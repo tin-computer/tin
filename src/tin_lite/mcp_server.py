@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from functools import partial
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -492,8 +493,18 @@ def _result_view(result: Any) -> tuple[Any, bool]:
     return "\n".join(parts), bool(getattr(result, "is_error", False))
 
 
-async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any:
-    """Record call metadata and session starts; never export tool or error bodies."""
+async def analytics_middleware(
+    ctx: Any,
+    call_next: Callable[[Any], Any],
+    *,
+    seen_before: Callable[[str], Awaitable[bool]] | None = None,
+) -> Any:
+    """Record call metadata and session starts; never export tool or error bodies.
+
+    `seen_before` answers whether a Clerk identity has reached Tin before, which is what
+    separates a first connection from an agent restart. Without it the handshake is
+    recorded with that question left unanswered.
+    """
     if not analytics.current().enabled or ctx.method not in {"tools/call", "initialize"}:
         return await call_next(ctx)
     token = get_access_token()
@@ -501,6 +512,15 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
     params = dict(ctx.params or {})
     if ctx.method == "initialize":
         info = params.get("clientInfo") or {}
+        # The row is written on the first tool call, so no row yet means nobody has
+        # arrived through this identity before. Internal alerts use this to tell a
+        # first connection from an agent restart.
+        first_session = None
+        if user_id is not None and seen_before is not None:
+            try:
+                first_session = not await seen_before(user_id)
+            except Exception:  # noqa: BLE001 - a handshake must not fail over analytics
+                logger.warning("analytics: first-session lookup failed", exc_info=True)
         analytics.capture(
             "mcp_session_started",
             distinct_id=user_id,
@@ -510,6 +530,7 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
                 "client_name": info.get("name"),
                 "client_version": info.get("version"),
                 "protocol_version": params.get("protocolVersion"),
+                "first_session": first_session,
             },
         )
         return await call_next(ctx)
@@ -693,7 +714,12 @@ def create_mcp_app(
         title="Tin workflow registry",
         description="Discover and run the workflows available to your Tin projects.",
         instructions=SERVER_INSTRUCTIONS,
-        middleware=[analytics_middleware],
+        middleware=[
+            partial(
+                analytics_middleware,
+                seen_before=lambda uid: runtime().database.tin_user_exists(uid),
+            )
+        ],
         token_verifier=ClerkOAuthTokenVerifier(auth, resource=resource),
         auth=AuthSettings(
             # Clerk is the authorization server clients discover. Codex requires the
@@ -715,11 +741,7 @@ def create_mcp_app(
         if MCP_SCOPE not in token.scopes:
             raise ToolError(f"forbidden: OAuth scope {MCP_SCOPE} is required")
         if await runtime().database.record_tin_user(token.subject):
-            analytics.capture(
-                "tin_user_created",
-                distinct_id=token.subject,
-                properties={"clerk_user_id": token.subject, "via": "mcp"},
-            )
+            analytics.capture_new_user(auth=auth, clerk_user_id=token.subject, via="mcp")
             welcome_email.send_in_background(
                 settings=settings, auth=auth, clerk_user_id=token.subject
             )

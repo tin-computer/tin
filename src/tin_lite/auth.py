@@ -14,6 +14,7 @@ from clerk_backend_api import AuthenticateRequestOptions, authenticate_request
 from fastapi import HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from tin_lite import analytics
 from tin_lite.settings import Settings
 
 SESSION_BEARER = HTTPBearer(
@@ -33,6 +34,26 @@ class AuthContext:
     expires_at: int | None = None
     raw_token: str = field(default="", repr=False)
     resource: str | None = None
+
+
+def _primary_email(payload: dict[str, Any]) -> str | None:
+    """The address Clerk marks primary, falling back to the first one on the account."""
+    addresses = payload.get("email_addresses") or []
+    primary_id = payload.get("primary_email_address_id")
+    for item in addresses:
+        if isinstance(item, dict) and item.get("id") == primary_id:
+            return item.get("email_address") or None
+    for item in addresses:
+        if isinstance(item, dict) and item.get("email_address"):
+            return item["email_address"]
+    return None
+
+
+def _display_name(payload: dict[str, Any]) -> str | None:
+    """What to call the person: their name, else the username Clerk holds."""
+    parts = [payload.get("first_name"), payload.get("last_name")]
+    name = " ".join(part for part in parts if isinstance(part, str) and part.strip())
+    return name.strip() or (payload.get("username") or None)
 
 
 class ClerkAuth:
@@ -60,25 +81,25 @@ class ClerkAuth:
     async def close(self) -> None:
         await self._client.aclose()
 
-    async def primary_email(self, clerk_user_id: str) -> str | None:
-        """The person's primary email from Clerk's Backend API, or None when unavailable."""
+    async def identity(self, clerk_user_id: str) -> dict[str, str | None]:
+        """The person's email and display name from Clerk, in one round trip.
+
+        Both are None when Clerk is unreachable or the fields are unset, so every caller
+        has to cope with an anonymous answer.
+        """
         try:
             response = await self._client.get(f"/users/{clerk_user_id}")
             response.raise_for_status()
             payload = response.json()
         except (httpx.HTTPError, ValueError):
-            return None
+            return {"email": None, "name": None}
         if not isinstance(payload, dict):
-            return None
-        addresses = payload.get("email_addresses") or []
-        primary_id = payload.get("primary_email_address_id")
-        for item in addresses:
-            if isinstance(item, dict) and item.get("id") == primary_id:
-                return item.get("email_address") or None
-        for item in addresses:
-            if isinstance(item, dict) and item.get("email_address"):
-                return item["email_address"]
-        return None
+            return {"email": None, "name": None}
+        return {"email": _primary_email(payload), "name": _display_name(payload)}
+
+    async def primary_email(self, clerk_user_id: str) -> str | None:
+        """The person's primary email from Clerk's Backend API, or None when unavailable."""
+        return (await self.identity(clerk_user_id))["email"]
 
     async def authenticate_session(self, request: Request) -> AuthContext:
         try:
@@ -287,7 +308,12 @@ async def require_user(
             detail="authentication required",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
-    await request.app.state.runtime.database.record_tin_user(context.clerk_user_id)
+    if await request.app.state.runtime.database.record_tin_user(context.clerk_user_id):
+        # Someone whose first touch is the browser, not their coding agent. Same event,
+        # so the internal alert fires whichever door they came through.
+        analytics.capture_new_user(
+            auth=request.app.state.auth, clerk_user_id=context.clerk_user_id, via="web"
+        )
     request.state.tin_auth = context
     return context
 

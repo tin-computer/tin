@@ -18,7 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from tin_lite import project_task_control
+from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
@@ -125,6 +125,28 @@ router.include_router(project_connections_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 BILLING_QUOTE_HEADER = Header(default=None, alias="Tin-Billing-Quote")
+
+
+@router.post("/api/events/install-prompt-copied", status_code=204)
+async def record_install_prompt_copied(request: Request, user: AuthContext = AUTHENTICATED_USER):
+    """Someone copied the agent install command from inside the app.
+
+    The same moment on the website fires `opensource_install_copied`, so the two ends of
+    the install funnel read as one event pair. The body is a fixed vocabulary, never
+    free text.
+    """
+    body = await request.json() if await request.body() else {}
+    agent = body.get("agent") if isinstance(body, dict) else None
+    analytics.capture(
+        "install_prompt_copied",
+        distinct_id=user.clerk_user_id,
+        properties={
+            "clerk_user_id": user.clerk_user_id,
+            "surface": "app",
+            "agent": agent if agent in {"codex", "claude"} else None,
+        },
+    )
+    return Response(status_code=204)
 
 
 @router.get("/api/projects/{project_id}/writing-style/guide")

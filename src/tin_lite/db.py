@@ -194,6 +194,15 @@ class Database:
         await self.grant_welcome_credit(clerk_user_id)
         return bool(inserted)
 
+    async def tin_user_exists(self, clerk_user_id: str) -> bool:
+        """Whether this Clerk identity has been seen before. A primary-key lookup."""
+        return bool(
+            await self.pool.fetchval(
+                "SELECT 1 FROM tin_users WHERE clerk_user_id = $1",
+                clerk_user_id,
+            )
+        )
+
     async def grant_welcome_credit(self, clerk_user_id: str) -> None:
         billing = getattr(self, "billing", None)
         if billing is not None:

@@ -78,8 +78,19 @@ METADATA_FIELDS = frozenset(
         "control",
         "stopped_runs",
         "removed_schedules",
+        # Who connected, for the internal Slack alerts. Identity only: an email, a
+        # display name, and which door they came through. Never project content.
+        "email",
+        "name",
+        "via",
+        "surface",
+        "agent",
+        "first_session",
     }
 )
+
+PERSON_FIELDS = frozenset({"email", "name"})
+"""Of those, the ones worth pinning to the PostHog person so later events can read them."""
 
 
 class Analytics:
@@ -111,8 +122,14 @@ class Analytics:
         distinct_id: str | UUID | None,
         properties: dict[str, Any] | None = None,
         project_id: str | UUID | None = None,
+        set_person: bool = False,
     ) -> None:
-        """Queue one event. Safe to call from anywhere; drops silently when disabled."""
+        """Queue one event. Safe to call from anywhere; drops silently when disabled.
+
+        `set_person` pins the identity fields to the PostHog person as well, so a later
+        event from the same person can be rendered with their email without another
+        lookup. Pass it where identity is freshly fetched, not on every call.
+        """
         if not self.enabled or distinct_id is None:
             return
         props: dict[str, Any] = {"$lib": "tin-lite", "source": self._source}
@@ -129,6 +146,10 @@ class Analytics:
                 and isinstance(value, str | int | float | bool | type(None))
             }
         )
+        if set_person:
+            person = {k: props[k] for k in PERSON_FIELDS if props.get(k) is not None}
+            if person:
+                props["$set"] = person
         if len(self._queue) == self._queue.maxlen:
             self.dropped += 1
         self._queue.append(
@@ -215,8 +236,49 @@ def capture(
     distinct_id: str | UUID | None,
     properties: dict[str, Any] | None = None,
     project_id: str | UUID | None = None,
+    set_person: bool = False,
 ) -> None:
-    _current.capture(event, distinct_id=distinct_id, properties=properties, project_id=project_id)
+    _current.capture(
+        event,
+        distinct_id=distinct_id,
+        properties=properties,
+        project_id=project_id,
+        set_person=set_person,
+    )
+
+
+def capture_new_user(*, auth: Any, clerk_user_id: str, via: str) -> None:
+    """Announce a person's first arrival in Tin, with their identity attached.
+
+    The Clerk lookup runs in the background, so the tool call or request that created the
+    user never waits on it. When Clerk cannot be reached the event still fires, carrying
+    the Clerk id alone.
+    """
+    if not _current.enabled:
+        return
+
+    async def run() -> None:
+        try:
+            identity = await auth.identity(clerk_user_id)
+        except Exception:  # noqa: BLE001 - an alert must never break a signup
+            logger.warning("analytics: identity lookup failed for %s", clerk_user_id)
+            identity = {"email": None, "name": None}
+        capture(
+            "tin_user_created",
+            distinct_id=clerk_user_id,
+            properties={
+                "clerk_user_id": clerk_user_id,
+                "via": via,
+                "email": identity.get("email"),
+                "name": identity.get("name"),
+            },
+            set_person=True,
+        )
+
+    try:
+        asyncio.get_running_loop().create_task(run(), name="analytics-new-user")
+    except RuntimeError:
+        return
 
 
 async def aclose() -> None:

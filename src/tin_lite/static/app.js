@@ -6580,6 +6580,11 @@ copyAgentCommand?.addEventListener("click", async () => {
     return;
   }
   showToast("Command copied.");
+  // Tells us someone reached the install step, to pair with the same copy on the website.
+  api("/api/events/install-prompt-copied", {
+    method: "POST",
+    body: JSON.stringify({ agent: state.agentTab }),
+  }).catch(() => {});
   if (!AGENT_TAB_LABELS[state.agentTab] || !agentCommand) return;
   // Flip the command to the next step for a few seconds, then back (see Paper sketch G2).
   agentCommand.textContent = `Copied. Run it, then ask your coding agent: “${AGENT_PROMPT}”`;
