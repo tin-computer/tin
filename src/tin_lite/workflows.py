@@ -1065,6 +1065,44 @@ class StyleCaptureWorkflow:
             raise
 
 
+@workflow.defn(name="growth.onboarding_plan")
+class GrowthOnboardingPlanWorkflow:
+    """Read, write, save. Only the run identifier enters history; activities hold every result."""
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        try:
+            await workflow.execute_activity(
+                "growth_plan_prepare",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            # One activity owns the model sequence; each step is receipted, so a retry replays
+            # completed steps from their effects and buys nothing twice.
+            await workflow.execute_activity(
+                "growth_plan_write",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=20),
+                heartbeat_timeout=timedelta(minutes=6),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            await workflow.execute_activity(
+                "growth_plan_publish",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except BaseException:
+            await workflow.execute_activity(
+                "growth_plan_failure",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            raise
+
+
 @workflow.defn(name="growth.onboarding")
 class GrowthOnboardingWorkflow:
     """Plan, hold for picks and connections, then set up; only run identifiers enter history."""
@@ -1125,6 +1163,7 @@ def registered_workflows() -> list[type]:
         StyleCaptureWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
+        GrowthOnboardingPlanWorkflow,
         ScheduledDispatchWorkflow,
         ContentPlanWorkflow,
         DesignMdWorkflow,
@@ -1151,6 +1190,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         "style.capture": StyleCaptureWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
+        "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
         "content.plan": ContentPlanWorkflow,
         CREATIVE_CHARACTER_WORKFLOW_NAME: CharacterDesignWorkflow,
         WORKFLOW_NAME: DesignMdWorkflow,

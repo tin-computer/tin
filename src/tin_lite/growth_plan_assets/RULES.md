@@ -1,7 +1,6 @@
----
-name: growth-onboarding-plan
-description: Rank the marketing systems for a business regardless of Tin, say which are usable in Tin today, propose a scope, and list what Tin would run per system four levels of automation the founder picks from.
----
+<!-- The rules of the Start here plan. `growth_plan.py` quotes these sections verbatim into its
+model steps, by heading; keep the `## ` headings stable. Code, not a model, runs the scorer,
+computes availability from `tin_state` and renders section 5's structure. -->
 
 # Growth onboarding plan
 

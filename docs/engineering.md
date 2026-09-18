@@ -277,10 +277,9 @@ in a fenced `mermaid` block.
 every list, and are the onboarding for a new project in two parts. Part 1: the founder's coding
 agent fills one form from the codebase (product URL, eleven `system_*` fields, notes, a timezone)
 plus the founder's multiple-choice constraints (hours, budget, urgency, the sixty-day outcome, hard
-no's), and the plan procedure reads the site, any project memory and a `tin_state` input the
-switchboard injects at launch (every registry workflow with a runnable flag, the run service's
-refusal reason, who unblocks it, declared prerequisites, connected integrations) and writes
-`reports/GROWTH_ONBOARDING_PLAN.md`: the business as understood, the programs worth attention,
+no's), and the plan reads the site, any project memory and the live `tin_state` (every registry
+workflow with a runnable flag, the run service's refusal reason, who unblocks it, declared
+prerequisites, connected integrations) and writes `reports/GROWTH_ONBOARDING_PLAN.md`: the business as understood, the programs worth attention,
 what changes for today's activities, and a checklist of three to six streams, each naming the
 integrations it needs, over a fenced `tin-plan` block Tin reads itself. Part 2: the native parent
 holds ("Set it up"); the agent shows the founder the four levels, starts the integration
@@ -293,7 +292,28 @@ and reporting anything still blocked, and
 publishes `reports/onboarding/<run>/RESULT.md`: what runs now, what is scheduled, what waits on
 whom, the five project views to watch, and what to expect in the next hours, days and weeks. The
 MCP server carries instructions and a `get_started` tool that says all of this to a fresh
-session. The plan procedure can also run on its own.
+session. The plan can also run on its own.
+
+The plan is an LLM flow (`growth_plan.py`), not an agent: choosing the steps was never the job.
+Code fetches the public site (every hop resolved and refused unless all its addresses are public,
+same-site redirects only, bounded pages plus `llms.txt` and the sitemap), reads project memory,
+runs the packaged scorer, computes each workflow's availability from `tin_state`, applies hard
+no's and the founder's own prohibitions, keeps one configuration per workflow, and renders the
+file including the whole `tin-plan` block, so a workflow key, mode, market or integration never
+comes from a model. Models supply judgment through schema-bound steps with stable identifiers:
+what is known about the business, the scorer profile (each parameter needs a verbatim basis in
+the evidence or code drops it), the scope decision (where growth breaks, which few systems, the
+founder's part, one number to watch), one role per system, the table cells and the spoken view
+with the answers to what the founder asked for. The judgment steps (`facts`, `scope`, `view`)
+use `gpt-6-astra`; the mechanical steps use `gpt-5.6-luna`; both at medium effort, pinned in the
+definition with a digest of the rules, rubric, programs, scorer and prompts. When code changes a
+system's setup after its text was written, that text is rewritten to match the final setup; a
+code-side lint then sends only the offending sentences for one or two short repairs. Each step
+is receipted by an owning effect, so an activity retry replays completed steps and buys nothing
+twice, an unconfirmed step stops the run, and an unusable result gets exactly one replacement
+under its own step identifier. When the direct fetch is blocked, thin or unreachable, one
+receipted hosted-web-search read stands in for it, the way `content.answer_page` searches. The
+saved file passes the same parsers setup reads it with before it is published.
 
 `creative.character` and `creative.product_demo` form the `creative-studio` system.
 `creative.character` is a native model workflow: the switchboard fetches the product page itself

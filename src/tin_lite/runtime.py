@@ -7,7 +7,7 @@ from temporalio import activity
 from temporalio.client import Client
 from temporalio.worker import Worker
 
-from tin_lite import content_plan, content_plan_editorial, style_capture
+from tin_lite import content_plan, content_plan_editorial, growth_plan, style_capture
 from tin_lite.activities import TinActivities
 from tin_lite.activity_lanes import (
     CODEX_ACTIVITIES,
@@ -26,6 +26,7 @@ from tin_lite.content_plan_activities import ContentPlanActivities
 from tin_lite.db import Database
 from tin_lite.e2b_runtime import E2BRuntime
 from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
+from tin_lite.growth_plan_activities import GrowthPlanActivities
 from tin_lite.integrations import IntegrationService
 from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
 from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
@@ -116,6 +117,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             SITE_HEALTH_MODEL_ROUTE,
             CHARACTER_MODEL_ROUTE,
             style_capture.ROUTE,
+            *growth_plan.ROUTES,
             ModelRoute(
                 key=content_plan.ROUTE_KEY,
                 provider=ProviderName.OPENAI,
@@ -233,6 +235,13 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     style_activities = StyleCaptureActivities(
         database=database, storage=storage, router=model_router
     )
+    plan_activities = GrowthPlanActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        router=model_router,
+        responses=responses,
+    )
     onboarding = GrowthOnboardingActivities(
         database=database,
         storage=storage,
@@ -255,6 +264,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         style_activities.extract,
         style_activities.publish,
         style_activities.failure,
+        plan_activities.prepare,
+        plan_activities.write,
+        plan_activities.publish,
+        plan_activities.failure,
         organic_system.organic_system_prepare,
         organic_system.organic_system_step,
         organic_system.organic_system_step_failure,

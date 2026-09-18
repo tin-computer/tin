@@ -3,7 +3,7 @@
 OPERATION = "included_workflow_v1"
 ONBOARDING = {
     "growth.onboarding": "growth.onboarding",
-    "growth.onboarding_plan": "codex.procedure",
+    "growth.onboarding_plan": "growth.onboarding_plan",
 }
 
 

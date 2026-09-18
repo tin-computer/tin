@@ -26,7 +26,8 @@ def inputs(definition: dict) -> str:
 def output(definition: dict) -> str:
     declared = (definition.get("procedure") or definition.get("code") or {}).get("output")
     if not declared:
-        return "—"
+        # A native flow that saves one fixed artifact pins its path in the definition.
+        return f"`{definition['output_path']}`" if definition.get("output_path") else "—"
     path = declared.get("path") or declared.get("path_template")
     section = declared.get("section")
     if declared["kind"] == "github.pull_request":

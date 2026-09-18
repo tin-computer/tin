@@ -63,3 +63,6 @@ ignore = ["S101"]
 # The studio toolkit runs inside the sandbox and drives ffmpeg, resvg, and its own sibling
 # scripts by design; the sandbox is the security boundary.
 "sandbox/studio/*.py" = ["S603", "S607", "S110", "S310", "E501"]
+# The Start here plan's prompts and their code-side wording rules were validated verbatim against
+# historical runs; rewrapping them by hand risks changing what was tested.
+"src/tin_lite/growth_plan.py" = ["E501"]

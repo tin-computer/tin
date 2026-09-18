@@ -486,8 +486,6 @@ def test_reservation_uses_cache_write_upper_bound():
 
 
 async def test_parent_pins_child_api_auth_across_flag_changes(billed):
-    from tin_lite.codex_api import MODE
-
     f = billed
     await fund(f)
     f.settings.codex_api_projects = {f.project.id}
@@ -496,11 +494,14 @@ async def test_parent_pins_child_api_auth_across_flag_changes(billed):
     child = await admit(
         f, "growth.onboarding_plan", parent=parent, step=f"onboarding:{parent.id}:plan"
     )
-    from tin_lite.free_workflows import api_terms_for_included
+    from tin_lite.free_workflows import included_execution
 
     async with f.db.pool.acquire() as conn:
-        terms = await api_terms_for_included(f.db, child.id, conn=conn)
-    assert terms["codex_auth"] == MODE
+        included = await included_execution(f.db, child.id, conn=conn)
+    # The parent's API choice is pinned for every child, whatever the flag says later. The plan
+    # itself is a native LLM flow, so it carries no Codex API terms of its own.
+    assert included["codex_api"] is True and included["api_terms"] is None
+    assert included["root_run_id"] == str(parent.id)
     assert (await f.billing.run_charge(child.id, ACTOR))["root_run_id"] == str(parent.id)
     assert (await f.billing.overview(f.project.id, ACTOR))["reserved_usd"] == "0.00"
 
@@ -541,7 +542,9 @@ async def test_start_here_needs_neither_funds_nor_quote(billed, monkeypatch, key
         await admit(f, "organic.audit", SITE)
 
 
-async def test_free_onboarding_api_records_supplier_usage_without_debiting_credits(billed):
+async def test_free_onboarding_api_records_supplier_usage_without_debiting_credits(
+    billed, monkeypatch
+):
     from datetime import UTC, datetime, timedelta
     from types import SimpleNamespace
 
@@ -557,11 +560,15 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
     )
     from tin_lite.codex_api_pricing import RATE_CARD
     from tin_lite.codex_api_relay import CodexAPIRelay, router
+    from tin_lite.free_workflows import ONBOARDING
     from tin_lite.procedures import SandboxProfile
 
     f = billed
     f.settings.codex_api_projects = {f.project.id}
-    run = await admit(f, "growth.onboarding_plan")
+    # No Start here step is a Codex procedure any more; the included-run relay path still serves
+    # Tin-funded Codex work, so exercise it with a synthetic included procedure.
+    monkeypatch.setitem(ONBOARDING, "research.deep_dive", "codex.procedure")
+    run = await admit(f, "research.deep_dive", {"question": "Which clinics buy form builders?"})
     await f.db.pool.execute(
         """UPDATE workflow_runs SET status='running', lease_active=true,
            sandbox_id='free-test', lease_owner='test' WHERE id=$1""",

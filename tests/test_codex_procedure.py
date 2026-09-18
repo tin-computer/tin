@@ -18,7 +18,6 @@ from tin_lite.domain import (
     CONTENT_DIAGRAM_WORKFLOW_NAME,
     CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
     EMAIL_SHORTLIST_WORKFLOW_NAME,
-    GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
     PRODUCT_CODE_MAP_WORKFLOW_NAME,
     PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
     PUBLIC_ARTICLE_WORKFLOW_NAME,
@@ -187,7 +186,6 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "content.deliver",
         "content.generate",
         "organic.technical_fix",
-        GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
         RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
         PUBLIC_ARTICLE_WORKFLOW_NAME,
         SITE_HEALTH_WORKFLOW_NAME,
@@ -1018,113 +1016,3 @@ def test_procedure_bridge_uses_explicit_skills_web_search_and_one_output() -> No
     assert 'STATE_DIR = Path(os.environ.get("TIN_PROCEDURE_STATE_DIR"' in bridge
     assert "is a read-only snapshot of the connected" in bridge
     assert "replace that section in full" in bridge
-
-
-def test_growth_onboarding_plan_procedure_contract() -> None:
-    """The plan is the only model run of onboarding; its package must stay small and honest."""
-    procedures = {item.key: item for item in BUILTIN_WORKFLOWS}
-    registry_keys = set(procedures)
-    onboarding_keys = {GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME, "growth.onboarding"}
-
-    plan = procedures[GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME]
-    plan_definition, plan_files = plan.definition_and_resource_files()
-    assert plan_definition["system"] == "start-here"
-    assert plan_definition["procedure"]["entry_skill"] == "growth-onboarding-plan"
-    assert plan_definition["procedure"]["output"]["path"] == "reports/GROWTH_ONBOARDING_PLAN.md"
-    assert plan_definition["input_schema"]["required"] == ["project_id"]
-    properties = plan_definition["input_schema"]["properties"]
-    assert {
-        "notes",
-        "timezone",
-        "founder_hours",
-        "budget",
-        "urgency",
-        "outcome",
-        "hard_nos",
-    } <= set(properties)
-    assert "human_review" not in plan_definition
-    assert plan_definition["schedule_modes"] == ["on_demand"]
-    plan_root = "procedures/growth.onboarding_plan/skills/growth-onboarding-plan"
-    assert set(plan_files) == {
-        "procedures/growth.onboarding_plan/PROMPT.md",
-        f"{plan_root}/SKILL.md",
-        f"{plan_root}/programs.json",
-        f"{plan_root}/rubric.json",
-        f"{plan_root}/score.py",
-    }
-    # The context reaches the sandbox as a file, so no exec limit applies; the cap keeps the
-    # package readable in one model context.
-    assert sum(len(content) for content in plan_files.values()) < 96_000
-
-    resource = json.loads(plan_files[f"{plan_root}/programs.json"])
-    programs = resource["programs"]
-    assert len(programs) == 15
-    assert len({row["id"] for row in programs}) == 15
-    providers = {"infra.github", "workspace.google", "analytics.gsc"}
-    for row in programs:
-        assert row["tin"]["coverage"] in {"full", "partial", "none"}
-        assert 0 <= row["tin"]["impact"] <= 1 and row["tin"]["impact_note"]
-        assert row["needs"]["founder_hours"] in {"min", "some", "lots"}
-        assert set(row["tin"]["workflows"]) <= registry_keys, row["id"]
-        assert not set(row["tin"]["workflows"]) & onboarding_keys
-        assert set(row["tin"]["integrations"]) <= providers, row["id"]
-    system_fields = {entry["input"] for entry in resource["systems_checklist"]}
-    assert len(system_fields) == 11 and system_fields <= set(properties)
-    for entry in resource["systems_checklist"]:
-        assert entry["tin_integration"] in providers | {None}, entry["system"]
-    titles = resource["workflow_titles"]
-    assert titles == {
-        item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys
-    }
-    for row in programs:
-        assert set(row["tin"]["workflows"]) <= set(titles), row["id"]
-    assert set(resource["workflow_scope"]) == set(titles)
-
-    rubric = json.loads(plan_files[f"{plan_root}/rubric.json"])
-    assert {system["id"] for system in rubric["systems"]} == {row["id"] for row in programs}
-    known = {param["id"] for param in rubric["params"]}
-    for system in rubric["systems"]:
-        assert set(system["weights"]) <= known, system["id"]
-        assert system["plays"] and system["out"]
-    assert len({play for system in rubric["systems"] for play in system["plays"]}) == 115
-
-
-def test_growth_onboarding_scorer_ranks_all_systems_and_penalises_fair_failures(tmp_path) -> None:
-    import subprocess
-    import sys
-
-    root = (
-        Path(__file__).parents[1]
-        / "codex_procedures/growth.onboarding_plan/skills/growth-onboarding-plan"
-    )
-    profile = tmp_path / "profile.json"
-    base = {
-        "businessType": "dev_tool",
-        "priceBand": "low",
-        "searchDemand": "proven",
-        "buyersBuy": ["search", "community"],
-        "funnelBreak": "conversion",
-        "hours": "some",
-        "budget": "none",
-    }
-    profile.write_text(json.dumps(base))
-    first = json.loads(
-        subprocess.check_output(  # noqa: S603
-            [sys.executable, str(root / "score.py"), str(profile)]
-        )
-    )
-    assert [row["rank"] for row in first["ranking"]] == list(range(1, 16))
-    assert first["outcome"] == "paying customers"
-    top = first["ranking"][0]["id"]
-    profile.write_text(json.dumps({**base, "tried": {top: 2}}))
-    second = json.loads(
-        subprocess.check_output(  # noqa: S603
-            [sys.executable, str(root / "score.py"), str(profile)]
-        )
-    )
-    moved = next(row for row in second["ranking"] if row["id"] == top)
-    assert moved["rank"] > 1 and any(c["param"] == "tried" for c in moved["against"])
-    describe = subprocess.check_output(  # noqa: S603  # noqa: S603
-        [sys.executable, str(root / "score.py"), "--describe"]
-    ).decode()
-    assert "businessType (required)" in describe

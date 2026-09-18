@@ -5549,6 +5549,7 @@ class Database:
             raise ValueError("Unsupported report result status")
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
+            "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),
             "organic.audit": ("organic_audit_ready", "Organic visibility audit is ready."),
             "organic.keyword_plan": ("keyword_plan_ready", "Keyword opportunity plan is ready."),

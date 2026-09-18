@@ -51,6 +51,7 @@ NATIVE_EXECUTORS = {
     "visibility.audit",
     "organic.audit",
     "organic.keyword_plan",
+    "growth.onboarding_plan",
 }
 PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding"}
 
@@ -94,6 +95,9 @@ def service_terms(definition, *, inputs=None):
         kinds = []  # The parent itself never buys a model call.
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
+    elif executor == "growth.onboarding_plan":
+        # About twenty-five bounded model steps; each reserves its conservative ceiling first.
+        maximum = 8 * NANOS_PER_DOLLAR
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
     return {

@@ -30,7 +30,6 @@ from tin_lite.domain import (
     CODEX_PROCEDURE_EXECUTOR,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     EMAIL_SHORTLIST_PATH,
-    GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
     MEMORY_INDEX_PATH,
     PROJECT_MEMORY_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -3046,16 +3045,6 @@ class TinActivities:
                         "file_count": bundle.file_count,
                     }
                 procedure_inputs: dict[str, object] = dict(run.input or {})
-                if procedure.workflow_key == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
-                    # The plan's appendix must only send an agent to doors that open today.
-                    from tin_lite.onboarding import onboarding_tin_state
-
-                    procedure_inputs["tin_state"] = await onboarding_tin_state(
-                        storage=self._storage,
-                        database=self._db,
-                        settings=self._settings,
-                        project_id=run.project_id,
-                    )
                 from tin_lite import content_draft
 
                 if procedure.output_validator in content_draft.VALIDATORS:

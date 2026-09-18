@@ -170,7 +170,12 @@ class GrowthOnboardingActivities:
                         path=f"workflows/{workflow_key}.json",
                     )
                 )
-                if child.get("key") != workflow_key or child.get("executor") != "codex.procedure":
+                # The plan is a native LLM flow; parents pinned before that change still hold the
+                # Codex procedure definition, which stays runnable from the registry.
+                if child.get("key") != workflow_key or child.get("executor") not in {
+                    workflow_key,
+                    "codex.procedure",
+                }:
                     raise ApplicationError(
                         "Onboarding child contract is unavailable.", non_retryable=True
                     )

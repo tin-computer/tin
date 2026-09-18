@@ -12,6 +12,7 @@ from tin_lite import (
     content_plan_editorial,
     content_repository_delivery,
     growth_onboarding,
+    growth_plan,
     organic_system,
     style_capture,
     technical_fix,
@@ -360,6 +361,11 @@ class BuiltinWorkflow:
             definition["organic_system_policy"] = dict(organic_system.POLICY)
         if self.key == growth_onboarding.KEY:
             definition["growth_onboarding_policy"] = dict(growth_onboarding.POLICY)
+        if self.key == growth_plan.KEY:
+            definition["plan_policy"] = dict(growth_plan.POLICY)
+            definition["plan_routes"] = growth_plan.route_definitions()
+            definition["plan_contract_sha256"] = growth_plan.contract_digest()
+            definition["output_path"] = GROWTH_ONBOARDING_PLAN_PATH
         if self.key == content_plan.KEY:
             definition["content_policy"] = dict(content_plan_editorial.POLICY)
             definition["content_instructions"] = content_plan_editorial.INSTRUCTIONS
@@ -2123,20 +2129,14 @@ BUILTIN_WORKFLOWS = (
             "in Tin today, a proposed scope, and what Tin would run system by system. Run "
             "inside Start here: onboard this business to have Tin set the picks up."
         ),
-        executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.1.0",
+        # An LLM flow: code owns the sequence, scoring, availability and rendering; models supply
+        # judgment. It replaced a Codex procedure that spent most of four minutes typing the file.
+        executor=growth_plan.KEY,
+        version_label="3.0.0",
         system=START_HERE_SYSTEM,
         agent_only=True,
         schedule_modes=("on_demand",),
         input_schema=growth_onboarding.INPUT_SCHEMA,
-        procedure=CodexProcedureSource(
-            root=Path(__file__).parents[2]
-            / "codex_procedures"
-            / GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
-            entry_skill="growth-onboarding-plan",
-            output_path=GROWTH_ONBOARDING_PLAN_PATH,
-            output_max_bytes=300_000,
-        ),
     ),
 )
 

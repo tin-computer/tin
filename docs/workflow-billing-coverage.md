@@ -28,7 +28,8 @@ hosted-default policy does so. Neither enables live Stripe charging.
   free for now. Their approved initial setup children inherit a trusted included
   receipt, not a customer credit budget. No paid quote, reservation or ledger
   charge is created, including at a $0 balance. Model and tool usage still has
-  internal receipts; existing execution bounds and project access still apply.
+  internal receipts (the plan is a native LLM flow of about twenty-five metered model
+  steps; started outside the included path it would carry an $8 ceiling); existing execution bounds and project access still apply.
   Later scheduled occurrences or independently started workflows use normal
   billing, and do not inherit free status from the saved configuration.
 - `outreach.email_campaign` has no Tin model or per-send charge: it sends the
