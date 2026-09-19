@@ -1,6 +1,6 @@
 ---
 name: growth-onboarding-plan
-description: Rank the marketing systems for a business regardless of Tin, say which are usable in Tin today, propose a scope, and list what Tin would run per system four levels of automation the founder picks from.
+description: Rank the marketing systems for a business regardless of Tin, say which are usable in Tin today, propose a scope, and list what Tin would run per system with explicit access, first deliverables and review control.
 ---
 
 # Growth onboarding plan
@@ -182,6 +182,12 @@ generation is a separate workflow. Approved drafts ship as pull requests only th
 repository on the GitHub connection; setup pins it for the content programs when GitHub is
 connected, and drafts stay in Tin otherwise.
 
+Before the systems list, describe the first useful deliverable: its concrete contents, the
+question it answers, an estimated arrival time, and the founder's next decision. Tie the work
+to this business's core action. Promise useful evidence and artifacts, never guaranteed growth.
+Reports arrive in Tin's Files; drafts wait in Decisions. No email or Slack result notifications
+are currently available. A file path alone is not a delivery explanation.
+
 Then a `## Connections` checklist, one line per provider key in the exact shape of the structure
 below. List every integration Tin supports that this business has, not only what the listed
 workflows need: `infra.github` when the code is on GitHub (from `system_repository` and
@@ -189,8 +195,14 @@ workflows need: `infra.github` when the code is on GitHub (from `system_reposito
 runs on Google. Mark each `required` when a listed workflow needs it, otherwise `recommended`,
 and say in one clause what it unlocks (GitHub: approved drafts ship as pull requests and site
 fixes arrive as pull requests; Search Console: real queries and impressions for the plan and the
-audits; Google Workspace: outreach sends from their mailbox). The agent records there what the
-founder connected and what they declined, and Tin reads it at setup.
+audits; Google Workspace: outreach sends from their mailbox). When content or site improvements would benefit from GitHub but repository details are unknown,
+include it as recommended, conditional on confirming which repository serves the site. Do not
+hide useful access just because the form was blank. Recommend Search Console for a live site;
+explain that it adds actual queries and impressions. Ask about product analytics for signup and
+activation measurement without claiming an automatic connection. Request Google Workspace only
+when the selected work needs signup testing or mailbox research. Name permissions, what improves
+with access, and what can proceed without it. The agent records what the founder connected or
+explicitly declined, and Tin reads it at setup.
 
 Each system carries, in the block, a `summary` (one sentence in the founder's framing of what
 Tin does for them there: "Tin improves your technical SEO: a weekly site-health pull request you
@@ -202,8 +214,10 @@ with "likely", and give no number the evidence cannot support.
 
 Each system lists its workflows with a `mode` (`once` when `schedule_modes` has `on_demand`,
 `weekly` or `daily` when it has that word; for `weekly` a `weekdays` list, several days when the
-role needs volume, and a `local_time` "HH:MM"; Tin applies the founder's timezone), inputs using
-`required_inputs` with values from the business, every enum input one of its listed values,
+role needs volume, and a `local_time` "HH:MM"; Tin applies the founder's timezone), inputs validated against
+`tin_state.workflows[].input_schema`, including required fields, enums and maxLength. Never put
+prose into an enum or exceed a string limit (the weekly brief focus is at most 240 characters).
+Use values from the business,
 `visibility.audit`'s `target` the site's bare domain or URL and nothing else, and
 the integrations it needs, so the agent can start those connections at once. Never include a
 workflow `tin_state` marks blocked on `tin_operator`, nor one whose prerequisites or required
@@ -257,7 +271,7 @@ As the first phase, Tin can start
 These are Tin's suggestion; you can take on more, or less.
 
 In the next phase, Tin can
-- publish those pages to your site, once it lives in a repository Tin can open pull requests against
+- prepare those pages as pull requests once the website repository is connected
 - submit the directory listings for you
 ```
 
@@ -311,7 +325,7 @@ Tell your agent, in your words, what Tin should take on. It records your answer 
 ## Control
 Tick how much control you keep. Your agent asks you this first.
 - [ ] control: pull_request — Tin opens a pull request; nothing changes until you merge it. (only when the code is on GitHub)
-- [ ] control: review_in_tin — Tin drafts; you approve each item in Decisions, and your yes opens a pull request or publishes when GitHub is connected. (Tin's suggestion)
+- [ ] control: review_in_tin — Tin drafts; you approve each item in Decisions, approved drafts stay in Tin unless GitHub pull-request delivery is configured. PRs need your merge. (Tin's suggestion)
 - [ ] control: auto_publish — not yet for your stack; Tin will tell you when it is.
 
 ## Connections

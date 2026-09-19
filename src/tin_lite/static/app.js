@@ -61,7 +61,7 @@ const ALLOWED_VIEWS = new Set(["chat", "workflows", "activity", "decisions", "fi
 if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
-const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|files|integrations|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
+const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
 function routeUrl(route, base = window.location.href) {
   const url = new URL(base);
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
@@ -102,6 +102,16 @@ const CUSTOM_API_TEMPLATE = Object.freeze({
   status: "available",
 });
 const CONNECT_REQUEST_KEY = "tin-lite:connect-providers";
+const CONNECT_PROVIDERS = new Set(["infra.github", "analytics.gsc", "workspace.google"]);
+let pendingConnectRequest = null;
+
+function rememberConnectRequest(projectId, providers) {
+  if (!projectId) return;
+  pendingConnectRequest = { projectId, providers: [...new Set(providers.filter((key) => CONNECT_PROVIDERS.has(key)))] };
+  try {
+    window.sessionStorage.setItem(CONNECT_REQUEST_KEY, JSON.stringify(pendingConnectRequest));
+  } catch (_error) {}
+}
 
 // A connect request from the founder's agent: /connect?project=…&providers=a,b opens the
 // Integrations view filtered to those providers and keeps that filter across the OAuth round
@@ -110,25 +120,27 @@ function adoptConnectRequest() {
   const url = new URL(window.location.href);
   if (url.pathname.replace(/\/$/, "") !== "/connect") return;
   const providers = (url.searchParams.get("providers") || "").split(",").map((s) => s.trim()).filter(Boolean);
-  try {
-    if (providers.length) window.sessionStorage.setItem(CONNECT_REQUEST_KEY, providers.join(","));
-  } catch (_error) {}
+  clearConnectRequest();
+  rememberConnectRequest(url.searchParams.get("project"), providers);
   url.pathname = "/integrations";
   url.searchParams.delete("providers");
   url.hash = "";
   window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+  state.view = "integrations";
 }
 
-function connectRequest() {
+function connectRequest(projectId = state.project?.id) {
+  let request = pendingConnectRequest;
   try {
     const stored = window.sessionStorage.getItem(CONNECT_REQUEST_KEY);
-    return stored ? stored.split(",").filter(Boolean) : [];
-  } catch (_error) {
-    return [];
-  }
+    if (stored) request = JSON.parse(stored);
+  } catch (_error) {}
+  if (!projectId || request?.projectId !== projectId || !Array.isArray(request.providers)) return [];
+  return request.providers.filter((key) => CONNECT_PROVIDERS.has(key));
 }
 
 function clearConnectRequest() {
+  pendingConnectRequest = null;
   try {
     window.sessionStorage.removeItem(CONNECT_REQUEST_KEY);
   } catch (_error) {}
@@ -1390,7 +1402,8 @@ function render() {
   });
   updateRail();
   if (state.projectAccess === "locked") {
-    renderLockPage();
+    if (state.view === "integrations" && connectRequest().length) renderIntegrations();
+    else renderLockPage();
     return;
   }
   if (!hasProject) return;
@@ -5405,7 +5418,9 @@ function renderConnectRequest(requested) {
   const items = requested
     .map((key) => state.integrations.find((integration) => integration.key === key))
     .filter(Boolean);
-  const done = items.filter((integration) => integration.connection_id && integration.status === "connected");
+  const done = items.filter((integration) => integration.connection_id && integration.status === "connected" &&
+    (!RESOURCE_SCOPED_INTEGRATIONS.has(integration.key) ||
+      integration.configuration?.selected_repository || integration.configuration?.selected_site_url));
   const projectName = escapeHtml(state.project?.name || "your project");
   main.innerHTML = `<section class="product-view integrations-view connect-view">
     <header class="workspace-header">
@@ -5414,7 +5429,7 @@ function renderConnectRequest(requested) {
         <p class="connect-intro">Your agent asked for ${items.length === 1 ? "this connection" : `these ${items.length} connections`}. Each takes about a minute in the browser${items.some((i) => i.key === "infra.github") ? "; GitHub also asks which repository" : ""}.</p>
       </div>
       <span class="header-spacer"></span>
-      <button class="button-quiet" type="button" data-connect-show-all>All integrations</button>
+      <button class="button-quiet" type="button" data-connect-show-all>${state.projectAccess === "locked" ? "Back to setup" : "All integrations"}</button>
     </header>
     <div class="integration-list">
       ${items.length ? items.map(renderIntegrationCard).join("") : `<div class="integration-no-results"><strong>Nothing to connect.</strong><span>The link named no integration Tin offers.</span></div>`}
@@ -5427,7 +5442,7 @@ function renderConnectRequest(requested) {
   </section>`;
   document.querySelector("[data-connect-show-all]").addEventListener("click", () => {
     clearConnectRequest();
-    renderIntegrations();
+    render();
   });
   bindIntegrationCardControls();
 }
@@ -5466,6 +5481,7 @@ function bindIntegrationCardControls() {
 function renderIntegrations() {
   const requested = connectRequest();
   if (requested.length) return renderConnectRequest(requested);
+  if (state.projectAccess === "locked") return renderLockPage();
   const search = state.integrationSearch.trim().toLowerCase();
   const catalog = [...state.integrations, CUSTOM_API_TEMPLATE];
   const visible = catalog.filter((integration) => {
@@ -5783,6 +5799,9 @@ async function connectIntegration(providerKey, capabilities = null, targetProjec
       return;
     }
     persistProjectSelection(projectId);
+    if (state.projectAccess === "locked" || connectRequest().length) {
+      rememberConnectRequest(projectId, [...connectRequest(projectId), providerKey]);
+    }
     if (integrationProjectDialog.open) integrationProjectDialog.close();
     window.location.assign(result.authorization_url);
   } catch (error) {
@@ -6064,7 +6083,7 @@ function resetProjectState(project) {
   window.history.replaceState(null, "", routeUrl(nextView));
 }
 
-async function loadProject(project, { announce = false } = {}) {
+async function loadProject(project, { announce = false, integrationReturn = null } = {}) {
   closeProjectMenu();
   resetProjectState(project);
   const generation = state.projectGeneration;
@@ -6106,12 +6125,17 @@ async function loadProject(project, { announce = false } = {}) {
     state.integrations = integrations;
     state.activityHasMore = activity.length === 100;
     state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length ? "locked" : "ready";
+    // A callback may arrive in a new tab or from the legacy origin. Let this project
+    // finish that connection while keeping its dashboard locked.
+    if (state.projectAccess === "locked" && integrationReturn?.projectId === project.id) {
+      rememberConnectRequest(project.id, [...connectRequest(project.id), integrationReturn.provider]);
+    }
     state.billing = BILLING_ENABLED ? await api(`/api/projects/${projectId}/billing`).catch(() => null) : null;
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     renderProjectMenu();
     render();
     if (state.projectAccess === "locked") {
-      recordLockPageEvent("viewed");
+      if (state.view !== "integrations" || !connectRequest().length) recordLockPageEvent("viewed");
       return true;
     }
     schedulePolling();
@@ -6139,7 +6163,7 @@ async function switchProject(projectId) {
   await loadProject(project, { announce: true });
 }
 
-async function bootstrap(invitedProjectId = null) {
+async function bootstrap(invitedProjectId = null, integrationReturn = null) {
   main.innerHTML = '<div class="view-loading">Connecting to Tin…</div>';
   const paymentId = BILLING_ENABLED ? new URL(window.location.href).searchParams.get("billing_payment") : null;
   try {
@@ -6164,7 +6188,7 @@ async function bootstrap(invitedProjectId = null) {
       if (!project) throw new Error("No accessible project in this payment’s workspace.");
       state.view = "billing";
     }
-    const loaded = await loadProject(project);
+    const loaded = await loadProject(project, { integrationReturn });
     if (loaded && paymentId !== null) {
       // Persisted project + hash make reloads durable. Consume the return once so a
       // later explicit project switch is not redirected back to this payment.
@@ -6604,7 +6628,7 @@ async function initializeAuth() {
   }
   const returnedUrl = new URL(window.location.href);
   const returnedProvider = returnedUrl.searchParams.get("connected_provider");
-  let connection = RESOURCE_SCOPED_INTEGRATIONS.has(returnedProvider)
+  let connection = CONNECT_PROVIDERS.has(returnedProvider)
     ? { provider: returnedProvider, projectId: returnedUrl.searchParams.get("project") } : null;
   if (returnedProvider) {
     returnedUrl.searchParams.delete("connected_provider");
@@ -6623,7 +6647,9 @@ async function initializeAuth() {
     state.view = "integrations";
     showToast(error.message);
   }
-  await bootstrap(invitedProject?.id || connection?.projectId || null);
+  const integrationReturn = connection || (state.githubInstallationChoice
+    ? { provider: "infra.github", projectId: state.githubInstallationChoice.projectId } : null);
+  await bootstrap(invitedProject?.id || integrationReturn?.projectId || null, integrationReturn);
   if (connection && connection.projectId === state.project?.id) await promptForIntegrationResource(connection.provider);
   if (state.githubInstallationChoice) chooseGitHubInstallation();
 }

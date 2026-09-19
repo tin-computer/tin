@@ -9,8 +9,12 @@ site yet, and the plan works from the form, the notes and memory alone. Every cl
 
 The plan answers three questions in order: which marketing systems would help this business,
 ranked without regard to Tin; which of those, and of the business's own current workflows, Tin can
-run today; and four levels of automation the founder picks one of. `tin_state` is the live truth
-about what Tin can start in this project: every workflow key comes from it. Below the levels, a
-fenced `tin-plan` block says exactly which workflows each level sets up; Tin reads that block
+run today; and which complete systems the founder chooses, with review control. `tin_state` is the live truth
+about what Tin can start in this project: every workflow key comes from it. Its input schemas
+give exact enums, required fields and length limits; validate every proposed input against them.
+Describe the first useful deliverable, what it helps the founder decide, the evidence and access
+that make it useful, and where it arrives. Unknown access details are discovery questions.
+Do not promise email or Slack notifications: reports arrive inside Tin and drafts await review.
+A fenced `tin-plan` block says exactly which workflows each system sets up; Tin reads that block
 itself. Use the `growth-onboarding-plan` skill for the method, the writing rules, and the exact
 structure. Write only the declared artifact; do not contact anyone or start other workflows.

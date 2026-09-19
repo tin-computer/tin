@@ -13,6 +13,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from test_growth_onboarding import PLAN, UNTICKED
 from test_procedure_publication import activity_fixture
 from test_procedure_publication import publication_db as publication_db
+from test_service_billing import install
 
 from tin_lite import growth_onboarding
 from tin_lite.api import router
@@ -36,6 +37,15 @@ PICKS = [
 
 async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.KEY, hold=True):
     _, storage, run, _ = await activity_fixture(db, review=True)
+    for key in (
+        "visibility.audit",
+        "organic.audit",
+        "outreach.email_shortlist",
+        "site.health_improve",
+        "project.weekly_brief",
+        "content.public_article",
+    ):
+        await install(SimpleNamespace(db=db), key)
     storage.repo.edit({PLAN_PATH: plan.encode()}, "growth.onboarding_plan")
 
     async def read(*, repo_id, commit_sha, path):

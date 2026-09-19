@@ -20,6 +20,7 @@ POLICY = {
 }
 PLAN_PATH = GROWTH_ONBOARDING_PLAN_PATH
 PLAN_BLOCK = "tin-plan"
+WORDS_BLOCK = "tin-words"
 
 PRIORITY_DEFAULTS: dict[str, dict[str, str]] = {
     "main": {"founder_hours": "lots", "budget": "500_to_2000", "urgency": "weeks"},
@@ -240,8 +241,8 @@ def plan_picks(text: str) -> tuple[list[str], list[str]]:
 CONTROL_OPTIONS: dict[str, str] = {
     "pull_request": "Tin opens a pull request; nothing changes until you merge it.",
     "review_in_tin": (
-        "Tin drafts; you approve each item in Decisions, and your yes opens a pull request "
-        "or publishes when GitHub is connected."
+        "Tin drafts; you approve each item in Decisions. Approved drafts stay in Tin unless "
+        "GitHub pull-request delivery is configured. A pull request still needs your merge."
     ),
 }
 _CONTROL = re.compile(r"^- \[(?P<mark>[ xX])\]\s+control:\s*(?P<option>[a-z_]+)\b")
@@ -612,10 +613,17 @@ def picked_actions(block: dict[str, Any], systems: list[str]) -> list[dict[str, 
     for item_system in block.get("systems", []):
         if not isinstance(item_system, dict) or item_system.get("id") not in systems:
             continue
-        for item in item_system.get("workflows", []) or []:
+        workflows = item_system.get("workflows")
+        if not isinstance(workflows, list):
+            continue
+        for item in workflows:
             if not isinstance(item, dict) or not isinstance(item.get("key"), str):
                 continue
             weekdays = item.get("weekdays") or ([item["weekday"]] if item.get("weekday") else [])
+            # Model-authored plans remain readable even when a field has the wrong shape.
+            # The approval validator reports these rows instead of attempting setup.
+            if not isinstance(weekdays, list) or not all(isinstance(day, str) for day in weekdays):
+                continue
             signature = (
                 item["key"],
                 str(item.get("mode", "once")),
@@ -700,21 +708,23 @@ def _when(action: dict[str, Any]) -> str:
 def _lands(action: dict[str, Any], delivery: dict[str, Any] | None) -> str:
     lands = expectation(action["key"])["lands"]
     if action["key"] in CONTENT_DRAFT_KEYS:
-        mode = (delivery or {}).get("mode")
+        mode = action.get("delivery_mode") or (delivery or {}).get("mode")
         where = (delivery or {}).get("repository") or "your repository"
         if mode == "github_pr":
             return f"Decisions, as a draft; your yes opens a pull request in {where}"
         if mode == "github_commit":
             return f"Decisions, as a draft; your yes publishes it to {where}"
-        return "Decisions, as a draft; connect GitHub and your yes opens a pull request"
+        return "Decisions, as a draft; approved copy stays in Tin"
     return lands
 
 
-def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
-    """The handshake the founder's agent relays word for word once Tin is set up.
+def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str, Any]:
+    """What the founder hears once Tin is set up, in the two parts the agent treats apart.
 
-    The win first, then each role as a benefit with its day and where it lands, what is
-    already there, the outlook, the two pages, and the invitation to ask for more.
+    `quote` is Tin's own words, relayed as given: the win, each role as a benefit with its
+    day and where it lands, and what is already under way. `relay` is the facts the agent
+    tells the founder in its own words, one per item: the outlook, the control they kept,
+    the two pages, what was left out and why, and the invitation to ask for more.
     """
     business = str(setup.get("business") or "Your project")
     actions = setup["actions"]
@@ -725,11 +735,23 @@ def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
     scheduled = [a for a in actions if a.get("status") == "scheduled"]
     not_running = [a for a in actions if a.get("status") in {"declined", "blocked", "skipped"}]
     roles = len(scheduled)
+    incomplete = [
+        a
+        for a in actions
+        if a.get("status") in {"blocked", "skipped", "declined"}
+        or a.get("first_run_status") == "blocked"
+        or a.get("delivery_error")
+    ]
 
     def title(action: dict[str, Any]) -> str:
         return titles.get(action["key"], action["key"])
 
     lines: list[str] = []
+    if incomplete:
+        lines.append(
+            f"Setup is partial for {business}: {len(incomplete)} workflow(s) "
+            "were left out or need attention."
+        )
     if roles:
         lines.append(
             f"{business} now has a marketing system running: {roles} "
@@ -740,7 +762,7 @@ def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
         lines.append(f"{business} has its first Tin runs under way.")
     else:
         lines.append(f"Tin could not start anything for {business} yet; here is why.")
-    if details.get("summary"):
+    if details.get("summary") and not incomplete:
         lines.append(details["summary"])
     lines.append("")
     for a in scheduled:
@@ -764,6 +786,9 @@ def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
             )
             + "."
         )
+    quote = "\n".join(lines).strip()
+
+    relay: list[str] = []
     outlook = details.get("outlook") or {}
     expect = [
         f"In a week: {outlook['week']}" if outlook.get("week") else "",
@@ -771,40 +796,68 @@ def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
         f"In three months: {outlook['quarter']}" if outlook.get("quarter") else "",
     ]
     expect = [item for item in expect if item]
-    if expect:
-        lines.append("")
-        lines.append(" ".join(expect))
+    if expect and not incomplete:
+        relay.append(" ".join(expect))
     control = setup.get("control")
     if control in CONTROL_OPTIONS:
-        lines.append("")
-        lines.append(f"Your control: {CONTROL_OPTIONS[control]}")
-    lines.append("")
-    lines.append(
+        relay.append(f"Your control: {CONTROL_OPTIONS[control]}")
+    relay.append(
         f"Two pages are yours: My system ({links['my_system']}), every workflow with its runs, "
         f"and Decisions ({links['decisions']}), anything waiting for your yes."
+    )
+    relay.append(
+        f"Reports arrive in Files ({links['files']}). Open Tin to check results; "
+        "email and Slack result notifications are not available."
     )
     for a in not_running:
         if a.get("status") == "declined":
             note = f" ({a['note']})" if a.get("note") else ""
-            lines.append(
+            relay.append(
                 f"Left out by your choice: {title(a)} needs {a.get('provider', 'an integration')} "
                 f"you did not connect{note}."
             )
         else:
-            lines.append(f"Waiting: {title(a)}. {a.get('reason') or 'See My system.'}")
-    lines.append("")
-    lines.append(
+            relay.append(f"Waiting: {title(a)}. {a.get('reason') or 'See My system.'}")
+    relay.append(
         "Tell me anything you do by hand for marketing and I will have Tin build it as a "
         "workflow; you will see it appear in My system. Once the first result is in, want to "
         f"talk through how Tin can help {business} grow?"
     )
-    return "\n".join(lines).strip()
+    return {"quote": quote, "relay": relay}
+
+
+def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
+    """The handshake as one text, for the written report: the quote, then each relayed fact
+    as a paragraph of its own."""
+    words = founder_words(setup, titles=titles)
+    return "\n\n".join([words["quote"], *words["relay"]]).strip()
 
 
 def report_message(text: str) -> str:
     """The founder message at the top of a written report, up to its first `## ` heading."""
     body = text.split("\n", 1)[1] if text.startswith("# ") else text
     return body.split("\n## ", 1)[0].strip()
+
+
+def report_words(text: str) -> dict[str, Any]:
+    """The quote and relay a written report carries in its `tin-words` block.
+
+    Reports written before the block existed carry the handshake as one text; it comes back
+    as the quote, the way those clients were told to treat it.
+    """
+    match = re.search(r"```" + WORDS_BLOCK + r"\s*\n(.*?)\n```", text, re.S)
+    if match is not None:
+        try:
+            value = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            value = None
+        if isinstance(value, dict) and isinstance(value.get("quote"), str):
+            relay = value.get("relay")
+            return {
+                "quote": value["quote"],
+                "relay": [str(item) for item in relay] if isinstance(relay, list) else [],
+            }
+    return {"quote": report_message(text), "relay": []}
 
 
 def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
@@ -820,7 +873,14 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
         return titles.get(action["key"], action["key"])
 
     heading = _join(names) if names else "your systems"
-    lines = [f"# Tin is set up: {heading}", "", founder_message(setup, titles=titles), ""]
+    partial = any(
+        a.get("status") in {"blocked", "skipped", "declined"}
+        or a.get("first_run_status") == "blocked"
+        or a.get("delivery_error")
+        for a in actions
+    )
+    label = "Tin setup needs attention" if partial else "Tin is set up"
+    lines = [f"# {label}: {heading}", "", founder_message(setup, titles=titles), ""]
     lines += ["## What runs", ""]
     if not scheduled and not started:
         lines.append("Nothing could start; see above.")
@@ -842,12 +902,25 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
             )
         elif mode == "github_commit":
             lines.append(f"Approved drafts publish straight to {delivery.get('repository')}.")
+        elif mode == "partial":
+            lines.append(
+                "Pull-request delivery was saved for only some workflows. "
+                "See each workflow's destination above; the others keep drafts in Tin."
+            )
         else:
             lines.append(
-                "Approved drafts stay in Tin until GitHub is connected; then your yes opens a "
-                "pull request."
+                "Approved drafts stay in Tin. Connect the website repository and configure "
+                "pull-request delivery to send approved copy to GitHub. "
+                "Nothing merges automatically."
             )
     lines += ["", f"Plan revision: `{setup['plan_revision']}`.", ""]
+    words = founder_words(setup, titles=titles)
+    lines += [
+        "```" + WORDS_BLOCK,
+        json.dumps({"quote": words["quote"], "relay": words["relay"]}, indent=2),
+        "```",
+        "",
+    ]
     return "\n".join(lines)
 
 

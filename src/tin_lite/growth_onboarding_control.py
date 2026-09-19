@@ -85,6 +85,7 @@ async def record_onboarding_picks(
     connections: list[ConnectionPick],
     actor_clerk_user_id: str,
     client_id: str | None,
+    settings: Any = None,
 ) -> dict[str, Any]:
     """Tick the picks into the plan at HEAD as a member-authored commit; replay-safe."""
     database = runtime.database
@@ -142,6 +143,31 @@ async def record_onboarding_picks(
                             "or record it as not_now with their reason.",
                         )
                 text, head = await current_plan_text(storage=runtime.storage, project=project)
+                original_text = text
+                # Older plans may omit useful optional access now exposed by the MCP.
+                # Accept only server-recommended providers, and record the explicit decision.
+                from tin_lite.growth_onboarding import picked_actions, plan_block, suggested_systems
+                from tin_lite.onboarding_experience import access_needs
+
+                block = plan_block(text) or {}
+                selected = suggested_systems(block) if systems == ["suggested"] else systems
+                current_connections = plan_readiness(text)["connections"]
+                recommendations = await access_needs(
+                    database=database,
+                    project_id=project.id,
+                    inputs=run.input or {},
+                    actions=picked_actions(block, selected),
+                    connections=current_connections,
+                )
+                for need in recommendations:
+                    provider = need["provider"]
+                    if provider in current_connections or not any(
+                        p.provider == provider for p in connections
+                    ):
+                        continue
+                    line = f"- [ ] {provider} — {need['name']}, recommended: {need['benefit']}\n"
+                    # A separate checklist section works even when a legacy heading has a suffix.
+                    text += f"\n## Connections — additional access\n{line}"
                 try:
                     updated = apply_plan_picks(
                         text,
@@ -153,7 +179,7 @@ async def record_onboarding_picks(
                     )
                 except ValueError as exc:
                     raise OnboardingPickError("unknown_pick", str(exc)) from exc
-                intent = {"head": head, "text": updated, "changed": updated != text}
+                intent = {"head": head, "text": updated, "changed": updated != original_text}
                 await database.start_effect(conn, execution_key=key, operation=KEY)
                 await database.save_effect_progress(
                     conn, execution_key=key, result={"digest": fingerprint, "intent": intent}
@@ -197,6 +223,20 @@ async def record_onboarding_picks(
                     "Tin then sets those systems up, skipping what was declined."
                 ),
             }
+
+            if settings is not None:
+                from tin_lite.onboarding_experience import onboarding_experience
+
+                result_view.update(
+                    await onboarding_experience(
+                        database=database,
+                        storage=runtime.storage,
+                        settings=settings,
+                        project_id=run.project_id,
+                        run=run,
+                        plan_text=updated,
+                    )
+                )
 
             await runtime.database.complete_effect(
                 conn, execution_key=key, result={"digest": fingerprint, "response": result_view}
@@ -243,6 +283,24 @@ async def ensure_onboarding_approvable(*, runtime: Any, run: Any) -> None:
             if plan_block(text) is None:
                 raise OnboardingPickError(
                     "invalid_plan", "The plan has no executable onboarding block."
+                )
+            from tin_lite.onboarding_experience import validate_plan
+
+            issues = await validate_plan(
+                database=runtime.database,
+                project_id=run.project_id,
+                text=text,
+                systems=readiness["systems"],
+                timezone=(run.input or {}).get("timezone") or "UTC",
+            )
+            if issues:
+                summary = "; ".join(
+                    f"{item.get('workflow_key', item.get('system', 'plan'))}: {item['reason']}"
+                    for item in issues
+                )
+                raise OnboardingPickError(
+                    "invalid_plan",
+                    f"Setup has not started. Correct the plan before approval: {summary}",
                 )
             await runtime.database.start_effect(conn, execution_key=key, operation=KEY)
             await runtime.database.complete_effect(

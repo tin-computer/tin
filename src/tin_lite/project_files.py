@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Literal
@@ -28,6 +29,33 @@ _PROTECTED_NAMES = frozenset(
     }
 )
 _PROTECTED_SUFFIXES = frozenset({".key", ".pem", ".p12", ".pfx"})
+# Credential shapes precise enough to refuse on sight. A project file is read by every run
+# and by the founder's agent, so a token in one is a leak, not a note. Kept to formats with
+# a fixed prefix or a key/value assignment with a long opaque value; prose never matches.
+_CREDENTIAL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("a private key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("an AWS access key", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
+    (
+        "a GitHub token",
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{22,})"),
+    ),
+    ("a Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}")),
+    ("a Stripe or Clerk secret key", re.compile(r"\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}")),
+    ("an OpenAI key", re.compile(r"\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}")),
+    ("a Google API key", re.compile(r"\bAIza[0-9A-Za-z_-]{35}\b")),
+    (
+        "a secret assignment",
+        re.compile(
+            r"(?i)\b(?:api[_-]?key|secret[_-]?key|client[_-]?secret|access[_-]?token|"
+            r"auth[_-]?token|password|passwd)\b['\"]?\s*[:=]\s*['\"]?[A-Za-z0-9_.\-/+=]{16,}"
+        ),
+    ),
+)
+
+
+def credential_findings(content: str) -> list[str]:
+    """What kind of credential a text appears to hold; empty when it looks clean."""
+    return [kind for kind, pattern in _CREDENTIAL_PATTERNS if pattern.search(content)]
 
 
 class ProjectFileError(RuntimeError):
@@ -113,6 +141,12 @@ def normalize_project_file_mutations(
         if item.operation == "upsert":
             if not isinstance(item.content, str) or item.new_path is not None:
                 raise ValueError("upsert requires UTF-8 text content and no new_path")
+            found = credential_findings(item.content)
+            if found:
+                raise ValueError(
+                    f"project file {item.path} appears to contain {found[0]}; remove the "
+                    "credential and commit the rest"
+                )
             total_bytes += len(item.content.encode())
         elif item.operation == "delete":
             if item.content is not None or item.new_path is not None:

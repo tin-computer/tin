@@ -292,6 +292,15 @@ class GrowthOnboardingActivities:
             )
         ).decode("utf-8", "replace")
         _picked, offered = plan_picks(text)
+        from tin_lite.onboarding_experience import validate_plan
+
+        issues = await validate_plan(
+            database=self.db,
+            project_id=run.project_id,
+            text=text,
+            systems=offered,
+            timezone=(run.input or {}).get("timezone") or "UTC",
+        )
         view = plan_view(text)[:1200]
         await self.db.project_run_progress(
             run_id=run.id,
@@ -301,6 +310,11 @@ class GrowthOnboardingActivities:
             step="systems",
             summary=(
                 f"Waiting for your pick among {len(offered)} systems in {plan['artifact_path']}."
+                + (
+                    f" {len(issues)} setup issue(s) need correction before those workflows can run."
+                    if issues
+                    else ""
+                )
             ),
         )
         analytics.capture(
@@ -314,11 +328,13 @@ class GrowthOnboardingActivities:
             canonical_commit_sha=plan["canonical_commit_sha"],
             artifact_ref=plan["artifact_ref"],
             artifact_path=plan["artifact_path"],
-            summary=(
-                (f"Tin's view. {view} " if view else "")
-                + f"The plan is ready: {len(offered)} systems Tin can run, in "
-                f"{plan['artifact_path']}. Ask the founder in their words what Tin should take "
-                "on, then record it with record_onboarding_picks and approve_workflow_run."
+            # Tin's own words to the founder, and nothing else: the dashboard shows this
+            # explanation to them, and the agent quotes it as given. The plan's system
+            # count is in the progress summary, and the agent's next steps in get_started.
+            summary=view
+            or (
+                f"The plan is ready: {len(offered)} systems Tin can run, in "
+                f"{plan['artifact_path']}."
             ),
         )
 
@@ -468,6 +484,14 @@ class GrowthOnboardingActivities:
                 outcomes.append(outcome)
             delivery = await self._configure_delivery(run, outcomes, head)
             result = {
+                "setup_status": "partial"
+                if any(
+                    row.get("status") in {"blocked", "skipped", "declined"}
+                    or row.get("first_run_status") == "blocked"
+                    or row.get("delivery_error")
+                    for row in outcomes
+                )
+                else "complete",
                 "plan_revision": head,
                 "systems": systems,
                 "offered": offered,
@@ -506,7 +530,12 @@ class GrowthOnboardingActivities:
             step="setup",
             summary=(
                 f"Set up {sum(row.get('status') in {'started', 'scheduled'} for row in outcomes)} "
-                f"workflows for {', '.join(systems) or 'no system'}."
+                f"workflows for {', '.join(systems) or 'no system'}. "
+                + (
+                    "Setup is partial; inspect incomplete_setup for what needs attention."
+                    if result["setup_status"] == "partial"
+                    else "Setup is complete."
+                )
             ),
         )
         return child_handles(outcomes)
@@ -646,6 +675,7 @@ class GrowthOnboardingActivities:
             database=self.db, storage=self.storage, integrations=self.integrations
         )
         revision = head
+        configured_programs = []
         for index, row in enumerate(programs):
             try:
                 saved = await service.save_settings(
@@ -657,14 +687,20 @@ class GrowthOnboardingActivities:
                     actor=run.started_by_clerk_user_id,
                     client_id=None,
                 )
-            except Exception as exc:  # one program failing to configure must not stop setup
-                row["note"] = f"{row.get('note', '')}; delivery not configured: {exc}".strip("; ")
+            except Exception:  # one program failing to configure must not stop setup
+                row["delivery_error"] = (
+                    "Pull-request delivery could not be saved; drafts stay in Tin."
+                )
+                row["delivery_mode"] = "draft_only"
                 continue
             revision = saved.get("revision", revision)
+            row["delivery_mode"] = "github_pr"
+            configured_programs.append(str(row["project_workflow_id"]))
         return {
-            "mode": "github_pr",
+            "mode": "github_pr" if len(configured_programs) == len(programs) else "partial",
             "repository": repository,
             "path_pattern": settings.path_pattern,
+            "configured_programs": configured_programs,
         }
 
     async def _titles(self, setup):

@@ -23,6 +23,7 @@ from tin_lite.executor_gates import keyword_plan_gate, organic_audit_gate, organ
 from tin_lite.integrations import parse_integration_requirements, registered_integrations
 from tin_lite.keyword_plan import KEY as KEYWORD_KEY
 from tin_lite.organic_audit import AUDIT_KEY
+from tin_lite.workflow_inputs import client_input_schema
 from tin_lite.workflow_prerequisites import project_readiness
 
 ONBOARDING_WORKFLOW_KEYS = frozenset({GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME, "growth.onboarding"})
@@ -97,6 +98,7 @@ def tin_state(
                     "validated when the run starts."
                 ),
                 "requires_integrations": required_providers,
+                "input_schema": client_input_schema(definition),
                 "required_inputs": [
                     key for key in schema.get("required", []) if key != "project_id"
                 ],

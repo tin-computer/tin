@@ -86,6 +86,11 @@ async def test_onboarding_identifier_and_ready_to_call_inspection_both_work(acco
     f = account
     workflow = await install(f, "growth.onboarding")
     started = await call(f, "get_started", project_id=str(f.project.id))
+    assert started["onboarding_contract_version"] == 1
+    assert started["delivery_destination"]["channel"] == "tin"
+    assert started["delivery_destination"]["notifications_enabled"] is False
+    assert {n["provider"] for n in started["access_needs"]} == {"infra.github", "analytics.gsc"}
+    assert started["first_deliverables"] and started["result_links"] == []
     first = started["first_workflow"]
     assert first["id"] == str(workflow.id)
     generic = await call(f, "get_workflow", workflow_id=first["id"])
@@ -123,3 +128,65 @@ async def test_private_id_inspection_keeps_membership_boundary(account, monkeypa
     f.server = mcp(f, monkeypatch, actor="user_OutsideProject")
     with pytest.raises(ToolError, match="workflow not found"):
         await call(f, "get_workflow", workflow_id=private["workflow_id"])
+
+
+async def test_founder_words_come_apart_as_quote_and_relay(account):
+    """A tool result carries Tin's own words in `quote` and facts for the agent's words in
+    `relay`; `tell_the_founder` joins them for clients on older instructions."""
+    f = account
+    workflow = await install(f, "growth.onboarding")
+    started = await call(
+        f,
+        "start_workflow",
+        project_id=str(f.project.id),
+        workflow_id=workflow.key,
+        inputs={"product_url": "https://example.com/"},
+    )
+    # Starting is a status, said in the agent's words, with the guessed defaults first.
+    assert "quote" not in started
+    assert started["relay"][0].startswith(
+        "I set this up as a serious side project aiming for more signups."
+    )
+    assert started["relay"][1].startswith("Tin is writing your plan now.")
+    assert started["tell_the_founder"] == "\n\n".join(started["relay"])
+    # The plan's minutes are useful: hand over context, connect the systems it leans on.
+    meanwhile = started["meanwhile"]
+    assert meanwhile["context_request"]["path_pattern"] == "context/{slug}.md"
+    assert meanwhile["context_request"]["index_path"] == "wiki/INDEX.md"
+    assert meanwhile["context_request"]["commit"]["name"] == "commit_project_changes"
+    assert "credential" in meanwhile["context_request"]["guard"]
+    assert "plan already running does not see it" in meanwhile["context_request"]["reaches"]
+    assert {need["provider"] for need in meanwhile["access_needs"]} == {
+        "infra.github",
+        "analytics.gsc",
+    }
+    assert all(need["benefit"] and need["permissions"] for need in meanwhile["access_needs"])
+    assert meanwhile["connection_batch"]["name"] == "start_integration_connections"
+    assert started["relay"][2].startswith("While it reads, two things help")
+    assert "GitHub" in started["relay"][2] and "Search Console" in started["relay"][2]
+
+    # While the plan waits for a pick, Tin's view is the quote and the state is the relay.
+    run_id = UUID(started["id"])
+    view = (
+        "Example has a live site and no measured traffic.\n\nAs the first phase, Tin can start\n"
+        "- checking assistant recommendations weekly"
+    )
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='running', review_required=true WHERE id=$1", run_id
+    )
+    await f.db.request_human_review(
+        run_id=run_id,
+        canonical_commit_sha="a" * 40,
+        artifact_ref="code.storage://repo@a/reports/GROWTH_ONBOARDING_PLAN.md",
+        artifact_path="reports/GROWTH_ONBOARDING_PLAN.md",
+        summary=view,
+    )
+    held = await call(f, "get_run", run_id=str(run_id))
+    assert held["status"] == "needs_input"
+    assert held["quote"] == held["review_summary"] == view
+    assert held["relay"] == [
+        "The plan is ready and waits for their pick.",
+        "The next few minutes are theirs: what Tin takes on, in their words, then the control "
+        "they keep and any connections. Nothing runs until they have said.",
+    ]
+    assert held["tell_the_founder"] == "\n\n".join([view, *held["relay"]])

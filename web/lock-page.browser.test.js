@@ -10,17 +10,24 @@ import { chromium } from "playwright";
 
 const assets = path.resolve("src/tin_lite/static");
 
-async function serve({ lockEnabled, projectWorkflows }) {
+async function serve({ lockEnabled, projectWorkflows, connections = false }) {
   const project = {id: "project-1", name: "QA’s project", workspace_id: "ws", workspace_name: "QA", member_count: 1, hidden: false};
+  const integrations = connections ? [
+    {key: "infra.github", name: "GitHub", badge: "GH", description: "Repositories", unlocks: [], configured: true, status: "available", connection_id: null},
+    {key: "analytics.gsc", name: "Search Console", badge: "SC", description: "Search performance", unlocks: [], configured: true, status: "available", connection_id: null},
+    {key: "workspace.google", name: "Google Workspace", badge: "GW", description: "Workspace", unlocks: [], configured: true, status: "available", connection_id: null},
+  ] : [];
   const writes = [];
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     const send = value => {response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(value));};
-    if (["/", "/system", "/decisions"].includes(url.pathname)) {
+    if (["/", "/system", "/decisions", "/integrations", "/connect", "/sign-in", "/integrations/callback/github"].includes(url.pathname)) {
       response.setHeader("Content-Type", "text/html");
       const html = (await fs.readFile(path.join(assets, "index.html"), "utf8"))
         .replaceAll("{{ASSET_VERSION}}", "test").replaceAll("{{CLERK_PUBLISHABLE_KEY}}", "")
-        .replaceAll("{{BROWSER_LOCK_ENABLED}}", String(lockEnabled)).replaceAll("{{MCP_URL}}", "https://app.tin.test/mcp");
+        .replaceAll("{{BROWSER_LOCK_ENABLED}}", String(lockEnabled)).replaceAll("{{MCP_URL}}", "https://app.tin.test/mcp")
+        .replaceAll("{{AUTH_RETURN_URL}}", (url.searchParams.get("redirect_url") || "").replaceAll("&", "&amp;").replaceAll('"', "&quot;"))
+        .replaceAll("{{AUTH_FLOW}}", "product");
       return response.end(html);
     }
     if (url.pathname.startsWith("/assets/")) {
@@ -34,10 +41,21 @@ async function serve({ lockEnabled, projectWorkflows }) {
     if (request.method !== "GET") {
       let raw = ""; for await (const chunk of request) raw += chunk;
       writes.push({path: url.pathname, body: JSON.parse(raw || "{}")});
+      if (url.pathname.endsWith("/infra.github/connect")) return send({authorization_url: "/integrations/callback/github?code=synthetic&state=synthetic"});
+      if (url.pathname === "/api/integrations/github/complete") {
+        Object.assign(integrations[0], {connection_id: "github-1", status: "connected", project_id: project.id, configuration: {}});
+        return send(integrations[0]);
+      }
+      if (url.pathname.endsWith("/infra.github") && request.method === "PUT") {
+        integrations[0].configuration.selected_repository = "example/site";
+        return send(integrations[0]);
+      }
       response.statusCode = 204; return response.end();
     }
-    if (url.pathname === "/api/projects") return send([project]);
-    if (url.pathname === "/api/projects/project-1/workflows") return send(projectWorkflows);
+    if (url.pathname === "/api/projects") return send(connections ? [project, {...project, id: "project-2", name: "Second project"}] : [project]);
+    if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send(projectWorkflows);
+    if (url.pathname.endsWith("/integrations")) return send(integrations);
+    if (url.pathname.endsWith("/infra.github/options")) return send([{id: "repo-1", label: "example/site"}]);
     if (url.pathname.endsWith("/system")) return send({workflow_count: projectWorkflows.length, running_count: 0, waiting_count: 0, runs_this_month: 0});
     if (url.pathname.startsWith("/api/")) return send([]);
     response.writeHead(404).end();
@@ -46,14 +64,14 @@ async function serve({ lockEnabled, projectWorkflows }) {
   return {server, writes, base: `http://127.0.0.1:${server.address().port}`};
 }
 
-async function open(browser, base, {viewport = {width: 1440, height: 900}, url = "/system"} = {}) {
+async function open(browser, base, {viewport = {width: 1440, height: 900}, url = "/system", signedIn = true} = {}) {
   const errors = [];
   const context = await browser.newContext({viewport});
   await context.route("**/*", route => route.request().url().startsWith(base) ? route.continue() : route.abort());
-  await context.addInitScript(() => {
-    window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: "QA"}, session: {getToken: async () => "synthetic"}};
+  await context.addInitScript(signedIn => {
+    window.Clerk = {load: async () => {}, isSignedIn: signedIn, user: {id: "member", firstName: "QA"}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
     localStorage.setItem("tin-lite:theme", "light");
-  });
+  }, signedIn);
   const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
   await page.goto(base + url);
   return {page, context, errors};
@@ -104,6 +122,85 @@ test("lock page: no workflow yet locks the rail and sends the person to their co
     await browser.close();
     server.close();
   }
+});
+
+test("agent connections remain available through OAuth and repository selection without unlocking an empty project", async () => {
+  const {server, writes, base} = await serve({lockEnabled: true, projectWorkflows: [], connections: true});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, {url: "/connect?project=project-1&providers=infra.github,analytics.gsc"});
+    await page.locator(".connect-view").waitFor();
+    assert.equal(await page.locator(".integration-card").count(), 2);
+    assert.equal(await page.getByText("Google Workspace", {exact: true}).count(), 0);
+    assert.equal(await page.locator("#agent-rail").isHidden(), true);
+    assert.equal(await page.locator(".nav-list .nav-item:not(:disabled)").count(), 0);
+    if (process.env.TIN_LOCK_SCREENSHOTS) {
+      await page.screenshot({path: path.join(process.env.TIN_LOCK_SCREENSHOTS, "onboarding-connections-desktop.png")});
+      await page.setViewportSize({width: 390, height: 844});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      await page.screenshot({path: path.join(process.env.TIN_LOCK_SCREENSHOTS, "onboarding-connections-mobile.png"), fullPage: true});
+      await page.setViewportSize({width: 1440, height: 900});
+    }
+    await page.locator('[data-integration-connect="infra.github"]').click();
+    await page.locator('[data-confirm-integration-project]').click();
+    await page.getByText("example/site", {exact: true}).waitFor();
+    assert.match(await page.locator(".connect-footer").innerText(), /0 of 2 connected/);
+    await page.locator('[data-confirm-integration-project]').click();
+    await page.waitForFunction(() => document.querySelector(".connect-footer")?.textContent.includes("1 of 2 connected"));
+    assert.ok(writes.some(item => item.path.endsWith("/infra.github") && item.body.option_id === "repo-1"));
+    await page.reload();
+    await page.locator(".connect-view").waitFor();
+    assert.equal(await page.locator(".integration-card").count(), 2);
+    // The request is scoped to its project, including when another project is opened in this tab.
+    await page.goto(base + "/integrations?project=project-2");
+    await page.locator(".lock-page").waitFor();
+    await page.goto(base + "/integrations?project=project-1");
+    await page.locator(".connect-view").waitFor();
+    await page.getByRole("button", {name: "Back to setup"}).click();
+    await page.locator(".lock-page").waitFor();
+    await page.reload();
+    await page.locator(".lock-page").waitFor();
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
+});
+
+test("connection callbacks can finish setup in a new tab but ordinary integrations remain locked", async () => {
+  const {server, base} = await serve({lockEnabled: true, projectWorkflows: [], connections: true});
+  const browser = await chromium.launch({headless: true});
+  try {
+    for (const url of ["/integrations?project=project-1", "/connect?project=project-1&providers=unknown", "/connect?providers=infra.github"]) {
+      const {page, context, errors} = await open(browser, base, {url});
+      await page.locator(".lock-page").waitFor();
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+    const {page, context, errors} = await open(browser, base, {url: "/integrations/callback/github?code=synthetic&state=synthetic"});
+    await page.getByText("example/site", {exact: true}).waitFor();
+    assert.equal(await page.locator(".connect-view .integration-card").count(), 1);
+    assert.equal(await page.locator(".nav-list .nav-item:not(:disabled)").count(), 0);
+    await page.locator('[data-confirm-integration-project]').click();
+    await page.waitForFunction(() => document.querySelector(".connect-footer")?.textContent.includes("All connected."));
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
+});
+
+test("agent connection links survive the sign-in return", async () => {
+  const {server, base} = await serve({lockEnabled: true, projectWorkflows: [], connections: true});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const url = "/connect?project=project-1&providers=infra.github,analytics.gsc";
+    const {page, context, errors} = await open(browser, base, {url, signedIn: false});
+    await page.waitForURL("**/sign-in?**");
+    const destination = new URL(new URL(page.url()).searchParams.get("redirect_url"));
+    assert.equal(destination.origin, base);
+    assert.equal(destination.pathname, "/connect");
+    assert.equal(destination.searchParams.get("project"), "project-1");
+    assert.equal(destination.searchParams.get("providers"), "infra.github,analytics.gsc");
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
 });
 
 test("lock page: one workflow, or the setting off, renders System as before", async () => {

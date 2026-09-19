@@ -90,6 +90,8 @@ async def test_the_creator_deletes_and_the_project_is_gone_from_both_surfaces(
             "Acme is deleted. I stopped 1 running run, removed 1 schedule and disconnected "
             "1 integration; its files are gone. Billing history stays."
         )
+        # A status the agent says in its own words: relay, no quote.
+        assert result["relay"] == [result["tell_the_founder"]] and "quote" not in result
     assert await listed(surface, f, monkeypatch) == []
     assert await listed(surface, f, monkeypatch, OTHER) == []
 
