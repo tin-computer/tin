@@ -1,0 +1,76 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_fit",
+    "title": "Find communities to market in",
+    "description": "A founder gives their product URL and what it does; the workflow scouts Reddit and other online communities, checks rules and engagement patterns, and returns a ranked list of places to post with suggested framing for each.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the community fit report before posting anywhere"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "product_url", "product_description"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Product URL",
+          "description": "The public URL of the product or landing page.",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "product_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "What the product does",
+          "description": "One to three sentences describing what the product does and who it is for.",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "target_audience": {
+          "type": "string",
+          "maxLength": 500,
+          "title": "Target audience (optional)",
+          "description": "Who the ideal user is, e.g. 'fashion-conscious Gen Z shoppers' or 'indie developers'.",
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        },
+        "extra_context": {
+          "type": "string",
+          "maxLength": 1000,
+          "title": "Extra context (optional)",
+          "description": "Anything that would help the scout — category, main use case, prior attempts, what flopped.",
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-fit/SKILL.md"],
+      "entry_skill": "community-fit",
+      "workspace": { "kind": "project.state" },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_FIT.md",
+        "media_type": "text/markdown",
+        "max_bytes": 100000
+      }
+    }
+  }
+}
