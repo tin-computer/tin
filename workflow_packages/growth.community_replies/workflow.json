@@ -1,0 +1,56 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.community_replies",
+    "title": "Draft replies to community mentions",
+    "description": "Turn a handful of pasted Reddit, Hacker News, Stack Overflow or forum posts into short, disclosed, non-promotional draft replies for the founder to check and post themselves.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {"eligible": true, "summary": "Review each drafted reply before posting it yourself"},
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "product_pitch": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "What you offer and who it is for",
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "posts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1200},
+          "title": "Posts you found where someone described this problem (paste the link and text)"
+        }
+      },
+      "required": ["project_id", "product_pitch", "posts"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "relevance": {
+          "provider": "openai", "model": "gpt-5.6-luna", "max_calls": 1,
+          "max_input_bytes": 16000, "max_output_tokens": 1024
+        },
+        "draft": {
+          "provider": "openai", "model": "gpt-5.6-luna", "max_calls": 1,
+          "max_input_bytes": 16000, "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_REPLIES.md",
+        "media_type": "text/markdown",
+        "max_bytes": 8000
+      }
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The founder finds and pastes the posts themselves; this workflow never searches or fetches the open web.",
+    "Up to 8 posts, each at most 1200 characters.",
+    "A drafted reply is a first pass for the founder to edit and post from their own account, never posted automatically."
+  ],
+  "effects": [
+    "Writes reports/COMMUNITY_REPLIES.md in the bound project.",
+    "Two model calls: one classifies relevance, a second drafts replies only for posts marked relevant."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "One clearly relevant post and one unrelated post.",
+      "inputs": {
+        "product_pitch": "A CLI that summarizes CSV exports for indie founders.",
+        "posts": [
+          "r/smallbusiness: does anyone know a quick way to total up a CSV export without opening Excel?",
+          "r/cats: my cat knocked over a plant again"
+        ]
+      },
+      "expect": {
+        "contains": ["# Community reply drafts", "Posts reviewed: 2"]
+      }
+    }
+  ]
+}
