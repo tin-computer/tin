@@ -1,0 +1,68 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.readme_dx_teardown",
+    "title": "Audit repository Developer Experience (DX) and onboarding friction",
+    "description": "Inspect a GitHub repository's README, quickstart commands, setup prerequisites, and architecture overview to produce an evidence-backed DX teardown with actionable onboarding improvements.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "repository"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 140,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+          "title": "GitHub repository (owner/name)",
+          "description": "Target GitHub repository to audit, for example tin-computer/tin."
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Focus area",
+          "description": "Optional focus area such as quickstart, environment setup, CLI instructions, or architecture explanation.",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/readme-dx-teardown/SKILL.md"
+      ],
+      "entry_skill": "readme-dx-teardown",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/README_DX_TEARDOWN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 100000
+      }
+    }
+  }
+}
