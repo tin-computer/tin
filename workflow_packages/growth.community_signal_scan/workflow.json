@@ -1,0 +1,119 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.community_signal_scan",
+    "title": "Find community problem signals",
+    "description": "Find recent public conversations that describe a target audience's problem and prepare a sourced, human-reviewable opportunity report with answer-first response drafts.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "target_audience",
+        "problem_to_find",
+        "product_context"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_audience": {
+          "type": "string",
+          "title": "Target audience",
+          "description": "Who should be experiencing the problem? Be specific about roles, situations, or types of users.",
+          "minLength": 1,
+          "maxLength": 1000,
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "problem_to_find": {
+          "type": "string",
+          "title": "Problem to find",
+          "description": "Describe the concrete task, frustration, or unmet need to look for.",
+          "minLength": 1,
+          "maxLength": 2000,
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "product_context": {
+          "type": "string",
+          "title": "Product context",
+          "description": "What the product does, who it helps, and relevant limitations. This context is not proof that the product fits a conversation.",
+          "minLength": 1,
+          "maxLength": 2000,
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "communities": {
+          "type": "array",
+          "title": "Communities or public sites",
+          "description": "Optional public forums, subreddits, or GitHub Discussions to prioritize. Search coverage is not guaranteed for every source.",
+          "items": {"type": "string", "minLength": 1, "maxLength": 200},
+          "maxItems": 10,
+          "default": []
+        },
+        "geography": {
+          "type": "string",
+          "title": "Geography",
+          "description": "Optional country or region relevant to the audience or problem.",
+          "maxLength": 200,
+          "default": "",
+          "x-tin-ui": {"control": "text", "order": 50}
+        },
+        "language": {
+          "type": "string",
+          "title": "Language",
+          "description": "Language for searches and conversations.",
+          "maxLength": 100,
+          "default": "English",
+          "x-tin-ui": {"control": "text", "order": 60}
+        },
+        "recency_days": {
+          "type": "integer",
+          "title": "Maximum conversation age",
+          "description": "Only include conversations within this many days when a reliable date is available.",
+          "minimum": 1,
+          "maximum": 365,
+          "default": 90,
+          "x-tin-ui": {"control": "counter", "order": 70}
+        },
+        "exclusions": {
+          "type": "array",
+          "title": "Exclude",
+          "description": "Optional topics, sources, or types of conversation to leave out.",
+          "items": {"type": "string", "minLength": 1, "maxLength": 200},
+          "maxItems": 20,
+          "default": []
+        },
+        "max_opportunities": {
+          "type": "integer",
+          "title": "Maximum opportunities",
+          "description": "Maximum number of conversations to include in the review report.",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 8,
+          "x-tin-ui": {"control": "counter", "order": 90}
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-signal-scan/SKILL.md"],
+      "entry_skill": "community-signal-scan",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/community-signal-scan/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}

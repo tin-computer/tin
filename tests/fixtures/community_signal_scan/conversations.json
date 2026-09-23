@@ -1,0 +1,30 @@
+{
+  "fixture_notice": "All conversations, source names, dates, content and .invalid URLs below are synthetic. This file is data only; tests must never request these URLs.",
+  "useful_conversation": {
+    "community": "Synthetic SaaS Founders Forum",
+    "title": "Trial users leave before onboarding is complete",
+    "source_url": "https://community.example.invalid/threads/trial-onboarding-dropoff",
+    "date": "2026-09-10",
+    "page_accessible": true,
+    "first_person_problem_evidence": "I can see trial users start onboarding, but I cannot tell which step makes them leave before they reach their first useful result.",
+    "context": "The fictional author says they run an early-stage SaaS company and have reviewed trial onboarding but cannot locate the step where users abandon it."
+  },
+  "unverifiable_snippet": {
+    "community": "Synthetic SaaS Founders Forum",
+    "title": "Trial users leave before onboarding is complete",
+    "source_url": "https://community.example.invalid/threads/unopenable-trial-dropoff",
+    "date": "2026-09-12",
+    "search_snippet": "SaaS founders: why do trial users abandon onboarding? I cannot find the drop-off step.",
+    "page_accessible": false,
+    "underlying_conversation_verified": false
+  },
+  "irrelevant_conversation": {
+    "community": "Synthetic Gardeners Q&A",
+    "title": "Trial seedlings drop after transplant onboarding",
+    "source_url": "https://garden.example.invalid/questions/trial-seedlings-onboarding",
+    "date": "2026-09-11",
+    "page_accessible": true,
+    "first_person_problem_evidence": "I trialed a new onboarding routine for tomato seedlings, but the leaves dropped after I moved them to the greenhouse.",
+    "context": "The fictional post is about gardening and plant care; SaaS founders, software trials and product onboarding are not involved."
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The qualification case is offline and uses synthetic fixtures. It demonstrates expected decision behavior but does not establish live-web research quality or live community-rule coverage.",
+    "Synthetic source URLs use the reserved .invalid domain and are never opened or requested.",
+    "The useful conversation's author is a fictional early-stage SaaS founder; all dates, text, source names and URLs are invented for this case."
+  ],
+  "effects": [
+    "Writes one run-owned Markdown report in the bound project.",
+    "No external posting, messaging, contact, account creation, or live web access is part of this offline case."
+  ],
+  "cases": [
+    {
+      "id": "useful_conversation",
+      "description": "Accept a verified synthetic first-person SaaS onboarding problem and include its evidence, source, fit assessments and review status.",
+      "inputs": {
+        "target_audience": "early-stage SaaS founders",
+        "problem_to_find": "founders struggle to understand why trial users abandon their product during onboarding",
+        "product_context": "A fictional SaaS analytics product helps teams identify where trial users drop off during onboarding.",
+        "communities": ["Synthetic SaaS Founders Forum"],
+        "geography": "United States",
+        "language": "English",
+        "recency_days": 90,
+        "exclusions": [],
+        "max_opportunities": 8
+      },
+      "expect": {
+        "contains": [
+          "Synthetic SaaS Founders Forum",
+          "https://community.example.invalid/threads/trial-onboarding-dropoff",
+          "Date: 2026-09-10",
+          "I can see trial users start onboarding, but I cannot tell which step makes them leave before they reach their first useful result.",
+          "Audience fit: high",
+          "Problem fit: high",
+          "Product fit: plausible",
+          "Review Status: review"
+        ],
+        "excludes": [
+          "This is a qualified lead",
+          "purchase intent is confirmed"
+        ]
+      }
+    },
+    {
+      "id": "unverifiable_snippet",
+      "description": "Do not treat a plausible search snippet as verified evidence when the synthetic underlying conversation cannot be opened.",
+      "inputs": {
+        "target_audience": "early-stage SaaS founders",
+        "problem_to_find": "founders struggle to understand why trial users abandon their product during onboarding",
+        "product_context": "A fictional SaaS analytics product helps teams identify where trial users drop off during onboarding.",
+        "communities": ["Synthetic SaaS Founders Forum"],
+        "geography": "United States",
+        "language": "English",
+        "recency_days": 90,
+        "exclusions": [],
+        "max_opportunities": 8
+      },
+      "expect": {
+        "contains": [
+          "No opportunity was included from the unverifiable search snippet.",
+          "could not be opened or verified",
+          "## Limitations"
+        ],
+        "excludes": [
+          "VERIFIED OPPORTUNITY: Trial users leave before onboarding is complete"
+        ]
+      }
+    },
+    {
+      "id": "irrelevant_conversation",
+      "description": "Reject keyword overlap when the synthetic conversation concerns gardening rather than SaaS founders or software onboarding.",
+      "inputs": {
+        "target_audience": "early-stage SaaS founders",
+        "problem_to_find": "founders struggle to understand why trial users abandon their product during onboarding",
+        "product_context": "A fictional SaaS analytics product helps teams identify where trial users drop off during onboarding.",
+        "communities": ["Synthetic SaaS Founders Forum"],
+        "geography": "United States",
+        "language": "English",
+        "recency_days": 90,
+        "exclusions": [],
+        "max_opportunities": 8
+      },
+      "expect": {
+        "contains": [
+          "No suitable, verifiable conversation was found",
+          "excluded because it concerns gardening, not SaaS onboarding"
+        ],
+        "excludes": [
+          "VERIFIED OPPORTUNITY: Trial seedlings drop after transplant onboarding",
+          "https://garden.example.invalid/questions/trial-seedlings-onboarding"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "evidence-grounding",
+      "question": "Does the opportunity section preserve only the accessible useful conversation's synthetic source, date and first-person problem evidence, while keeping fit judgments and uncertainty distinct?"
+    },
+    {
+      "id": "false-positive-control",
+      "question": "Are the unopenable snippet and unrelated keyword-overlap conversation excluded from opportunities rather than treated as verified customer signals?"
+    }
+  ]
+}
