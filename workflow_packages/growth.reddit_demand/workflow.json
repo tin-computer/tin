@@ -1,0 +1,69 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.reddit_demand",
+    "title": "Harvest Reddit demand",
+    "description": "A founder finds live Reddit threads where buyers ask for their solution, gets them ranked, and leaves with helpful reply drafts to post this week.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand", "weekly"],
+    "system": "cold-outreach",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 10,
+          "maxLength": 500,
+          "title": "Public product page",
+          "description": "Exact HTTPS landing page a stranger arrives at.",
+          "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "buyer_context": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000,
+          "title": "Product and buyers",
+          "description": "What the product does, who needs it, and the problems they search for.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "subreddits": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1, "maxLength": 80},
+          "maxItems": 10,
+          "default": [],
+          "title": "Optional subreddits",
+          "description": "Up to ten subreddits to prioritize. Leave empty to discover them from buyer context."
+        },
+        "max_threads": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 20,
+          "default": 10,
+          "title": "Max opportunities"
+        }
+      },
+      "required": ["project_id", "product_url", "buyer_context"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/reddit-demand/SKILL.md"],
+      "entry_skill": "reddit-demand",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 900},
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/REDDIT_DEMAND.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}

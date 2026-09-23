@@ -1,0 +1,1 @@
+Follow the reddit-demand skill to harvest live buyer demand on Reddit for the bound project. Read project context first so claims stay grounded, then find, filter, and rank real threads and draft helpful replies. Write reports/REDDIT_DEMAND.md. Do not post, publish, send messages, contact anyone, or change other files.
