@@ -1,0 +1,65 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_shortlist",
+    "title": "Find the communities worth showing up in",
+    "description": "Surface real, active subreddits, Discord/Slack servers and niche forums where your target audience already discusses the problem, and draft one rule-respecting post per venue for a human to review and post.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "audience"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "audience": {
+          "type": "string",
+          "title": "Who you're trying to reach",
+          "description": "The audience and the problem they have at the moment they'd notice this product.",
+          "minLength": 1,
+          "maxLength": 2000,
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "already_posted": {
+          "type": "string",
+          "title": "Communities already tried",
+          "description": "Subreddits, servers or forums to skip because you've already posted there or been asked not to.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "max_communities": {
+          "type": "integer",
+          "title": "Maximum communities",
+          "minimum": 3,
+          "maximum": 20,
+          "default": 10,
+          "x-tin-ui": { "control": "counter", "order": 30 }
+        },
+        "tone_notes": {
+          "type": "string",
+          "title": "Voice notes",
+          "description": "Optional: how the drafted posts should sound.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-shortlist/SKILL.md"],
+      "entry_skill": "community-shortlist",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_SHORTLIST.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
