@@ -1,0 +1,63 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.testimonial_miner",
+    "title": "Mine testimonials from customer feedback",
+    "description": "Turn a pasted batch of customer quotes (support chats, reviews, call notes) into a ranked, theme-tagged bank of ready-to-use marketing quotes, with a permission checklist for anything not already public.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the testimonial bank before publishing any quote or sending a permission ask"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "product_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "title": "Product or company name, as customers would refer to it"
+        },
+        "feedback_csv": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8000,
+          "title": "CSV with columns text, source, visibility (visibility is 'public' or 'private')"
+        }
+      },
+      "required": ["project_id", "product_name", "feedback_csv"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "extract": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 16000,
+          "max_output_tokens": 2048
+        },
+        "brief": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 16000,
+          "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/marketing/TESTIMONIAL_BRIEF.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}
