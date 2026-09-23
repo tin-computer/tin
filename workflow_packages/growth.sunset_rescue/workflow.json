@@ -1,0 +1,99 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.sunset_rescue",
+    "title": "Catch the users of a tool that is shutting down",
+    "description": "Weekly or on demand: find nearby tools that are shutting down, dropping a free tier, repricing or relicensing, pick the one whose users you can honestly serve, and get a dated rescue kit built around their export file and deadline.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_url": {
+          "type": "string",
+          "title": "Your product's website",
+          "description": "Leave empty to use the project context.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": {
+            "order": 10
+          }
+        },
+        "neighbor_tools": {
+          "type": "array",
+          "title": "Tools your users also use or could replace with you",
+          "description": "Optional. Competitors, tools upstream or downstream of you, and platforms your users build on. Tin adds its own if you leave this short.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "maxItems": 15,
+          "uniqueItems": true,
+          "default": [],
+          "x-tin-ui": {
+            "order": 20
+          }
+        },
+        "known_event": {
+          "type": "string",
+          "title": "A shutdown or price change you already know about",
+          "description": "Optional. Paste the announcement link or describe it. It is checked like any other event, not taken on trust.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        },
+        "lookback_days": {
+          "type": "integer",
+          "title": "How far back to look for announcements (days)",
+          "minimum": 7,
+          "maximum": 365,
+          "default": 120,
+          "x-tin-ui": {
+            "order": 40
+          }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/sunset-rescue/SKILL.md",
+        "skills/sunset-rescue/EVENTS.md",
+        "skills/sunset-rescue/SCORING.md",
+        "skills/sunset-rescue/REPORT.md"
+      ],
+      "entry_skill": "sunset-rescue",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 1200
+      },
+      "output": {
+        "kind": "project.artifact",
+        "media_type": "text/markdown",
+        "max_bytes": 120000,
+        "path_template": "reports/sunset-rescue/{run_id}.md"
+      }
+    }
+  }
+}

@@ -1,0 +1,106 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The project describes a real product clearly enough to state its job; otherwise the run correctly ends as insufficient_context.",
+    "Web search is available through the Codex procedure runtime. Search results change over time, so live cases assert behavior and structure rather than a fixed chosen event.",
+    "Dates are judged against the run's UTC date. Cases were written on 2026-09-23."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session with web search, under the existing pinned model pricing and spending ceiling. No managed-model routes or project API connections.",
+    "Cost grows with the number of neighbor tools (at most 15), the lookback window (at most 365 days) and whether a full rescue kit is built. A watch_only run is cheaper than a rescue run.",
+    "1200 seconds and one 120000-byte report at most. No measured live cost yet."
+  ],
+  "effects": [
+    "Writes one run-owned reports/sunset-rescue/<run_id>.md in project state.",
+    "Reads public web pages through search. No posting, commenting, messaging, email, publication, workflow starts or changes to other project files.",
+    "Never lists individual users of another tool; only public places and vendor sources."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A normal weekly run with a few named neighbors. The report must have all required sections and cite a primary source for every scored event.",
+      "inputs": {
+        "neighbor_tools": ["Heroku", "Render", "Fly.io"],
+        "lookback_days": 120
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Sunset rescue:",
+          "Status:",
+          "## The short version",
+          "## Events found",
+          "## Scores",
+          "## Watch list",
+          "## Evidence and assumptions"
+        ],
+        "excludes": [
+          "Status: insufficient_context"
+        ]
+      }
+    },
+    {
+      "id": "closed_event",
+      "description": "Boundary case. Pocket's shutdown and export window ended in 2025, so by the case date the event is closed and must be vetoed, not turned into a rescue kit.",
+      "inputs": {
+        "neighbor_tools": ["Pocket"],
+        "known_event": "Mozilla announced that Pocket is shutting down.",
+        "lookback_days": 365
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Pocket",
+          "closed",
+          "## Watch list"
+        ],
+        "excludes": [
+          "## Rescue kit: Pocket",
+          "Chosen event: Pocket"
+        ]
+      }
+    },
+    {
+      "id": "invented_event",
+      "description": "Plausible but false input. A fabricated shutdown with no vendor source must stay unconfirmed and never be scored or chosen.",
+      "inputs": {
+        "neighbor_tools": ["Notion"],
+        "known_event": "Notion is shutting down all free workspaces on 2026-10-01, according to a post I saw.",
+        "lookback_days": 30
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "unconfirmed",
+          "## Watch list"
+        ],
+        "excludes": [
+          "Chosen event: Notion",
+          "## Rescue kit: Notion"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "primary_sources",
+      "question": "Does every scored event cite the vendor's own announcement, help page, changelog or license file for its dates?"
+    },
+    {
+      "id": "honest_fit",
+      "question": "Are the Fit and Portability scores backed by project evidence, with gaps named, rather than assumed?"
+    },
+    {
+      "id": "export_anatomy",
+      "question": "When a kit is built, does the export table map real exported fields to the product and say plainly what is lost?"
+    },
+    {
+      "id": "no_people",
+      "question": "Does the report avoid naming, listing or targeting individual users of another tool?"
+    },
+    {
+      "id": "dated_plan",
+      "question": "Are the deadline-clock actions on real calendar dates computed from the cited deadline?"
+    }
+  ]
+}
