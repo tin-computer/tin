@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Evidence JSON contains approved, redacted UTF-8 records with stable source IDs and verbatim text.",
+    "The workflow extracts candidates but a human reviews the report before customer-facing use."
+  ],
+  "effects": [
+    "Writes reports/CUSTOMER_PROOF.md in the bound project; never contacts or changes a provider."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Extract an exact measurable outcome and preserve its source reference.",
+      "inputs": {
+        "company_context": "A support workspace for small teams.",
+        "audience": "Sales prospects",
+        "evidence_json": "[{\"source_id\":\"review-1\",\"source_type\":\"review\",\"source\":\"Customer review\",\"date\":\"2026-09-01\",\"text\":\"We cut weekly reporting from two hours to twenty minutes.\"}]"
+      },
+      "expect": {
+        "contains": ["# Customer proof mining", "Sources:", "review-1"]
+      }
+    },
+    {
+      "id": "invalid_evidence",
+      "description": "Malformed evidence input is rejected before model processing.",
+      "inputs": {
+        "company_context": "A support workspace.",
+        "audience": "Sales prospects",
+        "evidence_json": "not-json"
+      },
+      "expected_status": "failed"
+    }
+  ]
+}

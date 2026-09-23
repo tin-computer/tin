@@ -1,0 +1,70 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "customer.proof_mining",
+    "title": "Mine customer proof",
+    "description": "Extract evidence-linked customer outcomes, objections, themes and exact quote candidates from approved, redacted evidence for sales and marketing review without inventing claims.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the evidence-linked proof before using it in customer-facing material."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "company_context": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "Product and customer context"
+        },
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Sales or marketing audience"
+        },
+        "evidence_json": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 12000,
+          "title": "Approved and redacted customer evidence JSON",
+          "description": "A JSON array of approved, redacted records with source_id, source_type, source, date, and verbatim text."
+        }
+      },
+      "required": ["project_id", "company_context", "audience", "evidence_json"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "extract": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 2200
+        },
+        "review": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 1600
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CUSTOMER_PROOF.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
