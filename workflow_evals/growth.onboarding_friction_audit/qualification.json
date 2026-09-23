@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Target project has documented quickstart or README instructions in standard files."
+  ],
+  "effects": [
+    "Writes reports/ONBOARDING_FRICTION_AUDIT.md in the bound project."
+  ],
+  "cases": [
+    {
+      "id": "standard_run",
+      "description": "Standard run exploring the repository to evaluate onboarding flow.",
+      "inputs": {
+        "target_persona": "A developer familiar with the ecosystem but new to this product"
+      },
+      "expect": {
+        "contains": [
+          "Time-to-First-Value"
+        ]
+      }
+    }
+  ]
+}
