@@ -1,0 +1,54 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.email_retro",
+    "title": "See what the last email campaign taught you",
+    "description": "Compare a finished campaign's delivery ledger against its shortlist and get per-segment reply and bounce rates, the subject that earned replies, and named next actions.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "ledger_csv": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000,
+          "title": "Delivery ledger (CSV)",
+          "description": "A row per touch with columns recipient, segment, subject, touch, status, replied_at. Copy it from the campaign's delivery ledger in project Files."
+        },
+        "shortlist_csv": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16000,
+          "title": "Shortlist (CSV)",
+          "description": "The campaign's shortlist export, with at least the columns email and segment."
+        }
+      },
+      "required": ["project_id", "ledger_csv", "shortlist_csv"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "interpret": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/EMAIL_RETRO.md",
+        "media_type": "text/markdown",
+        "max_bytes": 8000
+      }
+    }
+  }
+}

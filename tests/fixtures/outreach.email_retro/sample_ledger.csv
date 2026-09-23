@@ -1,0 +1,5 @@
+recipient,segment,subject,touch,status,replied_at
+ada@example.com,Designers,Quick question about your Figma handoff,1,sent,
+ada@example.com,Designers,Quick question about your Figma handoff,2,sent,2026-09-21
+grace@example.com,Designers,Quick question about your Figma handoff,1,sent,2026-09-20
+alan@example.com,Marketers,Grow your pipeline without tools,1,bounced,
