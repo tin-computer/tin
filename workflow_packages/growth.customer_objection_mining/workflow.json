@@ -1,0 +1,75 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.customer_objection_mining",
+    "title": "Mine customer objections",
+    "description": "Turn supplied customer evidence into ranked, cited purchase objections and marketing-surface recommendations.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review customer-objection recommendations"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "source_ids": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {"type": "string", "minLength": 1, "maxLength": 80},
+          "title": "Customer evidence IDs"
+        },
+        "source_texts": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1400},
+          "title": "Customer evidence"
+        },
+        "source_types": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "enum": ["conversation", "review", "support_ticket"]
+          },
+          "title": "Customer evidence types"
+        }
+      },
+      "required": ["project_id", "source_ids", "source_texts", "source_types"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "extract": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 4096
+        },
+        "group_and_map": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CUSTOMER_OBJECTIONS.json",
+        "media_type": "application/json",
+        "max_bytes": 45000
+      }
+    }
+  }
+}

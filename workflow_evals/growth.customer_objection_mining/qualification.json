@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Supplied customer evidence is bounded text with stable source IDs; it is not proof of market-wide prevalence."
+  ],
+  "cost_drivers": [
+    "Number and length of supplied sources, extracted objections, and grouped recommendations."
+  ],
+  "effects": [
+    "Uses up to two managed model calls and writes one JSON customer-objections artifact in the bound project; no connected-provider requests or other external effects."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Repeated comparison concerns from distinct customer evidence types are grouped and mapped.",
+      "inputs": {
+        "source_ids": ["review-1", "ticket-2"],
+        "source_texts": [
+          "I need a comparison before I can justify the purchase.",
+          "Our team needs a clear comparison with the incumbent before approval."
+        ],
+        "source_types": ["review", "support_ticket"]
+      },
+      "expect": {
+        "contains": [
+          "objections",
+          "comparison_page",
+          "evidence_source_ids"
+        ]
+      }
+    },
+    {
+      "id": "insufficient_evidence",
+      "description": "Evidence without a supported purchase objection reports its limitation rather than inventing one.",
+      "inputs": {
+        "source_ids": ["review-quiet"],
+        "source_texts": ["The interface looks clean."],
+        "source_types": ["review"]
+      },
+      "expect": {
+        "contains": ["insufficient_evidence", "limitations"]
+      }
+    },
+    {
+      "id": "duplicate_source_id",
+      "description": "Reject a plausible input that cannot provide unambiguous evidence citations.",
+      "inputs": {
+        "source_ids": ["duplicate", "duplicate"],
+        "source_texts": ["The price is unclear.", "The comparison is missing."],
+        "source_types": ["review", "support_ticket"]
+      },
+      "expected_status": "failed"
+    }
+  ],
+  "rubric": [
+    {
+      "id": "grounding",
+      "question": "Does every objection and recommendation cite only supplied source IDs and exact evidence excerpts?"
+    },
+    {
+      "id": "mapping",
+      "question": "Does every recommendation use only the fixed marketing-surface taxonomy?"
+    }
+  ]
+}
