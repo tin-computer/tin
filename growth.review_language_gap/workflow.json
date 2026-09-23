@@ -1,0 +1,92 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.review_language_gap",
+    "title": "Find the buyer words your site is missing",
+    "description": "Compare your site's messaging with repeated language from public customer reviews and return one evidence-backed message change to test.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "site_url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://",
+          "minLength": 10,
+          "maxLength": 500,
+          "title": "Website",
+          "description": "The public website whose messaging should be checked."
+        },
+        "buyer_context": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000,
+          "title": "Target buyer",
+          "description": "Who buys the product, what they are trying to accomplish, and what problem makes them look for it."
+        },
+        "competitors": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "maxItems": 4,
+          "default": [],
+          "title": "Competitors",
+          "description": "Up to four competitor names or public URLs. Leave empty to discover obvious alternatives from search."
+        },
+        "market": {
+          "type": "string",
+          "maxLength": 120,
+          "default": "",
+          "title": "Market",
+          "description": "Optional country, region, or language context for the review research."
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Specific question",
+          "description": "Optional message, objection, feature, or buyer moment to investigate."
+        }
+      },
+      "required": [
+        "project_id",
+        "site_url",
+        "buyer_context"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/review-language-gap/SKILL.md"
+      ],
+      "entry_skill": "review-language-gap",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "open",
+        "timeout_seconds": 1200
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/REVIEW_LANGUAGE_GAP.md",
+        "media_type": "text/markdown",
+        "max_bytes": 60000
+      }
+    }
+  }
+}
