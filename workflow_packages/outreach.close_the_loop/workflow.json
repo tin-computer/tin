@@ -1,0 +1,79 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.close_the_loop",
+    "title": "Tell the people who asked for what you just shipped",
+    "description": "Run it the day a feature ships: match your exported requests to it, verify each match against the person's own words, and get a ranked list of who to win back, convert or tell, with a message drafted for each group. Nothing is sent.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {"eligible": true, "summary": "Check who to tell and the drafts before anyone is contacted"},
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "shipped": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 1500,
+          "title": "What shipped",
+          "description": "Plain words: what a user can now do that they could not before, and any limits.",
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "shipped_on": {
+          "type": "string",
+          "format": "date",
+          "maxLength": 10,
+          "title": "Ship date",
+          "x-tin-ui": {"control": "text", "order": 20}
+        },
+        "requests_csv": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24000,
+          "title": "Requests export (CSV)",
+          "description": "Columns contact, date (YYYY-MM-DD) and request; optional name and relationship (customer, trial, churned, lost_deal, lead). Export from your feedback board, CRM lost reasons, support tags or a spreadsheet. At most 150 rows.",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "link": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "Optional https:// link to the changelog or docs",
+          "x-tin-ui": {"control": "text", "order": 40}
+        },
+        "sender_name": {
+          "type": "string",
+          "maxLength": 80,
+          "default": "",
+          "title": "Optional sign-off name",
+          "x-tin-ui": {"control": "text", "order": 50}
+        }
+      },
+      "required": ["project_id", "shipped", "shipped_on", "requests_csv"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "match": {
+          "provider": "openai", "model": "gpt-6-luna", "max_calls": 2,
+          "max_input_bytes": 32000, "max_output_tokens": 4096
+        },
+        "draft": {
+          "provider": "openai", "model": "gpt-6-luna", "max_calls": 1,
+          "max_input_bytes": 8000, "max_output_tokens": 1500
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CLOSE_THE_LOOP.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

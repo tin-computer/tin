@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The founder exports requests they already hold (feedback board, CRM lost reasons, support tags or a spreadsheet) as CSV with contact, date and request columns; at most 150 rows and 24000 characters.",
+    "Relationship labels come from the founder's export; rows without one are ranked as unknown, in the Tell group.",
+    "A match is only as good as the request text: vague requests are expected to land in no or check-by-hand, not in a group."
+  ],
+  "effects": [
+    "Writes reports/CLOSE_THE_LOOP.md in the bound project.",
+    "Sends request text and the shipped description, never contacts or names, to the managed match and draft model routes.",
+    "Sends, publishes and changes nothing else."
+  ],
+  "cost_drivers": [
+    "Rows and request length decide whether matching takes one or two calls on the match route.",
+    "The draft route is called once, and only when at least one person matched."
+  ],
+  "rubric": [
+    {
+      "id": "grounding",
+      "question": "Is every person placed in a group someone whose quoted words, found verbatim in their request, actually ask for what shipped?"
+    },
+    {
+      "id": "no_overclaim",
+      "question": "Do the drafts describe only what the shipped text says, with partial matches flagged for the founder before sending?"
+    },
+    {
+      "id": "actionable_order",
+      "question": "Could the founder start at the top of the list and send, without re-reading the whole export?"
+    }
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Mixed export: a churned customer and a lost deal who asked, a lead who asked, a customer who asked twice, and unrelated requests.",
+      "inputs": {
+        "shipped": "Scheduled exports: send any report to Google Sheets every morning. CSV only for now.",
+        "shipped_on": "2026-09-20",
+        "requests_csv": "contact,name,date,request,relationship\nana@acme.test,Ana Ruiz,2026-03-02,We cancelled because we could not get reports into Google Sheets automatically,churned\nbo@beta.test,Bo,2026-05-10,Need scheduled exports to Sheets and to Excel,lost_deal\ncy@gamma.test,,2026-06-01,Please add an automatic export to Google Sheets,customer\ncy@gamma.test,,2026-04-01,Any way to push reports to sheets on a schedule?,customer\ndi@delta.test,Di,2026-07-15,Dark mode please,trial\nfa@zeta.test,Fa,2026-08-20,Sheets export on a schedule would close the deal for us,lead\n",
+        "link": "https://example.test/changelog/sheets",
+        "sender_name": "Maya"
+      },
+      "expect": {
+        "contains": [
+          "## Send first: Win back",
+          "ana@acme.test",
+          "## Merge list",
+          "Nothing has been sent."
+        ],
+        "excludes": [
+          "di@delta.test",
+          "Nobody in this export asked"
+        ]
+      }
+    },
+    {
+      "id": "nobody_asked",
+      "description": "Boundary: every request is about something else, so there is no list and no draft call.",
+      "inputs": {
+        "shipped": "Scheduled exports: send any report to Google Sheets every morning. CSV only for now.",
+        "shipped_on": "2026-09-20",
+        "requests_csv": "contact,date,request\ndi@delta.test,2026-07-15,Dark mode please\ned@eps.test,2026-08-01,Please support single sign-on with Okta\n"
+      },
+      "expect": {
+        "contains": [
+          "Nobody in this export asked for this change."
+        ],
+        "excludes": [
+          "## Merge list",
+          "**Subject:**"
+        ]
+      }
+    },
+    {
+      "id": "unusable_export",
+      "description": "A plausible export with US-style dates is rejected before any model call instead of being guessed at.",
+      "inputs": {
+        "shipped": "Scheduled exports: send any report to Google Sheets every morning. CSV only for now.",
+        "shipped_on": "2026-09-20",
+        "requests_csv": "contact,date,request\nana@acme.test,03/02/2026,Reports into Google Sheets automatically\n"
+      },
+      "expected_status": "failed"
+    }
+  ]
+}
