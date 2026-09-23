@@ -25,6 +25,7 @@ class PublicWorkflow:
 # Copyable example.* packages are deliberately not product Registry entries.
 PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("0ddd88b9-6ded-44c3-9982-b7505c2e31b1"), "product.analytics_brief"),
+    PublicWorkflow(UUID("96ac28ed-0122-44de-943e-a247e6ba5b40"), "growth.onboarding_friction_audit"),
 )
 
 
