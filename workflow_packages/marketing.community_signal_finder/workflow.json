@@ -1,0 +1,101 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "marketing.community_signal_finder",
+    "title": "Find community signals",
+    "description": "Find recent high-intent public conversations where a product may genuinely help, with evidence and a useful, non-promotional response angle.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "title": "Product or company description"
+        },
+        "target_customer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "Target customer"
+        },
+        "problem_keywords": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "title": "Problems and search terms"
+        },
+        "communities": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "title": "Public communities or sources",
+          "description": "Public community names, URLs, forums, or search sources to investigate."
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 30,
+          "title": "Recentness window in days"
+        },
+        "max_opportunities": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 15,
+          "default": 8,
+          "title": "Maximum opportunities"
+        }
+      },
+      "required": [
+        "project_id",
+        "product_description",
+        "target_customer",
+        "problem_keywords",
+        "communities"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/community-signal-finder/SKILL.md"
+      ],
+      "entry_skill": "community-signal-finder",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_SIGNAL_FINDER.md",
+        "media_type": "text/markdown",
+        "max_bytes": 50000
+      }
+    }
+  }
+}
