@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The founder can describe a developer audience and provide at least one problem phrase.",
+    "The project has a read-only custom API connection to the public Hacker News Search API.",
+    "Public search results are a bounded sample and do not establish market demand or reply eligibility."
+  ],
+  "effects": [
+    "Makes at most five read-only Hacker News Search API requests.",
+    "Writes reports/COMMUNITY_REPLY_QUEUE.md in the project.",
+    "Does not post, message users, create accounts, or modify Hacker News."
+  ],
+  "cost_drivers": [
+    "One managed model call when search results contain candidates.",
+    "The number and length of problem queries, bounded to five API requests."
+  ],
+  "cases": [
+    {
+      "id": "developer_problem_search",
+      "description": "Find recent developer discussions about a concrete problem and prepare a human-reviewed queue.",
+      "inputs": {
+        "audience": "Developers maintaining small production APIs",
+        "problem_queries": ["slow API debugging", "production error monitoring"],
+        "lookback_days": 14,
+        "notes": "Do not claim features not shown in project evidence."
+      },
+      "expect": {
+        "contains": [
+          "Search window",
+          "Candidates to review",
+          "Search notes and limitations",
+          "Human review before posting",
+          "Hacker News"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "evidence_and_fit",
+      "question": "Does every candidate have a working Hacker News item link and evidence that the discussion matches the audience and problem?"
+    },
+    {
+      "id": "useful_draft",
+      "question": "Would each draft still help the person if all product references were removed, and are product claims supported by project evidence?"
+    },
+    {
+      "id": "human_control",
+      "question": "Does the report clearly leave checking community rules and posting to a person, with no automatic external action?"
+    }
+  ]
+}

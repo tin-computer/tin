@@ -1,0 +1,102 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.community_reply_queue",
+    "title": "Find developer conversations worth answering",
+    "description": "Find recent Hacker News discussions that match a product's audience and problem, then prepare useful reply drafts for a person to review.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Who should this reach?",
+          "description": "For example, solo developers maintaining production APIs.",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "problem_queries": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": { "type": "string", "minLength": 2, "maxLength": 120 },
+          "title": "Problems people might discuss",
+          "description": "Use up to five plain-language phrases, not just the product name."
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 14,
+          "title": "Search the last N days",
+          "x-tin-ui": { "control": "number", "order": 30 }
+        },
+        "product_name": {
+          "type": "string",
+          "maxLength": 100,
+          "default": "",
+          "title": "Product name",
+          "description": "Optional. A draft may mention it only when the fit is direct and the author discloses their affiliation.",
+          "x-tin-ui": { "control": "text", "order": 40 }
+        },
+        "product_summary": {
+          "type": "string",
+          "maxLength": 1200,
+          "default": "",
+          "title": "What it does",
+          "description": "Optional evidence for a factual product mention. Claims outside this summary will be excluded.",
+          "x-tin-ui": { "control": "textarea", "order": 50 }
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Reply boundaries",
+          "description": "Topics to avoid, useful evidence, or disclosure wording.",
+          "x-tin-ui": { "control": "textarea", "order": 60 }
+        }
+      },
+      "required": ["project_id", "audience", "problem_queries"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "custom.api.hackernews",
+        "capabilities": ["http.read"],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "services": {
+        "hackernews": {
+          "provider_key": "custom.api.hackernews",
+          "max_calls": 5,
+          "max_response_bytes": 12000
+        }
+      },
+      "model_routes": {
+        "candidate_review": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 1600
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_REPLY_QUEUE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
