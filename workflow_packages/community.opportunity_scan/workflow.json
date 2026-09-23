@@ -1,0 +1,50 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "community.opportunity_scan",
+    "title": "Find community opportunities",
+    "description": "Find relevant public community conversations, verify their participation rules, and turn the strongest matches into a reviewable list of helpful response opportunities.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "focus": {
+          "type": "string",
+          "title": "Problem or audience to focus on",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "depth": {
+          "type": "string",
+          "title": "Research depth",
+          "enum": ["focused", "standard", "extensive"],
+          "default": "standard",
+          "x-tin-ui": {"control": "select", "order": 20}
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-opportunity-scan/SKILL.md"],
+      "entry_skill": "community-opportunity-scan",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1200},
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_OPPORTUNITY_SCAN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
