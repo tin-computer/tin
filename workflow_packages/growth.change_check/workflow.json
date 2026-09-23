@@ -1,0 +1,51 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.change_check",
+    "title": "Check whether a change moved a metric",
+    "description": "Founders paste a daily metric and dated changes, and get a process behaviour chart verdict for each change: moved, one-off, no detectable change, too early, can't separate or can't judge.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "metric_name": {
+          "type": "string", "minLength": 1, "maxLength": 80,
+          "title": "Metric, for example daily signups",
+          "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "series_csv": {
+          "type": "string", "minLength": 1, "maxLength": 16000,
+          "title": "Daily values as CSV with a date,value header",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "changes": {
+          "type": "string", "minLength": 1, "maxLength": 2500,
+          "title": "Up to 10 changes, one per line: YYYY-MM-DD | what changed",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "missing_days_are_zero": {
+          "type": "boolean", "default": false,
+          "title": "Count missing days as zero",
+          "x-tin-ui": {"control": "segmented", "order": 40}
+        }
+      },
+      "required": ["project_id", "metric_name", "series_csv", "changes"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 10,
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CHANGE_CHECK.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
