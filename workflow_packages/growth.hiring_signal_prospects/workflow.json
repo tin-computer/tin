@@ -1,0 +1,102 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.hiring_signal_prospects",
+    "title": "Find prospects from fresh hiring signals",
+    "description": "Turn recent hiring activity at potential customers into a small, evidence-backed prospect list with a specific reason to reach out.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "what_you_sell": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "title": "What you sell",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        },
+        "ideal_customer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1500,
+          "title": "Ideal customer",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 20
+          }
+        },
+        "hiring_roles": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "title": "Hiring roles that signal a need",
+          "description": "Job titles or role types that suggest the company may need what you sell.",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        },
+        "market": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Market or geography",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 40
+          }
+        },
+        "freshness_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 14,
+          "title": "How recent should the hiring signal be?",
+          "x-tin-ui": {
+            "control": "number",
+            "order": 50
+          }
+        }
+      },
+      "required": [
+        "project_id",
+        "what_you_sell",
+        "ideal_customer",
+        "hiring_roles",
+        "market"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/hiring-signal-prospects/SKILL.md"
+      ],
+      "entry_skill": "hiring-signal-prospects",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/HIRING_SIGNAL_PROSPECTS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
