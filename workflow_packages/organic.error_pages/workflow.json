@@ -1,0 +1,72 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.error_pages",
+    "title": "Turn error messages into pages people find",
+    "description": "Read the connected repository, list every error a user can see word for word, find the ones no page explains, and draft those pages plus the one-line change that makes each error link to its fix.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "docs_base_url": {
+          "type": "string",
+          "title": "Where error pages will live",
+          "description": "For example https://example.com/docs/errors. Used for suggested slugs and the link each error should print. Leave empty to use a placeholder.",
+          "maxLength": 300,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "focus": {
+          "type": "string",
+          "title": "Where to look first",
+          "description": "A package, command or flow users hit first, such as the CLI or the install step. Leave empty to read the whole repository.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "pages_to_draft": {
+          "type": "integer",
+          "title": "Pages to draft",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "x-tin-ui": { "order": 30 }
+        }
+      }
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/error-pages/SKILL.md",
+        "skills/error-pages/SCORING.md",
+        "skills/error-pages/REPORT.md"
+      ],
+      "entry_skill": "error-pages",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"]
+      },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 1200 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/ERROR_PAGES.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}

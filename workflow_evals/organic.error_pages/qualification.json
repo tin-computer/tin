@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The connected repository contains the product's source; public docs may or may not be in it.",
+    "Coverage is judged from repository content only, so docs hosted elsewhere show as uncovered."
+  ],
+  "cost_drivers": [
+    "Repository size up to the workspace file limit, the focus input, up to ten web searches, and pages_to_draft."
+  ],
+  "effects": [
+    "Reads the connected GitHub repository and writes reports/ERROR_PAGES.md in this project. Publishes nothing and changes no code."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A repository with a CLI and docs: rank user-visible errors and draft the top three pages.",
+      "inputs": {
+        "docs_base_url": "https://example.com/docs/errors",
+        "focus": "",
+        "pages_to_draft": 3
+      },
+      "expect": {
+        "contains": [
+          "# Error pages",
+          "## Funnel",
+          "## Error inventory",
+          "## Drafted pages",
+          "## Link-back changes",
+          "https://example.com/docs/errors/"
+        ],
+        "excludes": [
+          "https://<docs-site>/errors"
+        ]
+      }
+    },
+    {
+      "id": "no_docs_url",
+      "description": "Empty docs_base_url must leave a visible placeholder, not invent a domain.",
+      "inputs": {
+        "docs_base_url": "",
+        "focus": "",
+        "pages_to_draft": 1
+      },
+      "expect": {
+        "contains": [
+          "https://<docs-site>/errors",
+          "## Not read"
+        ],
+        "excludes": [
+          "example.com"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "verbatim",
+      "question": "Does each inventory anchor match the literal text at its cited path:line?"
+    },
+    {
+      "id": "traced_causes",
+      "question": "Is every cause in a drafted page backed by a cited condition in code, with guesses kept under Not confirmed?"
+    },
+    {
+      "id": "arithmetic",
+      "question": "Do the scores equal reach × gap × self_fixable per SCORING.md, and is nothing with gap 0 drafted?"
+    },
+    {
+      "id": "demand_honesty",
+      "question": "Are unrun searches marked not_checked rather than none, and do third_party or competitor entries cite a URL?"
+    },
+    {
+      "id": "diff_minimal",
+      "question": "Does each link-back diff change one line and keep the original wording?"
+    }
+  ]
+}
