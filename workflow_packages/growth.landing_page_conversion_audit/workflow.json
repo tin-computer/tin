@@ -1,0 +1,77 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.landing_page_conversion_audit",
+    "title": "Audit a landing page for conversion and messaging",
+    "description": "Review a landing page against the target customer and offer, identify the highest-impact conversion and messaging gaps, and propose concrete fixes grounded in observed page evidence.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "landing_page_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 8,
+          "maxLength": 2000,
+          "title": "Landing page URL",
+          "description": "A public landing, product, or pricing page to review.",
+          "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "target_customer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400,
+          "title": "Target customer",
+          "description": "Who the page is meant to convert.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "primary_offer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Primary offer or CTA",
+          "description": "What the business wants the visitor to do or buy.",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "optional_context": {
+          "type": "string",
+          "maxLength": 4000,
+          "default": "",
+          "title": "Optional context",
+          "description": "Objections, pricing notes, positioning context, or other relevant details.",
+          "x-tin-ui": {"control": "textarea", "order": 40}
+        }
+      },
+      "required": ["project_id", "landing_page_url", "target_customer", "primary_offer"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/landing-page-conversion-audit/SKILL.md"
+      ],
+      "entry_skill": "landing-page-conversion-audit",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "browser",
+        "egress": "open",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/landing_page_conversion_audit.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
