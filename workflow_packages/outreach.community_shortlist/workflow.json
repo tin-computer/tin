@@ -1,0 +1,82 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_shortlist",
+    "title": "Find people already asking for this",
+    "description": "Scan public forums and communities for threads where someone describes the problem the product solves, and draft a genuine reply for each one to review before posting.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand", "weekly"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "problem_statement", "product_one_liner"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "problem_statement": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 800,
+          "title": "The problem, the way a stranger would describe it",
+          "description": "What someone types when they hit this problem, before they know your product's name.",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "product_one_liner": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "title": "What you built, in one sentence",
+          "description": "Used only to draft replies, never used as a search term.",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "communities": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 100 },
+          "maxItems": 6,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Subreddits or forums to check (optional)",
+          "description": "e.g. r/SaaS, r/webdev. Leave empty to let the run infer likely communities from the problem."
+        },
+        "house_rules": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Self-promotion rules to respect",
+          "description": "Anything a moderator would remove a post for, so drafts stay inside the rules.",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 7,
+          "title": "How far back to look (days)",
+          "x-tin-ui": { "control": "number", "order": 50 }
+        },
+        "max_threads": {
+          "type": "integer",
+          "minimum": 3,
+          "maximum": 15,
+          "default": 8,
+          "title": "Maximum threads to shortlist",
+          "x-tin-ui": { "control": "number", "order": 60 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-shortlist/SKILL.md"],
+      "entry_skill": "community-shortlist",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "browser", "egress": "open", "timeout_seconds": 1800 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "outreach/community/SHORTLIST.csv",
+        "media_type": "text/csv",
+        "max_bytes": 100000
+      }
+    }
+  }
+}
