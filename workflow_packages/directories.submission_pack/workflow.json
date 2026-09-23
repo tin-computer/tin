@@ -1,0 +1,103 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "directories.submission_pack",
+    "title": "Directory submission pack",
+    "description": "Turns product metadata into a directory-specific submission pack — one section per target directory, formatted to each site's exact character limits — ready to copy-paste or hand to a VA.",
+    "executor": "workflow.code",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review your directory submission pack before submitting to any directory. Check trimmed fields and warnings."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "product_name", "tagline", "website_url"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "title": "Product name",
+          "description": "The exact canonical name of your product. Keep it consistent everywhere.",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "tagline": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 120,
+          "title": "Tagline",
+          "description": "Your one-line value proposition. Will be trimmed per directory character limit where needed.",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "website_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 10,
+          "maxLength": 256,
+          "title": "Website URL",
+          "description": "Canonical HTTPS homepage. Must start with https://. No trailing path or query string.",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        },
+        "short_description": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "Short description (optional)",
+          "description": "2-3 sentences expanding on the tagline. Used for directories with longer description fields. Falls back to tagline if empty.",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        },
+        "pricing_summary": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "",
+          "title": "Pricing summary (optional)",
+          "description": "e.g. 'Free plan available, paid from $19/mo'. Leave empty to omit.",
+          "x-tin-ui": { "control": "text", "order": 50 }
+        },
+        "category_tags": {
+          "type": "array",
+          "maxItems": 10,
+          "default": [],
+          "title": "Category tags",
+          "description": "Up to 10 tags (e.g. AI, SaaS, Productivity). Each trimmed per directory limit.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 30 }
+        },
+        "founder_email": {
+          "type": "string",
+          "maxLength": 120,
+          "default": "",
+          "title": "Founder contact email (optional)",
+          "description": "Required by some directories (G2, Capterra). Leave empty to omit from packs that don't need it.",
+          "x-tin-ui": { "control": "text", "order": 60 }
+        },
+        "target_directories": {
+          "type": "array",
+          "maxItems": 20,
+          "default": [],
+          "title": "Target directories (optional)",
+          "description": "Names of specific directories to generate (e.g. 'Product Hunt', 'G2'). Leave empty to generate all 10.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 60 }
+        }
+      }
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py", "fixtures/directories.json", "README.md"],
+      "timeout_seconds": 10,
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/DIRECTORY_SUBMISSION_PACK.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}

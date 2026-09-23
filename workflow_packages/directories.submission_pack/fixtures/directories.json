@@ -1,0 +1,162 @@
+[
+  {
+    "name": "Product Hunt",
+    "submission_url": "https://www.producthunt.com/posts/new",
+    "da": 91,
+    "notes": "Launches are best on Tuesdays/Wednesdays at 00:01 PST. Account must have 5+ days of activity before posting. Upvote window is 24 hours.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 60,
+      "description_max": 260,
+      "description_min": 50,
+      "pricing_max": 100,
+      "tags_max": 3,
+      "tag_max_each": 30
+    }
+  },
+  {
+    "name": "G2",
+    "submission_url": "https://sell.g2.com/claim",
+    "da": 92,
+    "notes": "B2B review platform. Requires business email and company verification. Listings typically go live within 2-3 weeks. High-authority backlink.",
+    "requires_email": true,
+    "field_spec": {
+      "name_max": 100,
+      "tagline_max": 200,
+      "description_max": 1500,
+      "description_min": 100,
+      "pricing_max": 300,
+      "tags_max": 5,
+      "tag_max_each": 30
+    }
+  },
+  {
+    "name": "Capterra",
+    "submission_url": "https://www.capterra.com/vendors/sign-up",
+    "da": 90,
+    "notes": "Requires business email. Listing review typically takes 5-7 business days. Free listing available; paid placement also exists.",
+    "requires_email": true,
+    "field_spec": {
+      "name_max": 50,
+      "tagline_max": 150,
+      "description_max": 3000,
+      "description_min": 50,
+      "pricing_max": 200,
+      "tags_max": 3,
+      "tag_max_each": 50
+    }
+  },
+  {
+    "name": "AlternativeTo",
+    "submission_url": "https://alternativeto.net/software/new/",
+    "da": 85,
+    "notes": "Free listing. Categories and alternatives can be added post-submission. Good for organic discovery.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 50,
+      "tagline_max": 100,
+      "description_max": 500,
+      "description_min": 30,
+      "pricing_max": 150,
+      "tags_max": 5,
+      "tag_max_each": 30
+    }
+  },
+  {
+    "name": "BetaList",
+    "submission_url": "https://betalist.com/submit",
+    "da": 71,
+    "notes": "Pre-launch and early-stage focus. Free submission goes into a queue (2-4 weeks). Paid option ($129) skips the queue. Good for early email signups.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 100,
+      "description_max": 300,
+      "description_min": 20,
+      "pricing_max": 100,
+      "tags_max": 3,
+      "tag_max_each": 25
+    }
+  },
+  {
+    "name": "Indie Hackers",
+    "submission_url": "https://www.indiehackers.com/products/new",
+    "da": 79,
+    "notes": "Community-driven. Requires founder verification. Best for bootstrapped or revenue-transparent products. Add your MRR if you have it.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 140,
+      "description_max": 500,
+      "description_min": 30,
+      "pricing_max": 150,
+      "tags_max": 5,
+      "tag_max_each": 30
+    }
+  },
+  {
+    "name": "SaaSHub",
+    "submission_url": "https://www.saashub.com/add-product",
+    "da": 73,
+    "notes": "Often auto-indexes from public data. Manual submission ensures faster and more accurate indexing. Good evergreen discovery.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 80,
+      "tagline_max": 200,
+      "description_max": 1000,
+      "description_min": 30,
+      "pricing_max": 200,
+      "tags_max": 8,
+      "tag_max_each": 30
+    }
+  },
+  {
+    "name": "Peerlist",
+    "submission_url": "https://peerlist.io/tools/submit",
+    "da": 57,
+    "notes": "Developer-focused community. Strong for dev tools, APIs, and B2D (business-to-developer) products. Growing fast in 2024-2025.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 120,
+      "description_max": 300,
+      "description_min": 20,
+      "pricing_max": 100,
+      "tags_max": 5,
+      "tag_max_each": 25
+    }
+  },
+  {
+    "name": "Uneed",
+    "submission_url": "https://www.uneed.best/submit",
+    "da": 52,
+    "notes": "Daily curated launches with upvoting. Free to submit. Best launch days Monday through Wednesday. Simple form.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 100,
+      "description_max": 200,
+      "description_min": 10,
+      "pricing_max": 80,
+      "tags_max": 3,
+      "tag_max_each": 20
+    }
+  },
+  {
+    "name": "Startup Stash",
+    "submission_url": "https://startupstash.com/submit-a-tool/",
+    "da": 66,
+    "notes": "Curated resource directory. Free listing. Reviewer approval typically takes 1-2 weeks. Strong SEO signal for bootstrapped tools.",
+    "requires_email": false,
+    "field_spec": {
+      "name_max": 60,
+      "tagline_max": 100,
+      "description_max": 400,
+      "description_min": 20,
+      "pricing_max": 100,
+      "tags_max": 5,
+      "tag_max_each": 30
+    }
+  }
+]
