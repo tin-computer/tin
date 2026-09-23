@@ -37,11 +37,16 @@ joins, or messages anything on its own.
    belongs in that room. Disclose the poster's affiliation with the product plainly wherever the
    community's rules or platform norms expect it, rather than writing as an unaffiliated user.
 
-7. Write the report to the declared path with one section per community, in ranked order:
-   - Name and link
-   - Fit: one line tying it back to `audience`
-   - Evidence: size and last-activity signal, with what was checked and when
-   - Self-promotion rule and its source
-   - Drafted post
-   Note any communities you found but excluded, and why. State plainly if fewer than
-   `max_communities` survived verification — do not pad the list to hit the number.
+7. Write the report to the declared path. Start with one line, `Status: complete` if at least
+   one community survived verification, otherwise `Status: no communities verified`. Then one
+   section per community, in ranked order, each with these exact labels so the result stays
+   checkable:
+   - `## <Community name>` with its link
+   - `Fit:` one line tying it back to `audience`
+   - `Evidence:` size and last-activity signal, with what was checked and when
+   - `Self-promotion rule:` the rule and its source
+   - `Drafted post:` the post
+
+   End with `## Excluded candidates`: anything found but dropped, and why. If fewer than
+   `max_communities` survived verification, say so plainly in that section — do not pad the
+   list to hit the number.

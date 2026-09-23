@@ -1,0 +1,118 @@
+{
+  "version": 1,
+  "assumptions": [
+    "No declared service or fixture-replayable API is involved; the agent's own web search supplies evidence, so the cases below check the report's contract and input handling, not live community facts.",
+    "Live qualification of whether picked communities are real, currently active, and correctly cite their self-promotion rules needs an explicitly authorized live case; nothing here fixture-replays that.",
+    "Static checking runs every case's inputs through the declared input_schema, including 'failed' cases; a required-field rejection is already guaranteed by that schema and isn't repeated as a case here."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session on the existing pinned model pricing and spending ceiling; no managed-model routes are declared. The configured 900-second runtime ceiling is not an expected price.",
+    "Cost scales with how many candidate communities must be searched and verified before max_communities survives; a narrow, well-specified audience needs fewer searches than a vague one."
+  ],
+  "effects": [
+    "One project.artifact write to reports/COMMUNITY_SHORTLIST.md; no other project files change.",
+    "No provider mutation, no posting, joining or messaging in any community, no outbound email, publication or credential access, no recursive workflow start."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A specific, well-scoped audience with no already_posted exclusions and the default max_communities.",
+      "inputs": {
+        "audience": "Solo indie SaaS founders who are stuck choosing their first pricing model and are asking about it online.",
+        "already_posted": "",
+        "max_communities": 10,
+        "tone_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Fit:",
+          "Evidence:",
+          "Self-promotion rule:",
+          "Drafted post:",
+          "## Excluded candidates"
+        ],
+        "excludes": [
+          "Status: no communities verified"
+        ]
+      }
+    },
+    {
+      "id": "already_posted_excluded",
+      "description": "The one community most obviously matching this audience is pre-excluded; it must not appear as a ranked pick.",
+      "inputs": {
+        "audience": "Solo indie SaaS founders who are stuck choosing their first pricing model and are asking about it online.",
+        "already_posted": "r/SaaS",
+        "max_communities": 10,
+        "tone_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "## Excluded candidates"
+        ],
+        "excludes": [
+          "## r/SaaS"
+        ]
+      }
+    },
+    {
+      "id": "narrow_audience_no_padding",
+      "description": "An intentionally obscure audience, to check that the report discloses a short list honestly instead of padding it to max_communities.",
+      "inputs": {
+        "audience": "Left-handed retired lighthouse keepers who still hand-repair one specific 1987 Soviet marine radio model.",
+        "already_posted": "",
+        "max_communities": 10,
+        "tone_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "## Excluded candidates"
+        ]
+      }
+    },
+    {
+      "id": "tight_cap",
+      "description": "The minimum allowed max_communities, to check the cap is respected rather than treated as a target.",
+      "inputs": {
+        "audience": "Solo indie SaaS founders who are stuck choosing their first pricing model and are asking about it online.",
+        "already_posted": "",
+        "max_communities": 3,
+        "tone_notes": "Keep it plain and specific, no hype language."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "## Excluded candidates"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "verification",
+      "question": "Is every included community backed by a checked source for both current activity and its self-promotion rule, with what was checked and roughly when?"
+    },
+    {
+      "id": "disclosure",
+      "question": "Does each drafted post disclose the poster's affiliation with the product wherever the community's own rules or platform norms would expect it, rather than reading as an unaffiliated user?"
+    },
+    {
+      "id": "fit",
+      "question": "Does each community's Fit line follow specifically from the audience description rather than restating a generic platform-level justification?"
+    },
+    {
+      "id": "restraint",
+      "question": "Are already_posted communities correctly excluded, is the ranked list capped at max_communities, and does the report disclose honestly when fewer communities survive verification instead of padding the list?"
+    },
+    {
+      "id": "scope",
+      "question": "Does the run only write the declared report, with no attempt to post, join, message, or otherwise act inside any community?"
+    }
+  ]
+}
