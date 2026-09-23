@@ -1,0 +1,96 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.dev_challenge",
+    "title": "Draft a developer challenge page",
+    "description": "Turn a real technical quirk of your product into a self-checkable puzzle, in the spirit of Stripe CTF and Google Foobar, with share-ready copy and a private answer key. Draft only; nothing is published.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the developer challenge draft before sharing it publicly."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "product_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "title": "Product name"
+        },
+        "topic": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "title": "What the puzzle should test",
+          "description": "A real technical detail from your product: an interesting bug, an algorithm, a protocol quirk. Not generic trivia."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": ["beginner", "intermediate", "advanced"],
+          "default": "intermediate",
+          "title": "Difficulty"
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "early-career developers and CS students",
+          "title": "Who should feel this is for them"
+        },
+        "reward": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "",
+          "title": "What a solver gets",
+          "description": "Optional. Leave empty for a plain shout-out."
+        },
+        "signup_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 10,
+          "maxLength": 500,
+          "title": "Where a solver submits their flag"
+        },
+        "voice_notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Optional voice notes"
+        }
+      },
+      "required": ["project_id", "product_name", "topic", "signup_url"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "design_challenge": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 6000,
+          "max_output_tokens": 1600
+        },
+        "write_promo": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 4000,
+          "max_output_tokens": 400
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/DEV_CHALLENGE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 8000
+      }
+    }
+  }
+}
