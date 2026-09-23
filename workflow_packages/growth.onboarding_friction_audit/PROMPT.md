@@ -1,0 +1,1 @@
+Read the project context and the optional target persona input. Follow the onboarding-audit skill to simulate the developer onboarding experience and write reports/ONBOARDING_FRICTION_AUDIT.md. Do not publish, send messages or change other files.

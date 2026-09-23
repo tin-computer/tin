@@ -1,0 +1,40 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.onboarding_friction_audit",
+    "title": "Audit developer onboarding friction",
+    "description": "Read the project's README and quickstart docs to identify friction points and missing prerequisites that delay a developer's time to first value.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "target_persona": {
+          "type": "string",
+          "title": "Target Developer Persona",
+          "maxLength": 200,
+          "default": "A developer familiar with the ecosystem but new to this product",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/onboarding-audit/SKILL.md"],
+      "entry_skill": "onboarding-audit",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/ONBOARDING_FRICTION_AUDIT.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
