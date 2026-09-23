@@ -1,0 +1,97 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.launch_kit",
+    "title": "Draft a launch-day kit",
+    "description": "Draft the coordinated Show HN post, Product Hunt listing copy, X/Twitter thread and launch email for one product or feature launch moment, sized to each platform's real limits. Draft only; nothing is posted.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the launch-day kit before posting anywhere."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "product_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "title": "Product name"
+        },
+        "launch_subject": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "title": "What's launching",
+          "description": "The product, feature or milestone you're announcing."
+        },
+        "value_prop": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600,
+          "title": "Why it matters now",
+          "description": "The concrete problem this solves and why today is the moment."
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "early adopters and technically curious users",
+          "title": "Who should care"
+        },
+        "notable_detail": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "A credible, concrete detail",
+          "description": "Optional: a specific fact that builds trust (team size, scale, how long you built it)."
+        },
+        "signup_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 10,
+          "maxLength": 500,
+          "title": "Where people go next"
+        },
+        "voice_notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Optional voice notes"
+        }
+      },
+      "required": ["project_id", "product_name", "launch_subject", "value_prop", "signup_url"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "draft_primary": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 6000,
+          "max_output_tokens": 1200
+        },
+        "draft_amplify": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 6000,
+          "max_output_tokens": 1400
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/LAUNCH_KIT.md",
+        "media_type": "text/markdown",
+        "max_bytes": 9000
+      }
+    }
+  }
+}
