@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The user supplies up to 12 bounded evidence records and is authorized to provide their excerpts.",
+    "Distinct URLs or threads are only a practical proxy for independent sources, not verified independent authors."
+  ],
+  "effects": [
+    "Writes reports/CUSTOMER_PAIN_GROWTH_OPPORTUNITY.md in the bound project."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Two synthetic independent forum records support a bounded, testable message hypothesis.",
+      "inputs": {
+        "product_description": "LedgerLeaf helps independent graphic designers organize bookkeeping and prepare records for tax time.",
+        "target_customer": "Independent graphic designers in the United States.",
+        "market_context": "Small freelance businesses.",
+        "research_focus": "What makes bookkeeping difficult before tax time?",
+        "evidence_bundle": "[{\"evidence_id\":\"E-01\",\"source_url\":\"https://forum.example.test/designers/receipt-thread\",\"platform\":\"Designer forum\",\"date\":\"2026-04-03\",\"excerpt\":\"I spend hours chasing client receipts before tax time and still worry I missed some.\"},{\"evidence_id\":\"E-02\",\"source_url\":\"https://community.example.test/freelance/bookkeeping\",\"platform\":\"Freelance community\",\"date\":\"2026-05-11\",\"excerpt\":\"Keeping receipts organized is the part of freelance bookkeeping I put off until year end.\"},{\"evidence_id\":\"E-03\",\"source_url\":\"https://reviews.example.test/tool/ledger\",\"date\":\"2026-05-14\",\"platform\":\"Software review site\",\"excerpt\":\"I wish this had a calendar view.\"}]"
+      },
+      "expect": {
+        "contains": [
+          "E-01",
+          "E-02",
+          "E-03",
+          "Evidence strength",
+          "Problem clarity",
+          "Product fit",
+          "Actionability",
+          "sample",
+          "tax time"
+        ]
+      }
+    },
+    {
+      "id": "weak_product_fit",
+      "description": "A clear pain does not establish that the product solves it or justify a product claim.",
+      "inputs": {
+        "product_description": "LedgerLeaf organizes bookkeeping records. It does not contact clients or collect documents from them.",
+        "target_customer": "Independent designers.",
+        "evidence_bundle": "[{\"evidence_id\":\"E-10\",\"source_url\":\"https://forum.example.test/designers/chasing-invoices\",\"platform\":\"Designer forum\",\"date\":\"\",\"excerpt\":\"I waste time reminding clients to send receipts and invoices.\"}]"
+      },
+      "expect": {
+        "contains": [
+          "E-10",
+          "not provided",
+          "sample",
+          "Product-fit uncertainty",
+          "The supplied description does not establish that LedgerLeaf solves this pain."
+        ]
+      }
+    },
+    {
+      "id": "duplicate_evidence_id",
+      "description": "Duplicate identifiers are surfaced with both source records retained and unsupported conclusions withheld.",
+      "inputs": {
+        "product_description": "LedgerLeaf organizes bookkeeping records.",
+        "target_customer": "Independent designers.",
+        "evidence_bundle": "[{\"evidence_id\":\"E-20\",\"source_url\":\"https://forum.example.test/pain/receipts\",\"platform\":\"Designer forum\",\"excerpt\":\"I lose track of receipts before tax time.\"},{\"evidence_id\":\"E-20\",\"source_url\":\"https://community.example.test/pain/records\",\"platform\":\"Freelance community\",\"excerpt\":\"I struggle to keep receipts organized before tax time.\"}]"
+      },
+      "expect": {
+        "contains": [
+          "duplicate evidence ID",
+          "E-20",
+          "https://forum.example.test/pain/receipts",
+          "https://community.example.test/pain/records",
+          "conclusions withheld pending corrected evidence IDs"
+        ]
+      }
+    }
+  ]
+}

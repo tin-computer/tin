@@ -1,0 +1,64 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.customer_pain_opportunity",
+    "title": "Customer Pain → Growth Opportunity",
+    "description": "Analyze supplied customer evidence, identify recurring pains, and propose traceable growth tests without generalizing beyond the sample.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "product_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 3000,
+          "title": "What the product does"
+        },
+        "target_customer": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "Target customer"
+        },
+        "market_context": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Optional market or geography"
+        },
+        "research_focus": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Optional question to focus the analysis"
+        },
+        "evidence_bundle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 24000,
+          "title": "JSON array of supplied evidence records (up to 12)",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        }
+      },
+      "required": ["project_id", "product_description", "target_customer", "evidence_bundle"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/customer-pain-opportunity/SKILL.md"],
+      "entry_skill": "customer-pain-opportunity",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 900},
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CUSTOMER_PAIN_GROWTH_OPPORTUNITY.md",
+        "media_type": "text/markdown",
+        "max_bytes": 60000
+      }
+    }
+  }
+}
