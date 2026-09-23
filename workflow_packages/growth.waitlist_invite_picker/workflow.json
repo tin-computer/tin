@@ -1,0 +1,76 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.waitlist_invite_picker",
+    "title": "Pick the next waitlist invites",
+    "description": "Rank inbound waitlist or demo signups against your ICP and output the exact people to invite next.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the waitlist invite list before contacting anyone."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "csv_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32000,
+          "title": "Waitlist or demo signup CSV",
+          "description": "Include columns like email, name, company, role, source, notes, use case or signup answer.",
+          "x-tin-ui": {"control": "textarea", "order": 10}
+        },
+        "ideal_customer_profile": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "Ideal customer profile",
+          "description": "Who you most want to learn from or onboard now.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "invite_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 25,
+          "default": 10,
+          "title": "Invite slots",
+          "x-tin-ui": {"control": "number", "order": 30}
+        },
+        "constraints": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Optional constraints",
+          "description": "For example: prioritize founders, include at least two agencies, or favor urgent launch projects.",
+          "x-tin-ui": {"control": "textarea", "order": 40}
+        }
+      },
+      "required": ["project_id", "csv_text", "ideal_customer_profile"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "score_leads": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/WAITLIST_INVITES.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}
