@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases are offline contract and quality specifications; browser research requires a separately authorized live run.",
+    "The procedure writes one Markdown artifact under reports/earned-media/<run_id>.md and has no outbound side effects.",
+    "The agent must use current source dates and reject unsupported or promotional opportunities instead of manufacturing a result."
+  ],
+  "cost_drivers": [
+    "One bounded browser-backed Codex session uses the existing pinned model pricing and spending ceiling; no managed-model routes are declared.",
+    "Research effort varies with company-site clarity, candidate count and source accessibility; the procedure is bounded to eight candidates and a 900-second run.",
+    "Public web traffic and browser infrastructure costs are separate from Tin model accounting."
+  ],
+  "effects": [
+    "Read-only public HTTPS pages through the browser sandbox.",
+    "One run-owned Markdown artifact in project state.",
+    "No email, publication, journalist contact, website edit, project-file edit, provider mutation or recursive workflow start."
+  ],
+  "rubric": [
+    {"id": "grounding", "question": "Does the opportunity distinguish news evidence from company evidence and avoid unsupported claims?"},
+    {"id": "timeliness", "question": "Does the opportunity enforce the configured recency window using an actual source date or honestly report missing precision?"},
+    {"id": "usefulness", "question": "Does the hook add a specific information gap or analysis rather than generic commentary?"},
+    {"id": "refusal", "question": "When no candidate passes the gates or threshold, does the report clearly refuse to manufacture an opportunity?"}
+  ],
+  "cases": [
+    {
+      "id": "ordinary_opportunity",
+      "description": "A normal run should produce one evidence-backed brief after current-story discovery.",
+      "inputs": {
+        "company_url": "https://example.test/company",
+        "industry": "authentication infrastructure",
+        "target_audience": "software teams",
+        "expertise": "authentication anomaly detection and incident response",
+        "focus_topics": "identity security incidents",
+        "company_evidence": "The company publishes documented incident-response guidance and maintains an anonymized annual anomaly report.",
+        "news_window_hours": 72,
+        "specific_story_url": ""
+      },
+      "expect": {
+        "contains": ["# Earned Media Opportunity", "## News story", "## Information gap", "## Suggested pitch", "## Evidence / Sources", "## Opportunity confidence"],
+        "excludes": ["journalist@example.com", "send this email", "press release"]
+      }
+    },
+    {
+      "id": "specific_story",
+      "description": "A supplied story is analyzed as the primary candidate without requiring broad discovery.",
+      "inputs": {
+        "company_url": "https://example.test",
+        "expertise": "data privacy compliance",
+        "company_evidence": "Published privacy implementation guide.",
+        "news_window_hours": 48,
+        "specific_story_url": "https://news.example.test/privacy-story"
+      },
+      "expect": {"contains": ["## News story", "## Why this is timely", "## Why this company can comment"]}
+    },
+    {
+      "id": "no_strong_opportunity",
+      "description": "Stale, irrelevant, generic or unsupported candidates must result in an honest no-opportunity decision.",
+      "inputs": {
+        "company_url": "https://example.test",
+        "industry": "workflow software",
+        "target_audience": "small teams",
+        "news_window_hours": 24,
+        "specific_story_url": "https://news.example.test/old-unrelated-story"
+      },
+      "expect": {"contains": ["No strong media opportunity found", "## Decision record"]}
+    }
+  ]
+}

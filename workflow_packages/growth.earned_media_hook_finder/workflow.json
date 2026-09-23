@@ -1,0 +1,69 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.earned_media_hook_finder",
+    "title": "Find one earned-media opportunity",
+    "description": "Find one recent news story where the company has a credible, useful, non-promotional contribution, or explain why no strong opportunity exists.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the proposed media opportunity and edit the pitch before sending it."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "company_url": {
+          "type": "string", "format": "uri", "minLength": 1, "maxLength": 500,
+          "title": "Company website", "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "industry": {
+          "type": "string", "maxLength": 300, "default": "", "title": "Industry or category",
+          "x-tin-ui": {"control": "text", "order": 20}
+        },
+        "target_audience": {
+          "type": "string", "maxLength": 1000, "default": "", "title": "Target audience",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "expertise": {
+          "type": "string", "maxLength": 2000, "default": "", "title": "Topics the company can discuss",
+          "x-tin-ui": {"control": "textarea", "order": 40}
+        },
+        "focus_topics": {
+          "type": "string", "maxLength": 1200, "default": "", "title": "Topics to prioritize",
+          "x-tin-ui": {"control": "textarea", "order": 50}
+        },
+        "company_evidence": {
+          "type": "string", "maxLength": 4000, "default": "", "title": "Evidence of authority",
+          "description": "Proprietary data, research, customer observations, published work, or documented experience.",
+          "x-tin-ui": {"control": "textarea", "order": 60}
+        },
+        "news_window_hours": {
+          "type": "integer", "minimum": 24, "maximum": 336, "default": 72,
+          "title": "News recency window (hours)", "x-tin-ui": {"control": "counter", "order": 70}
+        },
+        "specific_story_url": {
+          "type": "string", "format": "uri", "maxLength": 2000, "default": "",
+          "title": "Optional story URL", "description": "Analyze this story instead of discovering stories broadly.",
+          "x-tin-ui": {"control": "text", "order": 80}
+        }
+      },
+      "required": ["project_id", "company_url"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/earned-media-hook-finder/SKILL.md"],
+      "entry_skill": "earned-media-hook-finder",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "browser", "egress": "open", "timeout_seconds": 900},
+      "output": {
+        "kind": "project.artifact", "media_type": "text/markdown", "max_bytes": 120000,
+        "path_template": "reports/earned-media/{run_id}.md"
+      }
+    }
+  }
+}
