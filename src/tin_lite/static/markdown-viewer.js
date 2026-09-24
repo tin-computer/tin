@@ -59,7 +59,7 @@
     bar.append(filename, spacer, facts);
     for (const document of (documentData.related_documents || []).slice(0, 3)) {
       // Trusted product context, not links or instructions parsed from Markdown.
-      if (typeof document.url !== "string" || !document.url.startsWith("/?project=")) continue;
+      if (typeof document.url !== "string" || !(document.url.startsWith("/?project=") || document.url.startsWith("/file?project="))) continue;
       const link = makeElement("a", "markdown-related-document", document.label);
       link.href = document.url;
       bar.append(link);

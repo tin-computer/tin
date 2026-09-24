@@ -671,6 +671,11 @@ class ProjectionDatabase:
     async def get_run(self, run_id: UUID):
         return self.run if run_id == self.run.id else None
 
+    async def get_workflow(self, workflow_id):
+        return SimpleNamespace(
+            project_id=None, current_commit_sha=self.run.definition_commit_sha, definition={}
+        )
+
     async def get_project(self, project_id: UUID):
         return self.project if project_id == self.project.id else None
 
@@ -702,7 +707,14 @@ class ProjectionStorage:
 @pytest.mark.asyncio
 async def test_procedure_projection_refreshes_memory_only_for_index_writes() -> None:
     project = SimpleNamespace(id=uuid4(), state_repo_id="projects/test", canonical_branch="main")
-    run = SimpleNamespace(id=uuid4(), project_id=project.id, status=RunStatus.RUNNING)
+    run = SimpleNamespace(
+        id=uuid4(),
+        project_id=project.id,
+        status=RunStatus.RUNNING,
+        executor="codex.procedure",
+        workflow_id=uuid4(),
+        definition_commit_sha="d" * 40,
+    )
     index = _index(CODE_MAP, FEATURE_MAP)
     database = ProjectionDatabase(run=run, project=project, path=MEMORY_INDEX_PATH)
     storage = ProjectionStorage(index)

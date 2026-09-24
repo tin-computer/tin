@@ -71,6 +71,14 @@ class WorkflowReviews:
         }
 
     async def view(self, run_id, actor):
+        from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
+
+        run = await self.db.get_run(run_id)
+        if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if await document_spec(self.db, self.storage, run):
+                return await ReviewedDocuments(database=self.db, storage=self.storage).view(
+                    run_id, actor
+                )
         run, definition = await self.source(run_id, actor)
         root = run.review_root_run_id or run.id
         versions = await self.db.pool.fetch(
@@ -325,6 +333,16 @@ class WorkflowReviews:
         return await self.db.get_run(run.id)
 
     async def approve(self, *, run_id, actor, token=None):
+        from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
+
+        run = await self.db.get_run(run_id)
+        if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if await document_spec(self.db, self.storage, run):
+                return await ReviewedDocuments(database=self.db, storage=self.storage).approve(
+                    run_id=run_id,
+                    actor=actor,
+                    token=token,
+                )
         run, _ = await self.source(run_id, actor)
         _, artifact = await self.artifact(run)
         expected = review_token(run, artifact)

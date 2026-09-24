@@ -16,6 +16,12 @@ from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
 from tin_lite.memory import MAX_MEMORY_BYTES, validate_memory_index
+from tin_lite.procedure_documents import (
+    DocumentPair,
+    parse_document_pair,
+    validate_document,
+    validate_document_paths,
+)
 from tin_lite.studio_contracts import (
     CHARACTER_SVG_MEDIA_TYPE,
     CHARACTER_SVG_VALIDATOR,
@@ -344,6 +350,9 @@ class CodexProcedureSpec:
     repair_policy: str | None = None
     allow_no_change: bool = False
     services: tuple[ServiceBinding, ...] = ()
+    documents: DocumentPair | None = None
+    optional_repository: bool = False
+    repository_input: str | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -377,6 +386,9 @@ class PinnedCodexProcedure:
     content_draft_context: dict[str, Any] | None = None
     review_revision_context: dict[str, Any] | None = None
     services: tuple[ServiceBinding, ...] = ()
+    documents: DocumentPair | None = None
+    optional_repository: bool = False
+    repository_input: str | None = None
 
     @property
     def repository_workspace(self) -> bool:
@@ -388,6 +400,8 @@ class PinnedCodexProcedure:
 
     @property
     def companion_path(self) -> str | None:
+        if self.documents:
+            return self.documents.companion_path
         if (
             self.output_validator in {*content_draft.CLEAN_VALIDATORS, PUBLIC_ARTICLE_VALIDATOR}
             and self.output_path
@@ -423,7 +437,15 @@ class PinnedCodexProcedure:
             path = template.replace("{host}", artifact_host(inputs.get("product_url"))).replace(
                 "{started_at}", artifact_timestamp(started_at)
             )
-        return replace(self, output_path=path, output_path_template=None)
+        documents = self.documents.resolve(run_id) if self.documents else None
+        if documents:
+            validate_document_paths([path, documents.companion_path, *documents.destinations])
+        return replace(
+            self,
+            output_path=path,
+            output_path_template=None,
+            documents=documents,
+        )
 
     def sandbox_context(
         self,
@@ -442,7 +464,15 @@ class PinnedCodexProcedure:
             output["path"] = self.output_path
         if self.companion_path:
             output["companion_path"] = self.companion_path
-            output["companion_max_bytes"] = content_draft.NOTES_MAX_BYTES
+            output["companion_max_bytes"] = (
+                self.documents.companion_max_bytes
+                if self.documents
+                else content_draft.NOTES_MAX_BYTES
+            )
+            if self.documents:
+                output["reviewed_documents"] = True
+                output["companion_label"] = self.documents.companion_label
+                output["apply_on_approval"] = list(self.documents.destinations)
         if self.repair_policy is not None:
             output["repair_policy"] = self.repair_policy
         if self.allow_no_change:
@@ -743,6 +773,38 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             raise ValueError("GitHub procedure workspace capabilities are invalid")
         workspace_capabilities = tuple(capabilities)
 
+    optional_repository = workspace.get("optional", False)
+    repository_input = workspace.get("enabled_input")
+    if type(optional_repository) is not bool or (
+        optional_repository
+        and (
+            workspace_kind != GITHUB_REPOSITORY_WORKSPACE
+            or workspace_capabilities != ("contents.read",)
+        )
+    ):
+        raise ValueError("optional repository requires a read-only GitHub workspace")
+    if repository_input is not None and (
+        not optional_repository
+        or not isinstance(repository_input, str)
+        or definition.get("input_schema", {})
+        .get("properties", {})
+        .get(repository_input, {})
+        .get("type")
+        != "boolean"
+    ):
+        raise ValueError("repository enabled_input must name a declared boolean input")
+    if optional_repository:
+        github = [
+            r
+            for r in definition.get("integration_requirements", [])
+            if r.get("provider_key") == "infra.github"
+        ]
+        if (
+            len(github) != 1
+            or github[0].get("required", True)
+            or github[0].get("capabilities") != ["contents.read"]
+        ):
+            raise ValueError("optional workspace requires optional GitHub contents.read")
     # Repository snapshots share one gateway bound; older definitions may still carry
     # their former per-workflow limits, which are accepted and ignored.
     if "limits" in workspace and workspace_kind != GITHUB_REPOSITORY_WORKSPACE:
@@ -750,7 +812,10 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
     output = procedure.get("output")
     if not isinstance(output, dict):
         raise ValueError("Codex procedure has no output contract")
+    documents = parse_document_pair(output, definition)
     result_kind = output.get("kind", PROJECT_ARTIFACT_RESULT)
+    if optional_repository and result_kind != PROJECT_ARTIFACT_RESULT:
+        raise ValueError("optional repositories cannot produce pull requests")
     output_max_bytes = output.get("max_bytes")
     declared_media_type = output.get("media_type")
     byte_cap = (
@@ -798,10 +863,15 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                     and raw_output_template.endswith("/{run_id}.md")
                     and output.get("media_type") == "text/markdown"
                 )
-                if not plain_report and output_validator not in {
-                    *content_draft.VALIDATORS,
-                    PUBLIC_ARTICLE_VALIDATOR,
-                }:
+                if (
+                    not documents
+                    and not plain_report
+                    and output_validator
+                    not in {
+                        *content_draft.VALIDATORS,
+                        PUBLIC_ARTICLE_VALIDATOR,
+                    }
+                ):
                     raise ValueError("run-owned paths require a plain report or draft validation")
                 sample = raw_output_template.replace(
                     "{run_id}", "00000000-0000-4000-8000-000000000031"
@@ -840,7 +910,10 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != PROJECT_STATE_WORKSPACE
         ):
             raise ValueError("Public articles require their run-owned Markdown output.")
-        if output_validator in {*content_draft.CLEAN_VALIDATORS, PUBLIC_ARTICLE_VALIDATOR}:
+        if documents or output_validator in {
+            *content_draft.CLEAN_VALIDATORS,
+            PUBLIC_ARTICLE_VALIDATOR,
+        }:
             output_max_files = 2
         if output_validator == CHARACTER_SVG_VALIDATOR and (
             output_media_type != CHARACTER_SVG_MEDIA_TYPE
@@ -1038,6 +1111,9 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         repair_policy=repair_policy,
         allow_no_change=allow_no_change,
         services=services,
+        documents=documents,
+        optional_repository=optional_repository,
+        repository_input=repository_input,
     )
 
 
@@ -1189,6 +1265,9 @@ async def load_pinned_codex_procedure(
         repair_policy=spec.repair_policy,
         allow_no_change=spec.allow_no_change,
         services=spec.services,
+        documents=spec.documents,
+        optional_repository=spec.optional_repository,
+        repository_input=spec.repository_input,
     )
 
 
@@ -1208,6 +1287,8 @@ def validate_procedure_artifact(
         raise ValueError("procedure does not declare a project artifact")
     if not content or len(content) > spec.output_max_bytes:
         raise ValueError(f"procedure artifact must contain 1-{spec.output_max_bytes} bytes")
+    if spec.documents:
+        validate_document(content, spec.output_max_bytes)
     if spec.output_validator == DEMO_VIDEO_VALIDATOR:
         validate_demo_video(content)
         return

@@ -361,6 +361,17 @@ def _result_instruction(output: dict[str, Any], output_kind: str, output_path: o
             )
         return text
     absolute = STATE_DIR / str(output_path)
+    if output.get("reviewed_documents"):
+        companion = STATE_DIR / output["companion_path"]
+        return (
+            f"Read source evidence in `{WORKSPACE}` without modifying it. "
+            f"Write the primary document only to `{absolute}` "
+            f"(at most {output['max_bytes']} bytes), and the required companion only to "
+            f"`{companion}` (at most {output['companion_max_bytes']} bytes). "
+            "Both paths belong to the project-state checkout. Modify no other file. "
+            "These are proposals: never write their active destinations. "
+            "Complete both documents in this attempt; do not merely describe them."
+        )
     if output.get("companion_path"):
         companion = STATE_DIR / output["companion_path"]
         if output.get("validator") == "content-draft.v3":

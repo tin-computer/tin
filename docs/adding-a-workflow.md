@@ -77,6 +77,10 @@ The [package guide](../workflow_packages/README.md#codex-procedure-example) has 
 example. Procedure packages can produce a project artifact or an unmerged GitHub PR.
 They don't acquire the interactive conversation and controls of a one-off `project.task`.
 
+Public procedures can also [propose and adopt a reviewed document pair](reviewed-project-documents.md)
+and optionally inspect a read-only connected repository. These are explicit output/workspace
+contracts; ordinary reviewable artifacts keep their existing behavior.
+
 ## Test it as a private workflow
 
 Fixture tests show that the package fits the contract; a private run shows that it does the

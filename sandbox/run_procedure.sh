@@ -4,6 +4,10 @@ set -euo pipefail
 umask 077
 
 # Capability probe before credentials, cloning or model dispatch.
+if [[ "${1:-}" == "--check-reviewed-documents" ]]; then
+  printf 'TIN_PROCEDURE_DOCUMENTS_V1\n'
+  exit 0
+fi
 if [[ "${1:-}" == "--check-editorial" ]]; then
   printf 'TIN_PROCEDURE_EDITORIAL_V1\n'
   exit 0
@@ -81,8 +85,9 @@ if [[ "${result_kind}" != "project.artifact" && "${result_kind}" != "github.pull
 fi
 output_paths=("${TIN_PROCEDURE_OUTPUT_PATH}")
 if [[ -n "${TIN_PROCEDURE_COMPANION_PATH:-}" ]]; then
-  if [[ "${result_kind}" != "project.artifact" || \
-        "${TIN_PROCEDURE_COMPANION_PATH}" != "${TIN_PROCEDURE_OUTPUT_PATH%.md}.generation.md" ]]; then
+  if [[ "${result_kind}" != "project.artifact" ]] || {
+      [[ "${TIN_PROCEDURE_DOCUMENT_PAIR:-}" != "1" ]] &&
+      [[ "${TIN_PROCEDURE_COMPANION_PATH}" != "${TIN_PROCEDURE_OUTPUT_PATH%.md}.generation.md" ]]; }; then
     echo "invalid procedure companion path" >&2
     exit 64
   fi
@@ -409,7 +414,7 @@ else
   fi
   artifact_bytes="$(wc -c < "${state_workspace}/${output_path}")"
   artifact_limit="${TIN_PROCEDURE_OUTPUT_MAX_BYTES}"
-  if [[ "${output_path}" == "${TIN_PROCEDURE_COMPANION_PATH:-}" ]]; then artifact_limit=24000; fi
+  if [[ "${output_path}" == "${TIN_PROCEDURE_COMPANION_PATH:-}" ]]; then artifact_limit="${TIN_PROCEDURE_COMPANION_MAX_BYTES:-24000}"; fi
   if (( artifact_bytes > artifact_limit )); then
     echo "Codex procedure artifact exceeds its declared byte limit" >&2
     exit 65

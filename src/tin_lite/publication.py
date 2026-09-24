@@ -205,7 +205,10 @@ async def related_output_documents(database, run: WorkflowRun) -> list[dict[str,
         {
             "label": "Generation notes"
             if item.artifact_path.endswith(".generation.md")
-            else "Supporting document",
+            else item.artifact_path.rsplit("/", 1)[-1]
+            .removesuffix(".md")
+            .replace("_", " ")
+            .title(),
             "path": item.artifact_path,
             "revision": run.canonical_commit_sha,
             "url": f"/file?project={run.project_id}&"

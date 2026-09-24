@@ -2920,7 +2920,7 @@ def create_mcp_app(
 
     @server.tool()
     async def get_workflow_review(run_id: str) -> dict[str, Any]:
-        """Read the current article review and exact-version token. Read opens clean copy.
+        """Read the current review and exact-version token, including proposed document pairs.
 
         Collect feedback in one pass; do not ask again if the user already stated changes.
         Attach only relevant, authorized project files. Requesting changes does not approve,
@@ -3002,6 +3002,10 @@ def create_mcp_app(
         default branch now, none keeps it in Tin; `remember` makes it the program's default.
         Without `delivery` the program's setting applies. Tell the founder the result's
         `relay` in your words.
+
+        For reviewed project documents, first get_workflow_review, read both proposed files,
+        and supply its review_token. Approval applies both declared destinations atomically;
+        delivery and writing-style feedback do not apply to these pairs.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -3031,7 +3035,12 @@ def create_mcp_app(
                 "none": "Approved. The draft stays in Tin under Files.",
             }[delivery]
 
-        if run.workflow_id in SUPPORTED_IDS:
+        from tin_lite.reviewed_documents import document_spec
+
+        if run.workflow_id in SUPPORTED_IDS or (
+            run.executor == "codex.procedure"
+            and await document_spec(runtime().database, runtime().storage, run)
+        ):
             approved = await WorkflowReviews(runtime=runtime(), settings=settings).approve(
                 run_id=run.id,
                 actor=clerk_user_id,

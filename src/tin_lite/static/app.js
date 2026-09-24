@@ -4197,7 +4197,8 @@ async function discardCampaignRevision(runId, button) {
 
 function supportsArticleFeedback(run) {
   if (!run) return false;
-  return ["content.generate", "content.public_article"].includes(workflowForRun(run)?.key || run?.workflow_name);
+  return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
+    ["content.generate", "content.public_article"].includes(workflowForRun(run)?.key || run?.workflow_name);
 }
 
 function mountArticleFeedback(host, runId, reader = false) {
@@ -4348,7 +4349,7 @@ function renderDecisions() {
     navigate("integrations");
   });
   main.querySelector("[data-output-compare]")?.addEventListener("click", () => openOutputComparison(decision.run_id, "decisions"));
-  if (decision && ["content.generate", "content.public_article"].includes(decision.workflow_key)) {
+  if (decision && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
 }

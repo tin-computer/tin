@@ -168,3 +168,76 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     assert.deepEqual(errors, []);
   } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
 });
+
+for (const conflict of [null, "DESIGN.md changed during review; no documents were applied."]) test(`reviewed document pair: ${conflict ? "conflict" : "exact approval"}`, async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage();
+    await page.setContent('<main><div class="markdown-context-bar"><button class="markdown-context-action">Use these documents</button></div><article class="markdown-document"><h1>Brand</h1></article></main>');
+    await page.addScriptTag({path: path.join(assets, "workflow-review.js")});
+    await page.evaluate(conflict => {
+      window.TinWorkflowReview.mount(document.querySelector("main"), {
+        projectId: "project", runId: "pair", reader: true,
+        api: async () => ({is_current: true, can_approve: !conflict, can_request_changes: false,
+          review_token: "d".repeat(64), conflict, documents: [
+            {destination: "brand/BRAND.md", change: "new"},
+            {destination: "DESIGN.md", change: "unchanged"},
+          ]}),
+      });
+    }, conflict);
+    await page.getByText("brand/BRAND.md: new · DESIGN.md: carried forward unchanged", {exact: true}).waitFor();
+    assert.equal(await page.getByRole("button", {name: "Request changes"}).count(), 0);
+    assert.equal(await page.getByRole("button", {name: "Use these documents"}).isVisible(), !conflict);
+    assert.equal(await page.evaluate(() => window.TinWorkflowReview.token("project", "pair")), "d".repeat(64));
+    if (conflict) await page.getByText(conflict, {exact: true}).waitFor();
+  } finally {await browser.close();}
+});
+
+test("reviewed pair uses the normal reader and Decisions approval", async () => {
+  const project = {id: "project", name: "Example project", workspace_id: "workspace", workspace_name: "Example workspace", memory: {}};
+  const workflow = {id: "documents", key: "example.documents", title: "Capture documents", executor: "codex.procedure", status: "active", definition: {human_review: {eligible: true}, procedure: {output: {apply_on_approval: {primary: "brand/BRAND.md", companion: "DESIGN.md"}}}, input_schema: {type: "object", properties: {}}}};
+  const run = {id: "pair", project_id: "project", workflow_id: "documents", workflow_name: "example.documents", status: "needs_input", review_required: true, review_version: 1, artifact_path: "brand/proposals/pair/BRAND.md", canonical_commit_sha: "a".repeat(40), created_at: "2026-09-24T12:00:00Z"};
+  const writes = [];
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    const send = value => {response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(value));};
+    if (!url.pathname.startsWith("/api/") && !url.pathname.startsWith("/assets/")) {
+      response.setHeader("Content-Type", "text/html");
+      return response.end((await fs.readFile(path.join(assets, "index.html"), "utf8")).replaceAll("{{ASSET_VERSION}}", "test").replaceAll("{{CLERK_PUBLISHABLE_KEY}}", ""));
+    }
+    if (url.pathname.startsWith("/assets/")) {
+      const file = path.join(assets, url.pathname.slice(8));
+      try {const raw = await fs.readFile(file); response.setHeader("Content-Type", file.endsWith(".js") ? "text/javascript" : file.endsWith(".css") ? "text/css" : "application/octet-stream"); return response.end(raw);} catch {return response.writeHead(404).end();}
+    }
+    if (request.method === "POST") {
+      let raw = ""; for await (const chunk of request) raw += chunk;
+      writes.push({path: url.pathname, body: JSON.parse(raw || "{}")}); return send({...run, status: "running"});
+    }
+    if (url.pathname === "/api/projects") return send([project]);
+    if (url.pathname === "/api/workflows") return send([workflow]);
+    if (url.pathname.endsWith("/runs")) return send([run]);
+    if (url.pathname.endsWith("/runs/pair")) return send(run);
+    if (url.pathname.endsWith("/system")) return send({workflow_count: 0, running_count: 0, waiting_count: 1, runs_this_month: 1, timezone: "UTC"});
+    if (url.pathname.endsWith("/decisions")) return send([{id: "decision", run_id: run.id, project_id: "project", workflow_key: workflow.key, workflow_title: workflow.title, kind: "review", title: "Review your documents", explanation: "Both documents are ready for review.", feedback_supported: false, items: [{file: run.artifact_path, revision: run.canonical_commit_sha, title: "Brand and design"}], created_at: run.created_at}]);
+    if (url.pathname.endsWith("/review")) return send({is_current: true, status: run.status, current_run_id: run.id, version: 1, can_approve: true, can_request_changes: false, review_token: "b".repeat(64), documents: [{destination: "brand/BRAND.md", change: "new"}, {destination: "DESIGN.md", change: "unchanged"}]});
+    if (url.pathname.endsWith("/artifact/document")) return send({filename: "BRAND.md", word_count: 25, reading_minutes: 1, html: '<h1 id="brand">Example identity</h1><p>Warm paper, precise typography and a quiet green accent.</p><h2 id="generation">Generation rules</h2><p>Keep the founder’s green. Give each composition generous space.</p>', related_documents: [{label: "Design", path: "brand/proposals/pair/DESIGN.md", revision: run.canonical_commit_sha, url: "/file?project=project&path=brand%2Fproposals%2Fpair%2FDESIGN.md"}]});
+    return send([]);
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`, browser = await chromium.launch({headless: true});
+  try {
+    const context = await browser.newContext({viewport: {width: 1100, height: 760}});
+    await context.route("**/*", route => route.request().url().startsWith(base) ? route.continue() : route.abort());
+    await context.addInitScript(() => {window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: "QA"}, session: {getToken: async () => "synthetic"}}; localStorage.setItem("tin-lite:theme", "light");});
+    const page = await context.newPage();
+    await page.goto(`${base}/?project=project#document/pair?return=decisions`);
+    await page.getByText("brand/BRAND.md: new · DESIGN.md: carried forward unchanged", {exact: true}).waitFor();
+    await page.getByRole("link", {name: "Design", exact: true}).waitFor();
+    if (process.env.TIN_REVIEW_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/reviewed-documents.png`, fullPage: true});
+    await page.goto(`${base}/?project=project#decisions`);
+    await page.getByText("brand/BRAND.md: new · DESIGN.md: carried forward unchanged", {exact: true}).waitFor();
+    await page.locator("[data-apply-decision]").click();
+    await page.waitForTimeout(100);
+    assert.equal(writes.find(item => item.path.endsWith("/apply"))?.body.review_token, "b".repeat(64));
+  } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
+});

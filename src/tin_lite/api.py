@@ -3783,7 +3783,14 @@ async def approve_run(
     if payload is not None and payload.delivery is not None:
         # Record the pick before the approval so a refused pick never approves blindly.
         await _choose_content_delivery(run, payload, request, user)
-    if run.workflow_id in SUPPORTED_IDS:
+    from tin_lite.reviewed_documents import document_spec
+
+    if run.workflow_id in SUPPORTED_IDS or (
+        run.executor == "codex.procedure"
+        and await document_spec(
+            request.app.state.runtime.database, request.app.state.runtime.storage, run
+        )
+    ):
         try:
             updated = await WorkflowReviews(
                 runtime=request.app.state.runtime, settings=request.app.state.settings

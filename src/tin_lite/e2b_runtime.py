@@ -523,6 +523,11 @@ class E2BRuntime:
         companion = run_input.context.get("output", {}).get("companion_path")
         if companion:
             envs["TIN_PROCEDURE_COMPANION_PATH"] = companion
+            if run_input.context["output"].get("reviewed_documents"):
+                envs["TIN_PROCEDURE_DOCUMENT_PAIR"] = "1"
+                envs["TIN_PROCEDURE_COMPANION_MAX_BYTES"] = str(
+                    run_input.context["output"]["companion_max_bytes"]
+                )
         envs["TIN_PROCEDURE_OUTPUT_MAX_BYTES"] = str(run_input.output_max_bytes)
         envs["TIN_PROCEDURE_RESULT_KIND"] = run_input.result_kind
         if run_input.project_revision is not None:
@@ -576,6 +581,12 @@ class E2BRuntime:
                 )
                 if ready.stdout.strip() != "TIN_PROCEDURE_EDITORIAL_V1":
                     raise RuntimeError("Sandbox image lacks editorial assessment support")
+            if run_input.context.get("output", {}).get("reviewed_documents"):
+                ready = await sandbox.commands.run(
+                    "/opt/tin-lite/run-procedure --check-reviewed-documents", timeout=15
+                )
+                if ready.stdout.strip() != "TIN_PROCEDURE_DOCUMENTS_V1":
+                    raise RuntimeError("Sandbox image lacks reviewed document support")
             if companion:
                 ready = await sandbox.commands.run(
                     "/opt/tin-lite/run-procedure --check-companion", timeout=15

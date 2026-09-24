@@ -59,6 +59,18 @@
       requestButton.setAttribute("aria-expanded", String(draft.open));
       approval.forEach((button, i) => {button.hidden = draft.open || !review.can_approve; button.disabled = originalDisabled[i];});
       region.innerHTML = "";
+      if (review.documents) {
+        const summary = document.createElement("p");
+        summary.className = "review-change-summary";
+        summary.textContent = review.documents.map(item => `${item.destination}: ${item.change === "unchanged" ? "carried forward unchanged" : item.change}`).join(" · ");
+        region.append(summary);
+      }
+      if (review.conflict) {
+        const conflict = document.createElement("p");
+        conflict.className = "review-error";
+        conflict.textContent = review.conflict;
+        region.append(conflict);
+      }
       if (!review.is_current) {
         region.innerHTML = `<p class="review-version-notice">A newer version is available. <button type="button" class="system-action" data-current-review>Read current version →</button></p>`;
         region.querySelector("[data-current-review]").onclick = () => openRun(review.current_run_id);

@@ -87,6 +87,10 @@ See [billing coverage](workflow-billing-coverage.md),
 [Studio API and hosted defaults](studio-api-and-hosted-credits.md), and
 [self-hosted billing](self-hosted-billing.md).
 
+Public procedures have source support for [reviewed document pairs](reviewed-project-documents.md)
+and optional read-only repository evidence. Hosted acceptance requires an updated sandbox
+image and a registered consumer; this is not a deployed branding workflow.
+
 ## Deferred product work
 
 - Backlink planning and backlink-specific outreach are not a completed organic-system loop.

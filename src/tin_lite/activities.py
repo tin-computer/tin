@@ -2587,6 +2587,10 @@ class TinActivities:
 
         run_id = UUID(run_id_text)
         _definition, procedure = await self._pinned_codex_procedure(run_id)
+        if procedure.optional_repository:
+            from tin_lite.procedure_repository import select_repository
+
+            await select_repository(self._db, await self._require_run(run_id), procedure)
         from tin_lite import content_repository_delivery
 
         if _definition.id == content_repository_delivery.WORKFLOW_ID:
@@ -2713,6 +2717,21 @@ class TinActivities:
                     expected_head_sha = revision_sha
                 if expected_head_sha is None:
                     raise RuntimeError("project state repository has no canonical head")
+                if procedure.documents:
+                    from tin_lite.procedure_documents import validate_document
+
+                    for path, maximum in zip(
+                        procedure.documents.destinations,
+                        (procedure.output_max_bytes, procedure.documents.companion_max_bytes),
+                        strict=True,
+                    ):
+                        entry = await self._storage.read_output_destination(
+                            repo_id=project.state_repo_id,
+                            revision=expected_head_sha,
+                            path=path,
+                        )
+                        if entry is not None:
+                            validate_document(entry[1], maximum)
                 ephemeral_branch = f"procedures/{run.id}/{run.generation}"
                 identity_id: str | None = None
                 identity_mode: str | None = None
@@ -3126,21 +3145,34 @@ class TinActivities:
                     if content_source is not None:
                         workspace_context["content_delivery"] = content_source
                 elif procedure.workspace_kind == GITHUB_REPOSITORY_WORKSPACE:
-                    # A read-only repository snapshot: Codex reads it and writes only the
-                    # declared project artifact into the separate project-state checkout.
-                    bundle = await self._github_procedure_bundle(
-                        project_id=run.project_id,
-                        run_id=run_id,
-                        sandbox_id=sandbox_id,
-                    )
-                    workspace_archive = bundle.archive
-                    workspace_context = {
-                        "provider_key": "infra.github",
-                        "repository": bundle.repository,
-                        "default_branch": bundle.default_branch,
-                        "head_sha": bundle.head_sha,
-                        "file_count": bundle.file_count,
-                    }
+                    from tin_lite.procedure_repository import select_repository
+
+                    use_repository = await select_repository(self._db, run, procedure)
+                    if use_repository:
+                        # A read-only repository snapshot: Codex reads it and writes only the
+                        # declared project artifact into the separate project-state checkout.
+                        bundle = await self._github_procedure_bundle(
+                            project_id=run.project_id,
+                            run_id=run_id,
+                            sandbox_id=sandbox_id,
+                        )
+                        if procedure.optional_repository:
+                            selected = await self._db.get_effect(
+                                f"{run.id}:procedure_repository_selection"
+                            )
+                            if bundle.repository != selected.result["repository"]:
+                                raise ValueError("The selected source repository changed.")
+                        workspace_archive = bundle.archive
+                        workspace_context = {
+                            "provider_key": "infra.github",
+                            "repository": bundle.repository,
+                            "default_branch": bundle.default_branch,
+                            "head_sha": bundle.head_sha,
+                            "file_count": bundle.file_count,
+                        }
+                        workspace_context["complete"] = bundle.complete
+                    else:
+                        workspace_context = {"kind": "project.state", "repository_available": False}
                 procedure_inputs: dict[str, object] = dict(run.input or {})
                 from tin_lite import content_draft
 
@@ -3649,7 +3681,11 @@ class TinActivities:
         )
         from tin_lite import article_review
 
-        if procedure.output_validator == article_review.VALIDATOR:
+        if procedure.documents:
+            from tin_lite.procedure_documents import validate_document
+
+            validate_document(raw, procedure.documents.companion_max_bytes)
+        elif procedure.output_validator == article_review.VALIDATOR:
             article_review.validate_notes(
                 raw, revision=procedure.review_revision_context is not None
             )
@@ -3883,6 +3919,10 @@ class TinActivities:
     async def record_codex_procedure_approval(self, run_id_text: str) -> None:
         run_id = UUID(run_id_text)
         run = await self._require_run(run_id)
+        from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
+
+        if await document_spec(self._db, self._storage, run):
+            await ReviewedDocuments(database=self._db, storage=self._storage).apply(run_id)
         workflow_definition = await self._db.get_workflow(run.workflow_id)
         if workflow_definition is None:
             raise RuntimeError("procedure workflow definition is unavailable")
@@ -3941,6 +3981,12 @@ class TinActivities:
                 path = str(canonical.result["artifact_path"])
                 run = await self._require_run(run_id)
                 project = await self._require_project(run.project_id)
+                from tin_lite.reviewed_documents import document_spec
+
+                if await document_spec(self._db, self._storage, run):
+                    applied = await self._db.get_effect(f"{run.id}:procedure_document_apply")
+                    if not applied or applied.status != "completed":
+                        raise RuntimeError("The approved project documents have not been applied")
                 artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
                 if path == MEMORY_INDEX_PATH:
                     # A section-owning procedure rewrote project memory; Luna and the memory
