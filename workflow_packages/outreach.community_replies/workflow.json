@@ -1,0 +1,54 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_replies",
+    "title": "Find threads where buyers describe this problem, draft replies",
+    "description": "For founders with no inbound yet: finds live Reddit and Hacker News threads where someone is describing the problem this product solves, and drafts an authentic, no-pitch-first reply for the founder to personalize and post themselves.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "problem_description"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "problem_description": {
+          "type": "string",
+          "title": "What does someone say when they have this problem?",
+          "maxLength": 2000,
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "communities": {
+          "type": "string",
+          "title": "Subreddits or communities to check (optional, comma-separated)",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "max_threads": {
+          "type": "integer",
+          "title": "Max threads to review",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 15,
+          "x-tin-ui": { "control": "number", "order": 30 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/community-replies/SKILL.md"],
+      "entry_skill": "community-replies",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "outreach/community/REPLY_DRAFTS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
