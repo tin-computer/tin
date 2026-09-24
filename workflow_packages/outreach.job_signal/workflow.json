@@ -1,0 +1,78 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.job_signal",
+    "title": "Find job postings that signal a timely buying opportunity",
+    "description": "Monitor public job postings from target companies for roles that may indicate a relevant business need, then produce an evidence-backed outreach brief for human review.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "target_companies",
+        "role_signals",
+        "product_context",
+        "max_results"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_companies": {
+          "type": "array",
+          "description": "Companies whose public job postings should be researched.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "role_signals": {
+          "type": "array",
+          "description": "Role titles, keywords, or hiring patterns that may indicate a relevant business need.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1
+        },
+        "product_context": {
+          "type": "string",
+          "description": "Description of the product, service, or offer used to assess whether a job posting may create a relevant outreach opportunity."
+        },
+        "max_results": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50,
+            "default": 10
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/job-signal/SKILL.md"
+      ],
+      "entry_skill": "job-signal",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/JOB_SIGNAL_BRIEF.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
