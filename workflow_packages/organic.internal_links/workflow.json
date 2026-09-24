@@ -1,0 +1,114 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.internal_links",
+    "title": "Link a new page from the pages you already have",
+    "description": "Find the existing pages whose own words already mention what a new page is about, and open one pull request that turns those exact phrases into links to it. Wraps wording that is already there; never writes new sentences, and opens no PR when no honest anchor exists.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Page that needs incoming links",
+          "description": "The published HTTPS page other pages should link to, usually one just added or flagged as a possible orphan.",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 10
+          }
+        },
+        "link_budget": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "title": "Maximum linking pages",
+          "description": "A strict cap on how many existing pages the pull request may touch. Use fewer when the evidence supports fewer.",
+          "x-tin-ui": {
+            "control": "counter",
+            "order": 20
+          }
+        },
+        "context": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Optional context",
+          "description": "Sections to prefer or avoid, or wording the site treats as a term of art. Does not widen the change.",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        }
+      },
+      "required": [
+        "project_id",
+        "target_url"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": [
+          "contents.read",
+          "contents.write",
+          "pull_requests.read",
+          "pull_requests.write"
+        ],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/internal-link-repair/SKILL.md",
+        "skills/internal-link-repair/SELECTION.md"
+      ],
+      "entry_skill": "internal-link-repair",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": [
+          "contents.read",
+          "pull_requests.read"
+        ],
+        "limits": {
+          "max_files": 1000,
+          "max_bytes": 100000000
+        }
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "verification": {
+        "commands": [
+          "git diff --check"
+        ]
+      },
+      "output": {
+        "kind": "github.pull_request",
+        "provider_key": "infra.github",
+        "max_files": 5,
+        "max_bytes": 64000,
+        "receipt_path_template": "reports/internal-links/{run_id}.md",
+        "allow_no_change": true
+      }
+    },
+    "system": "organic-traffic"
+  }
+}

@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "assumptions": [
+    "A GitHub repository is connected and holds the site's content as Markdown, MDX or static HTML. Other templating languages are reported as unsupported, never guessed at.",
+    "target_url is a published HTTPS page on the same site; link_budget is 1..5 and caps files touched, not links proposed.",
+    "Anchor phrases must already exist in a candidate page's prose. Frontmatter, headings, code, existing links, HTML attributes, MDX/JSX syntax and bare URLs are not prose.",
+    "Run success establishes that a pull request or an explicit no-change result was delivered. It does not establish that a link is worth making; that needs the rubric below.",
+    "Fixtures are synthetic. A live run needs a separately authorized project, a connected repository and a named payer."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session at the existing pinned model pricing, 900 seconds, no managed-model routes of its own. The configured ceiling is not an expected price.",
+    "Work scales with the number of content files scanned and the size of the repository snapshot, not with link_budget. A large site costs more to search than a small one even when the answer is no_change.",
+    "One fetch of target_url plus the pinned repository workspace. No provider queries, no paid data."
+  ],
+  "effects": [
+    "Opens one unmerged GitHub pull request touching at most 5 existing content files, each with one added link, or changes no files at all.",
+    "Writes one receipt at reports/internal-links/<run_id>.md in project state.",
+    "Never merges, pushes, deploys, or edits navigation, sitemaps, redirects, dependencies, tests, CI or deployment configuration. Nothing is live until a human merges."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Two existing pages already use the target's phrase in ordinary prose; a third uses it only in a heading. Expect a pull request touching exactly the two, each naming its exact anchor phrase, and the heading-only page reported as rejected rather than edited.",
+      "inputs": {
+        "target_url": "https://example.test/guides/shipping-insurance-for-fragile-items",
+        "link_budget": 3,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "shipping insurance for fragile items",
+          "Anchor phrase",
+          "git diff --check",
+          "until a human merges"
+        ],
+        "excludes": [
+          "No change:",
+          "Related reading",
+          "sitemap"
+        ]
+      }
+    },
+    {
+      "id": "budget_is_a_cap_not_a_target",
+      "description": "Six pages contain an honest anchor and link_budget is 2. Expect exactly two files touched, chosen by the ranking, with the remaining candidates named as surfaced but not taken.",
+      "inputs": {
+        "target_url": "https://example.test/guides/shipping-insurance-for-fragile-items",
+        "link_budget": 2,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Anchor phrase",
+          "until a human merges"
+        ],
+        "excludes": [
+          "No change:"
+        ]
+      }
+    },
+    {
+      "id": "no_honest_anchor",
+      "description": "The phrase appears only inside code fences, an existing link and a heading. Expect a no-change result that says plainly the target still has no incoming links, with zero files changed and no invented sentence.",
+      "inputs": {
+        "target_url": "https://example.test/guides/shipping-insurance-for-fragile-items",
+        "link_budget": 3,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "No change:",
+          "still has no incoming links"
+        ],
+        "excludes": [
+          "Anchor phrase"
+        ]
+      }
+    },
+    {
+      "id": "unreachable_target",
+      "description": "target_url returns 404. Expect a no-change result naming the status, never a link to a page that does not resolve.",
+      "inputs": {
+        "target_url": "https://example.test/guides/removed",
+        "link_budget": 3,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "No change:",
+          "404"
+        ],
+        "excludes": [
+          "Anchor phrase"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "anchor_is_pre_existing",
+      "question": "Does every added link wrap wording that was already in the file, with no sentence rewritten, added or reordered?"
+    },
+    {
+      "id": "reader_value",
+      "question": "Would a reader on each source page plausibly want to follow that link at that point in the text, rather than the phrase merely matching?"
+    },
+    {
+      "id": "honest_coverage",
+      "question": "Does the pull-request body separate files changed, candidates rejected and unsupported files skipped, without implying fuller coverage than was achieved?"
+    },
+    {
+      "id": "checks_reported_truthfully",
+      "question": "Are the checks actually run, and their results, stated separately from checks skipped and the reasons they were skipped?"
+    }
+  ]
+}
