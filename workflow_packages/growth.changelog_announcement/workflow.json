@@ -1,0 +1,73 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.changelog_announcement",
+    "title": "Turn a shipped change into an announcement",
+    "description": "Read what actually merged since the last announcement and draft one update a founder can post, skipping anything not worth telling users about.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand", "weekly"],
+    "human_review": {
+      "eligible": true,
+      "reason": "Produces a public-facing announcement draft.",
+      "review_label": "Review announcement",
+      "defer_label": "Not now",
+      "summary": "Your changelog announcement is ready. Review it before Tin marks the workflow complete; otherwise it stays safely on hold.",
+      "queue_clause": "Announcement draft ready to finish"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "repository"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 140,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+          "title": "Repository",
+          "description": "The connected GitHub repository to read merged pull requests from.",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "since_run_id": {
+          "type": "string",
+          "default": "",
+          "pattern": "^(|[0-9a-f-]{36})$",
+          "title": "Last announcement run",
+          "description": "Leave empty on the first run. Otherwise, only merges after this run's date are considered.",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "audience_note": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Who reads this",
+          "description": "Optional: who the announcement is for and where it will be posted (e.g. changelog page, email, X).",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        }
+      }
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "github",
+        "capabilities": ["contents.read", "pull_requests.read"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/changelog-announcement/SKILL.md"],
+      "entry_skill": "changelog-announcement",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "content/announcements/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 60000
+      }
+    }
+  }
+}
