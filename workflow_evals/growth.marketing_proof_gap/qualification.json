@@ -1,0 +1,187 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Supplied marketing claims and evidence are bounded project inputs; supplied evidence is not proof of market-wide prevalence.",
+    "Claim and source IDs are expected to be stable within a run so that recommendations can cite supplied evidence unambiguously.",
+    "Recommendations are grounded only in supplied evidence and do not invent proof that is not present in the input sources."
+  ],
+  "cost_drivers": [
+    "Number and length of supplied claims and evidence sources.",
+    "One bounded evidence-matching model call and, when evidence is matched, one bounded recommendation model call.",
+    "Output size grows with the number of supplied claims and grounded recommendations."
+  ],
+  "effects": [
+    "Uses up to two managed model calls and writes one JSON marketing proof-gap artifact in the bound project.",
+    "No connected-provider requests or external mutations are required.",
+    "When no evidence is matched, the workflow uses its deterministic fallback instead of making an unnecessary recommendation model call."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Multiple marketing claims have directly relevant supplied evidence. The workflow should match evidence, produce grounded recommendations, and rank the resulting claim records.",
+      "inputs": {
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "claim_ids": [
+          "claim-price",
+          "claim-speed",
+          "claim-trust"
+        ],
+        "claim_texts": [
+          "Teams save money by switching to us.",
+          "Teams get setup in minutes.",
+          "Customers can trust our security controls."
+        ],
+        "claim_surfaces": [
+          "pricing",
+          "homepage",
+          "sales_collateral"
+        ],
+        "source_ids": [
+          "review-1",
+          "ticket-2",
+          "conversation-3"
+        ],
+        "source_texts": [
+          "We saved money after switching and the pricing was clear.",
+          "Setup took about 20 minutes for our team.",
+          "The security documentation helped our procurement team trust the controls."
+        ],
+        "source_types": [
+          "review",
+          "support_ticket",
+          "conversation"
+        ]
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "complete",
+          "claims_submitted",
+          "claims_with_evidence",
+          "weakly_supported",
+          "recommendation",
+          "evidence_source_ids"
+        ]
+      }
+    },
+    {
+      "id": "boundary_minimum",
+      "description": "The smallest valid claim/evidence input is accepted and produces a grounded artifact without requiring additional sources.",
+      "inputs": {
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "claim_ids": [
+          "claim-one"
+        ],
+        "claim_texts": [
+          "Customers complete setup quickly."
+        ],
+        "claim_surfaces": [
+          "homepage"
+        ],
+        "source_ids": [
+          "source-one"
+        ],
+        "source_texts": [
+          "Setup took about 20 minutes for our team."
+        ],
+        "source_types": [
+          "review"
+        ]
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "claims_submitted",
+          "claims_with_evidence"
+        ]
+      }
+    },
+    {
+      "id": "insufficient_evidence",
+      "description": "Supplied evidence does not provide a supported match for the submitted claims. The workflow should report the limitation and use the deterministic no-evidence fallback rather than inventing proof.",
+      "inputs": {
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "claim_ids": [
+          "claim-security"
+        ],
+        "claim_texts": [
+          "Customers can trust our security controls."
+        ],
+        "claim_surfaces": [
+          "sales_collateral"
+        ],
+        "source_ids": [
+          "source-one"
+        ],
+        "source_texts": [
+          "The interface looks clean and easy to use."
+        ],
+        "source_types": [
+          "review"
+        ]
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "no_evidence_matched",
+          "claims_with_evidence",
+          "evidence_source_ids"
+        ]
+      }
+    },
+    {
+      "id": "duplicate_claim_id",
+      "description": "Duplicate claim IDs are rejected before a model call because they make claim-level evidence and recommendation records ambiguous.",
+      "inputs": {
+        "project_id": "00000000-0000-4000-8000-000000000001",
+        "claim_ids": [
+          "duplicate",
+          "duplicate"
+        ],
+        "claim_texts": [
+          "The price is clear.",
+          "The price is competitive."
+        ],
+        "claim_surfaces": [
+          "pricing",
+          "homepage"
+        ],
+        "source_ids": [
+          "review-1",
+          "review-2"
+        ],
+        "source_texts": [
+          "The pricing was clear.",
+          "The price compared well with alternatives."
+        ],
+        "source_types": [
+          "review",
+          "review"
+        ]
+      },
+      "expected_status": "failed"
+    }
+  ],
+  "rubric": [
+    {
+      "id": "grounding",
+      "question": "Does every evidence match and recommendation cite only supplied source IDs and evidence excerpts?"
+    },
+    {
+      "id": "coverage",
+      "question": "Does the artifact account for every submitted claim and explicitly distinguish claims with matched evidence from claims without evidence?"
+    },
+    {
+      "id": "recommendation_safety",
+      "question": "Are proof actions grounded in the supplied evidence rather than invented facts or unsupported claims?"
+    },
+    {
+      "id": "determinism",
+      "question": "Are claim status and action-type decisions owned by workflow code where required, including contradiction handling and no-evidence fallback?"
+    },
+    {
+      "id": "validation",
+      "question": "Are malformed inputs, duplicate IDs, unknown evidence IDs, invalid excerpts, duplicate matches, and unrelated recommendation evidence rejected before producing an invalid artifact?"
+    }
+  ]
+}
