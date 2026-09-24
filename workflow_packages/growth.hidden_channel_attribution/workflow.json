@@ -1,0 +1,49 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.hidden_channel_attribution",
+    "title": "Find the word-of-mouth channels your dashboards can't see",
+    "description": "Classifies free-text \"how did you hear about us\" answers into channels, then summarizes which untracked channels are actually driving signups.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand", "weekly"],
+    "human_review": {"eligible": true, "summary": "Review the hidden-channel attribution brief"},
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "responses": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 300},
+          "title": "Raw \"how did you hear about us\" answers, one per signup"
+        }
+      },
+      "required": ["project_id", "responses"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "classify": {
+          "provider": "openai", "model": "gpt-6-luna", "max_calls": 1,
+          "max_input_bytes": 32000, "max_output_tokens": 4096
+        },
+        "summarize": {
+          "provider": "openai", "model": "gpt-6-luna", "max_calls": 1,
+          "max_input_bytes": 16000, "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/HIDDEN_CHANNEL_ATTRIBUTION.md",
+        "media_type": "text/markdown",
+        "max_bytes": 12000
+      }
+    }
+  }
+}
