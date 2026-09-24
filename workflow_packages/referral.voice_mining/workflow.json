@@ -1,0 +1,97 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "referral.voice_mining",
+    "title": "Mine the inbox for your next customers' exact words",
+    "description": "Reads the founder's connected mailbox for customer words — praise, objections and thank-yous already sitting there — and turns the quoted phrases into outreach one-liners, a referral ask and short web copy, delivered as a reviewable brief.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "email_keywords": {
+          "type": "array",
+          "title": "Words that mark a customer email",
+          "description": "Words that mark a customer email about the product, e.g. invoice, subscription, order, receipt. Leave empty to derive them from the onboarding plan and the wiki.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "maxItems": 8,
+          "default": [],
+          "x-tin-ui": { "order": 10 }
+        },
+        "focus": {
+          "type": "string",
+          "title": "What to mine for (optional)",
+          "description": "The customer words that would help most right now, e.g. why people cancel a competitor, or what they say the product replaced.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "max_searches": {
+          "type": "integer",
+          "title": "Mailbox searches",
+          "description": "Upper bound on Gmail searches this run may issue.",
+          "minimum": 1,
+          "maximum": 8,
+          "default": 6,
+          "x-tin-ui": { "order": 30 }
+        }
+      }
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "workspace.google",
+        "capabilities": ["gmail.messages.read"],
+        "required": true
+      }
+    ],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "Names the product, its buyers and the hard no's, and supplies the product words the mailbox search is built from."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map grounds which features customer words may describe."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/voice-mining/SKILL.md",
+        "skills/voice-mining/EVIDENCE.md"
+      ],
+      "entry_skill": "voice-mining",
+      "services": {
+        "mailbox": {
+          "provider_key": "workspace.google",
+          "max_calls": 8,
+          "max_response_bytes": 32000
+        }
+      },
+      "workspace": { "kind": "project.state" },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/VOICE_MINING.md",
+        "media_type": "text/markdown",
+        "max_bytes": 80000
+      }
+    }
+  }
+}

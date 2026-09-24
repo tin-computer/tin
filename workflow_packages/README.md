@@ -45,6 +45,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.campus_events` | onboarding plan, Feature map, style guide | founder pitches the organizer | Community and events |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
+| `referral.voice_mining` | mailbox connection (`workspace.google`, gmail read), onboarding plan, Feature map | founder sends the ask and lines | Referrals, cold outbound, owned audience |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`
