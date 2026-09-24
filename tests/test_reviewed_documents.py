@@ -394,3 +394,23 @@ async def test_mcp_pair_review_and_token_approval(publication_db, monkeypatch):
     )
     assert result["review_decision"] == "approved"
     assert f.storage.repo.writes == 0
+
+
+@pytest.mark.parametrize("content", [b"# Design\n" + b"x" * 32_000, b"x" * 64_001, b"\xff", None])
+async def test_required_companion_checkpoint_uses_its_declared_limit(publication_db, content):
+    f = await setup(publication_db)
+    path = f.checkpoint.companions[0].artifact_path
+    revision = f.storage.repo.edit({path: content})
+    procedure = SimpleNamespace(
+        companion_path=path,
+        documents=SimpleNamespace(companion_max_bytes=64_000),
+        review_revision_context=None,
+    )
+    project = await f.db.get_project(f.run.project_id)
+    if content is not None and 24_000 < len(content) <= 64_000:
+        pair = await f.activities._procedure_companions(f.run, project, procedure, revision)
+        assert pair[0].byte_count == len(content) and pair[0].ephemeral_commit_sha == revision
+    else:
+        with pytest.raises((ValueError, KeyError)):
+            await f.activities._procedure_companions(f.run, project, procedure, revision)
+    assert f.storage.repo.writes == 0
