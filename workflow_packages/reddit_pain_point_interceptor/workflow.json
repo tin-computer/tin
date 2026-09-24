@@ -1,0 +1,54 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "reddit_pain_point_interceptor",
+    "title": "Find Reddit pain points to answer",
+    "description": "Rank supplied Reddit search results for competitor or niche keywords and draft three helpful replies for founder review.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "reason": "Produces public-facing reply drafts for manual review.",
+      "review_label": "Review replies",
+      "defer_label": "Not now",
+      "summary": "Three Reddit reply drafts are ready. Review them before posting.",
+      "queue_clause": "Reddit replies ready for review"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "keywords": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "title": "Competitors or niche keywords",
+          "items": {"type": "string", "minLength": 2, "maxLength": 80}
+        },
+        "reddit_search_json": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "title": "Reddit search responses",
+          "description": "One captured Reddit search.json response per keyword, in the same order.",
+          "items": {"type": "string", "minLength": 2, "maxLength": 30000}
+        }
+      },
+      "required": ["project_id", "keywords", "reddit_search_json"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 10,
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/REDDIT_PAIN_POINT_INTERCEPTOR.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}
