@@ -1,0 +1,117 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.hackernews.show_hn_prep",
+    "title": "Prepare a Show HN launch",
+    "description": "Generate a complete Hacker News Show HN launch preparation package including title options, launch description, maker comment, FAQ preparation, and readiness checklists.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "project_url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Live demo or application URL"
+        },
+        "project_description": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "What the project does in 1-2 sentences"
+        },
+        "github_url": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "GitHub repository URL (if open source)"
+        },
+        "why_built": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "title": "Personal pain point or motivation (1-2 sentences)"
+        },
+        "tech_stack": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Tech stack (if novel or relevant)"
+        },
+        "target_audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "title": "Who would use this (developers, specific role, etc.)"
+        },
+        "current_state": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000,
+          "title": "What's done, what's not, any known limitations"
+        },
+        "launch_goal": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "What you're hoping for (feedback, users, visibility)"
+        },
+        "competitors": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Competitors or alternatives (for FAQ preparation)"
+        },
+        "business_model": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "Free, paid tier, pricing details"
+        },
+        "privacy_data_handling": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Privacy policy and data handling approach"
+        }
+      },
+      "required": [
+        "project_id",
+        "project_url",
+        "project_description",
+        "why_built",
+        "target_audience",
+        "current_state"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/show-hn-prep/SKILL.md"
+      ],
+      "entry_skill": "show-hn-prep",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "media_type": "text/markdown",
+        "max_bytes": 100000,
+        "path_template": "reports/hackernews/{run_id}.md"
+      }
+    }
+  }
+}
