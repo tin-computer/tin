@@ -1,0 +1,79 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.audience_prospector",
+    "title": "Find audience communities and opportunities",
+    "description": "Discover verified ecosystems, communities, organizations, and events where a target audience gathers, with verified URLs and concrete engagement mechanisms.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_audience": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000,
+          "title": "Target audience description",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        },
+        "geography": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Target geography or market",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 20
+          }
+        },
+        "constraints": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Exclusions or strategic constraints",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        }
+      },
+      "required": [
+        "project_id",
+        "target_audience"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/audience-prospector/SKILL.md"
+      ],
+      "entry_skill": "audience-prospector",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/AUDIENCE_PROSPECTS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
