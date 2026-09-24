@@ -1,0 +1,120 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_signal",
+    "title": "Find community problem signals",
+    "description": "Find recent public developer-community threads that closely match a product problem, then prepare helpful, human-reviewed reply drafts without posting them.",
+    "version": "0.1.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "problem_keywords": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "title": "Problem-statement keywords"
+        },
+        "communities": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional sources: github, hackernews, or reddit:<subreddit>"
+        },
+        "max_results": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 10,
+          "title": "Maximum strong matches"
+        }
+      },
+      "required": [
+        "project_id",
+        "problem_keywords"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "custom.api.github_community",
+        "capabilities": [
+          "http.read"
+        ],
+        "required": true
+      },
+      {
+        "provider_key": "custom.api.hn_search",
+        "capabilities": [
+          "http.read"
+        ],
+        "required": true
+      },
+      {
+        "provider_key": "custom.api.reddit_search",
+        "capabilities": [
+          "http.read"
+        ],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/community-signal/SKILL.md",
+        "skills/community-signal/RESPONSE_VALIDATION.md"
+      ],
+      "entry_skill": "community-signal",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "services": {
+        "github": {
+          "provider_key": "custom.api.github_community",
+          "max_calls": 3,
+          "max_response_bytes": 32000
+        },
+        "hackernews": {
+          "provider_key": "custom.api.hn_search",
+          "max_calls": 3,
+          "max_response_bytes": 32000
+        },
+        "reddit": {
+          "provider_key": "custom.api.reddit_search",
+          "max_calls": 2,
+          "max_response_bytes": 32000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/community-signals/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

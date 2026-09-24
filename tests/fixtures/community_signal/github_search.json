@@ -1,0 +1,12 @@
+{
+  "total_count": 1,
+  "incomplete_results": false,
+  "items": [
+    {
+      "title": "Need a way to diagnose flaky CI builds",
+      "html_url": "https://github.com/example/project/issues/42",
+      "updated_at": "2026-09-22T10:15:00Z",
+      "body": "Our builds fail intermittently and the logs do not make the cause clear."
+    }
+  ]
+}
