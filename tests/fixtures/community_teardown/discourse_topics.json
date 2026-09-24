@@ -1,0 +1,46 @@
+{
+  "grouped_search_result": {
+    "topics": [
+      {
+        "id": 1201,
+        "topic_id": 1201,
+        "title": "How do you keep folder sync simple across three devices?",
+        "posts_count": 33,
+        "like_count": 20,
+        "created_at": "2026-06-01T08:00:00Z",
+        "username": "ana_d",
+        "url": ""
+      },
+      {
+        "id": 1202,
+        "topic_id": 1202,
+        "title": "Burst GPU batch jobs: what do you actually use?",
+        "posts_count": 43,
+        "like_count": 30,
+        "created_at": "2026-06-01T08:10:00Z",
+        "username": "mlops",
+        "url": ""
+      },
+      {
+        "id": 1203,
+        "topic_id": 1203,
+        "title": "Pricing pages: why is per-GPU cost always hidden?",
+        "posts_count": 25,
+        "like_count": 12,
+        "created_at": "2026-06-01T08:20:00Z",
+        "username": "pricingguy",
+        "url": ""
+      },
+      {
+        "id": 1204,
+        "topic_id": 1204,
+        "title": "First post, saying hello",
+        "posts_count": 1,
+        "like_count": 0,
+        "created_at": "2026-06-01T08:25:00Z",
+        "username": "newbie",
+        "url": ""
+      }
+    ]
+  }
+}

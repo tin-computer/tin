@@ -1,4 +1,4 @@
-"""Offline checks of the community teardown recipe; no Hacker News requests or model calls."""
+"""Offline checks of the community teardown recipe; no network requests or model calls."""
 
 import json
 import re
@@ -32,14 +32,33 @@ def comments():
     return json.loads((FIXTURES / "comments.json").read_text())["hits"]
 
 
-def threads(recipe):
-    parsed = []
-    for hit in stories():
-        parsed.append(recipe["parse_thread"](hit, comments()))
-    story_records = [row["story"] for row in parsed]
-    picked = recipe["select_threads"](story_records, limit=4)
-    picked_ids = {row["objectID"] for row in picked}
-    return [row for row in parsed if row["story"]["objectID"] in picked_ids]
+def discourse_topics():
+    data = json.loads((FIXTURES / "discourse_topics.json").read_text())
+    return data["grouped_search_result"]["topics"]
+
+
+def discourse_posts():
+    data = json.loads((FIXTURES / "discourse_posts.json").read_text())
+    return data["post_stream"]["posts"]
+
+
+def hn_story_records(recipe):
+    return [recipe["parse_story"]("hacker_news", hit) for hit in stories()]
+
+
+def hn_threads(recipe, limit=3):
+    parsed = [recipe["parse_thread"]("hacker_news", hit, comments()) for hit in stories()]
+    records = [row["story"] for row in parsed]
+    picked = {row["id"] for row in recipe["select_threads"](records, limit=limit)}
+    return [row for row in parsed if row["story"]["id"] in picked]
+
+
+def test_resolve_community_rejects_unsupported(recipe):
+    assert recipe["resolve_community"]("") == "hacker_news"
+    assert recipe["resolve_community"](None) == "hacker_news"
+    assert recipe["resolve_community"]("Discourse") == "discourse"
+    with pytest.raises(ValueError, match="unsupported community"):
+        recipe["resolve_community"]("reddit")
 
 
 def test_epoch_before_is_bounded_and_deterministic(recipe):
@@ -51,40 +70,22 @@ def test_epoch_before_is_bounded_and_deterministic(recipe):
             recipe["epoch_before"](days, now=now)
 
 
-def test_select_threads_prefers_discussion_and_drops_dead_posts(recipe):
-    parsed = [recipe["parse_thread"](hit, comments()) for hit in stories()]
-    story_records = [row["story"] for row in parsed]
-    picked = recipe["select_threads"](story_records, limit=4)
-    assert [row["objectID"] for row in picked] == ["44520003", "44520001", "44520005", "44520007"]
-    assert all(row["score"] > 0 for row in picked)
-    # The zero-comment job post never appears, even at a wide limit.
-    ids = {row["objectID"] for row in recipe["select_threads"](story_records, limit=8)}
-    assert "44520006" not in ids
-
-
-def test_select_threads_dedupes_and_bounds(recipe):
-    hits = stories() + [stories()[0]]
-    assert len(recipe["select_threads"](hits, limit=8)) <= len({row["objectID"] for row in hits})
-    with pytest.raises(ValueError):
-        recipe["select_threads"](hits, limit=0)
-
-
-def test_parse_increases_and_fixture_stays_valid(recipe):
-    hit = stories()[0]
-    story = recipe["parse_story"](hit)
+def test_parse_hn_story_normalizes_fields(recipe):
+    story = recipe["parse_story"]("hacker_news", stories()[0])
     assert story == {
-        "objectID": "44520001",
+        "id": "44520001",
         "title": "Ask HN: What's everyone using for bursty GPU batch jobs?",
         "url": "",
         "points": 86,
-        "num_comments": 42,
+        "comment_count": 42,
         "author": "ana",
         "created_at": "2026-06-01T08:00:00Z",
+        "community": "hacker_news",
     }
     with pytest.raises(ValueError):
-        recipe["parse_story"]({"title": "no id"})
+        recipe["parse_story"]("hacker_news", {"title": "no id"})
     empty = {"comment_text": ""}
-    assert recipe["parse_comments"]([empty, comments()[0]]) == [
+    assert recipe["parse_comments"]("hacker_news", [empty, comments()[0]]) == [
         {
             "text": comments()[0]["comment_text"],
             "author": "mlguru",
@@ -93,20 +94,41 @@ def test_parse_increases_and_fixture_stays_valid(recipe):
     ]
 
 
-def test_validate_thread_rejects_bad_shapes(recipe):
-    story = recipe["parse_story"](stories()[0])
-    good = recipe["parse_thread"](story, comments())
-    assert recipe["validate_thread"](good) is good
+def test_select_threads_prefers_discussion_and_drops_dead_posts(recipe):
+    records = hn_story_records(recipe)
+    picked = recipe["select_threads"](records, limit=3)
+    assert [row["id"] for row in picked] == ["44520003", "44520001", "44520005"]
+    assert all(row["score"] > 0 for row in picked)
+    # The zero-comment job post never appears, even at a wide limit.
+    ids = {row["id"] for row in recipe["select_threads"](records, limit=8)}
+    assert "44520006" not in ids
+    assert "44520004" in ids
 
-    thread = {"story": {}, "comments": []}
-    with pytest.raises(ValueError, match="objectID"):
-        recipe["validate_thread"](thread)
+
+def test_select_threads_dedupes_and_bounds(recipe):
+    records = hn_story_records(recipe) + hn_story_records(recipe)[:1]
+    assert len(recipe["select_threads"](records, limit=8)) <= len({row["id"] for row in records})
+    with pytest.raises(ValueError):
+        recipe["select_threads"](records, limit=0)
+
+
+def test_parse_thread_adds_urls_and_validates(recipe):
+    thread = recipe["parse_thread"]("hacker_news", stories()[0], comments())
+    assert thread["story"]["thread_url"] == "https://news.ycombinator.com/item?id=44520001"
+    assert thread["story"]["thread_path"] == "/api/v1/search_by_date"
+    assert recipe["validate_thread"](thread) is thread
+
+
+def test_validate_thread_rejects_bad_shapes(recipe):
+    story = recipe["parse_story"]("hacker_news", stories()[0])
+    with pytest.raises(ValueError, match="story id"):
+        recipe["validate_thread"]({"story": {}, "comments": []})
 
     thread = {"story": story, "comments": [{"text": "   "}]}
     with pytest.raises(ValueError, match="empty"):
         recipe["validate_thread"](thread)
 
-    thread = {"story": story, "comments": [{"text": "x" * 20_000}]}
+    thread = {"story": story, "comments": [{"text": "x" * 20_001}]}
     with pytest.raises(ValueError, match="too large"):
         recipe["validate_thread"](thread)
 
@@ -144,7 +166,7 @@ def test_rank_grades_evidence_fit_and_dedupes(recipe):
         },
     ]
     ledger = recipe["rank_opportunities"](
-        threads(recipe),
+        hn_threads(recipe, limit=4),
         buyer_context="cheap burst gpu batch computing",
         commits=commits,
     )
@@ -160,37 +182,78 @@ def test_rank_grades_evidence_fit_and_dedupes(recipe):
 
 
 def test_rank_rejects_unknown_kinds_and_unread_threads(recipe):
-    story = recipe["parse_story"](stories()[0])
-    parsed = [recipe["parse_thread"](story, comments())]
+    threads = hn_threads(recipe, limit=1)
     with pytest.raises(ValueError, match="unknown opportunity kind"):
         recipe["rank_opportunities"](
-            parsed,
+            threads,
+            buyer_context="gpu",
             commits=[{"kind": "backlink", "quote": "x", "thread_id": "44520003"}],
         )
     with pytest.raises(ValueError, match="was not read"):
         recipe["rank_opportunities"](
-            parsed,
+            threads,
+            buyer_context="gpu",
             commits=[{"kind": "content_topic", "quote": "x", "thread_id": "44520099"}],
         )
-    assert recipe["rank_opportunities"]([], commits=[]) == []
+    assert recipe["rank_opportunities"]([], buyer_context="gpu", commits=[]) == []
 
 
 def test_rank_dedupes_identical_ideas(recipe):
-    story = recipe["parse_story"](stories()[0])
-    parsed = [recipe["parse_thread"](story, comments())]
     commits = [
         {
             "kind": "content_topic",
             "quote": "burst gpu too expensive to rent",
             "author": "a",
-            "thread_id": "44520001",
+            "thread_id": "44520003",
         },
         {
             "kind": "content_topic",
             "quote": "burst gpu too expensive to rent",
             "author": "b",
-            "thread_id": "44520001",
+            "thread_id": "44520003",
         },
     ]
-    ledger = recipe["rank_opportunities"](parsed, buyer_context="gpu", commits=commits)
+    ledger = recipe["rank_opportunities"](
+        hn_threads(recipe, limit=1),
+        buyer_context="gpu",
+        commits=commits,
+    )
     assert len(ledger) == 1
+
+
+def test_discourse_profile_normalizes_and_urls(recipe):
+    topics = discourse_topics()
+    story = recipe["parse_story"]("discourse", topics[1])
+    assert story["id"] == "1202"
+    assert story["comment_count"] == 42
+    assert story["points"] == 30
+    assert story["community"] == "discourse"
+
+    thread = recipe["parse_thread"](
+        "discourse", topics[1], discourse_posts(), community_base="https://forum.example.com/"
+    )
+    assert thread["story"]["thread_url"] == "https://forum.example.com/t/1202"
+    assert thread["story"]["thread_path"] == "/t/1202.json"
+    with pytest.raises(ValueError, match="community_base"):
+        recipe["parse_thread"]("discourse", topics[1], discourse_posts())
+
+
+def test_discourse_comments_strip_html(recipe):
+    parsed = recipe["parse_comments"]("discourse", discourse_posts())
+    assert len(parsed) == 3
+    assert (
+        parsed[0]["text"]
+        == "We moved our bursty batch jobs to a spot pool and the per-GPU cost dropped a lot."
+    )
+    assert (
+        parsed[1]["text"]
+        == "Pricing pages hide the per-GPU cost & you have to email sales for a quote."
+    )
+
+
+def test_discourse_select_order(recipe):
+    records = [recipe["parse_story"]("discourse", topic) for topic in discourse_topics()]
+    picked = recipe["select_threads"](records, limit=3)
+    assert [row["id"] for row in picked] == ["1202", "1201", "1203"]
+    ids = {row["id"] for row in recipe["select_threads"](records, limit=8)}
+    assert "1204" not in ids
