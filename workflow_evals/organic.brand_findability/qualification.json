@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The fixture project is Harbor (harbor.so), an invoice app for freelancers. Project state holds reports/GROWTH_ONBOARDING_PLAN.md naming Harbor and what it does, one organic.audit evidence.json whose panel names Harbor with site_hosts harbor.so and app.harbor.so, and an earlier reports/brand-findability/ report with a score of 21, unless a case says otherwise.",
+    "Brand name, domain and category come from the inputs first and from project context when the inputs are empty. A run that can resolve neither brand nor domain writes a diagnostic and searches nothing.",
+    "The query plan, every status, the score, the verdict and the fixes come only from the SCORE.md functions. The model labels each result with one kind; the functions reject an own-host result labelled otherwise and a lookalike host labelled own.",
+    "Search results change over time, so live result pages are observations with a date, not fixtures. Run success establishes artifact delivery only."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session under the existing procedure ceiling, with no managed-model routes and no connected-provider calls.",
+    "Web actions: one search per planned query (max_queries, 4 to 16) and at most five page fetches, one of them the homepage. No measured live cost yet."
+  ],
+  "effects": [
+    "Writes one run-owned reports/brand-findability/<run_id>.md in project state.",
+    "Reads the onboarding plan, organic audit evidence, project memory, the keyword plan and earlier brand-findability reports, plus public search results and pages through fenced web search.",
+    "No site change, pull request, post, form submission, contact, memory edit or workflow start. Fixes are text for the founder to act on or hand to the named workflow."
+  ],
+  "rubric": [
+    { "id": "listener_queries", "question": "Is every query something a person who only heard the name would type, with no site filters, quotes or queries outside the planned set?" },
+    { "id": "labels", "question": "Is every result on the brand's own hosts labelled own, and is every same-named company, product, place or word labelled namesake rather than own, profile or about_brand?" },
+    { "id": "evidence", "question": "Does every fix cite the actual results that show the problem, and is each action specific to this brand rather than general search advice?" },
+    { "id": "honest_gaps", "question": "When searches failed, does the report say which ones and withhold a verdict instead of guessing a score?" }
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Second run with empty inputs. The bare name, a common respelling and a mishearing are held by namesakes; the name with its category and the typed domain reach the site; the homepage title lacks the category. Expect the brand resolved from project context, a LOST verdict from the functions, the say-the-query fix first, and the score compared with last run.",
+      "inputs": { "brand_name": "", "domain": "", "category": "", "heard_as": "harbour", "max_queries": 10 },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status: complete",
+          "Verdict: LOST",
+          "## What a listener types",
+          "## Fix these first",
+          "## Since last run",
+          "## Sources and budget",
+          "Fix: say_the_query",
+          "Fix: title_names_category",
+          "Hand-off: site.health_improve",
+          "Score 21 →",
+          "```tin-findability-state"
+        ],
+        "excludes": [
+          "Verdict: FINDABLE",
+          "Status: diagnostic",
+          "https://goharbor.io/ | found",
+          "Fix: improve_seo"
+        ]
+      }
+    },
+    {
+      "id": "search_reads_fail",
+      "description": "Plausible but unusable provider responses: the search for the bare name times out and two more come back empty. An empty read is a failed read, not proof the brand is missing. The useful result is an incomplete report with no verdict, no score and no fixes, naming the failed searches.",
+      "inputs": { "brand_name": "Harbor", "domain": "harbor.so", "category": "invoice app", "heard_as": "", "max_queries": 6 },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: incomplete", "Verdict: UNMEASURED", "Score: —/100", "## Sources and budget"],
+        "excludes": ["Verdict: LOST", "Verdict: AT RISK", "Verdict: FINDABLE", "Fix: "]
+      }
+    },
+    {
+      "id": "already_findable",
+      "description": "A brand with a distinctive name whose site holds the first result for every query. The useful result is a FINDABLE verdict and no invented fixes.",
+      "inputs": { "brand_name": "Quillmate", "domain": "quillmate.com", "category": "grant writing", "heard_as": "", "max_queries": 6 },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: complete", "Verdict: FINDABLE", "Nothing to fix"],
+        "excludes": ["Verdict: LOST", "Verdict: AT RISK", "Fix: "]
+      }
+    },
+    {
+      "id": "no_brand_context",
+      "description": "A new project with empty brand_name and domain, and no onboarding plan, organic audit, keyword plan or project memory. The run must name what is missing and what to run, not guess a brand from the repository name.",
+      "inputs": { "brand_name": "", "domain": "", "category": "", "heard_as": "", "max_queries": 10 },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: diagnostic", "brand_name", "domain", "growth.onboarding_plan"],
+        "excludes": ["## What a listener types", "Verdict: "]
+      }
+    }
+  ]
+}

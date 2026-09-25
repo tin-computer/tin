@@ -1,0 +1,92 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.brand_findability",
+    "title": "Check that people who hear your name can find you",
+    "description": "Run after onboarding, a launch or a rename, and again after fixing: search your name the way someone who only heard it would, get a verdict on whether they reach your site, and at most three fixes for the searches that lose them. It never changes your site, posts or contacts anyone.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The plan names the business and what it does, so brand_name and category can stay empty."
+      },
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit's evidence holds the brand name and every host the site is served from, so pages on them count as found."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "brand_name": {
+          "type": "string",
+          "title": "Brand or product name",
+          "description": "Leave empty to use the name Tin already holds: the onboarding plan, the latest organic audit, or project memory.",
+          "maxLength": 200,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "domain": {
+          "type": "string",
+          "title": "Site domain",
+          "description": "A bare host such as example.com. Leave empty to use the site from the latest organic audit, keyword plan or project memory.",
+          "maxLength": 253,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "category": {
+          "type": "string",
+          "title": "What people would add to the name",
+          "description": "Two to four words that say what it is, such as \"invoice app\". Leave empty to take it from the onboarding plan.",
+          "maxLength": 200,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        },
+        "heard_as": {
+          "type": "string",
+          "title": "How people say or misspell it",
+          "description": "Spellings you have seen people use after hearing the name. One per line.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        },
+        "max_queries": {
+          "type": "integer",
+          "title": "Searches to run",
+          "minimum": 4,
+          "maximum": 16,
+          "default": 10,
+          "x-tin-ui": { "control": "counter", "order": 50 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/brand-findability/SKILL.md",
+        "skills/brand-findability/SCORE.md"
+      ],
+      "entry_skill": "brand-findability",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/brand-findability/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 60000
+      }
+    }
+  }
+}
