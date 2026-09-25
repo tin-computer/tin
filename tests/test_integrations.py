@@ -2700,6 +2700,38 @@ async def test_repository_bundle_ignores_members_outside_the_pinned_tree(monkeyp
         assert archive.getnames() == ["README.md"]
 
 
+async def test_github_repositories_follow_every_installation_page(monkeypatch):
+    names = [f"example-org/repo-{index:03d}" for index in range(1, 151)]
+    requests: list[httpx.Request] = []
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/installation/repositories"
+        page = int(request.url.params.get("page", "1"))
+        per_page = int(request.url.params["per_page"])
+        chunk = names[(page - 1) * per_page : page * per_page]
+        headers = {}
+        if page * per_page < len(names):
+            headers["link"] = (
+                f'<https://api.github.com/installation/repositories?page={page + 1}>; rel="next"'
+            )
+        return httpx.Response(
+            200,
+            headers=headers,
+            json={
+                "total_count": len(names),
+                "repositories": [{"full_name": name, "private": True} for name in chunk],
+            },
+        )
+
+    async with repository_service(monkeypatch, github) as service:
+        options = await service.github_repositories(project_id=PROJECT_ID)
+        receipt = service._database.calls[-1]
+    assert [option.id for option in options] == names
+    assert len(requests) == 2
+    assert receipt["response_summary"] == {"count": 150, "truncated": False}
+
+
 # ---------------------------------------------------------------- Google Ads (ads.google)
 
 ADS_CID = "1234567890"
@@ -2957,6 +2989,58 @@ async def test_connect_google_ads_already_invited_falls_back_to_the_link_status(
         "code": "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
     }
     assert backend.requests[-1][1]["query"].startswith("SELECT customer_client_link")
+
+
+@pytest.mark.asyncio
+async def test_connect_google_ads_to_another_account_cancels_the_pending_invitation() -> None:
+    backend = AdsBackend()
+    service, _ = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    backend.requests.clear()
+    connection = await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id="222-222-2222", clerk_user_id=USER_ID
+    )
+    operations = [
+        body["operation"]
+        for path, body, _ in backend.requests
+        if path.endswith("customerClientLinks:mutate")
+    ]
+    assert operations == [
+        {
+            "update": {
+                "resourceName": f"customers/{ADS_MCC}/customerClientLinks/{ADS_CID}~555",
+                "status": "CANCELED",
+            },
+            "updateMask": "status",
+        },
+        {"create": {"clientCustomer": "customers/2222222222", "status": "PENDING"}},
+    ]
+    assert connection.external_account_id == "2222222222"
+    assert connection.configuration["link_status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_connect_google_ads_refuses_another_account_once_the_invitation_was_accepted() -> (
+    None
+):
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    # The founder accepted in Google Ads, but Tin has not checked the link since.
+    backend.link_status = "ACTIVE"
+    backend.requests.clear()
+    with pytest.raises(IntegrationAuthorizationError, match="Disconnect the linked"):
+        await service.connect_google_ads(
+            project_id=PROJECT_ID, customer_id="222-222-2222", clerk_user_id=USER_ID
+        )
+    assert not any(path.endswith("customerClientLinks:mutate") for path, _, _ in backend.requests)
+    connection = database.connections[(PROJECT_ID, ADS_PROVIDER)]
+    assert connection.external_account_id == ADS_CID
+    assert connection.configuration["link_status"] == "active"
 
 
 @pytest.mark.asyncio

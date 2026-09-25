@@ -123,6 +123,7 @@ WORKSPACE_DEFAULT_CAPABILITIES = (
     "gmail.messages.send",
     "calendar.events.read",
 )
+GITHUB_REPOSITORY_PAGE_LIMIT = 10
 GITHUB_OPEN_PULL_REQUEST_LIMIT = 20
 GITHUB_OPEN_PULL_REQUEST_FILE_LIMIT = 100
 GITHUB_OPEN_PULL_REQUEST_EVIDENCE_MAX_BYTES = 250_000
@@ -1155,22 +1156,31 @@ class IntegrationService:
         token = await self._github_installation_token(installation_id)
         execution_key = f"integration:{uuid4()}"
         fingerprint = _sha256(f"{project_id}:{GITHUB_PROVIDER}:repositories.list")
+        options: list[ProviderOption] = []
+        truncated = False
         try:
-            response = await self._client.get(
-                "https://api.github.com/installation/repositories?per_page=100",
-                headers=self._github_headers(token),
-            )
-            payload = _provider_json(response, provider="GitHub")
-            repositories = payload.get("repositories", [])
-            options = [
-                ProviderOption(
-                    id=str(item["full_name"]),
-                    label=str(item["full_name"]),
-                    detail=("private" if item.get("private") else "public"),
+            # GitHub pages installation repositories at 100; follow a bounded number of pages.
+            for page in range(1, GITHUB_REPOSITORY_PAGE_LIMIT + 1):
+                response = await self._client.get(
+                    "https://api.github.com/installation/repositories",
+                    headers=self._github_headers(token),
+                    params={"per_page": 100, "page": page},
                 )
-                for item in repositories
-                if isinstance(item, dict) and item.get("full_name")
-            ]
+                payload = _provider_json(response, provider="GitHub")
+                repositories = payload.get("repositories", [])
+                options.extend(
+                    ProviderOption(
+                        id=str(item["full_name"]),
+                        label=str(item["full_name"]),
+                        detail=("private" if item.get("private") else "public"),
+                    )
+                    for item in repositories
+                    if isinstance(item, dict) and item.get("full_name")
+                )
+                if not _github_has_next_page(response):
+                    break
+            else:
+                truncated = True
             options.sort(key=lambda option: option.label.casefold())
         except IntegrationError:
             await self._database.record_integration_call(
@@ -1192,7 +1202,7 @@ class IntegrationService:
             capability="repositories.list",
             request_fingerprint=fingerprint,
             status="completed",
-            response_summary={"count": len(options)},
+            response_summary={"count": len(options), "truncated": truncated},
             provider_request_id=response.headers.get("x-github-request-id"),
         )
         return options
@@ -3498,14 +3508,16 @@ class IntegrationService:
         existing = await self._database.get_integration_connection(
             project_id=project_id, provider_key=ADS_PROVIDER
         )
-        if (
-            existing is not None
-            and existing.external_account_id not in {None, account}
-            and existing.configuration.get("link_status") == "active"
-        ):
-            raise IntegrationAuthorizationError(
-                "Disconnect the linked Google Ads account before connecting another one"
-            )
+        if existing is not None and existing.external_account_id not in {None, account}:
+            if existing.configuration.get("link_status") == "pending":
+                # The old invitation may have been accepted since Tin last checked it.
+                existing = await self.google_ads_link_status(project_id=project_id)
+            if existing.configuration.get("link_status") == "active":
+                raise IntegrationAuthorizationError(
+                    "Disconnect the linked Google Ads account before connecting another one"
+                )
+            # The overwrite below forgets the old account, so withdraw its invitation first.
+            await self._cancel_google_ads_link(existing)
         configuration = {
             **(dict(existing.configuration) if existing is not None else {}),
             "customer_id": account,
