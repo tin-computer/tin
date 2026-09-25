@@ -27,6 +27,20 @@ PYTHON = "/opt/tin-lite/metadata-venv/bin/python"
 MAX_RESULT = 64_000 * 6 + 2048
 MAX_RPC = 128_000
 SOCKET = "/run/tin-code-model.sock"
+SERVICE_ERROR_EXIT = 3
+"""Exit status when authored code let a service error from the bridge escape.
+
+Only that fact crosses back, so the host may report its own stored error for the run; any
+other failure keeps the generic status. Must match e2b_runtime.SERVICE_ERROR_EXIT.
+"""
+
+
+class ServiceError(ValueError):
+    """A service error Tin handed to authored code, as the documented ValueError."""
+
+
+class ServiceErrorEscaped(Exception):
+    """Authored code let a ServiceError escape; the runner exits with SERVICE_ERROR_EXIT."""
 
 
 class Models:
@@ -52,7 +66,8 @@ class Models:
             client.sendall(raw)
             response = json.loads(client.makefile("rb").readline(MAX_RPC + 1))
         if response.get("error"):
-            raise ValueError(response["error"])
+            error = ServiceError if request.get("kind") == "service" else ValueError
+            raise error(response["error"])
         return response["result"]
 
 
@@ -138,6 +153,8 @@ def managed_process(command, timeout):
                         if len(response) > MAX_RPC:
                             raise ValueError("model response exceeds its bound")
                         client.sendall(response + b"\n")
+                if process.returncode == SERVICE_ERROR_EXIT:
+                    raise ServiceErrorEscaped
                 if process.returncode:
                     raise RuntimeError("code worker failed")
             finally:
@@ -158,9 +175,12 @@ def worker():
     sys.path.insert(0, str(ROOT))
     namespace = runpy.run_path(str(ROOT / context["entrypoint"]))
     ctx = Context(context["context"]) if context.get("model_client") else context["context"]
-    result = namespace["run"](ctx, context["inputs"])
-    if inspect.isawaitable(result):
-        result = asyncio.run(result)
+    try:
+        result = namespace["run"](ctx, context["inputs"])
+        if inspect.isawaitable(result):
+            result = asyncio.run(result)
+    except ServiceError:
+        raise ServiceErrorEscaped from None
     raw = json.dumps(result, ensure_ascii=False, allow_nan=False).encode("utf-8")
     if len(raw) > MAX_RESULT:
         raise ValueError("result too large")
@@ -235,6 +255,8 @@ def controller():
 if __name__ == "__main__":
     try:
         worker() if sys.argv[1:] == ["--worker"] else controller()
+    except ServiceErrorEscaped:
+        raise SystemExit(SERVICE_ERROR_EXIT) from None
     except BaseException:
         # Do not propagate customer exceptions/source/terminal output to trusted logs.
         raise SystemExit("Code workflow failed or exceeded its execution limits.") from None

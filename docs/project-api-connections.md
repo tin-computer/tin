@@ -97,10 +97,13 @@ public DNS addresses before attaching credentials, preserves the host resolver's
 preference, verifies TLS for the approved hostname,
 ignores proxy environment variables, refuses compressed responses and bounds returned JSON.
 Credential echoes are withheld. Non-redirect HTTP responses return `{status, data}` so code
-can validate business results. Invalid, unavailable or ambiguous results stop the attempt and
-do not silently repeat the external request. An oversized response is different: it arrived,
-so it is settled as a named `max_response_bytes` error for that step, counted against the
-allowance, and later steps can still call the service.
+can validate business results; an empty body, such as a 204 to a DELETE, returns `data: null`.
+Unavailable or ambiguous results stop the attempt and do not silently repeat the external
+request. An oversized response is different: it arrived, so it is settled as a named
+`max_response_bytes` error for that step, counted against the allowance, and later steps can
+still call the service. A body that is not JSON is settled the same way, as an
+`invalid_response` error naming the HTTP status, with the body withheld; a 401 or 403 still
+marks the connection for attention.
 
 GET requires `http.read`. POST/PUT/PATCH/DELETE require `http.write` **and** that exact method
 on the connection. Where supported, configuring `Idempotency-Key` or `X-Idempotency-Key`

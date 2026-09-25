@@ -1911,10 +1911,7 @@ class IntegrationService:
         max_results: int,
         execution_key: str,
     ) -> dict[str, Any]:
-        if not query.strip() or len(query) > 500:
-            raise IntegrationError("Gmail search query must contain 1-500 characters")
-        if not 1 <= max_results <= 100:
-            raise IntegrationError("Gmail search result limit must be between 1 and 100")
+        _gmail_search_request(query, max_results)
         connection = await self._workspace_connection(
             project_id=project_id,
             capability="gmail.messages.read",
@@ -1980,8 +1977,7 @@ class IntegrationService:
         thread_id: str,
         execution_key: str,
     ) -> dict[str, Any]:
-        if not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", thread_id):
-            raise IntegrationError("Gmail thread ID is invalid")
+        _gmail_thread_request(thread_id)
         connection = await self._workspace_connection(
             project_id=project_id,
             capability="gmail.messages.read",
@@ -2053,12 +2049,7 @@ class IntegrationService:
         max_results: int,
         execution_key: str,
     ) -> dict[str, Any]:
-        start = _aware_datetime(time_min, field="Calendar start")
-        end = _aware_datetime(time_max, field="Calendar end")
-        if end <= start or end - start > timedelta(days=366):
-            raise IntegrationError("Calendar range must be positive and at most 366 days")
-        if len(query) > 500 or not 1 <= max_results <= 250:
-            raise IntegrationError("Calendar query or result limit is invalid")
+        start, end = _calendar_request(time_min, time_max, query, max_results)
         connection = await self._workspace_connection(
             project_id=project_id,
             capability="calendar.events.read",
@@ -2358,27 +2349,9 @@ class IntegrationService:
             raise IntegrationAuthorizationError("Choose a Search Console property first")
         if expected_site_url is not None and selected_site != expected_site_url:
             raise IntegrationAuthorizationError("The selected Search Console property changed")
-        try:
-            start = date.fromisoformat(start_date)
-            end = date.fromisoformat(end_date)
-        except ValueError as exc:
-            raise IntegrationError("Search Console dates must use YYYY-MM-DD") from exc
-        if end < start or (end - start).days > 366:
-            raise IntegrationError("Search Console date range must span at most 366 days")
-        allowed_dimensions = {"date", "query", "page", "country", "device", "searchAppearance"}
-        if (
-            not dimensions
-            or len(dimensions) > 3
-            or any(item not in allowed_dimensions for item in dimensions)
-        ):
-            raise IntegrationError("Search Console dimensions are unsupported")
-        if type(row_limit) is not int or not 1 <= row_limit <= 25_000:
-            raise IntegrationError("Search Console row limit must be between 1 and 25000")
-        if type(start_row) is not int or not 0 <= start_row <= GSC_MAX_START_ROW:
-            raise IntegrationError(
-                f"Search Console start row must be between 0 and {GSC_MAX_START_ROW}"
-            )
-        filters = _search_console_filters(dimension_filters)
+        filters = _search_console_request(
+            start_date, end_date, dimensions, row_limit, start_row, dimension_filters
+        )
         sent_limit = row_limit
         if max_response_bytes is not None:
             # Lossless: a response that fits the bound cannot hold more rows than this.
@@ -4273,7 +4246,7 @@ def _workspace_capabilities_for_scopes(scopes: set[str]) -> set[str]:
 def _aware_datetime(value: str, *, field: str) -> datetime:
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise IntegrationError(f"{field} must be an ISO 8601 timestamp") from exc
     if parsed.tzinfo is None:
         raise IntegrationError(f"{field} must include a timezone")
@@ -4466,6 +4439,84 @@ def _search_console_filters(value: Any) -> list[dict[str, str]]:
             }
         )
     return filters
+
+
+def _search_console_request(
+    start_date: str,
+    end_date: str,
+    dimensions: tuple[str, ...] = ("date",),
+    row_limit: int = 1000,
+    start_row: int = 0,
+    dimension_filters: list[dict[str, Any]] | tuple[dict[str, Any], ...] | None = None,
+) -> list[dict[str, str]]:
+    try:
+        start = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+    except (TypeError, ValueError) as exc:
+        raise IntegrationError("Search Console dates must use YYYY-MM-DD") from exc
+    if end < start or (end - start).days > 366:
+        raise IntegrationError("Search Console date range must span at most 366 days")
+    allowed_dimensions = {"date", "query", "page", "country", "device", "searchAppearance"}
+    if (
+        not isinstance(dimensions, (list, tuple))
+        or not dimensions
+        or len(dimensions) > 3
+        or any(not isinstance(item, str) or item not in allowed_dimensions for item in dimensions)
+    ):
+        raise IntegrationError("Search Console dimensions are unsupported")
+    if type(row_limit) is not int or not 1 <= row_limit <= 25_000:
+        raise IntegrationError("Search Console row limit must be between 1 and 25000")
+    if type(start_row) is not int or not 0 <= start_row <= GSC_MAX_START_ROW:
+        raise IntegrationError(
+            f"Search Console start row must be between 0 and {GSC_MAX_START_ROW}"
+        )
+    return _search_console_filters(dimension_filters)
+
+
+def _gmail_search_request(query: str, max_results: int) -> None:
+    if not isinstance(query, str) or not query.strip() or len(query) > 500:
+        raise IntegrationError("Gmail search query must contain 1-500 characters")
+    if type(max_results) is not int or not 1 <= max_results <= 100:
+        raise IntegrationError("Gmail search result limit must be between 1 and 100")
+
+
+def _gmail_thread_request(thread_id: str) -> None:
+    if not isinstance(thread_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,128}", thread_id):
+        raise IntegrationError("Gmail thread ID is invalid")
+
+
+def _calendar_request(
+    time_min: str, time_max: str, query: str, max_results: int
+) -> tuple[datetime, datetime]:
+    start = _aware_datetime(time_min, field="Calendar start")
+    end = _aware_datetime(time_max, field="Calendar end")
+    if end <= start or end - start > timedelta(days=366):
+        raise IntegrationError("Calendar range must be positive and at most 366 days")
+    if (
+        not isinstance(query, str)
+        or len(query) > 500
+        or type(max_results) is not int
+        or not 1 <= max_results <= 250
+    ):
+        raise IntegrationError("Calendar query or result limit is invalid")
+    return start, end
+
+
+# The adapters' own value checks, by service operation, so the service gateway can refuse a
+# malformed call before a receipt exists instead of recording an uncertain provider attempt.
+GOOGLE_ARGUMENT_CHECKS = {
+    "search_analytics.read": _search_console_request,
+    "gmail.messages.search": _gmail_search_request,
+    "gmail.thread.read": _gmail_thread_request,
+    "calendar.events.list": _calendar_request,
+}
+
+
+def check_google_arguments(operation: str, arguments: dict[str, Any]) -> None:
+    """Gateway hook: raise IntegrationError, or TypeError for a missing argument."""
+    check = GOOGLE_ARGUMENT_CHECKS.get(operation)
+    if check is not None:
+        check(**arguments)
 
 
 def _json_size(value: Any) -> int:

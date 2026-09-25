@@ -18,8 +18,15 @@ from tin_lite.integrations import (
     IntegrationRequirement,
     ServiceCallRefused,
     ServiceResponseTooLarge,
+    check_google_arguments,
 )
-from tin_lite.project_connections import CUSTOM_KEY, READ_METHODS, request_api, request_contract
+from tin_lite.project_connections import (
+    CUSTOM_KEY,
+    READ_METHODS,
+    InvalidAPIResponse,
+    request_api,
+    request_contract,
+)
 
 OPERATION = "code_service_call_v1"
 # Adding an adapter operation is an explicit reviewed mapping, never getattr on author input.
@@ -52,16 +59,35 @@ OPERATIONS = {
         for name, op in posthog_connection.OPERATIONS.items()
     },
 }
+
+
+def _check_google_arguments(operation, args):
+    try:
+        check_google_arguments(operation, args)
+    except IntegrationError as exc:
+        raise ServiceArgumentError(str(exc)) from None
+
+
 # Providers whose argument values are checked before a receipt exists, so a malformed call is
 # a contract error the author can fix rather than an uncertain provider attempt.
 ARGUMENT_CHECKS = {
     STRIPE_PROVIDER: stripe_connection.check_arguments,
     POSTHOG_PROVIDER: posthog_connection.check_arguments,
+    "analytics.gsc": _check_google_arguments,
+    "workspace.google": _check_google_arguments,
 }
 
 
 class CodeServiceError(ValueError):
-    """Fixed safe errors; never supplier exceptions, bodies, URLs or authentication."""
+    """Fixed safe errors; never supplier exceptions, bodies, URLs or authentication.
+
+    Authored code receives the message as a ValueError from the call, unless `fatal`: the run
+    itself lost its authority, so it stops without handing anything back.
+    """
+
+    def __init__(self, message, *, fatal=False):
+        super().__init__(message)
+        self.fatal = fatal
 
 
 def _too_large(service):
@@ -136,7 +162,7 @@ class CodeServices:
                 await self.authorize(conn=conn, run=run, workflow=workflow, require_budget=False)
             except CodeModelError:
                 raise CodeServiceError(
-                    "The run no longer has permission to use services."
+                    "The run no longer has permission to use services.", fatal=True
                 ) from None
             requirement = IntegrationRequirement(service.provider_key, service.capabilities)
             try:
@@ -291,6 +317,9 @@ class CodeServices:
                         execution_key=usage_key,
                         result={**usage, "outcome": "response_received", "usage": {"requests": 1}},
                     )
+                    # A rejected credential needs attention whatever body the API sent with it.
+                    if isinstance(exc, InvalidAPIResponse) and exc.status in {401, 403}:
+                        await self._authentication_failed(conn, run, connection, secret_revision)
                 raise CodeServiceError(refused["message"]) from None
             except (
                 IntegrationError,
@@ -318,20 +347,7 @@ class CodeServices:
                 )
                 await project_completed_steps(conn, run.id)
                 if custom and response["status"] in {401, 403}:
-                    await conn.execute(
-                        """UPDATE integration_connections
-                           SET status='needs_attention', last_error_code='authentication_failed',
-                               configuration=jsonb_set(configuration,'{access_verified}','false'),
-                               last_checked_at=now()
-                           WHERE id=$1 AND configuration->>'revision'=$2
-                           AND EXISTS(SELECT 1 FROM project_secrets WHERE project_id=$3
-                             AND name=$4 AND revision=$5)""",
-                        connection.id,
-                        connection.configuration["revision"],
-                        run.project_id,
-                        connection.configuration["secret_name"],
-                        secret_revision,
-                    )
+                    await self._authentication_failed(conn, run, connection, secret_revision)
                 if custom and 200 <= response["status"] < 300:
                     await conn.execute(
                         """UPDATE integration_connections
@@ -346,6 +362,22 @@ class CodeServices:
                         secret_revision,
                     )
             return response
+
+    async def _authentication_failed(self, conn, run, connection, secret_revision):
+        await conn.execute(
+            """UPDATE integration_connections
+               SET status='needs_attention', last_error_code='authentication_failed',
+                   configuration=jsonb_set(configuration,'{access_verified}','false'),
+                   last_checked_at=now()
+               WHERE id=$1 AND configuration->>'revision'=$2
+               AND EXISTS(SELECT 1 FROM project_secrets WHERE project_id=$3
+                 AND name=$4 AND revision=$5)""",
+            connection.id,
+            connection.configuration["revision"],
+            run.project_id,
+            connection.configuration["secret_name"],
+            secret_revision,
+        )
 
     async def adapter(self, provider, operation, args, run, connection, key, *, max_response_bytes):
         service = self.integrations

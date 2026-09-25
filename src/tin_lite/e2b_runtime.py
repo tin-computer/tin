@@ -14,6 +14,7 @@ from typing import Any
 from e2b import (
     AsyncCommandHandle,
     AsyncSandbox,
+    CommandExitException,
     FileType,
     NotFoundException,
     SandboxNotFoundException,
@@ -35,6 +36,8 @@ from tin_lite.usage_capture import observe_sandbox
 logger = logging.getLogger(__name__)
 
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
+SERVICE_ERROR_EXIT = 3
+"""code_runner's exit status when authored code let a forwarded service error escape."""
 CONTEXT_ENV_MAX = 96 * 1024
 """Largest base64 context still passed as a variable, under the 128 KiB per-string cap."""
 
@@ -276,7 +279,7 @@ class E2BRuntime:
         from tin_lite.code_models import CodeModelError
         from tin_lite.code_services import CodeServiceError
 
-        sandbox = None
+        sandbox = forwarded = None
         try:
             sandbox = await AsyncSandbox.connect(
                 sandbox_id, timeout=packet["timeout_seconds"] + 30, api_key=self._api_key
@@ -291,7 +294,7 @@ class E2BRuntime:
             buffer = ""
 
             async def model_notice(chunk):
-                nonlocal buffer
+                nonlocal buffer, forwarded
                 buffer += chunk
                 if len(buffer) > 128:
                     raise RuntimeError("Invalid code control notification.")
@@ -312,6 +315,12 @@ class E2BRuntime:
                         # A schema rejection may be handled by authored code. A corrective
                         # request needs a different step and another declared allowance.
                         response = {"error": exc.code}
+                    except CodeServiceError as exc:
+                        if exc.fatal:
+                            raise
+                        # Settled refusals and uncertain results are the package's to handle;
+                        # the gateway already blocks any step that must not be retried.
+                        forwarded, response = exc, {"error": str(exc)}
                     await sandbox.files.write(
                         "/root/tin-code/response.tmp",
                         json.dumps(response, ensure_ascii=False),
@@ -335,7 +344,12 @@ class E2BRuntime:
             raise
         except (CodeModelError, CodeServiceError):
             raise
-        except Exception:
+        except Exception as exc:
+            escaped = isinstance(exc, CommandExitException) and exc.exit_code == SERVICE_ERROR_EXIT
+            if forwarded is not None and escaped:
+                # The package let the service error escape, so the run fails for Tin's named
+                # reason. A package that handled it and failed later keeps the generic failure.
+                raise forwarded from None
             raise RuntimeError("Code workflow failed or exceeded its execution limits.") from None
         finally:
             if sandbox is not None:
