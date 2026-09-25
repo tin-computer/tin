@@ -1,0 +1,45 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.decay_refresh",
+    "title": "Refresh stale marketing content",
+    "description": "Finds customer-facing content that may have become outdated, verifies changes against current company evidence, and produces a prioritized refresh brief without publishing or modifying content.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "system": "content-refresh",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/content-decay-refresh/SKILL.md"
+      ],
+      "entry_skill": "content-decay-refresh",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/content-decay-refresh/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
