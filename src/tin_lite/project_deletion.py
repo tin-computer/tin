@@ -95,6 +95,9 @@ async def delete_project(
                 await db.start_effect(conn, execution_key=key, operation=OPERATION)
                 deleted_at = await db.tombstone_project(conn, project_id=project_id, actor=actor)
                 stopped = await db.stop_runs_for_project(conn, project_id=project_id)
+                # A retry finds its runs already stopped; close them again with any new ones.
+                earlier = await db.runs_stopped_by_deletion(conn, project_id=project_id)
+                closing = stopped + [handle for handle in earlier if handle not in stopped]
                 scheduled = await db.archive_project_workflows_for_deletion(
                     conn, project_id=project_id
                 )
@@ -107,7 +110,7 @@ async def delete_project(
                 connection.provider_key
                 for connection in await db.list_integration_connections(project_id)
             ]
-            failures = await _close_temporal_and_sandboxes(runtime, stopped, scheduled)
+            failures = await _close_temporal_and_sandboxes(runtime, closing, scheduled)
             if failures:
                 message = "; ".join(failures)[:2000]
                 async with conn.transaction():

@@ -1785,6 +1785,11 @@ class Database:
     ) -> ProjectWorkflow:
         project_workflow_id = uuid4()
         async with self.pool.acquire() as conn, conn.transaction():
+            if not await conn.fetchval(
+                "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR SHARE",
+                project_id,
+            ):
+                raise LookupError(f"project {project_id} does not exist")
             workflow = await conn.fetchrow(
                 """
                 SELECT * FROM workflows
@@ -2239,8 +2244,10 @@ class Database:
                     "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
                     f"content-program:{UUID(input_payload['program_id'])}",
                 )
+            # Deletion tombstones under the same row lock, so admission never outlives it.
             exists = await conn.fetchval(
-                "SELECT true FROM projects WHERE id = $1 FOR UPDATE", project_id
+                "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
+                project_id,
             )
             if not exists:
                 raise LookupError(f"project {project_id} does not exist")
@@ -5965,6 +5972,33 @@ class Database:
                 "DELETE FROM broker_grants WHERE run_id = ANY($1::uuid[])",
                 [row["id"] for row in rows],
             )
+        return [
+            StoppedRunHandle(
+                run_id=row["id"],
+                temporal_workflow_id=row["temporal_workflow_id"],
+                sandbox_id=row["sandbox_id"],
+            )
+            for row in rows
+        ]
+
+    async def runs_stopped_by_deletion(
+        self, conn: asyncpg.Connection, *, project_id: UUID
+    ) -> list[StoppedRunHandle]:
+        """The runs a deletion stopped, on this attempt or an earlier one.
+
+        The stop commits before the external cleanup, so a retry finds these runs already
+        stopped; closing them again is safe and finishes what a failed attempt left open.
+        """
+        rows = await conn.fetch(
+            """
+            SELECT run.id, run.temporal_workflow_id, run.sandbox_id
+            FROM workflow_runs run JOIN projects project ON project.id = run.project_id
+            WHERE run.project_id = $1 AND run.status = 'stopped'
+              AND run.finished_at >= project.deleted_at
+            ORDER BY run.created_at, run.id
+            """,
+            project_id,
+        )
         return [
             StoppedRunHandle(
                 run_id=row["id"],
