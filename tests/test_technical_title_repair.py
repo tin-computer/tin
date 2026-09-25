@@ -188,6 +188,35 @@ async def test_fresh_check_pins_public_socket_but_preserves_tls_and_http_hostnam
     assert len(requests) == 1
 
 
+@pytest.mark.parametrize(
+    "addresses",
+    [
+        ["93.184.215.14", "2606:4700:4700::1111"],
+        ["2606:4700:4700::1111", "93.184.215.14"],
+    ],
+)
+async def test_fresh_check_keeps_resolver_preference_and_checks_every_address(addresses):
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, content=BEFORE, headers={"content-type": "text/html"})
+
+    rows = AsyncMock(return_value=[(2, 1, 6, "", (ip, 443)) for ip in addresses])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await technical_fix.fetch_page(
+            "https://example.com/", host="example.com", resolver=rows, client=client
+        )
+        assert [request.url.host for request in requests] == [addresses[0]]
+
+        rows.return_value.append((2, 1, 6, "", ("127.0.0.1", 443)))
+        with pytest.raises(ValueError, match="public network"):
+            await technical_fix.fetch_page(
+                "https://example.com/", host="example.com", resolver=rows, client=client
+            )
+    assert len(requests) == 1
+
+
 @pytest.mark.parametrize("ip", ["127.0.0.1", "10.0.0.1", "169.254.169.254", "::1", "fc00::1"])
 async def test_private_dns_resolution_never_opens_a_socket(ip):
     async with httpx.AsyncClient(

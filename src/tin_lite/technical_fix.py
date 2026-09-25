@@ -147,7 +147,8 @@ async def fetch_page(url, *, host, client=None, resolver=None):
             ):
                 raise ValueError("Fresh verification left the audited HTTPS host.")
             addresses = await resolver(host, 443, type=socket.SOCK_STREAM)
-            ips = sorted({row[4][0] for row in addresses})
+            # Keep the resolver's route preference; lexical sorting can select unreachable IPv6.
+            ips = list(dict.fromkeys(row[4][0] for row in addresses))
             if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
                 raise ValueError("Fresh verification requires public network addresses.")
             pinned_url = httpx.URL(url).copy_with(host=ips[0])

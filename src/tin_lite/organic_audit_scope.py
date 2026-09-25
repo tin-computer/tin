@@ -36,7 +36,8 @@ async def resolve_site_identity(url, *, client=None, resolver=None):
                 seen.add(url)
                 current_host = urlsplit(url).hostname
                 addresses = await resolver(current_host, 443, type=socket.SOCK_STREAM)
-                ips = sorted({row[4][0] for row in addresses})
+                # Keep the resolver's route preference; lexical sorting can select unreachable IPv6.
+                ips = list(dict.fromkeys(row[4][0] for row in addresses))
                 if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
                     result["status"] = "non_public_address"
                     break

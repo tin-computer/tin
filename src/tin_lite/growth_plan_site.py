@@ -93,7 +93,8 @@ def _same_site(a, b):
 
 async def _public_ip(host, port, resolver):
     addresses = await resolver(host, port, type=socket.SOCK_STREAM)
-    ips = sorted({row[4][0] for row in addresses})
+    # Keep the resolver's route preference; lexical sorting can select unreachable IPv6.
+    ips = list(dict.fromkeys(row[4][0] for row in addresses))
     if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
         raise ValueError("non_public_address")
     return ips[0]

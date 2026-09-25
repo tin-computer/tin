@@ -19,6 +19,7 @@ from tin_lite.organic_audit import (
     audit_paths,
     audit_policy,
     canonical_json,
+    check_outcome,
     digest,
     in_scope_url,
     public_site,
@@ -256,9 +257,19 @@ class TechnicalFixSources:
         except (KeyError, TypeError, ValueError, AttributeError, RecursionError) as exc:
             raise _invalid_source() from exc
         selections = []
+        applicability = audit_policy(evidence["policy"]["version"]).get("check_applicability")
         for finding in findings:
             flag = finding["affected_url_evidence"]["flag"]
-            affected = [p["url"] for p in crawl["pages"] if p["checks"].get(flag) is True]
+            # Select the same pages the pinned audit counted, not every raw provider flag.
+            affected = [
+                p["url"]
+                for p in crawl["pages"]
+                if (
+                    check_outcome(p, flag) == "problem"
+                    if applicability
+                    else p["checks"].get(flag) is True
+                )
+            ]
             reason = None
             if finding["check_id"] not in self.supported_checks:
                 reason = "check_not_supported"

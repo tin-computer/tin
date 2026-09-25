@@ -41,7 +41,11 @@ def source_fixture(
                 "resource_type": "html",
                 "status_code": 200,
                 "meta": {"title": ""},
-                "checks": {"canonical": True, "no_title": True} if checks is None else checks,
+                "checks": {"canonical": True, "no_title": True}
+                if checks is None
+                else checks[index]
+                if isinstance(checks, list)
+                else checks,
             }
             for index in range(count)
         ],
@@ -403,6 +407,16 @@ async def test_full_affected_list_is_recovered_not_silently_capped(count, reason
             await f.service.preflight(**f.selection)
         assert error.value.code == reason
         f.integrations.github_repository_binding.assert_not_awaited()
+
+
+async def test_affected_list_uses_the_pinned_audit_applicability():
+    checks = [{"canonical": True, "no_title": True}]
+    checks += [{"canonical": False, "no_title": True}] * 5 + [{"no_title": True}]
+    f = source_fixture(count=len(checks), checks=checks, policy="organic-audit-v9")
+    row = (await inspect(f))["findings"][0]
+    assert row["finding"]["affected_count"] == 1
+    assert row["affected_urls"] == ["https://example.com/page-000"]
+    assert row["source_eligible"] is True
 
 
 async def test_unknown_checks_and_empty_findings_do_not_invent_a_repair():

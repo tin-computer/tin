@@ -734,6 +734,32 @@ async def test_site_reader_refuses_non_public_addresses_and_outside_redirects():
         assert outside["pages"][0]["error"] == "outside_site_redirect"
 
 
+@pytest.mark.parametrize(
+    "addresses",
+    [
+        ["93.184.216.34", "2606:4700:4700::1111"],
+        ["2606:4700:4700::1111", "93.184.216.34"],
+    ],
+)
+async def test_site_reader_keeps_resolver_preference_and_checks_every_address(addresses):
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.host)
+        return httpx.Response(404, text="not found", headers={"content-type": "text/html"})
+
+    async def resolve(host, port, **_kwargs):
+        return [(None, None, None, None, (ip, port)) for ip in addresses]
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await read_site("https://acme.example", client=client, resolver=resolve)
+        assert seen and set(seen) == {addresses[0]}
+
+        addresses.append("127.0.0.1")
+        private = await read_site("https://acme.example", client=client, resolver=resolve)
+    assert private["pages"][0]["error"] == "non_public_address"
+
+
 async def test_site_reader_reads_pages_the_sitemap_and_reports_a_js_shell():
     body = "<html><title>Acme</title><meta name='description' content='Forms for clinics'>" + (
         "<p>" + "Acme builds forms for clinics. " * 80 + "</p><a href='/pricing'>Pricing</a></html>"

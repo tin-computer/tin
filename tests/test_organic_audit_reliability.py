@@ -120,6 +120,36 @@ async def test_unrelated_or_unsafe_redirect_never_broadens_scope(destination):
     assert audit_hosts({**scope(), "site_identity": identity}) == ("example.com",)
 
 
+@pytest.mark.parametrize(
+    "addresses",
+    [
+        ["93.184.216.34", "2606:4700:4700::1111"],
+        ["2606:4700:4700::1111", "93.184.216.34"],
+    ],
+)
+@pytest.mark.asyncio
+async def test_site_identity_keeps_resolver_preference_and_checks_every_address(addresses):
+    calls = []
+
+    def handle(request):
+        calls.append(request.url.host)
+        return httpx.Response(200)
+
+    rows = [(None, None, None, None, (ip, 443)) for ip in addresses]
+    resolver = AsyncMock(return_value=rows)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
+        identity = await resolve_site_identity(
+            "https://example.com/", client=client, resolver=resolver
+        )
+        assert identity["status"] == "observed" and calls == [addresses[0]]
+
+        rows.append((None, None, None, None, ("127.0.0.1", 443)))
+        identity = await resolve_site_identity(
+            "https://example.com/", client=client, resolver=resolver
+        )
+    assert identity["status"] == "non_public_address" and len(calls) == 1
+
+
 @pytest.mark.asyncio
 async def test_private_redirect_destination_is_not_requested_or_recorded():
     resolver = AsyncMock(
