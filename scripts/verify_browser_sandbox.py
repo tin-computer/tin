@@ -42,6 +42,21 @@ PROBE_CLIENT = dedent(
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
+    def jpeg_dimensions(data):
+        if data[:2] != b'\xff\xd8':
+            fail('screenshot was not JPEG')
+        offset = 2
+        while offset + 9 <= len(data):
+            marker = data[offset:offset+2]
+            length = int.from_bytes(data[offset+2:offset+4], 'big')
+            if marker in (b'\xff\xc0', b'\xff\xc1', b'\xff\xc2'):
+                return (int.from_bytes(data[offset+7:offset+9], 'big'),
+                        int.from_bytes(data[offset+5:offset+7], 'big'))
+            if marker[0] != 255 or length < 2:
+                break
+            offset += 2 + length
+        fail('screenshot had no JPEG dimensions')
+
     def fail(message):
         print(message, file=sys.stderr)
         raise SystemExit(72)
@@ -116,6 +131,8 @@ PROBE_CLIENT = dedent(
                 images = [b for b in result.content if getattr(b, 'type', '') == 'image']
                 if len(images) != 1 or not 0 < len(base64.b64decode(images[0].data)) <= 2_000_000:
                     fail('bounded screenshot was not returned through MCP')
+                if jpeg_dimensions(base64.b64decode(images[0].data)) != (width, height):
+                    fail('screenshot dimensions did not match the requested viewport')
             failures = await call(session, 'network_failures')
             if '404 GET' not in failures or '/missing.woff2' not in failures:
                 fail('a real missing font was not reported')
