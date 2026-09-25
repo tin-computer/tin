@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Target competitor has a public product footprint with established pricing tiers.",
+    "The bound workspace contains documentation or codebase defining core features and architecture.",
+    "Outputs must enforce radical technical honesty by disclosing at least two competitor strengths."
+  ],
+  "cost_drivers": [
+    "One bounded Codex procedure session using standard isolated and fenced execution.",
+    "Processing time scales with project documentation depth, taking between 60 to 180 seconds.",
+    "Zero paid third-party API keys or external data extraction services required."
+  ],
+  "effects": [
+    "Writes reports/MIGRATION_BATTLECARD.md in the project state.",
+    "Zero external mutations, webhook transmissions, or credential persistence."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Standard developer tool displacement with medium complexity (PostHog vs Mixpanel).",
+      "inputs": {
+        "competitor_name": "Mixpanel",
+        "competitor_domain": "mixpanel.com",
+        "target_persona": "Growth Engineers, Product Managers, and CTOs",
+        "core_differentiators": "Self-hosted or EU cloud, open source, unlimited event retention, SQL access via ClickHouse, 70% lower TCO.",
+        "known_limitations": "Mixpanel has more polished out-of-the-box non-technical funnel visualizations and older mobile SDK maturity.",
+        "migration_complexity": "medium"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "## Executive Summary & Switching Thesis",
+          "## Incumbent Lock-in & Friction Analysis",
+          "## Honest Architectural Parity Matrix",
+          "## Switcher Positioning & Messaging Guide"
+        ]
+      }
+    },
+    {
+      "id": "high_complexity",
+      "description": "High-complexity infrastructure migration teardown (OpenTelemetry vs Datadog).",
+      "inputs": {
+        "competitor_name": "Datadog",
+        "competitor_domain": "datadoghq.com",
+        "target_persona": "DevOps Leads and VP of Infrastructure",
+        "core_differentiators": "OpenTelemetry native, predictable host-based billing with no custom metrics overage penalty.",
+        "known_limitations": "Datadog has 600+ turnkey vendor integrations and enterprise FedRAMP High certification.",
+        "migration_complexity": "high"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "## Executive Summary & Switching Thesis",
+          "## Honest Architectural Parity Matrix",
+          "Where Datadog Still Holds an Advantage"
+        ]
+      }
+    },
+    {
+      "id": "low_complexity_stateless",
+      "description": "Low-complexity stateless API displacement (Resend vs SendGrid).",
+      "inputs": {
+        "competitor_name": "SendGrid",
+        "competitor_domain": "sendgrid.com",
+        "target_persona": "Full-stack Developers and Technical Founders",
+        "core_differentiators": "Modern React Email support, sub-second API latency, no shared IP reputation penalty, transparent pricing.",
+        "known_limitations": "SendGrid has higher legacy transactional volume capacity and established enterprise marketing automation suites.",
+        "migration_complexity": "low"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "## Executive Summary & Switching Thesis",
+          "## Switcher Positioning & Messaging Guide"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "radical_honesty",
+      "question": "Does the report explicitly disclose at least two areas where the incumbent vendor holds a legitimate structural advantage?"
+    },
+    {
+      "id": "zero_hyperbole",
+      "question": "Is the report completely free of unsubstantiated marketing superlatives like revolutionary or game-changer, relying instead on concrete technical specifications?"
+    },
+    {
+      "id": "friction_classification",
+      "question": "Does the analysis systematically classify switching friction across structural lock-in vectors (data, API, workflow, commercial)?"
+    },
+    {
+      "id": "actionable_positioning",
+      "question": "Does the report provide concrete, copy-paste switcher messaging and value propositions suitable for a competitive comparison page?"
+    }
+  ]
+}

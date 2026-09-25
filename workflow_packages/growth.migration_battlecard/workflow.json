@@ -1,0 +1,93 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.migration_battlecard",
+    "title": "Competitor switcher battlecard",
+    "description": "Build an evidence-based competitor switcher battlecard, friction teardown, and honest parity matrix to capture displacement demand.",
+    "version": "1.1.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "competitor_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "title": "Incumbent competitor name"
+        },
+        "competitor_domain": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 120,
+          "title": "Competitor domain or website"
+        },
+        "target_persona": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "Technical decision makers, engineering leads, and founders",
+          "title": "Target buyer persona"
+        },
+        "core_differentiators": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Our core architectural, feature, or pricing advantages"
+        },
+        "known_limitations": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Known areas where competitor is still ahead (for radical honesty)"
+        },
+        "migration_complexity": {
+          "type": "string",
+          "maxLength": 10,
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "default": "medium",
+          "title": "Expected technical switching complexity"
+        }
+      },
+      "required": [
+        "project_id",
+        "competitor_name",
+        "competitor_domain"
+      ]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/migration-battlecard/SKILL.md",
+        "skills/migration-battlecard/RUBRIC.md",
+        "skills/migration-battlecard/TAXONOMY.md"
+      ],
+      "entry_skill": "migration-battlecard",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/MIGRATION_BATTLECARD.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
