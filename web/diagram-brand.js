@@ -5,6 +5,7 @@ function validateBrand(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       !["revision", "sha256", "light"].every((key) => Object.hasOwn(value, key)) ||
       Object.keys(value).some((key) => !["revision", "sha256", "light", "dark"].includes(key)) ||
+      typeof value.revision !== "string" || typeof value.sha256 !== "string" ||
       !/^[0-9a-f]{40}$/.test(value.revision) || !/^[0-9a-f]{64}$/.test(value.sha256))
     throw new Error("Invalid diagram brand snapshot.");
   for (const mode of ["light", "dark"]) {

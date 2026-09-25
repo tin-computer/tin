@@ -84,6 +84,7 @@ def test_branded_source_parity_and_injection_rejection():
         source + line,
         source.replace("graph LR", "graph LR\n" + line),
         source.replace('"revision":"' + REVISION, '"revision":"short'),
+        source.replace('"revision":"' + REVISION + '"', '"revision":["' + REVISION + '"]'),
         source.replace('"light":{', '"light":null,"extra":{'),
     ]
     for invalid in bad:
