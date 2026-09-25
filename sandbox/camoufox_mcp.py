@@ -3,7 +3,7 @@
 
 The server launches a single fingerprint-hardened Firefox on the first tool call and keeps one
 page open for the rest of the run, so cookies, login state, and the page itself survive between
-tool calls. Every tool returns bounded text; there is no screenshot, download, or file tool.
+tool calls. Tools return bounded text or a viewport screenshot; no downloads or file writes.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 
 from camoufox.addons import DefaultAddons
 from camoufox.async_api import AsyncCamoufox
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
 DEFAULT_PROXY = "socks5://127.0.0.1:40000"
@@ -33,6 +33,9 @@ MAX_ERROR_CHARS = 1_500
 EVENT_BUFFER = 200
 NAVIGATION_TIMEOUT_MS = 60_000
 ACTION_TIMEOUT_MS = 30_000
+MAX_SCREENSHOT_BYTES = 2_000_000
+MAX_VIEWPORT_WIDTH = 1920
+MAX_VIEWPORT_HEIGHT = 1200
 TURNSTILE_HOST = "challenges.cloudflare.com"
 TURNSTILE_RESPONSE_JS = (
     "() => { const el = document.querySelector('input[name=\"cf-turnstile-response\"]');"
@@ -48,6 +51,8 @@ TOOL_NAMES = (
     "current_page",
     "page_text",
     "snapshot",
+    "set_viewport",
+    "screenshot",
     "click",
     "click_role",
     "fill",
@@ -299,6 +304,43 @@ async def snapshot(max_chars: int = 12000) -> str:
     """Return the accessibility tree of the current page as text, bounded to max_chars."""
     page = await _page()
     return _bounded(await page.locator("body").aria_snapshot(), max_chars)
+
+
+@server.tool()
+@_reported
+async def set_viewport(width: int, height: int) -> str:
+    """Set a 320–1920 by 320–1200 CSS-pixel viewport in the same page.
+
+    This tests responsive layout, not a mobile OS, touch device or mobile browser.
+    Returns measured dimensions so a failed resize cannot be mistaken for mobile evidence.
+    """
+    if not 320 <= width <= MAX_VIEWPORT_WIDTH or not 320 <= height <= MAX_VIEWPORT_HEIGHT:
+        raise ValueError("viewport must be 320–1920 pixels wide and 320–1200 pixels high")
+    page = await _page()
+    await page.set_viewport_size({"width": width, "height": height})
+    actual = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
+    if actual != {"width": width, "height": height}:
+        raise RuntimeError(f"viewport did not resize: {actual}")
+    return json.dumps(actual)
+
+
+@server.tool()
+@_reported
+async def screenshot() -> Image:
+    """Return a bounded JPEG of the visible viewport, without writing a file.
+
+    Scroll the same page to inspect another region. No full-page capture or arbitrary paths.
+    """
+    page = await _page()
+    size = await page.evaluate("() => ({width: innerWidth, height: innerHeight})")
+    if not (0 < size["width"] <= MAX_VIEWPORT_WIDTH and 0 < size["height"] <= MAX_VIEWPORT_HEIGHT):
+        raise ValueError("set a viewport of at most 1920 by 1200 before taking a screenshot")
+    data = await page.screenshot(
+        type="jpeg", quality=80, full_page=False, scale="css", timeout=ACTION_TIMEOUT_MS
+    )
+    if len(data) > MAX_SCREENSHOT_BYTES:
+        raise ValueError("viewport screenshot exceeds 2 MB; use a smaller viewport")
+    return Image(data=data, format="jpeg")
 
 
 @server.tool()

@@ -550,7 +550,8 @@ creates the sandbox from the `TIN_LITE_E2B_BROWSER_TEMPLATE` alias, which layers
 build (a fingerprint-hardened Firefox), a pinned Cloudflare WARP client, and the Tin-owned
 `camoufox` MCP server on the standard Codex image. The runner starts WARP as a local SOCKS proxy
 and registers the MCP server, which launches one persistent Camoufox on an Xvfb virtual display
-for the whole run and exposes bounded text tools; Codex writes no browser scripts and there is no
+for the whole run and exposes bounded text tools plus viewport resizing and a bounded screenshot
+of the visible page; Codex writes no browser scripts and there is no
 other browser. By default the browser sends only Cloudflare's challenge hosts through WARP (its
 dependencies are IPv6-only) and everything else out directly, so payment processors see the
 sandbox's own cloud address rather than a shared VPN exit; `TIN_BROWSER_EGRESS` selects `split`,

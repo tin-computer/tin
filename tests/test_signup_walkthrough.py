@@ -483,7 +483,7 @@ def test_warp_up_script_registers_then_connects() -> None:
     assert script.rstrip().endswith('echo "WARP_OK=true"')
 
 
-def test_camoufox_mcp_exposes_only_bounded_text_tools() -> None:
+def test_camoufox_mcp_exposes_bounded_browser_tools_without_file_access() -> None:
     source = (ROOT / "sandbox" / "camoufox_mcp.py").read_text()
     tree = ast.parse(source)
     declared: tuple[str, ...] = ()
@@ -502,7 +502,8 @@ def test_camoufox_mcp_exposes_only_bounded_text_tools() -> None:
                 ):
                     registered.add(node.name)
     assert registered == set(declared) and len(declared) == len(set(declared))
-    assert not {name for name in registered if "screenshot" in name or "download" in name}
+    assert {"set_viewport", "screenshot"} <= registered
+    assert not {name for name in registered if "download" in name}
     assert not {name for name in registered if "write" in name or "save" in name}
     assert "MAX_TEXT_CHARS = 20_000" in source
     assert '"persistent_context": True' in source

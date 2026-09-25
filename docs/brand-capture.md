@@ -31,8 +31,12 @@ styles. It does not require Studio's image or voice services. Its session is bou
 900 seconds with the ordinary protected API runner, admission and verified usage billing.
 There is no extra classifier/model route and no measured live cost estimate yet.
 
-Instructions call for the homepage and one relevant deeper page, including desktop and
-mobile observations. A narrower sample needs an explicit reason. URL-only capture
+Instructions call for the homepage and one relevant deeper page, including measured 1440×900
+and 390×844 viewports and screenshots. The latter tests responsive Firefox layout, not mobile
+Safari or touch behavior. Screenshots are bounded tool results, not extra durable project files.
+Camoufox masks its Font Loading API; an `error` status alone is not evidence of failed loading.
+Capture checks resource transfers, network/decoder errors and visual evidence separately from
+CSS declarations. Ambiguous rendering remains unverified. A narrower sample needs an explicit reason. URL-only capture
 documents what was visible; it cannot assert unseen application components or states.
 Repository facts cite exact commits and paths. Supplied observations retain their attribution.
 

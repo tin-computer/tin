@@ -4,7 +4,7 @@
     "key": "brand.capture",
     "title": "Capture brand and design",
     "description": "Inspect your website and optional repository once. Propose a concise brand guide for future marketing and document the product design you have today. Review both before using them; existing documents stay unchanged.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "executor": "codex.procedure",
     "system": "creative-studio",
     "schedule_modes": ["on_demand"],

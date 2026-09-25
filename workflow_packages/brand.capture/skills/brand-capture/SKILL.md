@@ -29,9 +29,23 @@ subject and message; a classifier cannot grant permission to replace identity.
 
 When a URL exists, inspect the homepage and one representative deeper product, feature or
 documentation page with the available browser. Include relevant desktop and mobile views,
-computed CSS colors and font declarations. A single-page site, blocked page, or sufficient
+computed CSS colors and font declarations. Use `camoufox.set_viewport(1440, 900)` and
+`camoufox.set_viewport(390, 844)`, verify the returned dimensions, and inspect
+`camoufox.screenshot()` at both sizes. Scroll and capture a representative lower section when
+needed. A narrow Firefox viewport proves responsive layout, not mobile Safari or touch behavior.
+Never substitute `window.resizeTo`, changed CSS, or responsive stylesheet rules for a rendered
+narrow viewport. A single-page site, blocked page, or sufficient
 supplied documentation can justify narrower coverage; state the exception. A CSS declaration
-does not prove a font loaded. Do not infer application screens, flows or states you did not see.
+does not prove a font loaded. Camoufox masks `document.fonts` / `FontFace.status` and can report
+`error` for a downloaded, rendered font. Never call that alone a font-loading failure. Check
+font resource transfers in `performance.getEntriesByType('resource')`, `network_failures`,
+console diagnostics and the screenshot. If necessary, compare the declared family's rendered
+text widths with its fallback using temporary measurement elements, then remove them. Record
+download evidence and rendering evidence separately; neither a successful download nor a
+computed family name alone proves which font painted every glyph. A failed font request or
+decoder error is a real limitation; ambiguous evidence stays unverified. Do not change the
+site's fonts or the browser's fingerprint mask to force a positive result.
+Do not infer application screens, flows or states you did not see.
 
 When a source snapshot is supplied, inspect relevant styles, tokens, components, routes and
 design documentation without installs, builds or source modifications. Cite repository facts

@@ -31,8 +31,13 @@ from tin_lite.settings import get_settings
 PROBE_CLIENT = dedent(
     r"""
     import asyncio
+    import base64
+    import json
     import os
     import sys
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from pathlib import Path
 
     from mcp import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -54,6 +59,71 @@ PROBE_CLIENT = dedent(
         for name in ("console_messages", "network_failures"):
             print(f"--- {name}\n{await call(session, name)}", file=sys.stderr)
 
+    class FontPage(BaseHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/font.woff2':
+                body = Path('/home/user/probe-font.woff2').read_bytes()
+                self.send_response(200)
+                self.send_header('Content-Type', 'font/woff2')
+            elif self.path == '/':
+                body = b'''<meta name="viewport" content="width=device-width,initial-scale=1">
+                <style>@font-face{font-family:TinProbe;src:url(/font.woff2)}
+                @font-face{font-family:BrokenProbe;src:url(/missing.woff2)}
+                #sample{font:40px TinProbe,monospace}#missing{font-family:BrokenProbe}
+                #layout{display:grid;grid-template-columns:1fr 1fr}
+                @media(max-width:600px){#layout{grid-template-columns:1fr}}</style>
+                <div id="layout"><span id="sample">WWW iii 012345</span>
+                <span id="missing">Expected missing font</span></div>'''
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/html')
+            else:
+                body = b'Expected missing font'
+                self.send_response(404)
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    async def visual_probe(session):
+        fixture = HTTPServer(('127.0.0.1', 0), FontPage)
+        threading.Thread(target=fixture.serve_forever, daemon=True).start()
+        try:
+            await call(session, 'navigate', url=f'http://127.0.0.1:{fixture.server_port}/')
+            await call(session, 'evaluate', expression='''() => new Promise(resolve => {
+              const deadline=Date.now()+5000;
+              const check=()=>performance.getEntriesByType('resource').some(r=>
+                r.name.endsWith('/font.woff2') && r.decodedBodySize>0) || Date.now()>deadline
+                ? resolve(true) : setTimeout(check,100); check(); })''')
+            for width, height in ((1440, 900), (390, 844)):
+                dimensions = json.loads(await call(
+                    session, 'set_viewport', width=width, height=height
+                ))
+                if dimensions != {'width': width, 'height': height}:
+                    fail('viewport dimensions were not applied')
+                state = json.loads(await call(session, 'evaluate', expression='''() => ({
+                  narrow: matchMedia('(max-width:600px)').matches,
+                  columns: getComputedStyle(document.querySelector('#layout'))
+                    .gridTemplateColumns.split(' ').length,
+                  downloaded: performance.getEntriesByType('resource').some(r=>
+                    r.name.endsWith('/font.woff2') && r.decodedBodySize>0)
+                })'''))
+                expected = {'narrow': width < 600, 'columns': 1 if width < 600 else 2,
+                            'downloaded': True}
+                if state != expected:
+                    fail(f'responsive/font evidence did not match: {state}')
+                result = await session.call_tool('screenshot', {})
+                images = [b for b in result.content if getattr(b, 'type', '') == 'image']
+                if len(images) != 1 or not 0 < len(base64.b64decode(images[0].data)) <= 2_000_000:
+                    fail('bounded screenshot was not returned through MCP')
+            failures = await call(session, 'network_failures')
+            if '404 GET' not in failures or '/missing.woff2' not in failures:
+                fail('a real missing font was not reported')
+            print('VISUAL_EVIDENCE_OK=true', flush=True)
+        finally:
+            fixture.shutdown()
+            fixture.server_close()
+
     async def main():
         env = {
             "TIN_BROWSER_PROFILE_DIR": os.environ["TIN_PROBE_PROFILE_DIR"],
@@ -71,6 +141,7 @@ PROBE_CLIENT = dedent(
         async with stdio_client(params) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
+                await visual_probe(session)
                 text = await call(session, "navigate", url=os.environ["TIN_PROBE_URL"])
                 if os.environ["TIN_PROBE_MARKER"] not in text:
                     await evidence(session)
@@ -138,10 +209,18 @@ VERIFY_SCRIPT = dedent(
     """
 ).strip()
 
-REQUIRED_MARKERS = {"WARP_OK=true", "WARP_IPV6_OK=true", "CAMOUFOX_OK=true", "TURNSTILE_OK=true"}
+REQUIRED_MARKERS = {
+    "WARP_OK=true",
+    "WARP_IPV6_OK=true",
+    "CAMOUFOX_OK=true",
+    "TURNSTILE_OK=true",
+    "VISUAL_EVIDENCE_OK=true",
+}
 
 
 async def verify(*, url: str, marker: str, turnstile_url: str, turnstile_marker: str) -> None:
+    from pathlib import Path
+
     settings = get_settings()
     sandbox = await AsyncSandbox.create(
         settings.e2b_browser_template,
@@ -155,6 +234,12 @@ async def verify(*, url: str, marker: str, turnstile_url: str, turnstile_marker:
         script_path = "/home/user/verify-browser"
         await sandbox.files.write(script_path, VERIFY_SCRIPT)
         await sandbox.files.write("/home/user/cfx-probe.py", PROBE_CLIENT)
+        await sandbox.files.write(
+            "/home/user/probe-font.woff2",
+            (
+                Path(__file__).parents[1] / "src/tin_lite/static/fonts/geist-sans-regular.woff2"
+            ).read_bytes(),
+        )
         await sandbox.commands.run(f"chmod 700 {script_path}", timeout=20)
         result = await sandbox.commands.run(
             script_path,
@@ -176,7 +261,8 @@ async def verify(*, url: str, marker: str, turnstile_url: str, turnstile_marker:
         "live browser acceptance: PASS "
         "(warp-up registration and connect as user, WARP SOCKS egress with IPv6 reachability, "
         "camoufox-mcp rendered a public page through WARP, Turnstile widget loaded and its "
-        "token validated through the same MCP tools, sandbox kill)"
+        "token validated through the same MCP tools, desktop/narrow layout and screenshots, "
+        "successful font transfer and missing-font diagnostics, sandbox kill)"
     )
 
 
