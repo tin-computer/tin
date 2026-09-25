@@ -161,6 +161,10 @@ class Settings(BaseSettings):
     github_webhook_secret: SecretStr | None = Field(
         default=None, alias="TIN_LITE_GITHUB_WEBHOOK_SECRET"
     )
+    # Bearer secret the tin repository's contributor gate sends; unset disables the check.
+    contributor_check_token: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_CONTRIBUTOR_CHECK_TOKEN"
+    )
     # Tin-owned, receive-only phone number test identities give to products that ask for one.
     # Twilio posts each inbound SMS to the switchboard; Tin never sends from the number.
     twilio_auth_token: SecretStr | None = Field(default=None, alias="TWILIO_AUTH_TOKEN")

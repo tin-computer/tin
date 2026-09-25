@@ -214,12 +214,14 @@ purchase a model run.
    want to execute it. Read `reports/EXAMPLE_PLAY.md` from the resulting run. Review the actual
    output before recommending the package; successful validation is not an execution test.
 
-This private test is optional; it isn't the public registration process.
+Outside contributors must complete this private test on a real project before opening a pull
+request; an automatic check verifies the run. It isn't the public registration process. See
+[contributing a workflow](../docs/contributing-workflows.md).
 
 ## What we look for
 
 A workflow a founder would want to run, rather than a summary of marketing advice. Say where
-the insight came from. If you ran it yourself, say what happened.
+the insight came from, and say what happened when you ran it on your project.
 
 Search the open pull requests before you start. Several contributors can reach the same idea,
 and a workflow nobody has written is worth more than a second version of one already in review.

@@ -675,6 +675,14 @@ def authoring_guide(*, settings, project_id):
             "start_workflow with a prerequisite_missing diagnostic, recommended ones return "
             "advisories.",
         ],
+        "public_contribution": (
+            "To offer a workflow for Tin's public catalog, the pull request author must be the "
+            "Tin user who ran it here: GitHub connected on this business project (not the "
+            "personal one), Start here completed, and a succeeded run of the custom.* copy of "
+            "the exact package. Put 'Tin run ID: <uuid>' in the pull request; the repository "
+            "gate closes workflow pull requests it cannot verify. See "
+            "docs/contributing-workflows.md in the tin repository."
+        ),
         "limits": {
             "files": 64,
             "manifest_bytes": 512000,

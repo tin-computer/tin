@@ -11,6 +11,11 @@ packages, whether authored by a person or Tin. Include cases and disclose what w
 Coding agents should also read [AGENTS.md](AGENTS.md).
 The [documentation index](docs/README.md) groups contributor and self-hosting references.
 
+Workflow contributions have their own requirements: you need to use Tin on a product of your
+own and run the package there before opening a pull request. An automatic check closes
+workflow pull requests that don't meet them. Read
+[contributing a workflow](docs/contributing-workflows.md) first.
+
 Bug fixes, documentation corrections and focused integration contributions can go straight
 to a pull request; no prior issue or permission is required. Discuss broad architecture or
 breaking changes before building them. Report security
