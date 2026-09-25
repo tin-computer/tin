@@ -47,7 +47,7 @@ class PilotSettings(BaseSettings):
     anthropic_api_key: SecretStr = Field(alias="ANTHROPIC_API_KEY")
     anthropic_workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
     luna_api_key: SecretStr = Field(alias="TIN_LITE_LUNA_API_KEY")
-    luna_model: str = Field(default="gpt-5.6-luna", alias="TIN_LITE_LUNA_MODEL")
+    luna_model: str = Field(default="gpt-6-luna", alias="TIN_LITE_LUNA_MODEL")
     luna_base_url: str = Field(default="https://api.openai.com/v1", alias="TIN_LITE_LUNA_BASE_URL")
 
 

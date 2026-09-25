@@ -10,4 +10,6 @@ def test_workflow_catalog_doc_matches_the_catalog():
     )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    assert module.DOC_PATH.read_text() == module.render(), "run scripts/dump_catalog.py"
+    assert module.DOC_PATH.read_text(encoding="utf-8") == module.render(), (
+        "run scripts/dump_catalog.py"
+    )

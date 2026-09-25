@@ -71,9 +71,9 @@ def package_row(definition: dict) -> str:
 def packages() -> list[dict]:
     """Manifests of the maintainer-selected Registry packages, read without executing them."""
     return [
-        json.loads((ROOT / "workflow_packages" / item.key / "workflow.json").read_text())[
-            "definition"
-        ]
+        json.loads(
+            (ROOT / "workflow_packages" / item.key / "workflow.json").read_text(encoding="utf-8")
+        )["definition"]
         for item in PUBLIC_WORKFLOWS
     ]
 
@@ -132,11 +132,11 @@ def main() -> int:
     args = parser.parse_args()
     rendered = render()
     if args.check:
-        if not DOC_PATH.exists() or DOC_PATH.read_text() != rendered:
+        if not DOC_PATH.exists() or DOC_PATH.read_text(encoding="utf-8") != rendered:
             print(f"{DOC_PATH} is stale; run scripts/dump_catalog.py", file=sys.stderr)
             return 1
         return 0
-    DOC_PATH.write_text(rendered)
+    DOC_PATH.write_text(rendered, encoding="utf-8")
     return 0
 
 

@@ -325,7 +325,9 @@ async def test_partial_survives_storage_ack_loss_without_publication(publication
             )
 
 
-@pytest.mark.parametrize("bad", [b"", b"\xff", b"x" * 250001])
+@pytest.mark.parametrize(
+    "bad", [b"", b"\xff", b"x" * 250001], ids=["empty", "invalid_utf8", "oversized"]
+)
 async def test_invalid_partial_never_written(publication_db, bad):
     activities, _, run, _ = await activity_fixture(publication_db)
     _, spec = await activities._pinned_codex_procedure(run.id)
