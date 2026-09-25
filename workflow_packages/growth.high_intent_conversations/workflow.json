@@ -1,0 +1,86 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.high_intent_conversations",
+    "title": "Find High-Intent Conversations",
+    "description": "Find public conversations where potential customers express a relevant problem and produce a prioritized response brief for human review.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "product_context",
+        "target_customer",
+        "problem"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_context": {
+          "type": "string",
+          "title": "Product or company context",
+          "maxLength": 4000,
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        },
+        "target_customer": {
+          "type": "string",
+          "title": "Target customer",
+          "maxLength": 2000,
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 20
+          }
+        },
+        "problem": {
+          "type": "string",
+          "title": "Problem the product solves",
+          "maxLength": 2000,
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        },
+        "keywords": {
+  "type": "array",
+  "title": "Optional search keywords",
+  "maxItems": 20,
+  "items": {
+    "type": "string",
+    "minLength": 1,
+    "maxLength": 100
+  	}
+	}
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/high-intent-conversations/SKILL.md"
+      ],
+      "entry_skill": "high-intent-conversations",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/HIGH_INTENT_CONVERSATIONS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
