@@ -1,0 +1,57 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.churn_reason_digest",
+    "title": "Rank cancellation reasons by revenue at risk",
+    "description": "Classify a billing export of cancellations into churn reasons, rank them by monthly revenue at risk, and recommend one concrete next action per top reason.",
+    "executor": "workflow.code",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the churn reason digest before acting on the recommended fixes"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "csv_text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 12000,
+          "title": "Cancellations CSV with reason and mrr_cents columns"
+        }
+      },
+      "required": ["project_id", "csv_text"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "classify": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 16000,
+          "max_output_tokens": 2048
+        },
+        "recommend": {
+          "provider": "openai",
+          "model": "gpt-5.6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 8000,
+          "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CHURN_REASON_DIGEST.md",
+        "media_type": "text/markdown",
+        "max_bytes": 8000
+      }
+    }
+  }
+}
