@@ -216,6 +216,52 @@ async def test_historical_task_keeps_oauth(billed, monkeypatch):
     assert auth == {"mode": "chatgpt_oauth"}
 
 
+async def unbudgeted_api_task(f, run):
+    # An enabled project's unbilled task selects API at its first turn, not at admission.
+    await f.db.pool.execute("DELETE FROM billing_run_budgets WHERE run_id=$1", run.id)
+    await f.db.pool.execute("UPDATE billing_accounts SET run_billing_enabled=false")
+
+
+async def test_first_turn_failure_before_auth_pin_retries_on_api(billed, monkeypatch):
+    run, activities, sandboxes = await task_fixture(billed, monkeypatch)
+    await unbudgeted_api_task(billed, run)
+    sandboxes.run_task_and_kill.return_value = SandboxTaskResult(
+        outcome="completed", summary="Ready", message="Summary", question=None, has_changes=False
+    )
+    require_run = activities._require_run
+    failures = [ConnectionError("database unavailable")]
+
+    async def flaky_require_run(run_id):
+        if failures:
+            raise failures.pop()
+        return await require_run(run_id)
+
+    activities._require_run = flaky_require_run
+    payload = {"run_id": str(run.id), "turn_number": "1"}
+    with pytest.raises(ConnectionError):
+        await activities.run_project_task_turn(payload)
+    # The failed first turn is not a pre-migration OAuth turn on retry.
+    assert await activities.run_project_task_turn(payload) == "completed"
+    receipt = await billed.db.get_effect(f"{run.id}:task_codex_auth")
+    assert receipt.status == "completed"
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+    assert sandboxes.create.call_args.kwargs["profile"].isolated
+
+
+async def test_unmarked_task_turn_receipt_keeps_oauth(billed, monkeypatch):
+    run, activities, sandboxes = await task_fixture(billed, monkeypatch)
+    await unbudgeted_api_task(billed, run)
+    key = f"{run.id}:task_turn:1"
+    async with billed.db.pool.acquire() as conn:
+        await billed.db.start_effect(conn, execution_key=key, operation="project_task_turn")
+    # A turn started before the API pilot never switches its historical OAuth pin.
+    with pytest.raises(ValueError, match="retired"):
+        await activities.run_project_task_turn({"run_id": str(run.id), "turn_number": "1"})
+    receipt = await billed.db.get_effect(f"{run.id}:task_codex_auth")
+    assert receipt.result["codex_auth"] == {"mode": "chatgpt_oauth"}
+    sandboxes.create.assert_not_awaited()
+
+
 def test_browser_has_separate_api_image_and_preserves_capabilities():
     pinned = SandboxProfile(profile="browser", timeout_seconds=1800, egress="open")
     effective = execution_profile(pinned, PROCEDURE_CONTRACT)

@@ -110,6 +110,55 @@ async def test_default_activity_pins_effective_image_without_changing_definition
     assert spec.sandbox.profile == "default"
 
 
+async def test_procedure_preflight_failure_does_not_fall_back_to_oauth(publication_db):
+    activities, _, run, _ = await activity_fixture(publication_db)
+    activities._settings = SimpleNamespace(codex_api_projects={run.project_id}, luna_api_key="test")
+    create = AsyncMock(return_value="new-api-sandbox")
+    activities._sandboxes.create = create
+    await publication_db.pool.execute(
+        "UPDATE workflow_runs SET lease_owner=NULL, sandbox_id=NULL, lease_active=false "
+        "WHERE id=$1",
+        run.id,
+    )
+    failures = [ConnectionError("code.storage read failed")] * 2
+    check = activities._check_private_attempt
+
+    async def flaky_check(*args):
+        if failures:
+            raise failures.pop()
+        return await check(*args)
+
+    activities._check_private_attempt = flaky_check
+    # Transient failures before the auth pin is saved are not historical OAuth receipts.
+    for _ in range(2):
+        with pytest.raises(ConnectionError):
+            await activities.create_codex_procedure_sandbox(str(run.id))
+    create.assert_not_awaited()
+    await activities.create_codex_procedure_sandbox(str(run.id))
+    assert create.call_args.kwargs["profile"].isolated
+    receipt = await publication_db.get_effect(f"{run.id}:procedure_sandbox_create")
+    assert receipt.status == "completed"
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+
+
+async def test_unmarked_procedure_create_receipt_keeps_oauth(publication_db):
+    activities, _, run, _ = await activity_fixture(publication_db)
+    activities._settings = SimpleNamespace(codex_api_projects={run.project_id}, luna_api_key="test")
+    create = AsyncMock(return_value="new-api-sandbox")
+    activities._sandboxes.create = create
+    key = f"{run.id}:procedure_sandbox_create"
+    async with publication_db.pool.acquire() as conn:
+        await publication_db.start_effect(
+            conn, execution_key=key, operation="procedure_sandbox_create"
+        )
+    # Historical OAuth pins are never upgraded or allowed to create an unsafe runner.
+    for _ in range(2):
+        with pytest.raises(ValueError, match="retired"):
+            await activities.create_codex_procedure_sandbox(str(run.id))
+    assert (await publication_db.get_effect(key)).result["codex_auth"] == {"mode": "chatgpt_oauth"}
+    create.assert_not_awaited()
+
+
 def test_only_fixed_tin_verifiers_run_after_freeze_without_grants(monkeypatch):
     bridge = load_sandbox_module("procedure_app_server")
     command = "/opt/tin-lite/metadata-venv/bin/python -I /opt/tin-lite/verify-technical-metadata.py"

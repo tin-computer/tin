@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -11,6 +11,8 @@ import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
 from temporalio.client import ScheduleOverlapPolicy
+from test_procedure_publication import activity_fixture
+from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
@@ -186,6 +188,46 @@ async def test_weekly_brief_appends_exact_sources() -> None:
     assert "## Sources" in result["markdown"]
     assert source.artifact_ref in result["markdown"]
     assert result["source_refs"] == [source.artifact_ref]
+
+
+@pytest.mark.asyncio
+async def test_weekly_brief_period_reads_keep_the_newest_sources(publication_db) -> None:
+    db = publication_db
+    _, _, brief, _ = await activity_fixture(db)
+    period_end = datetime(2020, 1, 8, tzinfo=UTC)
+    sources = []
+    for day, path in enumerate(("reports/analytics/DECISION.md", None, None, None), start=1):
+        source_id = uuid4()
+        finished_at = period_end - timedelta(days=7 - day)
+        await db.pool.execute(
+            """INSERT INTO workflow_runs
+            (id, project_id, workflow_id, executor, definition_commit_sha, temporal_workflow_id,
+             thread_id, status, generation, artifact_path, finished_at)
+            VALUES ($1,$2,$3,'codex.procedure',$4,$5,$5,'succeeded',1,$6,$7)""",
+            source_id,
+            brief.project_id,
+            brief.workflow_id,
+            brief.definition_commit_sha,
+            str(source_id),
+            path,
+            finished_at,
+        )
+        await db.add_activity(run_id=source_id, event_type="source_ready", audience="product")
+        await db.pool.execute(
+            "UPDATE activity_events SET created_at=$2 WHERE run_id=$1", source_id, finished_at
+        )
+        sources.append(source_id)
+    period = {
+        "project_id": brief.project_id,
+        "period_start": period_end - timedelta(days=7),
+        "period_end": period_end,
+        "exclude_run_id": brief.id,
+    }
+    # A busy week keeps its latest work and its analytics decisions, in chronological order.
+    runs = await db.list_runs_for_period(**period, limit=3)
+    assert [run.id for run in runs] == [sources[0], sources[2], sources[3]]
+    events = await db.list_product_activity_for_period(**period, limit=2)
+    assert [event.run_id for event in events] == sources[2:]
 
 
 def test_weekly_brief_is_an_explicit_registry_template_and_migration_is_narrow() -> None:

@@ -3285,12 +3285,18 @@ class Database:
     ) -> list[WorkflowRun]:
         rows = await self.pool.fetch(
             """
-            SELECT * FROM workflow_runs
-            WHERE project_id = $1 AND id <> $2
-              AND COALESCE(finished_at, started_at, created_at) >= $3
-              AND COALESCE(finished_at, started_at, created_at) < $4
+            SELECT *
+            FROM (
+                SELECT * FROM workflow_runs
+                WHERE project_id = $1 AND id <> $2
+                  AND COALESCE(finished_at, started_at, created_at) >= $3
+                  AND COALESCE(finished_at, started_at, created_at) < $4
+                -- Keep analytics decisions and the latest work when the week is busy.
+                ORDER BY COALESCE(artifact_path LIKE 'reports/analytics/%', false) DESC,
+                         COALESCE(finished_at, started_at, created_at) DESC, id DESC
+                LIMIT $5
+            ) AS recent
             ORDER BY COALESCE(finished_at, started_at, created_at), id
-            LIMIT $5
             """,
             project_id,
             exclude_run_id,
@@ -3311,23 +3317,28 @@ class Database:
     ) -> list[ActivityEvent]:
         rows = await self.pool.fetch(
             """
-            SELECT events.*,
-                   jsonb_strip_nulls(
-                       events.details || jsonb_build_object(
-                           'trigger_source', runs.trigger_source,
-                           'trigger_client', runs.trigger_client
-                       )
-                   ) AS details,
-                   COALESCE(runs.executor, events.details->>'workflow_key') AS workflow_key,
-                   COALESCE(workflows.title, events.details->>'workflow_title') AS workflow_title
-            FROM activity_events AS events
-            LEFT JOIN workflow_runs AS runs ON runs.id = events.run_id
-            LEFT JOIN workflows ON workflows.id = runs.workflow_id
-            WHERE events.project_id = $1 AND events.audience = 'product'
-              AND events.created_at >= $2 AND events.created_at < $3
-              AND (events.run_id IS NULL OR events.run_id <> $4)
-            ORDER BY events.created_at, events.id
-            LIMIT $5
+            SELECT *
+            FROM (
+                SELECT events.*,
+                       jsonb_strip_nulls(
+                           events.details || jsonb_build_object(
+                               'trigger_source', runs.trigger_source,
+                               'trigger_client', runs.trigger_client
+                           )
+                       ) AS details,
+                       COALESCE(runs.executor, events.details->>'workflow_key') AS workflow_key,
+                       COALESCE(workflows.title, events.details->>'workflow_title')
+                           AS workflow_title
+                FROM activity_events AS events
+                LEFT JOIN workflow_runs AS runs ON runs.id = events.run_id
+                LEFT JOIN workflows ON workflows.id = runs.workflow_id
+                WHERE events.project_id = $1 AND events.audience = 'product'
+                  AND events.created_at >= $2 AND events.created_at < $3
+                  AND (events.run_id IS NULL OR events.run_id <> $4)
+                ORDER BY events.created_at DESC, events.id DESC
+                LIMIT $5
+            ) AS recent
+            ORDER BY created_at, id
             """,
             project_id,
             period_start,

@@ -631,6 +631,41 @@ async def test_every_dispatch_surface_consults_the_gate(publication_db, monkeypa
     f.runtime.temporal.start_workflow.assert_not_awaited()
 
 
+async def test_schedule_retry_after_run_creation_still_consults_the_gate(publication_db):
+    f = await fixture(publication_db)
+    gated = with_prerequisite(f.definition)
+    f.snapshots["a" * 40][f.builtin.definition_path] = json.dumps(gated).encode()
+    await f.db.upsert_registry_workflow(**{**f.values, "definition": gated})
+    await activate_b(f)
+    activities = TinActivities(
+        database=f.db, storage=f.storage, sandboxes=None, settings=f.settings
+    )
+    advance = f.db.advance_project_workflow_schedule
+    failures = [ConnectionError("connection reset")]
+
+    async def flaky_advance(**kwargs):
+        if failures:
+            raise failures.pop()
+        return await advance(**kwargs)
+
+    f.db.advance_project_workflow_schedule = flaky_advance
+    payload = {
+        "project_workflow_id": str(f.configured.id),
+        "scheduled_for": datetime.now(UTC).isoformat(),
+        "occurrence_id": "gated-retry-occurrence",
+    }
+    # The first attempt commits the run and then fails before its admission gate.
+    with pytest.raises(ConnectionError):
+        await activities.dispatch_scheduled_workflow(payload)
+    assert await activities.dispatch_scheduled_workflow(payload) == {}
+    row = await f.db.pool.fetchrow(
+        "SELECT status, error_message FROM workflow_runs WHERE project_workflow_id=$1",
+        f.configured.id,
+    )
+    assert row["status"] == "failed"
+    assert row["error_message"].startswith("Prerequisite missing: ")
+
+
 # ---------------------------------------------------------------- private packages
 
 

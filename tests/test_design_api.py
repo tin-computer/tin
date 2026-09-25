@@ -190,3 +190,24 @@ async def test_design_preflight_failure_does_not_fall_back_to_oauth(billed):
     f.settings.codex_api_projects = set()  # The paid admission already fixed API auth.
     await activities.create_design_sandbox(str(run.id))
     assert sandboxes.create.call_args.kwargs["profile"].isolated
+
+
+async def test_design_early_failure_does_not_fall_back_to_oauth(billed, monkeypatch):
+    f = billed
+    run, activities, _, sandboxes = await design_run(f)
+    failures = [ConnectionError("database connection reset")]
+    require_run = activities._require_run
+
+    async def flaky_require_run(run_id):
+        if failures:
+            raise failures.pop()
+        return await require_run(run_id)
+
+    monkeypatch.setattr(activities, "_require_run", flaky_require_run)
+    with pytest.raises(ConnectionError):
+        await activities.create_design_sandbox(str(run.id))
+    sandboxes.create.assert_not_awaited()
+    await activities.create_design_sandbox(str(run.id))
+    assert sandboxes.create.call_args.kwargs["profile"].isolated
+    receipt = await f.db.get_effect(f"{run.id}:sandbox_create")
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
