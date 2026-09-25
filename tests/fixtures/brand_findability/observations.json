@@ -1,0 +1,70 @@
+{
+  "brand": "Harbor",
+  "domain": "harbor.so",
+  "category": "invoice app",
+  "variants": ["harbour", "harber"],
+  "max_queries": 10,
+  "homepage_title": "Harbor — Get paid faster",
+  "previous": {
+    "version": 1,
+    "domain": "harbor.so",
+    "score": 21,
+    "queries": {
+      "Harbor": "missing",
+      "Harbor invoice app": "buried",
+      "harbour": "missing",
+      "harbor.so": "found",
+      "Harbor app": "missing",
+      "Harbor review": "missing"
+    }
+  },
+  "results": {
+    "Harbor": [
+      {"rank": 1, "url": "https://www.harborfreight.com/", "kind": "namesake"},
+      {"rank": 2, "url": "https://goharbor.io/", "kind": "namesake"},
+      {"rank": 3, "url": "https://www.merriam-webster.com/dictionary/harbor", "kind": "namesake"},
+      {"rank": 4, "url": "https://en.wikipedia.org/wiki/Harbor", "kind": "namesake"},
+      {"rank": 5, "url": "https://github.com/goharbor/harbor", "kind": "namesake"},
+      {"rank": 6, "url": "https://www.harborcu.org/", "kind": "namesake"},
+      {"rank": 7, "url": "https://www.harborbreeze.com/", "kind": "namesake"},
+      {"rank": 8, "url": "https://www.harborhotels.com/", "kind": "namesake"},
+      {"rank": 9, "url": "https://www.linkedin.com/company/harbor-labs", "kind": "namesake"},
+      {"rank": 10, "url": "https://www.harborcompliance.com/", "kind": "namesake"}
+    ],
+    "Harbor invoice app": [
+      {"rank": 1, "url": "https://harbor.so/", "kind": "own"},
+      {"rank": 2, "url": "https://www.g2.com/products/harbor-invoicing/reviews", "kind": "about_brand"},
+      {"rank": 3, "url": "https://www.invoicely.com/", "kind": "competitor"}
+    ],
+    "harbour": [
+      {"rank": 1, "url": "https://dictionary.cambridge.org/dictionary/english/harbour", "kind": "namesake"},
+      {"rank": 2, "url": "https://www.harbour.space/", "kind": "namesake"},
+      {"rank": 3, "url": "https://en.wikipedia.org/wiki/Harbor", "kind": "namesake"},
+      {"rank": 4, "url": "https://www.harbourhotels.co.uk/", "kind": "namesake"}
+    ],
+    "harber": [
+      {"rank": 1, "url": "https://www.harber.com/", "kind": "namesake"},
+      {"rank": 2, "url": "https://www.linkedin.com/in/jamie-harber", "kind": "namesake"},
+      {"rank": 3, "url": "https://www.harberlaw.com/", "kind": "namesake"}
+    ],
+    "harbor.so": [
+      {"rank": 1, "url": "https://harbor.so/", "kind": "own"},
+      {"rank": 2, "url": "https://app.harbor.so/login", "kind": "own"},
+      {"rank": 3, "url": "https://harbor.so/pricing", "kind": "own"}
+    ],
+    "Harbor app": [
+      {"rank": 1, "url": "https://apps.apple.com/us/app/harbor-freight-tools/id1234", "kind": "namesake"},
+      {"rank": 2, "url": "https://www.invoicely.com/harbor-alternative", "kind": "competitor"},
+      {"rank": 3, "url": "https://play.google.com/store/apps/details?id=com.harborcu", "kind": "namesake"},
+      {"rank": 4, "url": "https://goharbor.io/docs/", "kind": "namesake"},
+      {"rank": 5, "url": "https://www.harborfreight.com/app", "kind": "namesake"},
+      {"rank": 6, "url": "https://www.producthunt.com/products/harbor-7", "kind": "namesake"},
+      {"rank": 7, "url": "https://harbor.so/", "kind": "own"}
+    ],
+    "Harbor review": [
+      {"rank": 1, "url": "https://www.harborfreight.com/reviews", "kind": "namesake"},
+      {"rank": 2, "url": "https://www.g2.com/products/harbor-invoicing/reviews", "kind": "about_brand"},
+      {"rank": 3, "url": "https://www.trustpilot.com/review/harborfreight.com", "kind": "namesake"}
+    ]
+  }
+}
