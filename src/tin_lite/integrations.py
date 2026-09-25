@@ -3735,9 +3735,11 @@ class IntegrationService:
         `kind` is search | mutate | mutate_resource; `request` carries `query`, or `operations`
         and `validate_only`, or `segment` and `body`. Writes require the connection's explicit
         opt-in. Provider failures surface as GoogleAdsCallError with the opaque error code so
-        the owning receipt can keep it; nothing else from the provider leaves this method.
+        the owning receipt can keep it; nothing else from the provider leaves this method. A
+        write whose answer was lost may have been applied, so it surfaces as
+        IntegrationDeliveryUnknownError instead of a refusal.
         """
-        from tin_lite.google_ads import GoogleAdsError
+        from tin_lite.google_ads import UNCONFIRMED_CODES, GoogleAdsError
 
         connection = await self._connection(project_id, ADS_PROVIDER)
         account = await self.google_ads_account(project_id=project_id)
@@ -3766,15 +3768,22 @@ class IntegrationService:
             else:
                 raise IntegrationError("unknown Google Ads request kind")
         except GoogleAdsError as exc:
+            unconfirmed = (
+                write and not request.get("validate_only") and exc.code in UNCONFIRMED_CODES
+            )
             await self._record_ads_call(
                 execution_key=execution_key,
                 run_id=run_id,
                 connection=connection,
                 capability=capability,
                 fingerprint=fingerprint,
-                status="failed",
+                status="unknown" if unconfirmed else "failed",
                 error_code=exc.code[:120],
             )
+            if unconfirmed:
+                raise IntegrationDeliveryUnknownError(
+                    "Google Ads did not confirm the change; Tin will not resend it automatically"
+                ) from None
             raise GoogleAdsCallError(exc.code) from None
         await self._record_ads_call(
             execution_key=execution_key,

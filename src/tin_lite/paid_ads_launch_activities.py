@@ -884,7 +884,34 @@ class PaidAdsLaunchActivities:
         enabled = await self._ads(
             run_id, "apply:enable", "mutate_resource", {"segment": segment, "body": body}
         )
-        if enabled.get("status") != "completed" or enabled.get("error"):
+        switched_on = enabled.get("status") == "completed" and not enabled.get("error")
+        if enabled.get("status") == "unknown":
+            # The switch may have landed without its answer: read the campaign back first.
+            check = await self._ads(
+                run_id,
+                "apply:enable_check",
+                "search",
+                {"query": QUERIES["campaign_by_name"](plan["campaign_name"])},
+            )
+            state = next(
+                (
+                    row["campaign"].get("status")
+                    for row in _rows(check)
+                    if isinstance(row.get("campaign"), dict)
+                    and row["campaign"].get("resourceName") == resources["campaign"]
+                ),
+                None,
+            )
+            switched_on = state == "ENABLED"
+            if state not in {"ENABLED", "PAUSED"}:
+                await self._refuse(
+                    run_id,
+                    "enable",
+                    "Tin did not receive Google Ads' answer to switching the campaign on and "
+                    "could not read its status back, so it may already be running. Check it in "
+                    "Google Ads before running the launch again.",
+                )
+        if not switched_on:
             await self._refuse(
                 run_id,
                 "enable",

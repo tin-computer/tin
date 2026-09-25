@@ -27,6 +27,7 @@ from tin_lite.integrations import (
     GitHubRepositoryFile,
     GitHubRepositorySnapshot,
     GoogleAdsCallError,
+    IntegrationDeliveryUnknownError,
     IntegrationUpstreamError,
 )
 from tin_lite.model_providers import ModelProviderError, ModelResult, ModelUsage, ProviderName
@@ -170,6 +171,8 @@ class Script:
         self.validate_error = None
         self.fail_create_once = False
         self.lookup_found = False
+        self.enable_lost = False
+        self.status_after_enable = None
         self.calls = []
 
     def rows(self, query):
@@ -218,6 +221,16 @@ class Script:
             status = "ENABLED" if self.subscriptions_enabled else "PAUSED"
             return [{"recommendationSubscription": {"type": "KEYWORD", "status": status}}]
         if "FROM campaign WHERE campaign.name" in query:
+            if self.status_after_enable:
+                return [
+                    {
+                        "campaign": {
+                            "resourceName": f"customers/{CUSTOMER}/campaigns/2",
+                            "campaignBudget": f"customers/{CUSTOMER}/campaignBudgets/1",
+                            "status": self.status_after_enable,
+                        }
+                    }
+                ]
             if not self.lookup_found:
                 return []
             return [
@@ -277,6 +290,8 @@ class Script:
             return {"results": results, "provider_request_id": "req"}
         assert kind == "mutate_resource"
         segment = request["segment"].split(":")[0]
+        if segment == "campaigns" and self.enable_lost:
+            raise IntegrationDeliveryUnknownError("Google Ads did not confirm the change")
         return {
             "results": [{"resourceName": f"customers/{CUSTOMER}/{segment}/55"}],
             "provider_request_id": "req",
@@ -530,6 +545,57 @@ async def test_an_unconfirmed_create_with_no_trace_refuses_and_a_retry_sends_not
     assert len(mutates(script, validate_only=False)) == sent == 1
     assert integrations.google_ads_call.await_count == count
     assert not any(c[0] == "mutate_resource" for c in script.calls)
+
+
+def enables(script):
+    return [c for c in script.calls if c[0] == "mutate_resource" and c[1]["segment"] == "campaigns"]
+
+
+@pytest.mark.asyncio
+async def test_a_lost_enable_answer_reads_the_campaign_back_and_goes_live_when_it_is_on():
+    script = Script()
+    script.enable_lost = True
+    activities, db, _, script, _, integrations, _ = await fixture(script=script)
+    run_id, _ = await run_through_approval(activities, db)
+    # Google applied the switch; only its answer was lost.
+    script.status_after_enable = "ENABLED"
+    await activities.apply(run_id)
+    enable = db.effects[activities.key(run_id, "apply:enable")]
+    assert enable.result["status"] == "unknown"
+    assert activities.key(run_id, "apply:enable_check") in launch_receipts(db)
+    applied = await activities._result(run_id, "applied")
+    assert applied["enabled"] and applied["campaign_id"] == "2"
+    assert db.campaigns[db.run.id]["enabled_at"]
+    count = integrations.google_ads_call.await_count
+    await activities.apply(run_id)
+    assert len(enables(script)) == 1 and integrations.google_ads_call.await_count == count
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status", "says"),
+    [
+        (None, "may already be running"),
+        ("PAUSED", "is paused in your account"),
+    ],
+)
+async def test_a_lost_enable_answer_only_claims_paused_when_the_account_says_so(status, says):
+    script = Script()
+    script.enable_lost = True
+    activities, db, _, script, _, integrations, _ = await fixture(script=script)
+    run_id, _ = await run_through_approval(activities, db)
+    script.status_after_enable = status
+    with pytest.raises(ApplicationError) as failed:
+        await activities.apply(run_id)
+    assert says in str(failed.value)
+    assert ("paused" in str(failed.value)) is (status == "PAUSED")
+    failure = await activities._result(run_id, "failure")
+    assert failure["stage"] == "enable" and failure["detail"] == str(failed.value)
+    assert await activities._result(run_id, "applied") is None
+    count = integrations.google_ads_call.await_count
+    with pytest.raises(ApplicationError):
+        await activities.apply(run_id)
+    assert len(enables(script)) == 1 and integrations.google_ads_call.await_count == count
 
 
 @pytest.mark.asyncio

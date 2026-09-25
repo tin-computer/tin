@@ -2741,10 +2741,13 @@ class AdsBackend:
         self.search_error: tuple[str, str] | None = None
         self.mutate_error: tuple[str, str] | None = None
         self.link_rows: list[dict] | None = None
+        self.answer_lost = False
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content or b"{}")
         self.requests.append((request.url.path, body, dict(request.headers)))
+        if self.answer_lost:
+            raise httpx.ReadTimeout("the answer was lost", request=request)
         path = request.url.path
         if path.endswith("customerClientLinks:mutate"):
             if self.link_error:
@@ -3122,6 +3125,52 @@ async def test_google_ads_call_receipts_reads_and_writes_for_a_run() -> None:
     failed = database.call_receipts["run:enable"]
     assert failed.status == "failed" and failed.error_code == "PolicyFindingError.POLICY_FINDING"
     assert failed.capability == "campaigns.write"
+
+
+@pytest.mark.asyncio
+async def test_a_lost_answer_to_a_google_ads_write_is_unknown_not_a_refusal() -> None:
+    backend = AdsBackend()
+    backend.link_status = "ACTIVE"
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    await service.google_ads_link_status(project_id=PROJECT_ID)
+    backend.answer_lost = True
+    with pytest.raises(IntegrationDeliveryUnknownError):
+        await service.google_ads_call(
+            project_id=PROJECT_ID,
+            kind="mutate_resource",
+            request={
+                "segment": "campaigns",
+                "body": {"operations": [{"update": {"resourceName": "x"}, "updateMask": "status"}]},
+            },
+            execution_key="run:enable",
+            run_id=RUN_ID,
+        )
+    assert backend.requests[-1][0].endswith("campaigns:mutate")
+    lost = database.call_receipts["run:enable"]
+    assert lost.status == "unknown" and lost.error_code == "timeout"
+    # A read or a validate-only check changes nothing, so its lost answer stays a failure.
+    with pytest.raises(GoogleAdsCallError) as read:
+        await service.google_ads_call(
+            project_id=PROJECT_ID,
+            kind="search",
+            request={"query": "SELECT campaign.id FROM campaign"},
+            execution_key="run:read",
+            run_id=RUN_ID,
+        )
+    assert read.value.code == "timeout"
+    assert database.call_receipts["run:read"].status == "failed"
+    with pytest.raises(GoogleAdsCallError):
+        await service.google_ads_call(
+            project_id=PROJECT_ID,
+            kind="mutate",
+            request={"operations": [{"campaignOperation": {}}], "validate_only": True},
+            execution_key="run:validate",
+            run_id=RUN_ID,
+        )
+    assert database.call_receipts["run:validate"].status == "failed"
 
 
 @pytest.mark.asyncio
