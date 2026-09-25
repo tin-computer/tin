@@ -564,6 +564,56 @@ class Database:
         )
         return _integration_connection(row) if row else None
 
+    async def link_github_identity(
+        self, *, clerk_user_id: str, github_user_id: int, github_login: str
+    ) -> None:
+        """Bind a GitHub account to one Tin user; the latest authorization wins."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            await conn.execute(
+                """
+                DELETE FROM tin_user_github_identities
+                WHERE github_user_id = $1 AND clerk_user_id <> $2
+                """,
+                github_user_id,
+                clerk_user_id,
+            )
+            await conn.execute(
+                """
+                INSERT INTO tin_user_github_identities (clerk_user_id, github_user_id, github_login)
+                VALUES ($1, $2, $3)
+                ON CONFLICT (clerk_user_id) DO UPDATE
+                SET github_user_id = EXCLUDED.github_user_id,
+                    github_login = EXCLUDED.github_login,
+                    updated_at = now()
+                """,
+                clerk_user_id,
+                github_user_id,
+                github_login,
+            )
+
+    async def clerk_user_for_github_id(self, github_user_id: int) -> str | None:
+        return await self.pool.fetchval(
+            "SELECT clerk_user_id FROM tin_user_github_identities WHERE github_user_id = $1",
+            github_user_id,
+        )
+
+    async def project_setup_completed(self, project_id: UUID) -> bool:
+        """True once any Start here run in the project has its setup receipt completed."""
+        return bool(
+            await self.pool.fetchval(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM workflow_runs AS run
+                    JOIN effect_receipts AS receipt
+                      ON receipt.execution_key = 'onboarding:' || run.id::text || ':setup'
+                    WHERE run.project_id = $1 AND run.executor = 'growth.onboarding'
+                      AND receipt.status = 'completed'
+                )
+                """,
+                project_id,
+            )
+        )
+
     async def list_integration_connections_by_external_id(
         self, *, provider_key: str, external_account_id: str
     ) -> list[IntegrationConnection]:

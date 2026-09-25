@@ -1073,6 +1073,7 @@ class IntegrationService:
             raise IntegrationAuthorizationError(
                 "The GitHub installation must grant Contents and Pull requests write access"
             )
+        github_user = await self._github_authorizing_user(user_token)
         del user_token
         connection = await self._database.upsert_integration_connection(
             project_id=attempt.project_id,
@@ -1100,7 +1101,40 @@ class IntegrationService:
             "GitHub connected with repository and pull-request write access.",
             suffix=str(uuid4()),
         )
+        if github_user is not None:
+            await self._database.link_github_identity(
+                clerk_user_id=clerk_user_id,
+                github_user_id=github_user[0],
+                github_login=github_user[1],
+            )
         return connection
+
+    async def _github_authorizing_user(self, user_token: str) -> tuple[int, str] | None:
+        """The GitHub account that authorized, kept so contributor checks can match PR authors.
+
+        The connection does not depend on it: a failed lookup only leaves the identity unlinked.
+        """
+        try:
+            response = await self._client.get(
+                "https://api.github.com/user", headers=self._github_headers(user_token)
+            )
+            payload = response.json() if response.status_code == 200 else None
+        except (httpx.HTTPError, ValueError):
+            logger.warning("GitHub user lookup failed; contributor identity not linked")
+            return None
+        if not isinstance(payload, dict):
+            logger.warning("GitHub user lookup returned HTTP %s", response.status_code)
+            return None
+        user_id, login = payload.get("id"), payload.get("login")
+        if (
+            not isinstance(user_id, int)
+            or isinstance(user_id, bool)
+            or user_id <= 0
+            or not isinstance(login, str)
+            or not 1 <= len(login) <= 39
+        ):
+            return None
+        return user_id, login
 
     async def google_sites(self, *, project_id: UUID) -> list[ProviderOption]:
         connection = await self._connection(project_id, GSC_PROVIDER)

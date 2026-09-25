@@ -123,3 +123,7 @@ jobs:
       - run: uv sync --frozen
       - run: uv run tin-lite validate-community
       - run: uv run python -m tin_lite.workflow_qualification_cli check workflow_packages/example.csv_summary/workflow.json
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: node --test .github/scripts/contributor-gate.test.mjs

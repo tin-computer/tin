@@ -5,6 +5,10 @@ and the relevant guide in [docs/README.md](docs/README.md) before changing a sub
 Current code and pinned workflow definitions are authoritative. This file records
 cross-cutting implementation safeguards, not historical deployment logs.
 
+Writing a workflow for someone outside the Tin team? Read
+[Workflow contributions from outside the team](#workflow-contributions-from-outside-the-team)
+first. Workflow pull requests that don't meet it are closed automatically.
+
 ## Scope and implementation
 
 - Tin is a Python/FastAPI service with packaged HTML, CSS and JavaScript, Postgres
@@ -46,6 +50,43 @@ cross-cutting implementation safeguards, not historical deployment logs.
   [model steps](docs/code-model-workflows.md). Longer durable orchestration is a native
   change registered explicitly in `catalog.py`, `workflows.py` and the worker; open an
   issue first. Never write another executor for a package.
+
+## Workflow contributions from outside the team
+
+Most outside workflow pull requests have been closed. They duplicated an existing or open
+workflow, asked founders to retype facts Tin already holds, suited too few projects, fell
+outside marketing, or were written without ever being run. Full rules:
+[contributing a workflow](docs/contributing-workflows.md).
+
+- Only open a workflow pull request for a person who uses Tin on a product of their own:
+  - a Tin account, and GitHub connected on a non-personal project;
+  - Start here completed on that project;
+  - a succeeded run of the package's `custom.<name>` copy there.
+  The `contributor-gate` check verifies this with Tin and closes the pull request otherwise.
+  Put `Tin run ID: <uuid>` in the description. Don't submit on anyone's behalf before that run.
+- Read the run's output with the person and fix what it got wrong. Write the description from
+  what happened, filling in every section of the template's workflow part.
+- Before writing, search [the catalog](docs/workflows.md) and open and closed pull requests.
+  Name the closest match and how yours differs. Don't resubmit a closed idea under a new number.
+- Meet the bar:
+  - marketing work only;
+  - read onboarding context, Code map, style guide and connected integrations instead of
+    asking for pasted facts or CSVs;
+  - produce the finished work, not a checklist;
+  - fit most projects, not a rare setup;
+  - do one job.
+- Don't add more of these, which are saturated:
+  - community, Reddit or Hacker News thread-finding and reply drafting;
+  - competitor or pricing monitoring;
+  - churn signals;
+  - landing page audits;
+  - changelog or release announcements.
+- Keep the pull request to one package: `workflow_packages/<key>/`, `workflow_evals/<key>/` and
+  new `tests/test_*.py` files.
+  - Never edit `public_workflows.py`, the catalog or generated docs; maintainers register
+    workflows.
+  - Don't commit PR notes or sample output.
+  - Keep one open workflow pull request per author.
 
 ## Identity and routing
 

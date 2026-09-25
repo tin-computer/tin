@@ -37,6 +37,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 ## Workflow and integration contributions
 
 - [Built-in workflows](workflows.md): generated list with inputs and outputs.
+- [Contributing a workflow](contributing-workflows.md): who can open a workflow pull request,
+  the automatic contributor check and what we take.
 - [Adding a workflow](adding-a-workflow.md) and [definition contracts](workflow-definition-foundation.md).
 - [Creation and qualification](workflow-qualification.md): one creator package, versioned cases,
   static checks and explicitly budgeted evaluations using existing run evidence.

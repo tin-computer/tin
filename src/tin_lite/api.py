@@ -26,6 +26,7 @@ from tin_lite.codex_api_relay import router as codex_api_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
 from tin_lite.content_program_api import router as content_program_router
+from tin_lite.contributor_check import check_contributor
 from tin_lite.documents import render_markdown
 from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
@@ -1315,6 +1316,36 @@ async def github_webhook(
     except IntegrationAuthorizationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
     return {"accepted": accepted}
+
+
+class ContributorCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    github_user_id: int = Field(gt=0)
+    run_id: UUID
+    package_key: str = Field(pattern=r"^[a-z][a-z0-9_]*\.[a-z][a-z0-9_.]*$", max_length=120)
+
+
+@router.post("/api/contributor-checks", include_in_schema=False)
+async def contributor_check(
+    payload: ContributorCheckRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict[str, Any]:
+    """Answer the tin repository's contributor gate; disabled unless a token is configured."""
+    token = request.app.state.settings.contributor_check_token
+    if token is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    expected = f"Bearer {token.get_secret_value()}"
+    if not authorization or not secrets.compare_digest(authorization.encode(), expected.encode()):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    result = await check_contributor(
+        request.app.state.runtime.database,
+        github_user_id=payload.github_user_id,
+        run_id=payload.run_id,
+        package_key=payload.package_key,
+    )
+    return {"verified": result.verified, "reasons": result.reasons}
 
 
 @router.api_route(

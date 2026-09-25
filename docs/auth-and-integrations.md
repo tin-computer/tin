@@ -57,7 +57,10 @@ provider as a special workflow:
 2. A provider adapter owns authorization, token refresh, revocation, health checks, and provider API
    translation. LinkedIn-specific behavior stops at that adapter.
    GitHub uses OAuth-on-install only to verify that the current GitHub user can access the returned
-   installation ID; the short-lived user token is discarded and is never stored.
+   installation ID; the short-lived user token is discarded and is never stored. Tin keeps
+   only that user's numeric GitHub ID and login (`tin_user_github_identities`) so the
+   [contributor check](contributing-workflows.md) can match a pull-request author to a Tin
+   user. A failed lookup leaves the identity unlinked and the connection unaffected.
    GitHub issues that OAuth code only on a fresh install and does not redirect back at all
    from an already-installed app unless a Setup URL is configured, so the connection starts
    with GitHub user authorization instead of the install page. On return Tin lists the

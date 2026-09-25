@@ -67,6 +67,7 @@ class FakeIntegrationDatabase:
         self.calls: list[dict] = []
         self.call_receipts: dict[str, IntegrationCallReceipt] = {}
         self.deliveries: set[tuple[str, str]] = set()
+        self.github_identities: dict[str, tuple[int, str]] = {}
 
     async def create_integration_auth_attempt(self, **values) -> None:
         self.attempts[values["token_hash"]] = IntegrationAuthAttempt(
@@ -123,6 +124,9 @@ class FakeIntegrationDatabase:
             **{**attempt.__dict__, "used_at": datetime.now(UTC)}
         )
         return attempt
+
+    async def link_github_identity(self, *, clerk_user_id, github_user_id, github_login) -> None:
+        self.github_identities[clerk_user_id] = (github_user_id, github_login)
 
     async def upsert_integration_connection(self, **values) -> IntegrationConnection:
         now = datetime.now(UTC)
@@ -1106,6 +1110,8 @@ async def test_github_installation_requires_explicit_contents_and_pr_write(tmp_p
     async def github(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/login/oauth/access_token":
             return httpx.Response(200, json={"access_token": "user-token"})
+        if request.method == "GET" and request.url.path == "/user":
+            return httpx.Response(200, json={"id": 4242, "login": "ada"})
         if request.method == "GET" and request.url.path.endswith("/repositories"):
             assert request.headers["authorization"] == "Bearer user-token"
             return httpx.Response(200, json={"total_count": 1, "repositories": []})
@@ -1197,6 +1203,8 @@ async def test_github_rejects_an_installation_the_authorizing_user_cannot_access
     async def github(request: httpx.Request) -> httpx.Response:
         if request.method == "POST" and request.url.path == "/login/oauth/access_token":
             return httpx.Response(200, json={"access_token": "user-token"})
+        if request.method == "GET" and request.url.path == "/user":
+            return httpx.Response(200, json={"id": 4242, "login": "ada"})
         if request.method == "GET" and request.url.path.endswith("/repositories"):
             return httpx.Response(404, json={"message": "Not Found"})
         raise AssertionError("unverified installation reached a privileged GitHub endpoint")
@@ -2153,6 +2161,8 @@ def _github_write_app(private_key_path, *, user_installations=None):
         calls.append(f"{request.method} {request.url.path}")
         if request.method == "POST" and request.url.path == "/login/oauth/access_token":
             return httpx.Response(200, json={"access_token": "user-token"})
+        if request.method == "GET" and request.url.path == "/user":
+            return httpx.Response(200, json={"id": 4242, "login": "ada"})
         if request.method == "GET" and request.url.path == "/user/installations":
             assert request.headers["authorization"] == "Bearer user-token"
             return httpx.Response(200, json={"installations": user_installations or []})
@@ -2193,6 +2203,44 @@ def _github_settings(tmp_path):
         github_app_private_key_path=private_key_path,
         github_webhook_secret=SecretStr("webhook-secret"),
     ), private_key_path
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "user_response",
+    [httpx.Response(500, json={}), httpx.Response(200, json={"id": "not-a-number"})],
+)
+async def test_github_connects_even_when_the_authorizing_user_cannot_be_read(
+    tmp_path, user_response
+) -> None:
+    configured, private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    github, _ = _github_write_app(private_key_path)
+
+    async def without_user(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/user":
+            return user_response
+        return await github(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(without_user)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GITHUB_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        connection = await service.complete_github(
+            state=state,
+            code="one-time-code",
+            installation_id=42,
+            setup_action="install",
+            clerk_user_id=USER_ID,
+        )
+    assert connection.status == "connected"
+    assert database.github_identities == {}
 
 
 @pytest.mark.asyncio
@@ -2249,6 +2297,7 @@ async def test_github_already_installed_path_authorizes_then_binds_the_remembere
     assert connection.configuration["write_opted_in"] is True
     assert "GET /user/installations/42/repositories" in calls
     assert "GET /user/installations" not in calls
+    assert database.github_identities == {USER_ID: (4242, "ada")}
     with pytest.raises(IntegrationAuthorizationError, match="expired"):
         await service.complete_github(
             state=auth_state,

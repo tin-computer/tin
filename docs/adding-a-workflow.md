@@ -84,11 +84,14 @@ contracts; ordinary reviewable artifacts keep their existing behavior.
 ## Test it as a private workflow
 
 Fixture tests show that the package fits the contract; a private run shows that it does the
-job. You can run your package on hosted Tin before it is merged, as a `custom.*` copy in your
-own project.
+job. Outside contributors must run the package on hosted Tin before opening a pull request,
+as a `custom.*` copy in a real project of their own; see
+[contributing a workflow](contributing-workflows.md) for the full requirements.
 
 1. Sign up at [Tin](https://app.tin.computer) and connect your coding agent over MCP. New
    accounts get a one-time credit that covers test runs; code-only runs use no credits.
+   Use a project for a product of yours, not the personal one: connect GitHub to it and
+   complete Start here.
 2. Check that the copy would activate:
 
    ```bash
@@ -102,8 +105,9 @@ own project.
    dot. The copy's manifest `key` must be the same `custom.<name>`. Then call
    `validate_workflow_package`, `activate_workflow_package` and `start_workflow` with real
    inputs, and read the result with `read_run_output`.
-4. Invite the maintainer reviewing your PR to the project (Invite someone in the dashboard),
-   so they can open the run themselves. Put the run ID and the output in the PR.
+4. Put `Tin run ID: <uuid>` for a succeeded run in the PR. Optionally invite the maintainer
+   reviewing your PR to the project (Invite someone in the dashboard) so they can open the
+   run themselves.
 
 Private copies have narrower rules than public packages. For the test copy:
 
@@ -116,8 +120,8 @@ Private copies have narrower rules than public packages. For the test copy:
 Some packages can't be tested privately yet: procedures that need the browser profile, and
 integrations other than GitHub, Google Workspace read access,
 [Stripe, PostHog](stripe-and-posthog-connections.md) and
-[project API connections](project-api-connections.md). Say so in the PR; a maintainer can
-run those.
+[project API connections](project-api-connections.md). Open an issue before building one; a
+maintainer can exempt the PR from the run requirement and run it themselves.
 
 ## Submit it
 
@@ -147,9 +151,10 @@ Validation reads the manifest and declared resources. It parses Python but doesn
 it. Your tests execute code separately, without production credentials or paid API calls.
 A passing validator proves the package fits the contract, not that its output is useful.
 
-In the PR, explain who would run this, what they get, why an existing workflow doesn't
-cover it, and how you tested it, including the private run ID when you have one. Name the
-integrations, model costs and any external effects.
+Fill in the workflow part of the PR template: the private run ID, who would run this and
+what they get, the closest existing workflow or PR and how yours differs, what it reads from
+Tin instead of asking the founder, and how you tested it. Name the integrations, model costs
+and any external effects.
 External contributions need passing CI and maintainer review; see [CONTRIBUTING](../CONTRIBUTING.md).
 
 ## From a package to the public Registry
