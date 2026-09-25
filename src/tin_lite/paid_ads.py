@@ -1013,6 +1013,7 @@ def render(
     history,
     evidence,
     notes,
+    negative_themes: list | None = None,
 ) -> dict[str, bytes]:
     est = scorecard.get("estimate") or {}
     scores = scorecard["scores"]
@@ -1169,6 +1170,7 @@ def render(
         "diagnosis": diagnosis,
         "history": history,
         "evidence_index": evidence,
+        "negative_themes": list(negative_themes or []),
         "keywords": [
             {
                 **row,
@@ -1598,6 +1600,7 @@ async def build_assessment(scope: dict, gathered: dict, research: dict, generate
         history=history,
         evidence=index,
         notes=notes,
+        negative_themes=research.get("negative_themes"),
     )
     return {
         "documents": {name: content.decode() for name, content in documents.items()},

@@ -467,11 +467,33 @@ def _markets(geo, fallback) -> list[str]:
     return found or ["US"]
 
 
+def _words(text) -> list[str]:
+    return re.sub(r"[^\w\s'-]", " ", str(text or "").lower()).split()
+
+
 def _negative(text: str, match_type: str) -> dict | None:
-    words = re.sub(r"[^\w\s'-]", " ", str(text or "").lower()).split()
+    words = _words(text)
     if not words or len(words) > 10 or len(" ".join(words)) > LIMITS["keyword"]:
         return None
     return {"text": " ".join(words), "match_type": match_type}
+
+
+def _targeted(groups) -> list[list[str]]:
+    return [_words(k["text"]) for g in groups for k in g["keywords"]]
+
+
+def _blocks(negative: dict, targeted: list[list[str]]) -> bool:
+    """A phrase negative blocks every query holding its words in order, so one inside a bought
+    keyword switches that keyword off; an exact negative blocks only its own words."""
+    words = negative["text"].split()
+    if negative["match_type"] == "EXACT":
+        return words in targeted
+    size = len(words)
+    return any(
+        keyword[start : start + size] == words
+        for keyword in targeted
+        for start in range(len(keyword) - size + 1)
+    )
 
 
 def _dedupe_negatives(items, cap: int) -> list[dict]:
@@ -555,8 +577,8 @@ def plan_skeleton(
             row.get("intent") == "tofu" and relevance is not None and relevance <= 1
         ):
             negatives.append(_negative(row["keyword"], "PHRASE"))
-    targeted = {k["text"] for g in groups for k in g["keywords"]}
-    negatives = [n for n in negatives if n and n["text"] not in targeted]
+    targeted = _targeted(groups)
+    negatives = [n for n in negatives if n and not _blocks(n, targeted)]
     competitors = [
         _host(v).removeprefix("www.").split(".")[0]
         for v in (assessment.get("inputs") or {}).get("competitor_domains") or []
@@ -957,13 +979,13 @@ def merge_copy(plan: dict, copy: dict) -> dict:
 
 
 def merge_negatives(plan: dict, result: dict) -> dict:
-    targeted = {k["text"] for g in plan["ad_groups"] for k in g["keywords"]}
+    targeted = _targeted(plan["ad_groups"])
     extra = [
         _negative(text, "PHRASE")
         for text in (result.get("negatives") or [])[: POLICY["max_model_negatives"]]
         if isinstance(text, str)
     ]
-    extra = [n for n in extra if n and n["text"] not in targeted]
+    extra = [n for n in extra if n and not _blocks(n, targeted)]
     return {
         **plan,
         "negatives": _dedupe_negatives(plan["negatives"] + extra, POLICY["max_negatives"]),

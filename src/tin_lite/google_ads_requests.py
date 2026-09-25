@@ -184,13 +184,24 @@ def _list(value, *, label: str, maximum: int, minimum: int = 0) -> list:
     return value
 
 
+def bundle_names(plan: dict) -> dict[str, str]:
+    """The names campaign_bundle sends, marked once; lookups after an uncertain create use them."""
+    mark = _text(plan.get("marker"), limit=40, label="Marker")
+    name = _text(plan.get("campaign_name"), limit=200, label="Campaign name")
+    name = name.removesuffix(f" {mark}")
+    return {
+        "campaign": f"{name} {mark}",
+        "budget": f"{name} budget {mark}",
+        "shared_set": f"{name} negatives {mark}",
+    }
+
+
 def campaign_bundle(plan: dict, *, customer_id: str) -> list[dict]:
     """The whole paused campaign as one ordered, all-or-nothing `mutateOperations` list."""
     cid = globals()["customer_id"](customer_id)
     if not isinstance(plan, dict):
         raise ValueError("A campaign plan is an object.")
-    mark = _text(plan.get("marker"), limit=40, label="Marker")
-    name = _text(plan.get("campaign_name"), limit=200, label="Campaign name")
+    names = bundle_names(plan)
     budget = _amount(plan.get("daily_budget_usd"), minimum=BOUNDS["min_budget_usd"], label="Budget")
     ceiling = _amount(
         plan.get("cpc_ceiling_usd"), minimum=BOUNDS["min_ceiling_usd"], label="CPC ceiling"
@@ -234,7 +245,7 @@ def campaign_bundle(plan: dict, *, customer_id: str) -> list[dict]:
             "campaignBudgetOperation": {
                 "create": {
                     "resourceName": budget_rn,
-                    "name": f"{name} budget {mark}",
+                    "name": names["budget"],
                     "amountMicros": budget,
                     "deliveryMethod": "STANDARD",
                     "explicitlyShared": False,
@@ -245,7 +256,7 @@ def campaign_bundle(plan: dict, *, customer_id: str) -> list[dict]:
     campaign_rn = resource("campaigns", ids.take())
     campaign = {
         "resourceName": campaign_rn,
-        "name": f"{name} {mark}",
+        "name": names["campaign"],
         "status": "PAUSED",
         "advertisingChannelType": "SEARCH",
         "campaignBudget": budget_rn,
@@ -293,7 +304,7 @@ def campaign_bundle(plan: dict, *, customer_id: str) -> list[dict]:
             "sharedSetOperation": {
                 "create": {
                     "resourceName": shared_rn,
-                    "name": f"{name} negatives {mark}",
+                    "name": names["shared_set"],
                     "type": "NEGATIVE_KEYWORDS",
                 }
             }

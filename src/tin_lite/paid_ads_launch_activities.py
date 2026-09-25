@@ -19,6 +19,7 @@ from tin_lite import paid_ads, paid_ads_launch
 from tin_lite.google_ads_requests import (
     QUERIES,
     SUBSCRIPTION_TYPES,
+    bundle_names,
     campaign_bundle,
     campaign_status_body,
     conversion_action_body,
@@ -433,7 +434,7 @@ class PaidAdsLaunchActivities:
                 run_id,
                 "gather:campaign_lookup",
                 "search",
-                {"query": QUERIES["campaign_by_name"](skeleton["campaign_name"])},
+                {"query": QUERIES["campaign_by_name"](bundle_names(skeleton)["campaign"])},
             )
             rows = _rows(lookup)
             existing = rows[0].get("campaign") if rows else None
@@ -808,7 +809,7 @@ class PaidAdsLaunchActivities:
                 run_id,
                 "apply:lookup",
                 "search",
-                {"query": QUERIES["campaign_by_name"](plan["campaign_name"])},
+                {"query": QUERIES["campaign_by_name"](bundle_names(plan)["campaign"])},
             )
             rows = _rows(lookup)
             if rows and isinstance(rows[0].get("campaign"), dict):
@@ -817,11 +818,7 @@ class PaidAdsLaunchActivities:
                     run_id,
                     "apply:shared_set_lookup",
                     "search",
-                    {
-                        "query": QUERIES["shared_set_by_name"](
-                            f"{plan['campaign_name']} negatives {plan['marker']}"
-                        )
-                    },
+                    {"query": QUERIES["shared_set_by_name"](bundle_names(plan)["shared_set"])},
                 )
                 shared_rows = _rows(shared)
                 resources = {

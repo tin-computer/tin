@@ -202,6 +202,24 @@ def test_campaign_bundle_has_exact_shapes_in_order():
     assert ops[14]["campaignAssetOperation"]["create"]["fieldType"] == "CALLOUT"
 
 
+def test_campaign_bundle_marks_an_already_marked_name_once():
+    mark = requests.marker(RUN_ID)
+    ops = requests.campaign_bundle(
+        plan(campaign_name=f"Tin | Search | Core {mark}"), customer_id=CID
+    )
+    names = [next(iter(op.values()))["create"].get("name") for op in ops[:5]]
+    assert names == [
+        f"Tin | Search | Core budget {mark}",
+        f"Tin | Search | Core {mark}",
+        None,
+        None,
+        f"Tin | Search | Core negatives {mark}",
+    ]
+    assert requests.bundle_names(plan(campaign_name=f"Tin | Search | Core {mark}")) == (
+        requests.bundle_names(plan())
+    )
+
+
 def test_temporary_ids_are_negative_unique_and_defined_before_use():
     ops = requests.campaign_bundle(plan(), customer_id=CID)
     defined: set[str] = set()

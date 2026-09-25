@@ -485,15 +485,37 @@ def _allowable(campaign: dict) -> float | None:
     return float(value)
 
 
+def _term_totals(search_terms: list[dict]) -> list[dict]:
+    """One row per search term: Google splits a term by ad group and matched keyword, and a
+    campaign-wide negative blocks it in all of them."""
+    totals: dict[str, dict] = {}
+    for row in search_terms:
+        total = totals.setdefault(
+            row["term"],
+            {
+                "term": row["term"],
+                "clicks": 0,
+                "cost_usd": 0.0,
+                "conversions": 0.0,
+                "excluded": False,
+            },
+        )
+        total["clicks"] += row["clicks"]
+        total["cost_usd"] = _money(total["cost_usd"] + row["cost_usd"])
+        total["conversions"] += row["conversions"]
+        total["excluded"] = total["excluded"] or row["status"] in EXCLUDED_TERM_STATES
+    return sorted(totals.values(), key=lambda t: (-t["cost_usd"], -t["clicks"], t["term"]))
+
+
 def _negatives(reads: dict, labels: dict, cap: int) -> list[dict]:
     chosen = []
-    for term in reads["search_terms"]:
+    for term in _term_totals(reads["search_terms"]):
         if len(chosen) >= cap:
             break
         label = labels.get(term["term"])
         if label not in AUTO_NEGATIVE_LABELS:
             continue
-        if term["conversions"] > 0 or term["status"] in EXCLUDED_TERM_STATES:
+        if term["conversions"] > 0 or term["excluded"]:
             continue
         if term["clicks"] < POLICY["search_terms_min_clicks"]:
             continue

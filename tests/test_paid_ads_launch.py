@@ -281,6 +281,36 @@ def test_plan_skeleton_honours_founder_overrides_and_refuses_broad():
         )
 
 
+def test_negatives_never_block_a_keyword_the_campaign_buys(monkeypatch):
+    # A phrase negative blocks every query holding its words in order, so a starter word
+    # inside a bought keyword would switch that keyword off.
+    rows = keywords_csv() + "kw_course,Online Course Platform,bofu,3,500,5.0,4.0,9.0,40,c1,,\n"
+    data = assessment()
+    data["campaign"]["ad_groups"][0]["keyword_ids"].append("kw_course")
+    data["campaign"]["negatives"] += ["Course Platform", "platform online"]
+    monkeypatch.setitem(
+        launch.STARTER_NEGATIVES, "exact", ["online course platform", "course platform"]
+    )
+    plan = launch.plan_skeleton(
+        assessment=data,
+        keywords_csv=rows,
+        inputs=inputs(),
+        account=account(),
+        marker=MARKER,
+        today=TODAY,
+    )
+    assert "Online Course Platform" in [k["text"] for k in plan["ad_groups"][0]["keywords"]]
+    kept = {(n["text"], n["match_type"]) for n in plan["negatives"]}
+    assert ("course", "PHRASE") not in kept and ("course platform", "PHRASE") not in kept
+    assert ("online course platform", "EXACT") not in kept
+    # An exact negative blocks only its own query; words out of order block nothing bought.
+    assert ("course platform", "EXACT") in kept and ("platform online", "PHRASE") in kept
+    assert ("courses", "PHRASE") in kept and ("free", "PHRASE") in kept
+    merged = launch.merge_negatives(plan, {"negatives": ["Platform", "imessage", "platforms"]})
+    added = {n["text"] for n in merged["negatives"]} - {n["text"] for n in plan["negatives"]}
+    assert added == {"platforms"}
+
+
 # ---------------------------------------------------------------- copy validation
 
 

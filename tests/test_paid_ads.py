@@ -603,6 +603,18 @@ async def test_an_unusable_result_gets_one_replacement_and_two_fail_the_run():
         )
 
 
+async def test_seed_negative_themes_reach_assessment_json_for_the_launch():
+    themes = {**research(), "negative_themes": ["jobs", "free", "android emulator"]}
+    result = await paid_ads.build_assessment(scope(), gathered(), themes, FakeModel())
+    assessment = json.loads(result["documents"]["assessment.json"])
+    assert assessment["negative_themes"] == ["jobs", "free", "android emulator"]
+    text = result["documents"]["ASSESSMENT.md"]
+    block = json.loads(re.search(r"```tin-ads\n(.*?)\n```", text, re.S).group(1))
+    assert "negative_themes" not in block
+    result = await paid_ads.build_assessment(scope(), gathered(), research(), FakeModel())
+    assert json.loads(result["documents"]["assessment.json"])["negative_themes"] == []
+
+
 async def test_an_off_contract_verdict_is_repaired_then_clamped_by_code():
     def overspend(value, user):
         value["campaign"]["daily_budget_usd"] = {"min": 1, "max": 9999}

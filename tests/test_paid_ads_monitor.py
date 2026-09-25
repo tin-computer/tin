@@ -368,6 +368,25 @@ def test_negatives_follow_labels_clicks_conversions_status_and_the_cap():
     assert unlabeled["auto"]["negatives"] == []
 
 
+def test_negatives_judge_a_term_across_every_row_it_appears_in():
+    # search_term_view returns one row per term, ad group and matched keyword.
+    split = reads(
+        search_terms=[
+            term_row("imessage api jobs", clicks=1, cost=2.0, conversions=1.0),
+            term_row("imessage api jobs", clicks=4, cost=10.0),
+            term_row("send imessage from python free", clicks=1, cost=2.5),
+            term_row("send imessage from python free", clicks=1, cost=3.0),
+            term_row("imessage weather", clicks=3, cost=4.0),
+            term_row("imessage weather", clicks=1, cost=1.0, status="ADDED_EXCLUDED"),
+        ]
+    )
+    negatives = decide(split)["auto"]["negatives"]
+    assert [(n["text"], n["clicks"], n["cost_usd"]) for n in negatives] == [
+        ("send imessage from python free", 2, 5.5)
+    ]
+    assert negatives[0]["why"].startswith("2 clicks and $5.50")
+
+
 def test_disapproved_ads_are_paused_only_while_enabled():
     decision = decide()
     assert [p["ad_id"] for p in decision["auto"]["pause_ads"]] == ["2"]
