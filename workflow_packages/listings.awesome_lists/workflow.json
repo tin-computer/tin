@@ -1,0 +1,64 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "listings.awesome_lists",
+    "title": "Get your product into the awesome lists that will actually accept it",
+    "description": "A founder with a public product or repository gets the curated GitHub lists whose own rules it meets, ranked, with a paste-ready entry and pull request checklist for each, and the one fix that would unlock the most others.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "product_url"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "product_url": {
+          "type": "string",
+          "title": "Product URL",
+          "minLength": 1,
+          "maxLength": 2000,
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "repository_url": {
+          "type": "string",
+          "title": "Public repository URL (optional). Leave empty to look for one from the product site.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "category": {
+          "type": "string",
+          "title": "What the product is, in the words a list would use (optional)",
+          "maxLength": 600,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        },
+        "avoid": {
+          "type": "string",
+          "title": "Lists or topics to avoid (optional)",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/awesome-lists/SKILL.md",
+        "skills/awesome-lists/REPORT_TEMPLATE.md"
+      ],
+      "entry_skill": "awesome-lists",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 1200 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/AWESOME_LISTS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}
