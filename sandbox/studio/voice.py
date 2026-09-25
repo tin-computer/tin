@@ -25,7 +25,8 @@ import urllib.request
 # fal's Gemini TTS content checker refuses ordinary product lines when the style asks for a
 # "short-form voiceover" or "creator talking to camera"; this plainer style passes them.
 DEFAULT_STYLE = "Warm, upbeat, and quick. Friendly product narration."
-CONTENT_KINDS = ("goto", "scroll", "click", "hold")
+# The one keyframe per script step that carries its voice line; a type step speaks over its focus.
+CONTENT_KINDS = ("goto", "scroll", "click", "hold", "focus")
 
 
 class VoiceRefused(RuntimeError):
@@ -175,13 +176,16 @@ def main():
     if os.path.exists(vo_path):
         for clip in json.load(open(vo_path)).get("clips", []):
             previous[clip["step_idx"]] = clip
-    content = [s for s in log["steps"] if s["kind"] in CONTENT_KINDS]
+    content = {s.get("script_idx"): s for s in log["steps"] if s["kind"] in CONTENT_KINDS}
     out = {"voice": voice, "style": style, "language": language, "clips": []}
     failed = []
-    for i, (sstep, kstep) in enumerate(zip(script["steps"], content, strict=False)):
+    for i, sstep in enumerate(script["steps"]):
         line = (sstep.get("vo") or "").strip()
         if not line:
             continue
+        kstep = content.get(i)
+        if kstep is None:
+            raise SystemExit(f"script step {i} has no keyframe in log.json; run capture again")
         f = os.path.join(d, "vo", f"vo{i:02d}.mp3")
         kept = previous.get(kstep["idx"])
         # Stable across CLI retries/restarts, including an ambiguous HTTP response.

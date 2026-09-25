@@ -203,7 +203,8 @@ def capture(script_path, outdir):
         "hook": script.get("hook"),
         "steps": [],
     }
-    counter = {"k": 0}
+    # "step" is the script step being captured; voice.py pairs each vo line with its keyframes.
+    counter = {"k": 0, "step": 0}
     cursor = {"x": session.vw * 0.55, "y": session.vh * 0.6}
 
     def snapshot(**extra):
@@ -211,7 +212,14 @@ def capture(script_path, outdir):
         counter["k"] += 1
         file = f"frames/k{idx:03d}.png"
         session.page.screenshot(path=os.path.join(outdir, file))
-        entry = {"idx": idx, "file": file, **session.state(), "cursor": dict(cursor), **extra}
+        entry = {
+            "idx": idx,
+            "script_idx": counter["step"],
+            "file": file,
+            **session.state(),
+            "cursor": dict(cursor),
+            **extra,
+        }
         log["steps"].append(entry)
         print(
             f"k{idx} {entry.get('kind')} {entry.get('label', '')} scrollY={entry['scrollY']}",
@@ -232,7 +240,8 @@ def capture(script_path, outdir):
         return {"file": file, "heightCss": height_css}
 
     try:
-        for step in script["steps"]:
+        for n, step in enumerate(script["steps"]):
+            counter["step"] = n
             if step.get("goto"):
                 session.goto(step["goto"], step.get("settleMs"))
                 if step.get("scrollTo") is not None:

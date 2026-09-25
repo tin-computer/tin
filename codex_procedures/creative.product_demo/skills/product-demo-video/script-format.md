@@ -32,7 +32,8 @@
   - `click` a selector string (from `tin-studio inspect` actions) or `{"x": px, "y": px}`;
     optional `scrollTo` after the click, `zoom` (default 1.12), `scrollDuration`.
   - `type` with `{"selector": "...", "text": "...", "every": 3}` to type into a field on a
-    public page (a search box, never a form you would submit).
+    public page (a search box, never a form you would submit); its voice line plays on the
+    focused field before the text is typed.
   - `hold` in ms to linger on the current screen.
 - `hold` (ms) is the minimum time on the step's screen; with a voice line it stretches until the
   line finishes. The viewport is 390x693 css px at 2.77x, a true 9:16 phone frame.

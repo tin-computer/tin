@@ -4,10 +4,11 @@ import base64
 import importlib.util
 import json
 import struct
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from uuid import UUID
 
 import httpx
@@ -413,6 +414,133 @@ def test_sandbox_runner_fences_fal_and_wires_the_studio_profile() -> None:
     assert "FAL_KEY" not in toolkit
     assert "fal.run" not in toolkit
     assert "TIN_RUN_TOOLS_GRANT" in toolkit
+
+
+def _load_studio_tool(name: str, monkeypatch: pytest.MonkeyPatch):
+    # The browser and imaging stacks exist only in the studio sandbox; the step bookkeeping
+    # under test never calls them.
+    camoufox = ModuleType("camoufox.sync_api")
+    camoufox.Camoufox = object
+    pil = ModuleType("PIL")
+    for attr in ("Image", "ImageDraw", "ImageFilter", "ImageFont"):
+        setattr(pil, attr, SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "camoufox", ModuleType("camoufox"))
+    monkeypatch.setitem(sys.modules, "camoufox.sync_api", camoufox)
+    monkeypatch.setitem(sys.modules, "PIL", pil)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    spec = importlib.util.spec_from_file_location(
+        f"tin_lite_sandbox_studio_{name}", ROOT / "sandbox" / "studio" / f"{name}.py"
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_voice_pairs_each_script_step_with_its_own_keyframe(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    capture = _load_studio_tool("capture", monkeypatch)
+    voice = _load_studio_tool("voice", monkeypatch)
+
+    class Browser:
+        vw, vh, dpr = 390, 693, 2.77
+
+        def __init__(self, script):
+            self.url = ""
+            self.page = SimpleNamespace(
+                screenshot=lambda path, **kwargs: None,
+                keyboard=SimpleNamespace(insert_text=lambda ch: None),
+            )
+
+        def goto(self, url, settle_ms=None):
+            self.url = url
+
+        def settle(self, ms=None):
+            pass
+
+        def evaluate(self, expression):
+            return 0
+
+        def locate(self, selector):
+            return {"x": 100, "y": 200}
+
+        def click_at(self, x, y):
+            pass
+
+        def state(self):
+            return {"url": self.url, "scrollY": 0}
+
+        def close(self):
+            pass
+
+    # A type step logs focus and typing keyframes, none of which is a goto/scroll/click/hold.
+    script = {
+        "steps": [
+            {"goto": "https://example.com/", "label": "home", "vo": "Line A"},
+            {"type": {"selector": "#q", "text": "shoes"}, "label": "search", "vo": "Line B"},
+            {"click": {"x": 50, "y": 60}, "label": "results", "vo": "Line C"},
+        ]
+    }
+    (tmp_path / "in.json").write_text(json.dumps(script))
+    monkeypatch.setattr(capture, "Session", Browser)
+    capture.capture(str(tmp_path / "in.json"), str(tmp_path))
+
+    requested: list[str] = []
+
+    def request_voice(text, *args):
+        requested.append(text)
+        return {"audio_base64": base64.b64encode(b"mp3").decode(), "words": []}
+
+    monkeypatch.setattr(voice, "request_voice", request_voice)
+    monkeypatch.setattr(voice, "probe_duration", lambda path: 1.5)
+    monkeypatch.setattr(sys, "argv", ["voice.py", str(tmp_path)])
+    voice.main()
+
+    log = json.loads((tmp_path / "log.json").read_text())
+    keyframes = {step["idx"]: (step["kind"], step["label"]) for step in log["steps"]}
+    clips = json.loads((tmp_path / "vo.json").read_text())["clips"]
+    assert requested == ["Line A", "Line B", "Line C"]
+    assert [(keyframes[clip["step_idx"]], clip["text"]) for clip in clips] == [
+        (("goto", "home"), "Line A"),
+        (("focus", "search"), "Line B"),
+        (("click", "results"), "Line C"),
+    ]
+
+
+def test_render_plays_a_type_step_line_on_its_focus_keyframe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    render = _load_studio_tool("render", monkeypatch)
+    log = {
+        "steps": [
+            {"idx": 0, "kind": "goto", "hold": 1200},
+            {"idx": 1, "kind": "focus", "hold": 300},
+            {"idx": 2, "kind": "typing", "hold": 70},
+        ]
+    }
+    vo = {"clips": [{"step_idx": 1, "duration": 2.0, "words": []}]}
+    segs, total, audio = render.build_timeline(log, vo)
+    holds = {seg["key"]["idx"]: seg for seg in segs if seg["kind"] == "hold"}
+    assert [(round(start, 2), clip["step_idx"]) for start, clip in audio] == [(1.87, 1)]
+    assert holds[1]["start"] + holds[1]["dur"] >= 1.87 + 2.0
+    assert holds[2]["dur"] == pytest.approx(0.07)
+    assert total == pytest.approx(4.39)
+
+
+def test_render_stretches_a_hold_step_until_its_line_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    render = _load_studio_tool("render", monkeypatch)
+    log = {
+        "steps": [{"idx": 0, "kind": "goto", "hold": 1200}, {"idx": 1, "kind": "hold", "hold": 500}]
+    }
+    vo = {"clips": [{"step_idx": 1, "duration": 4.0, "words": []}]}
+    segs, total, audio = render.build_timeline(log, vo)
+    holds = {seg["key"]["idx"]: seg for seg in segs if seg["kind"] == "hold"}
+    assert [(round(start, 2), clip["step_idx"]) for start, clip in audio] == [(1.87, 1)]
+    assert holds[1]["start"] + holds[1]["dur"] >= 1.87 + 4.0
+    assert total == pytest.approx(6.2)
 
 
 def test_e2b_runtime_selects_the_studio_template_and_flags_the_profile() -> None:
