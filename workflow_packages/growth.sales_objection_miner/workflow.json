@@ -1,0 +1,54 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.sales_objection_miner",
+    "title": "Turn sales objections into marketing changes",
+    "description": "Analyze founder-supplied prospect and customer objections, group recurring concerns, and produce concrete messaging changes for the website, FAQ, sales material, and outreach.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "objections": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 40,
+          "items": {"type": "string", "minLength": 1, "maxLength": 1200},
+          "title": "Prospect or customer objections"
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Target audience",
+          "description": "Who the product is trying to reach."
+        },
+        "product_context": {
+          "type": "string",
+          "maxLength": 3000,
+          "default": "",
+          "title": "Product context",
+          "description": "Optional product, pricing, positioning, or competitive context."
+        }
+      },
+      "required": ["project_id", "objections"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/sales-objection-miner/SKILL.md"],
+      "entry_skill": "sales-objection-miner",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 900},
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/SALES_OBJECTION_BRIEF.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}

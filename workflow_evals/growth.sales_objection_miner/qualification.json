@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Objections are founder-supplied text, at most 40 items and 1200 characters per item.",
+    "The sample is directional evidence and may not represent the full customer population."
+  ],
+  "effects": [
+    "Writes reports/SALES_OBJECTION_BRIEF.md in the bound project.",
+    "Makes no external provider writes and sends no messages."
+  ],
+  "cost_drivers": [
+    "One bounded Codex procedure run; cost depends on input and project context size."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Several objections repeat around value, implementation effort, and trust, so the report should produce clusters and concrete messaging changes.",
+      "inputs": {
+        "objections": [
+          "I do not see enough value to justify the price.",
+          "The subscription feels expensive for our current team.",
+          "I am worried setup will take too much engineering time.",
+          "How long would implementation take for a small team?",
+          "We need proof from companies like ours before we buy.",
+          "Do you have a case study from a similar company?"
+        ],
+        "audience": "Small product teams evaluating a new B2B software tool",
+        "product_context": "The product is a B2B software subscription sold to small teams."
+      },
+      "expect": {
+        "contains": [
+          "Executive summary",
+          "Objection clusters",
+          "Messaging gaps",
+          "Recommended marketing changes",
+          "Test plan",
+          "Evidence and limitations"
+        ]
+      }
+    },
+    {
+      "id": "mixed",
+      "description": "The sample contains different buying concerns and should not be presented as one universal problem.",
+      "inputs": {
+        "objections": [
+          "We already use another tool.",
+          "I need approval from my manager.",
+          "The price is higher than expected.",
+          "Can it integrate with our existing workflow?"
+        ],
+        "audience": "Operations teams",
+        "product_context": "A workflow automation product."
+      },
+      "expect": {
+        "contains": [
+          "Evidence and limitations"
+        ]
+      }
+    },
+    {
+      "id": "insufficient",
+      "description": "Three generic statements do not provide three useful objections, so the workflow should state that the evidence is insufficient rather than inventing a pattern.",
+      "inputs": {
+        "objections": [
+          "Interesting product.",
+          "Thanks for the demo.",
+          "We will think about it."
+        ]
+      },
+      "expect": {
+        "contains": [
+          "insufficient"
+        ]
+      }
+    }
+  ]
+}
