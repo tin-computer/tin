@@ -1936,6 +1936,9 @@ class Database:
                 """
                 UPDATE project_workflows
                 SET name = $3, inputs = $4::jsonb, schedule = $5::jsonb,
+                    -- A skip names one occurrence of the old calendar; a new one disarms it.
+                    skip_scheduled_for = CASE WHEN schedule IS DISTINCT FROM $5::jsonb
+                        THEN NULL ELSE skip_scheduled_for END,
                     status = 'provisioning', last_error = NULL,
                     settings_revision = settings_revision + 1, updated_at = now()
                 WHERE id = $1 AND project_id = $2 AND status <> 'archived'
@@ -4171,17 +4174,23 @@ class Database:
             )
             timezone = ZoneInfo(row["send_timezone"])
             local_now = current.astimezone(timezone)
-            window_start = datetime.combine(local_now.date(), row["send_window_start"], timezone)
-            window_end = datetime.combine(local_now.date(), row["send_window_end"], timezone)
-            if local_now < window_start:
-                return await defer(max(1, math.ceil((window_start - local_now).total_seconds())))
-            if local_now >= window_end:
+            # Compare and subtract UTC instants: same-zone arithmetic is wall-clock, which gains
+            # an hour across spring-forward and is ambiguous in the repeated fall-back hour.
+            window_start = datetime.combine(
+                local_now.date(), row["send_window_start"], timezone
+            ).astimezone(UTC)
+            window_end = datetime.combine(
+                local_now.date(), row["send_window_end"], timezone
+            ).astimezone(UTC)
+            if current < window_start:
+                return await defer(max(1, math.ceil((window_start - current).total_seconds())))
+            if current >= window_end:
                 next_start = datetime.combine(
                     local_now.date() + timedelta(days=1),
                     row["send_window_start"],
                     timezone,
                 )
-                return await defer(max(1, math.ceil((next_start - local_now).total_seconds())))
+                return await defer(max(1, math.ceil((next_start - current).total_seconds())))
             day_start = datetime.combine(local_now.date(), time.min, timezone).astimezone(UTC)
             day_end = datetime.combine(
                 local_now.date() + timedelta(days=1), time.min, timezone
@@ -4207,7 +4216,7 @@ class Database:
                     row["send_window_start"],
                     timezone,
                 )
-                return await defer(max(1, math.ceil((next_start - local_now).total_seconds())))
+                return await defer(max(1, math.ceil((next_start - current).total_seconds())))
             last_started_at = await conn.fetchval(
                 """
                 SELECT max(delivery.started_at)

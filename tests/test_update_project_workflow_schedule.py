@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
-from tin_lite.mcp_server import create_mcp_app
+from tin_lite.mcp_server import _project_workflow_message, create_mcp_app
 from tin_lite.schedules import WorkflowSchedule
 
 WEEKLY = WorkflowSchedule.model_validate(
@@ -112,3 +113,32 @@ async def test_given_schedule_replaces_the_saved_one(harness) -> None:
     saved = update.await_args.kwargs
     assert saved["schedule"]["cadence"] == "daily"
     assert "schedule" in saved["changed_fields"]
+
+
+@pytest.mark.parametrize(
+    ("schedule", "next_run_at", "day"),
+    [
+        (
+            {**WEEKLY, "local_time": "08:00", "timezone": "Asia/Tokyo"},
+            datetime(2026, 9, 27, 23, tzinfo=UTC),
+            "2026-09-28",
+        ),
+        (
+            {**WEEKLY, "local_time": "18:30"},
+            datetime(2026, 9, 29, 1, 30, tzinfo=UTC),
+            "2026-09-28",
+        ),
+        # A stored zone that no longer resolves keeps the UTC date instead of failing the call.
+        (
+            {**WEEKLY, "timezone": "Eastern Standard Time"},
+            datetime(2026, 9, 27, 23, tzinfo=UTC),
+            "2026-09-27",
+        ),
+    ],
+)
+def test_relay_names_the_next_run_date_in_the_schedule_timezone(schedule, next_run_at, day) -> None:
+    configured = SimpleNamespace(name="Audit", schedule=schedule, next_run_at=next_run_at)
+
+    message = _project_workflow_message(configured, created=True)
+
+    assert f"Monday at {schedule['local_time']}; the next run is {day}." in message

@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import httpx
@@ -11,6 +12,7 @@ import pytest
 from fastapi import FastAPI
 from pydantic import ValidationError
 from temporalio.client import ScheduleOverlapPolicy
+from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
@@ -25,6 +27,7 @@ from tin_lite.domain import (
     WorkflowRun,
     WorkflowStatus,
 )
+from tin_lite.project_workflow_operations import set_schedule_paused, sync_project_workflow
 from tin_lite.run_service import start_workflow_run
 from tin_lite.schedules import TemporalScheduleService, WorkflowSchedule, next_run_after
 from tin_lite.weekly_brief import WeeklyBriefReporter, WeeklyBriefSource
@@ -628,3 +631,150 @@ async def test_my_system_skip_and_remove_controls_are_project_scoped() -> None:
     assert stale.status_code == 409
     assert removed.status_code == 204
     assert database.archived == manual_id
+
+
+@pytest.mark.asyncio
+async def test_resync_and_resume_keep_an_armed_skip_off_the_next_run(monkeypatch) -> None:
+    schedule = WorkflowSchedule(cadence="daily", local_time="09:00", timezone="UTC")
+    # Pin the clock: Monday 07:00, before the skipped 09:00 run.
+    now = datetime(2026, 9, 28, 7, tzinfo=UTC)
+    monkeypatch.setattr(
+        "tin_lite.project_workflow_operations.next_run_after",
+        lambda schedule, after=None: next_run_after(schedule, after or now),
+    )
+    skipped_for = next_run_after(schedule, now)
+    created_at = datetime(2026, 9, 4, tzinfo=UTC)
+    configured = ProjectWorkflow(
+        id=uuid4(),
+        project_id=uuid4(),
+        workflow_id=uuid4(),
+        workflow_key="project.weekly_brief",
+        workflow_title="Create a weekly project brief",
+        workflow_description="Summarize the durable project week.",
+        version_label="1.0.0",
+        definition_commit_sha="d" * 40,
+        name="Daily brief",
+        inputs={},
+        input_schema={"type": "object", "properties": {}},
+        schedule=schedule.model_dump(mode="json"),
+        status="active",
+        temporal_schedule_id="tin-project-workflow-test",
+        next_run_at=next_run_after(schedule, skipped_for),
+        last_run_id=None,
+        last_run_status=None,
+        last_artifact_path=None,
+        last_error=None,
+        settings_revision=3,
+        created_by_clerk_user_id="user_test",
+        created_at=created_at,
+        updated_at=created_at,
+        skip_scheduled_for=skipped_for,
+    )
+
+    class Database:
+        def __init__(self) -> None:
+            self.synced: list[datetime | None] = []
+
+        async def project_workflow_synced(self, **values):
+            self.synced.append(values["next_run_at"])
+            return configured
+
+    handle = SimpleNamespace(update=AsyncMock(), unpause=AsyncMock())
+    database = Database()
+    runtime = SimpleNamespace(
+        database=database, temporal=SimpleNamespace(get_schedule_handle=lambda _id: handle)
+    )
+    settings = SimpleNamespace(task_queue="tin-lite-test")
+
+    await sync_project_workflow(
+        runtime=runtime,
+        settings=settings,
+        configured=configured,
+        previous_schedule=configured.schedule,
+    )
+    await set_schedule_paused(
+        runtime=runtime,
+        settings=settings,
+        configured=replace(configured, status="paused", next_run_at=None),
+        paused=False,
+    )
+
+    assert database.synced == [next_run_after(schedule, skipped_for)] * 2
+
+
+async def test_schedule_edit_disarms_skip_once_but_rename_keeps_it(publication_db) -> None:
+    db = publication_db
+    builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == WEEKLY_BRIEF_WORKFLOW_NAME)
+    workflow = await db.upsert_registry_workflow(
+        workflow_id=builtin.id,
+        key=builtin.key,
+        title=builtin.title,
+        description=builtin.description,
+        executor=builtin.executor,
+        definition_repo_id="registry/workflows",
+        definition_path=builtin.definition_path,
+        current_commit_sha="a" * 40,
+        version_label="1",
+        definition=builtin.definition,
+    )
+    project = await db.create_project(name="Skip fixture", state_repo_id=f"projects/{uuid4()}")
+    inputs = normalize_workflow_inputs(
+        schema=builtin.input_schema, project_id=project.id, inputs={}
+    )
+    schedule = {"cadence": "daily", "local_time": "09:00", "timezone": "UTC"}
+    configured = await db.create_project_workflow(
+        project_id=project.id,
+        workflow_id=workflow.id,
+        definition_commit_sha="a" * 40,
+        name="Daily brief",
+        inputs=inputs,
+        input_schema=builtin.input_schema,
+        schedule=schedule,
+        request_id=uuid4(),
+        created_by_clerk_user_id="user_fixture",
+    )
+    skipped_for = datetime(2026, 9, 28, 9, tzinfo=UTC)
+    await db.project_workflow_synced(
+        project_workflow_id=configured.id,
+        temporal_schedule_id=TemporalScheduleService.schedule_id(str(configured.id)),
+        next_run_at=skipped_for,
+    )
+    configured = await db.skip_project_workflow_once(
+        project_workflow_id=configured.id,
+        project_id=project.id,
+        skipped_for=skipped_for,
+        next_run_at=datetime(2026, 9, 29, 9, tzinfo=UTC),
+        clerk_user_id="user_fixture",
+        workflow_key=builtin.key,
+        workflow_title=builtin.title,
+    )
+    edit = dict(
+        project_workflow_id=configured.id,
+        project_id=project.id,
+        name="Morning brief",
+        inputs=inputs,
+        clerk_user_id="user_fixture",
+        workflow_key=builtin.key,
+        workflow_title=builtin.title,
+    )
+
+    renamed = await db.update_project_workflow(
+        **edit,
+        schedule=schedule,
+        expected_settings_revision=configured.settings_revision,
+        changed_fields=["name"],
+    )
+    assert renamed.skip_scheduled_for == skipped_for
+
+    # The skipped 09:00 no longer exists, so Tuesday's 08:00 must not be swallowed in its place.
+    moved = await db.update_project_workflow(
+        **edit,
+        schedule={**schedule, "local_time": "08:00"},
+        expected_settings_revision=renamed.settings_revision,
+        changed_fields=["schedule"],
+    )
+    assert moved.skip_scheduled_for is None
+    assert not await db.consume_project_workflow_skip(
+        project_workflow_id=configured.id,
+        scheduled_for=datetime(2026, 9, 29, 8, tzinfo=UTC),
+    )

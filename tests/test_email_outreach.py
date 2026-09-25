@@ -3,18 +3,19 @@ from __future__ import annotations
 import csv
 import io
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
 
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.catalog import BUILTIN_WORKFLOWS
-from tin_lite.db import _email_campaign_progress_text
+from tin_lite.db import Database, _email_campaign_progress_text
 from tin_lite.domain import EMAIL_CAMPAIGN_WORKFLOW_NAME, EMAIL_SHORTLIST_WORKFLOW_NAME
 from tin_lite.email_outreach import (
     build_campaign_plan,
@@ -172,6 +173,102 @@ def test_email_send_policy_validates_window_and_timezone() -> None:
             send_window_end="17:00",
             send_timezone="Mars/Olympus",
         )
+
+
+async def _reserve_in_new_york(
+    monkeypatch, *, now, used_today=0, window=(time(9), time(17))
+) -> tuple[int, list[datetime]]:
+    deferred: list[datetime] = []
+
+    class Connection:
+        @asynccontextmanager
+        async def transaction(self):
+            yield
+
+        async def fetchrow(self, query, *args):
+            return {
+                "execution_key": "delivery-1",
+                "status": "pending",
+                "campaign_run_id": RUN_ID,
+                "external_account_id": "account-1",
+                "daily_send_cap": 25,
+                "send_interval_seconds": 60,
+                "send_window_start": window[0],
+                "send_window_end": window[1],
+                "send_timezone": "America/New_York",
+                "revision_pending": False,
+            }
+
+        async def fetchval(self, query, *args):
+            # The day's send count, then the account's last start (none yet).
+            return used_today if "count(*)" in query else None
+
+        async def execute(self, query, *args):
+            if "SET scheduled_for" in query:
+                deferred.append(args[1])
+            return "UPDATE 1"
+
+    class Pool:
+        @asynccontextmanager
+        async def acquire(self):
+            yield Connection()
+
+    database = Database("postgresql://unused")
+    database._pool = Pool()  # noqa: SLF001
+    monkeypatch.setattr(database, "_refresh_email_campaign_progress", AsyncMock())
+
+    wait = await database.reserve_outreach_delivery(
+        recipient_id=UUID(int=1), stage="initial", now=now
+    )
+    return wait, deferred
+
+
+@pytest.mark.parametrize(
+    ("now", "used_today"),
+    [
+        (datetime(2026, 3, 7, 22, 30, tzinfo=UTC), 0),  # Sat 17:30 EST, after the window
+        (datetime(2026, 3, 8, 5, 0, tzinfo=UTC), 0),  # Sun 00:00 EST, before the window
+        (datetime(2026, 3, 7, 17, 0, tzinfo=UTC), 25),  # Sat 12:00 EST, daily cap reached
+    ],
+)
+@pytest.mark.asyncio
+async def test_send_window_wait_ends_at_window_open_across_spring_forward(
+    monkeypatch, now, used_today
+) -> None:
+    # New York springs forward at 02:00 on Sunday 2026-03-08; its 09:00 EDT is 13:00 UTC.
+    opens = datetime(2026, 3, 8, 13, tzinfo=UTC)
+
+    wait, deferred = await _reserve_in_new_york(monkeypatch, now=now, used_today=used_today)
+
+    assert wait == (opens - now).total_seconds()
+    assert deferred == [opens]
+
+
+@pytest.mark.parametrize(
+    ("now", "window", "opens"),
+    [
+        # 01:00 EST, the repeated hour: the 01:30 EDT opening (05:30 UTC) has already passed.
+        (datetime(2026, 11, 1, 6, 0, tzinfo=UTC), (time(1, 30), time(3)), None),
+        # 01:10 EST: the 01:00-01:30 EDT window closed at 05:30 UTC; Monday 01:00 EST is next.
+        (
+            datetime(2026, 11, 1, 6, 10, tzinfo=UTC),
+            (time(1), time(1, 30)),
+            datetime(2026, 11, 2, 6, tzinfo=UTC),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_send_window_compares_instants_across_fall_back(
+    monkeypatch, now, window, opens
+) -> None:
+    # New York falls back at 02:00 EDT on Sunday 2026-11-01, so 01:00-02:00 happens twice.
+    wait, deferred = await _reserve_in_new_york(monkeypatch, now=now, window=window)
+
+    if opens is None:
+        assert (wait, deferred) == (0, [])
+    else:
+        assert wait == (opens - now).total_seconds()
+        assert deferred == [opens]
 
 
 def test_campaign_rejects_unsafe_or_ambiguous_shortlist_content() -> None:

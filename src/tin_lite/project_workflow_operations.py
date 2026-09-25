@@ -28,6 +28,14 @@ async def schedule_issue(runtime, settings, configured):
     return next(iter(setup["issues"] + setup["schedule_issues"]), None)
 
 
+def next_unskipped_run(schedule, configured):
+    next_run = next_run_after(schedule)
+    # An armed skip-once still holds, so the occurrence after it is the next run.
+    if next_run is not None and next_run == getattr(configured, "skip_scheduled_for", None):
+        return next_run_after(schedule, next_run)
+    return next_run
+
+
 async def sync_project_workflow(
     *, runtime, settings, configured, previous_schedule=None, paused=None
 ):
@@ -60,7 +68,7 @@ async def sync_project_workflow(
     result = await db.project_workflow_synced(
         project_workflow_id=configured.id,
         temporal_schedule_id=schedule_id,
-        next_run_at=None if schedule_paused or issue else next_run_after(schedule),
+        next_run_at=None if schedule_paused or issue else next_unskipped_run(schedule, configured),
         paused=schedule_paused and not issue,
     )
     if issue:
@@ -90,7 +98,9 @@ async def set_schedule_paused(*, runtime, settings, configured, paused):
     return await runtime.database.project_workflow_synced(
         project_workflow_id=configured.id,
         temporal_schedule_id=service.schedule_id(str(configured.id)),
-        next_run_at=next_run_after(WorkflowSchedule.model_validate(configured.schedule)),
+        next_run_at=next_unskipped_run(
+            WorkflowSchedule.model_validate(configured.schedule), configured
+        ),
     )
 
 

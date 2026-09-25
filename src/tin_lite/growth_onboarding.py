@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from tin_lite.domain import GROWTH_ONBOARDING_PLAN_PATH, GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME
 
@@ -780,6 +782,25 @@ def _when(action: dict[str, Any]) -> str:
     return "once, starting now"
 
 
+def _local_date(value: Any, timezone: Any) -> str:
+    """next_run_at is stored in UTC; the founder reads the date where the schedule runs.
+
+    The onboarding timezone is free text, so a zone that does not resolve keeps the UTC date
+    and a stored value that does not parse prints as stored; the report never fails on either.
+    """
+    if not value:
+        return ""
+    try:
+        moment = datetime.fromisoformat(str(value))
+    except ValueError:
+        return str(value)[:10]
+    try:
+        zone = ZoneInfo(str(timezone)) if timezone else UTC
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = UTC
+    return moment.replace(tzinfo=moment.tzinfo or UTC).astimezone(zone).date().isoformat()
+
+
 def _lands(action: dict[str, Any], delivery: dict[str, Any] | None) -> str:
     lands = expectation(action["key"])["lands"]
     if action["key"] in CONTENT_DRAFT_KEYS:
@@ -943,6 +964,7 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
     scheduled = [a for a in actions if a.get("status") == "scheduled"]
     started = [a for a in actions if a.get("status") == "started"]
     delivery = setup.get("delivery")
+    timezone = setup.get("timezone")
 
     def title(action: dict[str, Any]) -> str:
         return titles.get(action["key"], action["key"])
@@ -961,7 +983,7 @@ def render_report(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
         lines.append("Nothing could start; see above.")
     for a in scheduled:
         lines.append(
-            f"- **{title(a)}**, {_when(a)}; next on {str(a.get('next_run_at', ''))[:10]}. "
+            f"- **{title(a)}**, {_when(a)}; next on {_local_date(a.get('next_run_at'), timezone)}. "
             f"Lands in {_lands(a, delivery)}."
         )
     for a in started:
