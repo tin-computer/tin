@@ -773,6 +773,8 @@ class BillingService:
             result={
                 "run_id": str(run["id"]),
                 "project_id": str(run["project_id"]),
+                # A billing parent dispatches its prepared child; recovery never starts it.
+                "parent_run_id": str(parent_id) if parent_id else None,
                 "root_run_id": parent_included["root_run_id"]
                 if parent_included
                 else str(run["id"]),

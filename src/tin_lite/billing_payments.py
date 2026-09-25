@@ -230,57 +230,76 @@ class StripePayments:
             self.settings, "stripe_secret_key", None
         ):
             return
+        # Session-less requests past Stripe's retry window await operator reconciliation;
+        # they must not fill the window ahead of rows this pass can still recover.
         payments = await self.db.pool.fetch(
             """SELECT * FROM billing_payments WHERE status='pending'
-               AND created_at<now()-interval '30 seconds' ORDER BY created_at LIMIT 20"""
+               AND created_at<now()-interval '30 seconds'
+               AND (stripe_session_id IS NOT NULL OR created_at>now()-interval '23 hours')
+               ORDER BY created_at LIMIT 20"""
         )
+        failure = None
         for payment in payments:
-            if payment["stripe_session_id"]:
-                obj = await self.request("GET", f"checkout/sessions/{payment['stripe_session_id']}")
-                if (
-                    obj.get("metadata", {}).get("tin_payment_id") != str(payment["id"])
-                    or obj.get("metadata", {}).get("tin_product") != "tin-lite"
-                ):
-                    raise BillingError("payment_mismatch", "Checkout identity did not match.")
-                status = obj.get("status")
-                await self.handle_event(
-                    {
-                        "id": (
-                            f"reconcile:checkout:{obj['id']}:{status}:{obj.get('payment_status')}"
-                        ),
-                        "type": "checkout.session.expired"
-                        if status == "expired"
-                        else "checkout.session.completed",
-                        "livemode": obj.get("livemode"),
-                        "data": {"object": obj},
-                    }
-                )
-            elif payment["created_at"] > datetime.now(UTC) - timedelta(hours=23):
-                # The same durable request stays within Stripe's idempotency window.
-                await self.checkout(
-                    workspace_id=payment["workspace_id"],
-                    actor=payment["actor_clerk_user_id"],
-                    amount_cents=payment["amount_cents"],
-                    request_id=payment["request_id"],
-                )
+            try:
+                if payment["stripe_session_id"]:
+                    obj = await self.request(
+                        "GET", f"checkout/sessions/{payment['stripe_session_id']}"
+                    )
+                    if (
+                        obj.get("metadata", {}).get("tin_payment_id") != str(payment["id"])
+                        or obj.get("metadata", {}).get("tin_product") != "tin-lite"
+                    ):
+                        raise BillingError("payment_mismatch", "Checkout identity did not match.")
+                    status = obj.get("status")
+                    await self.handle_event(
+                        {
+                            "id": (
+                                f"reconcile:checkout:{obj['id']}:{status}:"
+                                f"{obj.get('payment_status')}"
+                            ),
+                            "type": "checkout.session.expired"
+                            if status == "expired"
+                            else "checkout.session.completed",
+                            "livemode": obj.get("livemode"),
+                            "data": {"object": obj},
+                        }
+                    )
+                elif payment["created_at"] > datetime.now(UTC) - timedelta(hours=23):
+                    # The same durable request stays within Stripe's idempotency window.
+                    await self.checkout(
+                        workspace_id=payment["workspace_id"],
+                        actor=payment["actor_clerk_user_id"],
+                        amount_cents=payment["amount_cents"],
+                        request_id=payment["request_id"],
+                    )
+            except Exception as exc:
+                # One unreconciled row must not starve later rows or refunds.
+                failure = failure or exc
         refunds = await self.db.pool.fetch(
             """SELECT * FROM billing_refunds WHERE status='pending'
-               AND created_at<now()-interval '30 seconds' ORDER BY created_at LIMIT 20"""
+               AND created_at<now()-interval '30 seconds'
+               AND (stripe_refund_id IS NOT NULL OR created_at>now()-interval '23 hours')
+               ORDER BY created_at LIMIT 20"""
         )
         for refund in refunds:
-            if refund["stripe_refund_id"]:
-                obj = await self.request("GET", f"refunds/{refund['stripe_refund_id']}")
-                if obj.get("id") != refund["stripe_refund_id"]:
-                    raise BillingError("refund_mismatch", "Refund identity did not match.")
-                async with self.db.pool.acquire() as conn, conn.transaction():
-                    await self._refund_event(conn, obj)
-            elif refund["created_at"] > datetime.now(UTC) - timedelta(hours=23):
-                await self.request_refund(
-                    refund["payment_id"],
-                    refund["actor_clerk_user_id"],
-                    refund["request_id"],
-                    refund["amount_cents"],
-                )
+            try:
+                if refund["stripe_refund_id"]:
+                    obj = await self.request("GET", f"refunds/{refund['stripe_refund_id']}")
+                    if obj.get("id") != refund["stripe_refund_id"]:
+                        raise BillingError("refund_mismatch", "Refund identity did not match.")
+                    async with self.db.pool.acquire() as conn, conn.transaction():
+                        await self._refund_event(conn, obj)
+                elif refund["created_at"] > datetime.now(UTC) - timedelta(hours=23):
+                    await self.request_refund(
+                        refund["payment_id"],
+                        refund["actor_clerk_user_id"],
+                        refund["request_id"],
+                        refund["amount_cents"],
+                    )
+            except Exception as exc:
+                failure = failure or exc
+        if failure is not None:
+            raise failure
 
     async def webhook(self, body, signature):
         secret = getattr(self.settings, "stripe_webhook_secret", None)
@@ -508,6 +527,23 @@ class StripePayments:
             or refund["stripe_refund_id"] not in {None, obj["id"]}
         ):
             raise BillingError("refund_mismatch", "Refund did not match the recorded request.")
+        if refund["status"] == "succeeded" and obj.get("status") == "failed":
+            # A card refund can fail after succeeding; Stripe returns the funds to us.
+            await self.billing.post_ledger(
+                conn,
+                account=account,
+                event_key=f"refund:{refund_id}:reversal",
+                kind="adjustment",
+                amount=refund["amount_cents"] * NANOS_PER_CENT,
+                reference=str(refund_id),
+            )
+            await conn.execute(
+                "UPDATE billing_payments SET refunded_cents=refunded_cents-$2 WHERE id=$1",
+                payment["id"],
+                refund["amount_cents"],
+            )
+            await conn.execute("UPDATE billing_refunds SET status='failed' WHERE id=$1", refund_id)
+            return
         if refund["status"] != "pending":
             return
         await conn.execute(
@@ -627,6 +663,9 @@ class StripePayments:
         if prior and prior["status"] in {"won", "lost"}:
             return
         status = obj.get("status") if obj.get("status") in {"won", "lost"} else "open"
+        if obj.get("status") == "warning_closed":
+            # An inquiry that closes without a chargeback never withdrew the funds.
+            status = "won"
         if not prior:
             await self.billing.post_ledger(
                 conn,

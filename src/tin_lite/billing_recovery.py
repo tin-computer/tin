@@ -13,9 +13,15 @@ logger = logging.getLogger(__name__)
 
 
 async def recover_dispatches(runtime, settings):
+    # Included runs have no budget; their receipt is the dispatch intent. Only receipts
+    # that record no billing parent qualify, so a prepared child is never started alone.
     rows = await runtime.database.pool.fetch(
-        """SELECT r.id FROM workflow_runs r JOIN billing_run_budgets b ON b.run_id=r.id
-           WHERE r.status='pending' AND b.status='reserved' AND b.root_run_id=b.run_id
+        """SELECT r.id FROM workflow_runs r LEFT JOIN billing_run_budgets b ON b.run_id=r.id
+           LEFT JOIN effect_receipts e ON e.execution_key='billing-included:'||r.id::text
+             AND e.operation='included_workflow_v1' AND e.status='completed'
+           WHERE r.status='pending'
+             AND ((b.status='reserved' AND b.root_run_id=b.run_id)
+                  OR e.result->'parent_run_id'='null'::jsonb)
              AND r.created_at<now()-interval '30 seconds' AND r.trigger_source<>'schedule'
              AND r.review_source_run_id IS NULL
            ORDER BY r.created_at LIMIT 20"""
