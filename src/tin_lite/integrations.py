@@ -2765,6 +2765,7 @@ class IntegrationService:
                     message=message.strip(),
                     files=files,
                     base_branch=base_branch,
+                    expected_binding=expected_binding,
                 )
             except IntegrationError:
                 await record("failed", error_code="provider_request_failed")
@@ -2856,6 +2857,7 @@ class IntegrationService:
         message: str,
         files: tuple[GitHubFileChange, ...],
         base_branch: str | None,
+        expected_binding: GitHubRepositoryBinding | None = None,
     ) -> tuple[GitHubCommitResult, str | None]:
         token = await self._github_installation_token(_installation_id(connection))
         headers = self._github_headers(token)
@@ -2863,6 +2865,25 @@ class IntegrationService:
         branch = await self._github_default_branch(
             headers=headers, repository_path=repository_path, base_branch=base_branch
         )
+        if expected_binding is not None:
+            # Writes use the live file's sha, so a destination changed after preparation
+            # would be overwritten silently. Unrelated default-branch commits remain fine.
+            ref_response = await self._client.get(
+                f"https://api.github.com/repos/{repository_path}/git/ref/heads/"
+                f"{quote(branch, safe='')}",
+                headers=headers,
+            )
+            target = _provider_json(ref_response, provider="GitHub").get("object")
+            head_sha = target.get("sha") if isinstance(target, dict) else None
+            if not isinstance(head_sha, str) or not head_sha:
+                raise IntegrationUpstreamError("GitHub default branch did not resolve to a commit")
+            if head_sha != expected_binding.head_sha:
+                await self._github_validate_base_advance(
+                    connection=connection,
+                    binding=expected_binding,
+                    current_sha=head_sha,
+                    files=files,
+                )
         result = None
         request_id = None
         for change in files:

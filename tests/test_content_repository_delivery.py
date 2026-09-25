@@ -130,6 +130,25 @@ async def test_approval_and_project_boundary_before_dispatch(publication_db, mon
     )
 
 
+async def test_article_delivered_by_its_approval_choice_is_not_adapted_again(
+    publication_db, monkeypatch
+):
+    f = await prepared(publication_db, monkeypatch, approved=False)
+    # No pinned delivery: the reviewer picks a PR for this one article at approval.
+    await f.delivery.choose(run=f.source, mode="github_pr", actor=ACTOR)
+    f.source = await approve(f, f.source)
+    await f.delivery.deliver(f.source.id)
+    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
+    facts = await f.service.programs.facts(f.configured.id)
+    assert facts["drafts"][f.context["item"]["id"]]["delivery"]["pull_request"]["number"] == 42
+    with pytest.raises(WorkflowInputError, match="already has automatic delivery"):
+        await deliver_start(f)
+    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
+    assert not await f.db.pool.fetchval(
+        "SELECT id FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
+    )
+
+
 async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypatch):
     f = await prepared(publication_db, monkeypatch)
     results = await asyncio.gather(

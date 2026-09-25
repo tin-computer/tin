@@ -11,7 +11,7 @@ from dataclasses import asdict
 from uuid import UUID
 
 from tin_lite import content_draft
-from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, article_body
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, ContentDelivery, article_body
 from tin_lite.domain import RunStatus
 from tin_lite.integrations import GitHubRepositoryBinding
 
@@ -97,7 +97,8 @@ async def select_source(*, database, storage, integrations, project_id, inputs):
     if run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
         raise ValueError("Read and approve this article in Tin before preparing its PR.")
     selected = await database.get_effect(content_draft.selection_key(run.id))
-    if selected and (selected.result or {}).get("delivery"):
+    # The approval-time choice, else the pinned intent: the one the exact publisher uses.
+    if await ContentDelivery(database=database).intent(run):
         raise ValueError(
             "This article already has automatic delivery. Use its existing delivery action."
         )

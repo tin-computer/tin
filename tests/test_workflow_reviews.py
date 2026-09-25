@@ -373,6 +373,31 @@ async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication
     assert (await f.db.get_run(source.id)).status.value == "superseded"
 
 
+@pytest.mark.parametrize("ended", ["failed", "stopped"])
+async def test_failed_or_stopped_revision_keeps_reviewed_draft_in_program_progress(
+    publication_db, monkeypatch, ended
+):
+    from tin_lite.workflow_inputs import WorkflowInputError
+
+    f = await setup(publication_db, monkeypatch, planned=True)
+    source = await save(f, await start(f))
+    revision = await revise(f, source)
+    await f.db.pool.execute("UPDATE workflow_runs SET status='failed' WHERE id=$1", revision.id)
+    if ended == "stopped":
+        view = await f.reviews.view(revision.id, ACTOR)
+        await f.reviews.cancel_failed_revision(
+            run_id=revision.id, actor=ACTOR, token=view["review_token"]
+        )
+    assert (await f.db.get_run(revision.id)).status.value == ended
+    choices = await f.service.discover(project_id=f.project.id, program_id=f.configured.id)
+    item = next(i for i in choices["items"] if i["id"] == f.inputs["item_id"])
+    assert item["draft"]["run_id"] == str(source.id) and item["draft"]["has_output"]
+    assert not item["available"] and choices["next"]["item_id"] != item["id"]
+    # Drafting this item again still needs the explicit rewrite; no new article is bought.
+    with pytest.raises(WorkflowInputError, match="already has a draft"):
+        await start(f)
+
+
 async def test_dispatch_lost_ack_retries_only_command(publication_db, monkeypatch):
     f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))

@@ -5,6 +5,8 @@ from tin_lite.content_programs import decoded
 from tin_lite.organic_audit import digest
 
 ACTIVE = {"pending", "running", "paused"}
+# A superseded copy keeps its outcome until a newer version of that item has output.
+SETTLED = {"succeeded", "superseded"}
 
 
 async def history(executor, *, project_id, program_id):
@@ -12,12 +14,17 @@ async def history(executor, *, project_id, program_id):
     # A failed rewrite must not hide a usable result. Assessments may supersede a draft's
     # relevance but never delete its artifact or resolve its pending approval. Legacy drafts have
     # the same item in their preparation receipt/input; no backfill or plan rewrite needed.
+    # A superseded copy stays readable, so it ranks like any saved result: a failed or stopped
+    # revision cannot hide it, and a newer version with output replaces it.
+    # Delivery follows the approval-time choice when one exists, as ContentDelivery.intent does.
     rows = await executor.fetch(
         """
         SELECT DISTINCT ON (item_id) * FROM (
             SELECT run.id, run.status, run.created_at, run.canonical_commit_sha,
                    run.artifact_path, run.retained_output, run.output_resolution,
-                   selected.result->'delivery' AS delivery_intent,
+                   CASE WHEN choice.result IS NULL THEN selected.result->'delivery'
+                        WHEN choice.result->'settings'->>'mode' IN ('github_pr','github_commit')
+                        THEN choice.result END AS delivery_intent,
                    selected.result->'system_delivery' AS system_delivery,
                    parent.status AS system_status,
                    delivery.status AS delivery_status, delivery.result AS delivery_result,
@@ -31,6 +38,9 @@ async def history(executor, *, project_id, program_id):
             LEFT JOIN effect_receipts selected
               ON selected.execution_key='content-draft:' || run.id::text || ':selection'
              AND selected.operation='content_draft_selection_v1' AND selected.status='completed'
+            LEFT JOIN effect_receipts choice
+              ON choice.execution_key='content-draft:' || run.id::text || ':delivery:choice'
+             AND choice.operation='content_draft_delivery_choice_v1' AND choice.status='completed'
             LEFT JOIN effect_receipts prepared
               ON prepared.execution_key='content-draft:' || run.id::text || ':prepare'
              AND prepared.operation='content.generate' AND prepared.status='completed'
@@ -48,7 +58,7 @@ async def history(executor, *, project_id, program_id):
               ON persisted.execution_key=run.id::text || ':procedure_artifact_persist'
              AND persisted.operation='procedure_artifact_persist' AND persisted.status='completed'
             WHERE run.project_id=$1 AND w.key='content.generate' AND w.project_id IS NULL
-              AND run.status<>'superseded'
+              AND (run.status<>'superseded' OR run.canonical_commit_sha IS NOT NULL)
               AND run.input->>'program_id'=$2
         ) attempts WHERE item_id IS NOT NULL
         ORDER BY item_id,
@@ -73,7 +83,7 @@ async def history(executor, *, project_id, program_id):
                 "drafting"
                 if row["status"] in ACTIVE
                 else decoded(row["editorial"])["outcome"]
-                if row["status"] == "succeeded"
+                if row["status"] in SETTLED
                 and decoded(row["editorial"] or {}).get("outcome") in NO_DRAFT
                 else "assessment_saved"
                 if decoded(row["editorial"] or {}).get("outcome") in NO_DRAFT
@@ -94,7 +104,7 @@ async def history(executor, *, project_id, program_id):
             and decoded(row["editorial"] or {}).get("outcome") not in NO_DRAFT,
             "assessment": decoded(row["editorial"] or {})
             if (
-                row["status"] == "succeeded"
+                row["status"] in SETTLED
                 or decoded(row["output_resolution"] or {}).get("state") in {"applied", "kept"}
             )
             and decoded(row["editorial"] or {}).get("outcome") in NO_DRAFT

@@ -128,7 +128,17 @@ async def delivery():
             if state["fault"] == "after_file_write":
                 state["fault"] = None
                 raise httpx.ReadTimeout("Fixture lost file response")
-            return httpx.Response(200, json={"content": {"sha": "changed-sha"}})
+            commit = "e" * 40
+            return httpx.Response(
+                200,
+                json={
+                    "content": {"sha": "changed-sha"},
+                    "commit": {
+                        "sha": commit,
+                        "html_url": f"https://github.com/owner/site/commit/{commit}",
+                    },
+                },
+            )
         if method == "POST" and path.endswith("/pulls"):
             state["pr"] = True
             if state["fault"] == "after_pr_create":
@@ -319,3 +329,35 @@ async def test_markdown_destination_read_uses_exact_commit_and_regular_files(del
         with pytest.raises(IntegrationError):
             await call
     assert not any(method in {"POST", "PUT", "PATCH"} for method, _ in f.requests)
+
+
+@pytest.mark.parametrize("change", ["unrelated", "same_path", "rewritten"])
+async def test_direct_commit_never_overwrites_a_destination_changed_after_preparation(
+    delivery, change
+):
+    f = delivery
+    path = "content/blog/new.md"
+    f.state.update(path=path, original=None, html=None)
+    # The default branch advanced after the article was prepared at the bound head.
+    f.state["base"] = "c" * 40
+    if change == "same_path":
+        f.state.update(advanced_files=[{"filename": path}], html="# Someone else's page\n")
+    elif change == "rewritten":
+        f.state["advance_status"] = "diverged"
+    call = f.service.github_commit_files(
+        project_id=f.kwargs["project_id"],
+        run_id=f.kwargs["run_id"],
+        execution_key=f.kwargs["execution_key"],
+        message="Content: Reviewed article",
+        files=(GitHubFileChange(path, "# Reviewed article\n"),),
+        base_branch="main",
+        expected_binding=f.kwargs["expected_binding"],
+    )
+    if change == "unrelated":
+        assert (await call).commit == "e" * 40
+        assert f.state["html"] == "# Reviewed article\n"
+        return
+    with pytest.raises(IntegrationAuthorizationError):
+        await call
+    assert not any(method in {"POST", "PUT", "PATCH"} for method, _ in f.requests)
+    assert f.db.call_receipts[f.kwargs["execution_key"]].status == "failed"
