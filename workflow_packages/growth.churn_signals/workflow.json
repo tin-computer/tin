@@ -1,0 +1,113 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.churn_signals",
+    "title": "Find churn risks and what to tell each customer",
+    "description": "Run after exporting a week or more of support tickets, reviews and feature requests. Tin finds the complaints that are rising and costing revenue, checks your changelog for fixes, and gives you a ranked list of risks plus which customers to contact, with a draft note for each move. Nothing is sent.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the ranked risks and draft notes before contacting anyone"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "feedback_csv"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "feedback_csv": {
+          "type": "string",
+          "title": "Feedback CSV: date, customer_id, source, text",
+          "description": "Support tickets, reviews and feature requests in one export. date is YYYY-MM-DD; source is ticket, review or feature_request; customer_id may be blank for anonymous reviews.",
+          "minLength": 10,
+          "maxLength": 32000,
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "customers_csv": {
+          "type": "string",
+          "title": "Customers CSV: customer_id, plan, mrr, status",
+          "description": "Optional billing export. status is active or cancelled. Without it, risks are ranked by customer count instead of revenue.",
+          "maxLength": 32000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "changelog": {
+          "type": "string",
+          "title": "Recent changelog or release notes",
+          "description": "Used to tell customers when their problem is already fixed.",
+          "maxLength": 8000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        },
+        "winback_offer": {
+          "type": "string",
+          "title": "Optional win-back offer, in your exact wording",
+          "maxLength": 200,
+          "default": "",
+          "x-tin-ui": { "order": 40 }
+        },
+        "recent_days": {
+          "type": "integer",
+          "title": "Recent window (days)",
+          "minimum": 7,
+          "maximum": 30,
+          "default": 14,
+          "x-tin-ui": { "order": 50 }
+        },
+        "baseline_days": {
+          "type": "integer",
+          "title": "Baseline window before it (days)",
+          "minimum": 14,
+          "maximum": 120,
+          "default": 42,
+          "x-tin-ui": { "order": 60 }
+        },
+        "top_risks": {
+          "type": "integer",
+          "title": "Risks to plan messages for",
+          "minimum": 1,
+          "maximum": 6,
+          "default": 5,
+          "x-tin-ui": { "order": 70 }
+        },
+        "as_of": {
+          "type": "string",
+          "title": "Optional end date, YYYY-MM-DD (exclusive)",
+          "maxLength": 10,
+          "default": "",
+          "x-tin-ui": { "order": 80 }
+        }
+      }
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py", "README.md"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "tag": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        },
+        "plan": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/CHURN_SIGNALS.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
