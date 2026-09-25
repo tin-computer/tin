@@ -341,6 +341,26 @@ async def test_already_closed_temporal_and_storage_state_is_tolerated(publicatio
     assert result["stopped_runs"] == 1 and result["removed_schedules"] == 1
 
 
+async def test_an_activity_finishing_after_deletion_cannot_revive_the_run(publication_db):
+    f = await fixture(publication_db)
+    work = await seed_work(f)
+    await delete_project(f.runtime, project_id=f.project.id, actor=ACTOR, request_id=uuid4())
+    success = dict(
+        run_id=work.run_id,
+        canonical_commit_sha="b" * 40,
+        artifact_ref="code.storage://projects/acme@b/DESIGN.md",
+        artifact_path="DESIGN.md",
+    )
+    for status in ("stopped", "failed"):
+        await f.db.pool.execute(
+            "UPDATE workflow_runs SET status=$2 WHERE id=$1", work.run_id, status
+        )
+        with pytest.raises(SideEffectConflictError):
+            await f.db.project_success(**success)
+        run = await f.db.pool.fetchrow("SELECT * FROM workflow_runs WHERE id=$1", work.run_id)
+        assert run["status"] == status and run["artifact_path"] is None
+
+
 async def test_code_storage_delete_repo_tolerates_missing_repositories():
     storage = CodeStorage(organization="tin", private_key="key")
     storage._client = SimpleNamespace(delete_repo=AsyncMock())

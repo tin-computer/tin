@@ -95,6 +95,48 @@ async def test_project_files_are_membership_gated_and_pinned_to_canonical_state(
     assert inaccessible.status_code == 404
 
 
+@pytest.mark.asyncio
+async def test_project_file_search_is_scoped_to_the_requested_paths() -> None:
+    project = Project(uuid4(), "Tin POC", "projects/tin-poc", "main")
+    revision = "c" * 40
+    searched = []
+
+    class Database:
+        async def has_project_access(self, *, project_id, clerk_user_id):
+            return project_id == project.id
+
+        async def get_project(self, project_id):
+            return project
+
+    class Storage:
+        async def search_canonical_files(self, **values):
+            searched.append(values["paths"])
+            return [], False
+
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[require_user] = lambda: AuthContext(
+        clerk_user_id="user_test",
+        token_type="session_token",  # noqa: S106
+        session_id="sess_test",
+    )
+    app.state.runtime = SimpleNamespace(database=Database(), storage=Storage())
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        scoped = await client.get(
+            f"/api/projects/{project.id}/files/search",
+            params={"query": "plan", "revision": revision, "path": ["notes/a.md", "notes/b.md"]},
+        )
+        unsafe = await client.get(
+            f"/api/projects/{project.id}/files/search",
+            params={"query": "plan", "revision": revision, "path": "../secret"},
+        )
+
+    assert scoped.status_code == 200
+    assert unsafe.status_code == 422
+    assert searched == [["notes/a.md", "notes/b.md"]]
+
+
 def test_a_project_file_that_holds_a_credential_is_refused_before_commit() -> None:
     """Context the founder hands over is read by every run; a token in it is a leak."""
     from tin_lite.project_files import credential_findings, normalize_project_file_mutations

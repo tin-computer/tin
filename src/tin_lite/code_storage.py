@@ -972,7 +972,19 @@ class CodeStorage:
     ) -> tuple[str, tuple[str, ...]]:
         """Undo only the current head as a new commit, preserving an auditable history."""
         repo = await self.get_repo(repo_id)
+        commit_message = f"Undo {commit_sha[:8]} [project-file:{request_id}]"
         current_head = await self.head_sha(repo, branch)
+        if current_head != expected_head_sha and commit_sha == expected_head_sha:
+            # A retry after this request's undo landed returns it, as file commits do.
+            recent = await repo.list_commits(branch=branch, limit=2, ttl=300)
+            commits = recent.get("commits", [])
+            if (
+                len(commits) == 2
+                and commits[0].get("message") == commit_message
+                and commits[1].get("sha") == expected_head_sha
+            ):
+                diff = await repo.get_commit_diff(sha=commit_sha, ttl=300)
+                return commits[0]["sha"], _undo_changed_paths(diff)
         if current_head != expected_head_sha or commit_sha != expected_head_sha:
             raise RuntimeError("only the current project revision can be undone")
         recent = await repo.list_commits(branch=branch, limit=2, ttl=300)
@@ -982,17 +994,7 @@ class CodeStorage:
         diff = await repo.get_commit_diff(sha=commit_sha, ttl=300)
         if diff.get("filtered_files"):
             raise RuntimeError("current project revision is too large to undo safely")
-        changed_paths = tuple(
-            sorted(
-                {
-                    str(path)
-                    for item in diff.get("files", [])
-                    for path in (item.get("path"), item.get("old_path"))
-                    if isinstance(path, str) and _safe_repo_path(path)
-                }
-            )
-        )
-        commit_message = f"Undo {commit_sha[:8]} [project-file:{request_id}]"
+        changed_paths = _undo_changed_paths(diff)
         try:
             result = await repo.restore_commit(
                 target_branch=branch,
@@ -1459,3 +1461,16 @@ def _safe_repo_path(path: str) -> bool:
     if not path or path.startswith("/") or "\\" in path:
         return False
     return all(part not in {"", ".", ".."} for part in path.split("/"))
+
+
+def _undo_changed_paths(diff: dict[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            {
+                str(path)
+                for item in diff.get("files", [])
+                for path in (item.get("path"), item.get("old_path"))
+                if isinstance(path, str) and _safe_repo_path(path)
+            }
+        )
+    )

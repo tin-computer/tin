@@ -16,6 +16,7 @@ from tin_lite.activities import TinActivities
 from tin_lite.article_review import validate_article, validate_changes
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_draft_sources import ContentDraftSources
+from tin_lite.mcp_server import _review_summary
 from tin_lite.organic_audit import canonical_json
 from tin_lite.workflow_review_dispatch import dispatch_reviews
 from tin_lite.workflow_review_store import ReviewConflict
@@ -143,6 +144,19 @@ async def test_two_revisions_one_decision_and_only_latest_approval(
     if planned:
         sources = ContentDraftSources(database=f.db, storage=f.storage)
         assert (await sources.saved(first.id))["item"] == (await sources.saved(third.id))["item"]
+
+
+async def test_revised_draft_gets_its_own_review_summary(publication_db, monkeypatch):
+    f = await setup(publication_db, monkeypatch)
+    first = await save(f, await start(f))
+    assert await _review_summary(f.db, first) == "Answer page draft is ready for your review."
+    second = await save(f, await revise(f, first))
+    await f.db.pool.execute(
+        "UPDATE run_decisions SET explanation='The revised draft.' WHERE run_id=$1", second.id
+    )
+    # One decision row per review chain: its id is the root run, its run_id the latest.
+    assert await _review_summary(f.db, second) == "The revised draft."
+    assert await _review_summary(f.db, first) is None
 
 
 async def test_duplicate_and_approval_race_is_one_transaction(publication_db, monkeypatch):

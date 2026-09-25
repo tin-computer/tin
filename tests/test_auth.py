@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, status
+from test_procedure_publication import publication_db as publication_db
 
 import tin_lite.auth as auth_module
 from tin_lite.api import router
@@ -628,3 +629,36 @@ async def test_flat_member_invitation_is_email_bound_and_grants_the_same_access(
     assert personal_workspace.status_code == 200
     assert personal_workspace.json()["project"]["id"] != str(database.project.id)
     assert database.members[database.project.id] == {USER_A, USER_B}
+
+
+@pytest.mark.asyncio
+async def test_an_accepted_invitation_replays_for_its_member_after_it_expires(
+    publication_db,
+) -> None:
+    db = publication_db
+    project = await db.create_project(name="Acme", state_repo_id=f"projects/{uuid4()}")
+    token_hash = "a" * 64
+    await db.create_project_invitation(
+        project_id=project.id,
+        email="b@example.com",
+        token_hash=token_hash,
+        created_by_clerk_user_id=USER_A,
+        expires_at=datetime.now(UTC) + timedelta(days=7),
+    )
+    accept = {"token_hash": token_hash, "expected_email": "b@example.com"}
+    await db.accept_project_invitation(clerk_user_id=USER_B, **accept)
+    await db.pool.execute(
+        "UPDATE project_invitations SET created_at=now()-interval '8 days', "
+        "expires_at=now()-interval '1 day' WHERE token_hash=$1",
+        token_hash,
+    )
+
+    again = await db.accept_project_invitation(clerk_user_id=USER_B, **accept)
+    assert again.project_id == project.id and again.accepted_by_clerk_user_id == USER_B
+    with pytest.raises(RuntimeError, match="already been accepted"):
+        await db.accept_project_invitation(clerk_user_id=USER_WRONG, **accept)
+    # An expired invitation never grants access again once the membership is gone.
+    await db.pool.execute("DELETE FROM project_memberships WHERE project_id=$1", project.id)
+    with pytest.raises(RuntimeError, match="expired"):
+        await db.accept_project_invitation(clerk_user_id=USER_B, **accept)
+    assert not await db.has_project_access(project_id=project.id, clerk_user_id=USER_B)

@@ -131,3 +131,74 @@ async def test_other_ref_rejection_is_recorded_as_a_storage_failure(monkeypatch)
     with pytest.raises(RuntimeError, match=r"rejected the project file commit \(unavailable\)"):
         await commit(service)
     assert database.fail_project_file_change.await_args.kwargs["error_code"] == "storage_failed"
+
+
+UNDO = "b" * 40
+
+
+class UndoneRepo:
+    """The undo commit for HEAD is already the branch head."""
+
+    def __init__(self, request_id: str) -> None:
+        self.undo_message = f"Undo {HEAD[:8]} [project-file:{request_id}]"
+        self.restore_commit = AsyncMock()
+
+    async def list_commits(self, **values) -> dict:
+        commits = [
+            {"sha": UNDO, "message": self.undo_message},
+            {"sha": HEAD, "message": "tick the plan"},
+        ]
+        return {"commits": commits[: values["limit"]]}
+
+    async def get_commit_diff(self, **values) -> dict:
+        assert values["sha"] == HEAD
+        return {"files": [{"path": "notes.md", "state": "modified"}]}
+
+
+def storage_after_undo(monkeypatch: pytest.MonkeyPatch, request_id: str):
+    storage = storage_rejecting(monkeypatch, RefUpdateError("unused"))
+    repo = UndoneRepo(request_id)
+
+    async def get_repo(repo_id: str):
+        return repo
+
+    async def head_sha(repo, branch: str):
+        return UNDO
+
+    monkeypatch.setattr(storage, "get_repo", get_repo)
+    monkeypatch.setattr(storage, "head_sha", head_sha)
+    return storage, repo
+
+
+async def revert(service, request_id):
+    project = SimpleNamespace(id=uuid4(), state_repo_id="projects/p", canonical_branch="main")
+    return await service.revert_latest(
+        project=project,
+        actor_clerk_user_id="user_member",
+        client_id=None,
+        request_id=request_id,
+        commit_sha=HEAD,
+        expected_revision=HEAD,
+    )
+
+
+@pytest.mark.asyncio
+async def test_revert_retry_after_the_undo_landed_returns_that_undo(monkeypatch):
+    request_id = uuid4()
+    storage, repo = storage_after_undo(monkeypatch, str(request_id))
+    service, database = file_service(storage)
+    result = await revert(service, request_id)
+    assert result.revision == UNDO
+    assert result.changed_paths == ("notes.md",)
+    repo.restore_commit.assert_not_awaited()
+    database.fail_project_file_change.assert_not_awaited()
+    assert database.complete_project_file_change.await_args.kwargs["commit_sha"] == UNDO
+
+
+@pytest.mark.asyncio
+async def test_revert_after_another_request_undid_the_head_is_stale(monkeypatch):
+    storage, _ = storage_after_undo(monkeypatch, str(uuid4()))
+    service, database = file_service(storage)
+    with pytest.raises(StaleProjectRevisionError):
+        await revert(service, uuid4())
+    assert database.fail_project_file_change.await_args.kwargs["error_code"] == "stale_revision"

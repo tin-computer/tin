@@ -252,8 +252,11 @@ async def _review_summary(database: Any, run: Any) -> str | None:
     if not getattr(run, "review_required", False):
         return None
     try:
+        # A review chain shares one decision row keyed by its root run; run_id is the latest.
         row = await database.pool.fetchrow(
-            "SELECT explanation FROM run_decisions WHERE id = $1 AND kind = 'review'", run.id
+            "SELECT explanation FROM run_decisions WHERE run_id = $1 AND kind = 'review' "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            run.id,
         )
     except Exception:  # noqa: BLE001 - a missing decision row is not an error for the caller
         return None
