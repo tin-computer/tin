@@ -1,0 +1,116 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.framework_starter",
+    "title": "Draft a turnkey framework starter repository",
+    "description": "Reads your Code map and Feature map, selects a relevant developer framework ecosystem (Next.js, FastAPI, Vite/React, Express), and drafts a complete, runnable starter repository specification with minimal glue code, environment setup, and submission copy for framework template galleries. Research and drafting only; never publishes or creates repositories.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "system": "platform",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target_framework": {
+          "type": "string",
+          "maxLength": 60,
+          "default": "",
+          "title": "Target framework (optional)",
+          "description": "Specific framework to target (e.g. nextjs, fastapi, vite-react, express). Leave empty to let the run select the highest-affinity ecosystem from the Code map.",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 10
+          }
+        },
+        "use_case": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "Demonstrated use case (optional)",
+          "description": "The specific developer problem to solve in the starter. Leave empty to draw the clearest core capability from the Feature map.",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 20
+          }
+        },
+        "starter_name": {
+          "type": "string",
+          "maxLength": 100,
+          "default": "",
+          "title": "Starter repository name (optional)",
+          "description": "Override for the repository slug (e.g. myproduct-nextjs-starter).",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 30
+          }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "required",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map identifies public APIs, SDKs, client libraries, authentication flows, and language ecosystems supported by the product."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map identifies the core user-facing capabilities that the starter demonstrates."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The onboarding plan names the primary developer persona, ICP, and hard no's."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes the starter README, quickstart instructions, and gallery listing description."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/framework-starter/SKILL.md",
+        "skills/framework-starter/FRAMEWORKS.md",
+        "skills/framework-starter/REPORT.md"
+      ],
+      "entry_skill": "framework-starter",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/growth/starters/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
