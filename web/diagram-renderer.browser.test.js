@@ -17,6 +17,15 @@ const catalog = JSON.parse(execFileSync("uv", ["run", "--frozen", "python", "-c"
   "print(json.dumps([{'title': w.title, 'flow': w.definition['presentation']['flow']} for w in BUILTIN_WORKFLOWS if w.presentation]))",
 ].join("\n")], { encoding: "utf8" }));
 
+const brandFixtures = [
+  {light: {ink: "#18242C", paper: "#FFFFFF", accent: "#2265BD"}},
+  {light: {ink: "#492136", paper: "#FFF9ED", accent: "#CE9645"}},
+  {light: {ink: "#10241C", paper: "#EDF5EF", accent: "#58CC99"}, dark: {ink: "#EDF5EF", paper: "#10241C", accent: "#58CC99"}},
+].map((palette, index) => ({
+  id: `brand-${index}`, title: `Synthetic brand ${index}`,
+  source: `graph LR\n  %% tin:brand ${JSON.stringify({revision: "a".repeat(40), sha256: String(index + 1).repeat(64), ...palette})}\n  ask["Propose a change"]:::step\n  review["Human review"]:::gate\n  done["Verified evidence"]:::receipt\n  ask --> review\n  review --> done\n`,
+}));
+
 const studies = await Promise.all(JSON.parse(await fs.readFile("docs/diagram-studies/index.json", "utf8")).map(async (item) => ({ ...item, source: await fs.readFile(`docs/diagram-studies/${item.file}`, "utf8") })));
 
 test("catalog and varied diagrams keep balanced typography and clear routes across product surfaces", async () => {
@@ -69,7 +78,7 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
               stage.innerHTML = item.source ? await window.TinDiagramRenderer.renderSource(item.source) : (await window.TinDiagramRenderer.renderFlow(item.flow)).svg;
               section.append(heading, stage); root.append(section);
             }
-          }, { catalog: [...catalog, ...diagramFixtures, ...routingFixtures, ...studies], theme, surface });
+          }, { catalog: [...catalog, ...diagramFixtures, ...routingFixtures, ...studies, ...brandFixtures], theme, surface });
           await page.evaluate(async () => {
             await Promise.all([400, 700].flatMap((weight) => ["Tin Diagram Sans", "Tin Diagram Mono"].map((family) => document.fonts.load(`${weight} 12px "${family}"`))));
             await document.fonts.ready;
@@ -120,6 +129,24 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
         }
       }
     }
+    // Switch themes without rerendering: each SVG owns its colors, the host does not.
+    for (const theme of ["light", "dark"]) {
+      const colors = await page.evaluate((theme) => {
+        document.documentElement.dataset.theme = theme;
+        return [0,1,2].map(i => {
+          const svg = document.querySelector(`#brand-${i} svg`);
+          return {paper: getComputedStyle(svg).backgroundColor,
+            ink: getComputedStyle(svg.querySelector(".node tspan")).fill,
+            accent: getComputedStyle(svg.querySelector(".tin-diagram-receipt circle")).fill};
+        });
+      }, theme);
+      assert.equal(colors[0].paper, "rgb(255, 255, 255)");
+      assert.equal(colors[1].paper, "rgb(255, 249, 237)");
+      assert.equal(colors[1].ink, "rgb(73, 33, 54)");
+      assert.equal(colors[1].accent, "rgb(206, 150, 69)");
+      assert.equal(colors[2].paper, theme === "dark" ? "rgb(16, 36, 28)" : "rgb(237, 245, 239)");
+      assert.equal(colors[2].ink, theme === "dark" ? "rgb(237, 245, 239)" : "rgb(16, 36, 28)");
+    }
     // Exercise the actual async Markdown consumer, including its source fallback.
     const source = await page.evaluate((source) => {
       const article = document.createElement("article");
@@ -133,10 +160,10 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
         filename: "workflow.md", html: article.innerHTML, word_count: 20, reading_minutes: 1,
       }, { mode: "in-app" });
       return source;
-    }, studies[0].source);
+    }, brandFixtures[2].source);
     await page.locator(".md-diagram-stage svg").waitFor();
     assert.equal(await page.locator(".md-diagram-source code").textContent(), source);
-    assert.equal(await page.locator(".md-diagram-stage .node").count(), (studies[0].source.match(/:::/g) || []).length);
+    assert.equal(await page.locator(".md-diagram-stage .node").count(), (brandFixtures[2].source.match(/:::/g) || []).length);
     await page.locator(".md-code-block.is-diagram-invalid").waitFor();
     assert.doesNotMatch(await page.locator("#diagrams").textContent(), /\[object Promise\]/);
     assert.deepEqual(errors, []);

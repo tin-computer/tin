@@ -448,7 +448,7 @@ def execute() -> int:
         raise RuntimeError("procedure output kind is unsupported")
     diagram_review = None
     diagram_schema = None
-    if output.get("validator") == "tin-diagram.reviewed.v1":
+    if output.get("validator") in {"tin-diagram.reviewed.v1", "tin-diagram.branded.v1"}:
         from diagram_review import DiagramReview
 
         diagram_review = DiagramReview(STATE_DIR / str(output_path))

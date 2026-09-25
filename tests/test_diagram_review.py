@@ -121,7 +121,8 @@ def test_missing_candidate_uses_same_two_repair_bound(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_startup_timeout_does_not_mark_a_paid_attempt(monkeypatch):
+@pytest.mark.parametrize("validator", ["tin-diagram.reviewed.v1", "tin-diagram.branded.v1"])
+async def test_startup_timeout_does_not_mark_a_paid_attempt(monkeypatch, validator):
     import tin_lite.codex_api as api
 
     paid = AsyncMock()
@@ -130,7 +131,7 @@ async def test_startup_timeout_does_not_mark_a_paid_attempt(monkeypatch):
     activities = object.__new__(TinActivities)
     activities._sandboxes = SimpleNamespace(prepare_diagram=prepare)
     run_input = SimpleNamespace(
-        context={"output": {"validator": "tin-diagram.reviewed.v1"}},
+        context={"output": {"validator": validator}},
         api_url="test",
     )
     with pytest.raises(TimeoutError):

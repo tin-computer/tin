@@ -31,7 +31,7 @@ from tin_lite.e2b_runtime import E2BRuntime, SandboxProcedureInput
 from tin_lite.integrations import GitHubOpenPullRequestEvidence, GitHubRepositoryBundle
 from tin_lite.procedures import (
     GITHUB_PULL_REQUEST_RESULT,
-    TIN_DIAGRAM_REVIEWED_VALIDATOR,
+    TIN_DIAGRAM_BRANDED_VALIDATOR,
     CodexProcedureSource,
     GitHubPullRequestProcedure,
     PinnedCodexProcedure,
@@ -204,7 +204,7 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "path_template": "diagrams/{slug}.mmd",
         "media_type": "text/vnd.mermaid",
         "max_bytes": 64_000,
-        "validator": TIN_DIAGRAM_REVIEWED_VALIDATOR,
+        "validator": TIN_DIAGRAM_BRANDED_VALIDATOR,
     }
     assert diagram_definition["human_review"]["eligible"] is True
     assert "procedures/content.diagram/skills/content-diagram/SKILL.md" in diagram_files

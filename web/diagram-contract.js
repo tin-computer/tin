@@ -1,3 +1,4 @@
+import { PREFIX, validateBrand, parseBrand } from "./diagram-brand.js";
 // The same bounded source contract is validated on the server before publication.
 const KINDS = new Set([
   "step",
@@ -30,6 +31,7 @@ function text(value, limit, empty = false) {
 
 function validateFlow(flow) {
   const composed = Boolean(flow?.groups);
+  if (flow?.brand !== undefined) validateBrand(flow.brand);
   if (
     !flow ||
     !DIRECTIONS.has(flow.direction) ||
@@ -133,6 +135,7 @@ function validateFlow(flow) {
 function sourceForFlow(flow) {
   validateFlow(flow);
   const lines = [`graph ${flow.direction}`];
+  if (flow.brand) lines.push(`  ${PREFIX}${JSON.stringify(flow.brand)}`);
   const nodes = new Map(flow.nodes.map((node) => [node.id, node]));
   const groups = new Map((flow.groups || []).map((group) => [group.id, group]));
   if (flow.groups) lines.push("  %% tin:composition");
@@ -172,6 +175,7 @@ function parseSource(source) {
   const flow = { direction: header[1], nodes: [], edges: [] },
     stack = [],
     layout = [];
+  if (lines[0]?.trim().startsWith(PREFIX)) flow.brand = parseBrand(lines.shift().trim());
   for (const raw of lines) {
     const line = raw.trim();
     if (!line) continue;

@@ -115,7 +115,7 @@ SESSION_CONTRACT = {
 def procedure_contract(validator=None):
     return (
         DIAGRAM_CONTRACT
-        if validator in {"tin-diagram.reviewed.v1", "demo-video.v1"}
+        if validator in {"tin-diagram.reviewed.v1", "tin-diagram.branded.v1", "demo-video.v1"}
         else PROCEDURE_CONTRACT
     )
 

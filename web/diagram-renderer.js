@@ -3,6 +3,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import { FONT_ADVANCES, FONT_VERTICAL } from "./diagram-font-metrics.js";
 
 import { parseSource, sourceForFlow } from "./diagram-contract.js";
+import { brandStyles } from "./diagram-brand.js";
 import { layoutComposition } from "./diagram-composition.js";
 
 const EDGE_COLOR = "var(--diagram-edge)";
@@ -235,6 +236,11 @@ async function renderSource(source) {
   const svg = document.documentElement;
   setAttributes(svg, { viewBox: `0 0 ${graph.width} ${graph.height}`, role: "img", "aria-label": "Workflow diagram",
     "data-composed": flow.groups ? "true" : "false", preserveAspectRatio: "xMidYMid meet", style: `--diagram-width:${graph.width}px` });
+  if (flow.brand) {
+    svg.setAttribute("data-tin-brand", flow.brand.sha256);
+    svg.setAttribute("data-brand-revision", flow.brand.revision);
+    svg.setAttribute("style", `${svg.getAttribute("style")};${brandStyles(flow.brand)}`);
+  }
   for (const group of graph.groups || []) {
     const frame = element(document, "g", { class: "tin-diagram-group", "data-group-id": group.id });
     if (group.kind === "frame") frame.append(element(document, "rect", { x: group.x, y: group.y, width: group.width, height: group.height, rx: 12, fill: "var(--diagram-frame-fill)", stroke: "var(--card-border)", "stroke-width": 0.75 }));
@@ -298,7 +304,7 @@ function renderASCII(source) {
     for (const edge of flow.edges) lines.push(`${items.get(edge.from).label} ${edge.kind === "signal" ? "┄┄▷" : "──▷"} ${items.get(edge.to).label}${edge.label ? ` · ${edge.label}` : ""}`);
     return lines.join("\n");
   }
-  return renderMermaidASCII(source, { useAscii: false });
+  return renderMermaidASCII(sourceForFlow({ ...flow, brand: undefined }), { useAscii: false });
 }
 
 const TinDiagramRenderer = Object.freeze({

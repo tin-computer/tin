@@ -69,7 +69,7 @@ Tin ships 32 built-in workflows. Every workflow also takes a `project_id`; requi
 | Create a weekly project brief<br>`project.weekly_brief` | Summarize what moved, what needs attention, and the smallest useful next steps from this project's durable week of activity. | `detail`, `include_open_items`, `focus` | — |
 | One-off project task (task)<br>`project.task` | Use an isolated Codex task when the founder asks Tin to inspect, research, or change project files and no narrower registered workflow fits. | **`instruction`**, **`title`** | — |
 | Research a question deeply<br>`research.deep_dive` | Test a project question and its upstream assumptions against current, source-backed evidence. | **`question`**, `depth`, `audience`, `known_assumptions`, `constraints` | `reports/RESEARCH_DEEP_DIVE.md` |
-| Create a diagram (human review)<br>`content.diagram` | Turn a process or system into one clear Tin-styled diagram whose Mermaid source stays editable in project Files. | **`brief`**, **`slug`**, `direction`, `context` | `diagrams/{slug}.mmd` |
+| Create a diagram (human review)<br>`content.diagram` | Turn a process or system into one clear diagram using approved brand guidance. Its source stays editable in project Files. | **`brief`**, **`slug`**, `direction`, `context` | `diagrams/{slug}.mmd` |
 
 # Registry packages
 

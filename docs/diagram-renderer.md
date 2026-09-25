@@ -303,3 +303,37 @@ lane alignment, and nearly coincident feedback routes. The revised router keeps 
 local, aligns lane headings, and separates nearby parallel paths. These examples are regression
 cases, not a guarantee that every allowed topology has an ideal automatic composition. Source
 hierarchy remains the author’s tool for changing the reading order.
+
+
+## Project brand guidance
+
+`content.diagram` 2.2 uses `tin-diagram.branded.v1`, an extension of the existing reviewed
+composition contract. Before compute, the trusted activity checks active `brand/BRAND.md`
+and optional `DESIGN.md` at the immutable project checkout revision. The agent reads those
+files for identity, composition guidance and product language. Unadopted proposals are not
+sources. A missing brand keeps Tin's appearance; invalid active guidance fails explicitly.
+
+One bounded `%% tin:brand` JSON comment immediately after the graph header carries the
+brand file's revision, SHA-256 and exact approved light/optional dark palettes. Publication
+rejects a missing or changed snapshot. The existing source hash and independent offline
+render check bind the palette along with the diagram; retries resolve the same project
+revision. No new receipt table, artifact companion or workflow engine is required.
+
+The renderer scopes palette variables to that SVG. Labels use brand ink, neutral surfaces
+and borders derive from ink/paper, and evidence marks use the accent. Human gates keep their
+labels and geometry rather than depending on color alone. A light-only brand keeps its
+paper in dark UI; an explicitly supplied dark palette follows the reader theme. Other
+figures, the Markdown reader and Registry diagrams retain Tin styling. Exported SVGs carry
+resolved colors and embedded bundled fonts and do not need a live brand lookup.
+
+This slice retains measured Geist Sans/Mono. Font names in a guide do not silently substitute
+unavailable files. Repository font acquisition and measured custom-font layout remain separate
+work; no customer font binary enters this source distribution. The diagram source stays
+editable, and the usual human review remains in place. Historical validators keep their
+original contracts.
+
+Rebuild the isolated image and deploy it with the renderer before catalog activation. Branded
+runs check the image's `--brand-version` capability before paid execution. Fixture checks cover
+active-only resolution, revision/digest/palette binding, malformed or injected metadata,
+legacy parsing, multiple brands together, light/dark switching, Markdown embeds, offline
+checks and portable SVG export. These checks do not establish model quality or font fidelity.

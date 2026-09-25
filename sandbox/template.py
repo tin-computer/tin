@@ -222,6 +222,7 @@ def _diagram_layer(template):
         "scripts/check_diagram.mjs",
         "scripts/diagram-review.mjs",
         "web/diagram-contract.js",
+        "web/diagram-brand.js",
         "web/diagram-audit.js",
         "web/diagram-quality.js",
         "src/tin_lite/static/diagram-renderer.js",

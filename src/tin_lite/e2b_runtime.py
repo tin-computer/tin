@@ -671,7 +671,7 @@ class E2BRuntime:
                 diagram_review=(
                     payload.get("diagram_review")
                     if run_input.context.get("output", {}).get("validator")
-                    == "tin-diagram.reviewed.v1"
+                    in {"tin-diagram.reviewed.v1", "tin-diagram.branded.v1"}
                     else None
                 ),
             )
@@ -726,7 +726,7 @@ class E2BRuntime:
             return
         await run_input.interrupted_output_sink(content)
 
-    async def prepare_diagram(self, *, sandbox_id: str) -> None:
+    async def prepare_diagram(self, *, sandbox_id: str, branded: bool = False) -> None:
         # Read-only startup checks precede the paid-attempt receipt. A transient
         # envd stream timeout must remain retryable without implying a model call.
         sandbox = await AsyncSandbox.connect(
@@ -741,6 +741,14 @@ class E2BRuntime:
         )
         if ready.stdout.strip() != "tin-diagram-check.v1":
             raise RuntimeError("sandbox lacks the offline diagram checker")
+        if branded:
+            support = await sandbox.commands.run(
+                "node /opt/tin-lite/diagram/scripts/check_diagram.mjs --brand-version",
+                timeout=45,
+                request_timeout=30,
+            )
+            if support.stdout.strip() != "tin-diagram.branded.v1":
+                raise RuntimeError("sandbox lacks the branded diagram checker; rebuild its image")
         await self._diagram_product_styles(sandbox)
 
     async def validate_diagram(self, *, content: str | bytes, run_id: str, revision: str) -> dict:
@@ -752,12 +760,12 @@ class E2BRuntime:
         import hashlib
         from pathlib import Path
 
-        from tin_lite.diagram_compositions import parse_diagram_v2
+        from tin_lite.brand_diagrams import parse_diagram
 
         raw = content.encode("utf-8") if isinstance(content, str) else content
         if not 0 < len(raw) <= 64_000:
             raise ValueError("diagram source exceeds its byte bound")
-        parse_diagram_v2(raw.decode("utf-8"))
+        parse_diagram(raw.decode("utf-8"))
         source_sha = hashlib.sha256(raw).hexdigest()
         assets = Path(__file__).parent / "static"
         names = [

@@ -90,7 +90,7 @@ from tin_lite.procedures import (
     PRODUCT_AUDIT_VALIDATOR,
     SIGNUP_WALKTHROUGH_VALIDATOR,
     STUDIO_SANDBOX_PROFILE,
-    TIN_DIAGRAM_REVIEWED_VALIDATOR,
+    TIN_DIAGRAM_BRANDED_VALIDATOR,
     CodexProcedureSource,
     GitHubPullRequestProcedure,
     GitHubRepositoryWorkspace,
@@ -1362,11 +1362,11 @@ BUILTIN_WORKFLOWS = (
         key=CONTENT_DIAGRAM_WORKFLOW_NAME,
         title="Create a diagram",
         description=(
-            "Turn a process or system into one clear Tin-styled diagram whose Mermaid source "
-            "stays editable in project Files."
+            "Turn a process or system into one clear diagram using approved brand guidance. "
+            "Its source stays editable in project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.1.0",
+        version_label="2.2.0",
         review_policy=CONTENT_DIAGRAM_REVIEW_POLICY,
         schedule_modes=("on_demand",),
         input_schema={
@@ -1415,7 +1415,7 @@ BUILTIN_WORKFLOWS = (
             entry_skill="content-diagram",
             output_path_template="diagrams/{slug}.mmd",
             output_media_type="text/vnd.mermaid",
-            output_validator=TIN_DIAGRAM_REVIEWED_VALIDATOR,
+            output_validator=TIN_DIAGRAM_BRANDED_VALIDATOR,
             output_max_bytes=64_000,
         ),
     ),

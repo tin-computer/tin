@@ -75,10 +75,10 @@ They return the guide, tokens, optional assessment and diagnostics. Missing and 
 guidance are distinct. Invalid optional assessment does not discard valid brand guidance;
 invalid core tokens do not fall back to a prior proposal or guide.
 
-Consumers can use that same revision to read DESIGN.md. This slice does not yet change
-diagram rendering, character generation, ads or video to use the resolver. Palette swatches
-are a review aid, not proof that those outputs preserve an identity. Full consumer integration
-and human review of real generated outputs remain subsequent acceptance work.
+Consumers can use that same revision to read DESIGN.md. The diagram workflow now uses this resolver at its pinned checkout revision; see
+[diagram branding](diagram-renderer.md#project-brand-guidance). Character generation, ads and video
+do not yet consume the resolver. Palette swatches
+are a review aid, not proof that those outputs preserve an identity. Human review of real generated outputs remains necessary to assess identity fidelity.
 
 ## Verification and activation
 

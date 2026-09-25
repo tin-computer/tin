@@ -93,7 +93,8 @@ from tin_lite.procedures import (
     GITHUB_REPOSITORY_WORKSPACE,
     IDENTITY_REUSE_ACTIVE,
     PROJECT_ARTIFACT_RESULT,
-    TIN_DIAGRAM_REVIEWED_VALIDATOR,
+    REVIEWED_DIAGRAM_VALIDATORS,
+    TIN_DIAGRAM_BRANDED_VALIDATOR,
     PinnedCodexProcedure,
     artifact_host,
     build_procedure_pull_request_receipt,
@@ -213,10 +214,14 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
 
 class TinActivities:
     async def _run_accounted_procedure(self, *, conn, run, sandbox_id, run_input):
-        if getattr(run_input, "context", {}).get("output", {}).get("validator") == (
-            TIN_DIAGRAM_REVIEWED_VALIDATOR
+        if (
+            getattr(run_input, "context", {}).get("output", {}).get("validator")
+            in REVIEWED_DIAGRAM_VALIDATORS
         ):
-            await self._sandboxes.prepare_diagram(sandbox_id=sandbox_id)
+            await self._sandboxes.prepare_diagram(
+                sandbox_id=sandbox_id,
+                branded=run_input.context["output"]["validator"] == TIN_DIAGRAM_BRANDED_VALIDATOR,
+            )
         if run_input.api_url is not None:
             from tin_lite.codex_api import run_api_attempt
 
@@ -2731,6 +2736,10 @@ class TinActivities:
                     expected_head_sha = revision_sha
                 if expected_head_sha is None:
                     raise RuntimeError("project state repository has no canonical head")
+                if procedure.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR:
+                    from tin_lite.brand_diagrams import prepare
+
+                    await prepare(self._storage, project, expected_head_sha)
                 if procedure.documents:
                     from tin_lite.procedure_documents import validate_document
 
@@ -2882,7 +2891,7 @@ class TinActivities:
                         spec=procedure,
                         base=await self._procedure_artifact_base(run=run, procedure=procedure),
                     )
-                    if procedure.output_validator == TIN_DIAGRAM_REVIEWED_VALIDATOR:
+                    if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
                             "diagram_validation": await self._await_with_heartbeats(
                                 self._sandboxes.validate_diagram(
@@ -3232,7 +3241,7 @@ class TinActivities:
                             project_revision=(
                                 run.expected_head_sha
                                 if (
-                                    procedure.output_validator == TIN_DIAGRAM_REVIEWED_VALIDATOR
+                                    procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS
                                     or (procedure.review_revision_context or {}).get(
                                         "project_revision"
                                     )
@@ -3290,7 +3299,7 @@ class TinActivities:
                         spec=procedure,
                         base=await self._procedure_artifact_base(run=run, procedure=procedure),
                     )
-                    if procedure.output_validator == TIN_DIAGRAM_REVIEWED_VALIDATOR:
+                    if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
                             "diagram_validation": await self._await_with_heartbeats(
                                 self._sandboxes.validate_diagram(
@@ -3797,7 +3806,7 @@ class TinActivities:
                 repo_id=project.state_repo_id, revision=revision, path=procedure.companion_path
             )
             editorial = validate_pair(content, notes, procedure.content_draft_context)
-        if procedure.output_validator == TIN_DIAGRAM_REVIEWED_VALIDATOR:
+        if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
             proof = persisted.result.get("diagram_validation") or {}
             if (
                 proof.get("checker") != "tin-diagram-check.v1"
@@ -5054,6 +5063,13 @@ class TinActivities:
                 run.id
             )
             procedure = replace(procedure, brand_capture_context=prepared)
+        if procedure.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR and run.expected_head_sha:
+            from tin_lite.brand_diagrams import prepare
+
+            context = await prepare(
+                self._storage, await self._require_project(run.project_id), run.expected_head_sha
+            )
+            procedure = replace(procedure, diagram_brand_context=context)
         if run.review_source_run_id is not None:
             from tin_lite.workflow_reviews import saved_revision_context
 

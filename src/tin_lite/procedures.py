@@ -79,6 +79,10 @@ _E164 = re.compile(r"^\+[1-9][0-9]{6,14}$")
 TIN_DIAGRAM_VALIDATOR = "tin-diagram.v1"
 TIN_DIAGRAM_COMPOSITION_VALIDATOR = "tin-diagram.v2"
 TIN_DIAGRAM_REVIEWED_VALIDATOR = "tin-diagram.reviewed.v1"
+TIN_DIAGRAM_BRANDED_VALIDATOR = "tin-diagram.branded.v1"
+REVIEWED_DIAGRAM_VALIDATORS = frozenset(
+    {TIN_DIAGRAM_REVIEWED_VALIDATOR, TIN_DIAGRAM_BRANDED_VALIDATOR}
+)
 MEMORY_SECTION_VALIDATOR = "memory-section.v1"
 PRODUCT_AUDIT_VALIDATOR = "product-audit.v1"
 PUBLIC_ARTICLE_VALIDATOR = "public-article.v2"
@@ -91,7 +95,7 @@ ARTIFACT_VALIDATORS = frozenset(
         SIGNUP_WALKTHROUGH_VALIDATOR,
         TIN_DIAGRAM_VALIDATOR,
         TIN_DIAGRAM_COMPOSITION_VALIDATOR,
-        TIN_DIAGRAM_REVIEWED_VALIDATOR,
+        *REVIEWED_DIAGRAM_VALIDATORS,
         MEMORY_SECTION_VALIDATOR,
         PRODUCT_AUDIT_VALIDATOR,
         CHARACTER_SVG_VALIDATOR,
@@ -102,7 +106,7 @@ SLUG_TEMPLATE_VALIDATORS = frozenset(
     {
         TIN_DIAGRAM_VALIDATOR,
         TIN_DIAGRAM_COMPOSITION_VALIDATOR,
-        TIN_DIAGRAM_REVIEWED_VALIDATOR,
+        *REVIEWED_DIAGRAM_VALIDATORS,
         CHARACTER_SVG_VALIDATOR,
         DEMO_VIDEO_VALIDATOR,
     }
@@ -386,6 +390,7 @@ class PinnedCodexProcedure:
     allow_no_change: bool = False
     content_draft_context: dict[str, Any] | None = None
     brand_capture_context: dict[str, Any] | None = None
+    diagram_brand_context: dict[str, Any] | None = None
     review_revision_context: dict[str, Any] | None = None
     services: tuple[ServiceBinding, ...] = ()
     documents: DocumentPair | None = None
@@ -514,6 +519,13 @@ class PinnedCodexProcedure:
             )
         if self.content_draft_context is not None:
             context["content_draft"] = self.content_draft_context
+        if self.diagram_brand_context is not None:
+            context["diagram_brand"] = self.diagram_brand_context
+            context["prompt"] += (
+                "\nPinned diagram guidance (read the listed project files; copy source_line "
+                "unchanged immediately after the graph header when present):\n"
+                + json.dumps(self.diagram_brand_context)
+            )
         if self.brand_capture_context is not None:
             context["brand_capture"] = self.brand_capture_context
             context["prompt"] += (
@@ -968,7 +980,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         if output_validator in {
             TIN_DIAGRAM_VALIDATOR,
             TIN_DIAGRAM_COMPOSITION_VALIDATOR,
-            TIN_DIAGRAM_REVIEWED_VALIDATOR,
+            *REVIEWED_DIAGRAM_VALIDATORS,
         } and (
             output_media_type != "text/vnd.mermaid"
             or output_path_template is None
@@ -1340,6 +1352,10 @@ def validate_procedure_artifact(
         _validate_signup_walkthrough(text)
     elif spec.output_validator == TIN_DIAGRAM_VALIDATOR:
         _validate_tin_diagram(text)
+    elif spec.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR:
+        from tin_lite.brand_diagrams import validate_output
+
+        validate_output(text, spec.diagram_brand_context)
     elif spec.output_validator in {
         TIN_DIAGRAM_COMPOSITION_VALIDATOR,
         TIN_DIAGRAM_REVIEWED_VALIDATOR,

@@ -91,6 +91,7 @@ export async function checkDiagram(candidate, output, { previews = true } = {}) 
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   if (process.argv[2] === "--version") console.log(CHECKER_VERSION);
+  else if (process.argv[2] === "--brand-version") console.log("tin-diagram.branded.v1");
   else {
     const [, , verb, candidate, flag, output, mode] = process.argv;
     if (verb !== "check" || !candidate || flag !== "--out" || !path.isAbsolute(output || "")) throw new Error("Usage: tin-diagram check candidate.mmd --out /absolute/temporary-directory [--no-previews]");

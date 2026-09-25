@@ -34,3 +34,23 @@ test("candidate checker rejects syntax and produces real hash-bound theme previe
   assert.deepEqual(final.themes, valid.themes, "publication check measures the same exact layout without previews");
   assert.deepEqual(final.previews, []);
 });
+
+
+test("approved palette survives offline previews and portable SVG export", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tin-brand-checker-"));
+  const brand = {revision: "a".repeat(40), sha256: "b".repeat(64),
+    light: {ink: "#492136", paper: "#FFF9ED", accent: "#CE9645"},
+    dark: {ink: "#EDF5EF", paper: "#10241C", accent: "#58CC99"}};
+  const source = `graph LR\n%% tin:brand ${JSON.stringify(brand)}\n a["Start"]:::step\n b["Evidence"]:::receipt\n a --> b\n`;
+  const candidate = path.join(root, "candidate.mmd");
+  await fs.writeFile(candidate, source);
+  const report = await checkDiagram(candidate, path.join(root, "preview"));
+  assert.equal(report.passed, true, JSON.stringify(report.issues));
+  for (const [theme, paper, ink] of [["light", "rgb(255, 249, 237)", "rgb(73, 33, 54)"], ["dark", "rgb(16, 36, 28)", "rgb(237, 245, 239)"]]) {
+    const svg = await fs.readFile(path.join(root, "preview", `${theme}.svg`), "utf8");
+    assert.ok(svg.includes(`fill="${paper}"`), `${theme} export background`);
+    assert.ok(svg.includes(`fill="${ink}"`), `${theme} export text`);
+    assert.ok(svg.includes("data:font/woff2;base64,"));
+    assert.ok(!svg.includes("var(--"), "export needs neither Tin nor project CSS");
+  }
+});

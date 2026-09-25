@@ -35,7 +35,7 @@ export function exportDiagrams({ fontRules }) {
     svg.setAttribute("viewBox", `-24 -24 ${width + 48} ${height + 48}`); svg.removeAttribute("style");
     const style = document.createElementNS("http://www.w3.org/2000/svg", "style"); style.textContent = fontRules;
     const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
-    for (const [key, value] of Object.entries({ x: -24, y: -24, width: width + 48, height: height + 48, fill: getComputedStyle(document.body).backgroundColor })) background.setAttribute(key, value);
+    for (const [key, value] of Object.entries({ x: -24, y: -24, width: width + 48, height: height + 48, fill: getComputedStyle(source.hasAttribute("data-tin-brand") ? source : document.body).backgroundColor })) background.setAttribute(key, value);
     svg.prepend(style, background);
     return { id: section.id, svg: new XMLSerializer().serializeToString(svg) };
   });
