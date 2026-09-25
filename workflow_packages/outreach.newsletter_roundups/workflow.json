@@ -1,0 +1,100 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.newsletter_roundups",
+    "title": "Get into the newsletters your buyers already read",
+    "description": "Finds curated newsletters that run a \"tools we like\" or link-roundup section your buyers actually read, verifies each one's submission process, and drafts one pitch per newsletter in your voice. Skips newsletters pitched in earlier runs; never submits or emails anything.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "system": "cold-outreach",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "pitch_angle": {
+          "type": "string",
+          "title": "What to pitch (optional)",
+          "description": "The specific feature, launch or resource worth a mention, and why a reader of that kind of newsletter would care. Leave empty to pitch what the Feature map and growth plan show is newest or most useful.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "newsletter_type_preference": {
+          "type": "string",
+          "title": "Newsletter type",
+          "enum": ["no_preference", "tools_roundup", "industry_digest", "community_digest"],
+          "default": "no_preference",
+          "x-tin-ui": { "control": "select", "order": 20 }
+        },
+        "already_pitched": {
+          "type": "string",
+          "title": "Newsletters pitched outside Tin (optional)",
+          "description": "Newsletters to skip because you already submitted or were declined. Newsletters drafted in earlier runs are skipped automatically.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        },
+        "max_newsletters": {
+          "type": "integer",
+          "title": "Maximum newsletters",
+          "minimum": 3,
+          "maximum": 20,
+          "default": 10,
+          "x-tin-ui": { "control": "counter", "order": 40 }
+        },
+        "tone_notes": {
+          "type": "string",
+          "title": "Voice notes (optional)",
+          "description": "How the drafted pitches should sound. The project's writing style guide is used when present; these notes win where they differ.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 50 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map supplies the real product detail a pitch cites, and the newest thing to pitch when pitch_angle is empty."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan says who the business serves and records hard no's such as no cold email."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes the drafted pitches; tone_notes still win."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/newsletter-roundups/SKILL.md",
+        "skills/newsletter-roundups/SCORING.md"
+      ],
+      "entry_skill": "newsletter-roundups",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/outreach/newsletters/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
