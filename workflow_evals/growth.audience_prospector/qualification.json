@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Web discovery and entity validation are based on public web pages and primary sources; English-language search is accepted for v1.",
+    "At most 15 qualified opportunities; empty or smaller sets are valid when evidence is lacking, and results are never padded to reach 15.",
+    "Run success requires verified canonical URLs, audience fit evidence, activity or schedule freshness, explicit verified engagement mechanisms or actionable opportunities, and actual source URLs in the Evidence column."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session uses the existing pinned model pricing and spending ceiling (isolated profile, 900 seconds timeout).",
+    "Web search volume depends on audience specificity, niche community density, and URL verification passes.",
+    "Single markdown report output in reports/AUDIENCE_PROSPECTS.md up to 64,000 bytes."
+  ],
+  "effects": [
+    "Writes one artifact reports/AUDIENCE_PROSPECTS.md to project state.",
+    "Read-only web search and page retrieval; no messages sent, no outreach executed, no external publishing, and no provider state mutated."
+  ],
+  "cases": [
+    {
+      "id": "college_hackathons",
+      "description": "Undergraduate CS students targeted via hackathons and university developer organizations with explicit sponsor/mentor routes.",
+      "inputs": {
+        "target_audience": "Undergraduate computer science and engineering students participating in student-led hackathons and developer clubs.",
+        "geography": "United States",
+        "constraints": "Focus on university-affiliated events and official student chapters; no unmoderated random forums."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Audience Prospects:",
+          "## Qualified Opportunities",
+          "| Entity | Type | Verified URL | Audience Fit | Activity/Scale Evidence | Verified Engagement Mechanism | Evidence |",
+          "https://"
+        ],
+        "excludes": [
+          "Generic marketing strategy",
+          "cold email",
+          "Post regularly on social media"
+        ]
+      }
+    },
+    {
+      "id": "devops_communities",
+      "description": "Platform and infrastructure engineers targeted through local meetups, subreddits, and open-source user groups.",
+      "inputs": {
+        "target_audience": "DevOps, SRE, and platform engineers managing cloud infrastructure and container workloads.",
+        "geography": "North America and Europe",
+        "constraints": "Exclude generic tech channels; require specific user groups or forums with verifiable active discussions or meetups."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Audience Prospects:",
+          "## Qualified Opportunities",
+          "| Entity | Type | Verified URL | Audience Fit | Activity/Scale Evidence | Verified Engagement Mechanism | Evidence |",
+          "https://"
+        ],
+        "excludes": [
+          "Generic marketing strategy",
+          "Post regularly on social media"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "specificity",
+      "question": "Are all identified prospects specific named entities (clubs, hackathons, user groups, newsletters) rather than broad generic platforms?"
+    },
+    {
+      "id": "evidence",
+      "question": "Is every prospect backed by a verified canonical URL, explicit audience fit evidence, observable activity or confirmed schedule dates, and actual source URLs in the Evidence column supporting all claims?"
+    },
+    {
+      "id": "engagement",
+      "question": "Does each opportunity define an explicit, verified engagement mechanism or an upcoming/current/recurring actionable opportunity supported by source evidence, rather than inferred or speculative arrangements?"
+    },
+    {
+      "id": "anti_hallucination",
+      "question": "Are member counts, scale metrics, and activity claims grounded in source evidence, with unknown metrics marked Unknown and zero fabricated contacts?"
+    },
+    {
+      "id": "bounds",
+      "question": "Is the total number of qualified opportunities capped at 15 without padding, and are unpromising entities properly excluded or listed under disqualified?"
+    }
+  ]
+}
