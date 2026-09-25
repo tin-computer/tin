@@ -1,0 +1,149 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Competitor has a public listing on the declared review platform (G2, Capterra, Trustpilot, GetApp, Software Advice, or Product Hunt).",
+    "At most 30 reviews fetched from the first page of the platform listing.",
+    "The procedure does not inspect workspace files, environment variables, or credentials; it operates solely on public review data.",
+    "Agent uses site-scoped web search to locate the competitor listing; does not require the user to paste review text."
+  ],
+  "cost_drivers": [
+    "Bounded Codex procedure session using standard rate card; spending capped at configured sandbox ceiling.",
+    "Web search calls are gated by the sandbox egress fence (fenced egress, isolated profile).",
+    "Execution work scales with number of reviews collected (up to 30) and output narrative size.",
+    "Zero paid external integrations or live provider API keys required."
+  ],
+  "effects": [
+    "Writes reports/COMPETITOR_REVIEW_MINER.md in the bound project workspace.",
+    "No mutations outside reports/COMPETITOR_REVIEW_MINER.md; no provider mutation or publication."
+  ],
+  "cases": [
+    {
+      "id": "ordinary_reviews",
+      "description": "Normal case: well-known competitor on G2 with pain points, loved features, and a switching trigger expected.",
+      "inputs": {
+        "competitor_name": "Intercom",
+        "review_platform": "g2",
+        "focus": "pricing and onboarding"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Competitor review intelligence: Intercom",
+          "## Signal summary",
+          "## Pain Points",
+          "## Loved Features",
+          "## Switching Triggers",
+          "## Pricing Signals",
+          "## Missed Use Cases",
+          "## Three growth moves",
+          "## Evidence notes",
+          "g2"
+        ],
+        "excludes": [
+          "Status: invalid input",
+          "Status: not found",
+          "Status: insufficient data"
+        ]
+      }
+    },
+    {
+      "id": "alternate_platform",
+      "description": "Boundary case: same competitor searched on Capterra instead of G2.",
+      "inputs": {
+        "competitor_name": "HubSpot",
+        "review_platform": "capterra",
+        "focus": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Competitor review intelligence: HubSpot",
+          "## Signal summary",
+          "## Pain Points",
+          "## Three growth moves",
+          "## Evidence notes",
+          "capterra"
+        ],
+        "excludes": [
+          "Status: invalid input",
+          "Status: not found",
+          "Status: insufficient data"
+        ]
+      }
+    },
+    {
+      "id": "not_found_diagnostic",
+      "description": "Unusable result case: obscure competitor name with no listing found on the platform produces a diagnostic report.",
+      "inputs": {
+        "competitor_name": "xXxNoSuchProduct999xXx",
+        "review_platform": "trustpilot",
+        "focus": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Competitor Review Miner — Diagnostic Report",
+          "Status: not found"
+        ],
+        "excludes": [
+          "## Three growth moves",
+          "## Signal summary"
+        ]
+      }
+    },
+    {
+      "id": "insufficient_data_diagnostic",
+      "description": "Sparse data case: listing found but fewer than 2 reviews available on the platform produces an insufficient data diagnostic report.",
+      "inputs": {
+        "competitor_name": "BrandNewStealthApp",
+        "review_platform": "producthunt",
+        "focus": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Competitor Review Miner — Diagnostic Report",
+          "Status: insufficient data"
+        ],
+        "excludes": [
+          "## Three growth moves",
+          "## Signal summary"
+        ]
+      }
+    },
+    {
+      "id": "invalid_input_diagnostic",
+      "description": "Semantic input error: URL passed as competitor_name fails Step 1 validation and produces an invalid input diagnostic report.",
+      "inputs": {
+        "competitor_name": "https://competitor.com/product/reviews",
+        "review_platform": "g2",
+        "focus": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Competitor Review Miner — Diagnostic Report",
+          "Status: invalid input"
+        ],
+        "excludes": [
+          "## Three growth moves",
+          "## Signal summary"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "grounding",
+      "question": "Is every pain point, loved feature, and switching trigger backed by verbatim or clearly attributed quotes from reviews found on the declared platform?"
+    },
+    {
+      "id": "actionability",
+      "question": "Do the three growth opportunities offer concrete, testable positioning, copy, or roadmap actions rather than generic advice?"
+    },
+    {
+      "id": "boundaries",
+      "question": "Does the workflow respect operational bounds (caps review collection at 30, targets the declared platform listing, and produces diagnostic output when no listing or insufficient reviews are found) without hallucinating evidence?"
+    }
+  ]
+}

@@ -1,0 +1,58 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.competitor_review_miner",
+    "title": "Mine competitor reviews for growth signals",
+    "description": "Searches a specific public review platform (G2, Capterra, Trustpilot, etc.) for competitor reviews and produces ranked pain points, switching triggers, and three concrete moves to acquire their unhappy users.",
+    "version": "2.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "competitor_name", "review_platform"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "competitor_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "title": "Competitor name (as it appears on the review platform)",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "review_platform": {
+          "type": "string",
+          "enum": ["g2", "capterra", "trustpilot", "getapp", "software_advice", "producthunt"],
+          "title": "Review platform to search",
+          "x-tin-ui": { "control": "select", "order": 20 }
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Optional focus area (e.g. 'onboarding', 'pricing', 'integrations')",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/competitor-review-miner/SKILL.md"
+      ],
+      "entry_skill": "competitor-review-miner",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMPETITOR_REVIEW_MINER.md",
+        "media_type": "text/markdown",
+        "max_bytes": 50000
+      }
+    }
+  }
+}
