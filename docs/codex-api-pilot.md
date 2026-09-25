@@ -52,6 +52,8 @@ conversation. Pausing or asking a question does not settle the run prematurely.
 A completed turn's redacted result can replay after a projection failure without
 another model call. Projection and turn completion are atomic. Old task receipts
 without an API budget/auth pin retain OAuth rather than changing authentication on resume.
+A task paused before its first compute turn pins its contract at that pause, and a new
+turn's failed preflight cannot be misread as an old receipt.
 
 The design executor keeps its stable identity, saved versions and recorded Temporal
 commands. Its sandbox-create activity pins the shared API controller's DESIGN.md-only

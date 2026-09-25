@@ -3617,17 +3617,16 @@ async def resume_project_task(
     request: Request,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> RunView:
-    run = await _project_task_from_postgres(run_id, request, user)
     try:
-        run = await request.app.state.runtime.database.clear_task_control(run_id=run_id)
-        handle = request.app.state.runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
-        await handle.signal("resume")
-    except RuntimeError as exc:
+        run = await project_task_control.resume_project_task(
+            runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except project_task_control.ProjectTaskConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="task resume was not accepted"
-        ) from exc
+    except project_task_control.ProjectTaskDeliveryError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return RunView.model_validate(run)
 
 

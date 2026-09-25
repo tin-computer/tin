@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -20,7 +22,11 @@ from tin_lite.auth import AuthContext, require_user
 from tin_lite.db import Database, apply_migrations
 from tin_lite.domain import RunStatus, WorkflowRun
 from tin_lite.mcp_server import _run_allowed_actions, create_mcp_app
-from tin_lite.project_task_control import project_task_allowed_actions, project_task_view
+from tin_lite.project_task_control import (
+    approve_project_task,
+    project_task_allowed_actions,
+    project_task_view,
+)
 
 MEMBER = "user_member"
 OUTSIDER = "user_outsider"
@@ -270,6 +276,8 @@ async def test_mcp_reads_the_waiting_question_and_answers_it_like_the_web(task_d
     ]
     assert retried.json()["entries"][-1]["id"] == answered["message"]["entry_id"]
     assert h.handle.signal.await_count == 1
+    # The resumed turn already has the answer; the replay must not steer it in again.
+    h.runtime.sandboxes.control_task.assert_not_awaited()
     assert reused.status_code == 409
     assert reused.json()["detail"] == "task message request ID belongs to different content"
 
@@ -351,6 +359,168 @@ async def test_a_saved_answer_survives_a_failed_resume_signal(task_db, monkeypat
     entries = await task_db.list_task_entries(run_id=run.id)
     assert [entry.kind for entry in entries] == ["instruction", "question", "answer"]
     assert entries[-1].content == ANSWER
+
+
+async def test_a_failed_resume_signal_leaves_the_task_waiting_for_a_retry(task_db, monkeypatch):
+    h = await harness(task_db, monkeypatch)
+    h.token.subject = MEMBER
+    h.handle.signal.side_effect = [RuntimeError("temporal unreachable"), None]
+    run = await seed_task(task_db)
+    message = {"run_id": str(run.id), "message": ANSWER, "request_id": str(uuid4())}
+
+    with pytest.raises(ToolError, match="delivery_failed: task direction was saved"):
+        await call(h, "send_project_task_message", **message)
+    waiting = await task_db.get_run(run.id)
+    assert waiting is not None
+    assert (waiting.status, waiting.task_phase) == (RunStatus.NEEDS_INPUT, "needs_input")
+    assert waiting.task_question == QUESTION
+
+    retried = await call(h, "send_project_task_message", **message)
+    assert retried["message"]["kind"] == "answer"
+    assert retried["message"]["delivery"] == "resumed"
+    assert retried["status"] == "running"
+    assert h.handle.signal.await_count == 2
+    h.runtime.sandboxes.control_task.assert_not_awaited()
+
+
+async def test_web_resume_is_retryable_after_a_failed_signal(task_db, monkeypatch):
+    h = await harness(task_db, monkeypatch)
+    h.token.subject = MEMBER
+    h.handle.signal.side_effect = [RuntimeError("temporal unreachable"), None]
+    run = await seed_task(task_db, status="paused", phase="paused", question=None)
+
+    async with web(h) as client:
+        failed = await client.post(f"/api/tasks/{run.id}/resume")
+        paused = await task_db.get_run(run.id)
+        resumed = await client.post(f"/api/tasks/{run.id}/resume")
+        running = await client.post(f"/api/tasks/{run.id}/resume")
+    assert failed.status_code == 502
+    assert failed.json()["detail"] == "task resume was not accepted"
+    assert paused is not None and paused.status is RunStatus.PAUSED
+    assert resumed.status_code == 200
+    assert (resumed.json()["status"], resumed.json()["task_phase"]) == ("running", "working")
+    # A running workflow never receives a resume that would skip its next question.
+    assert running.status_code == 409
+    assert running.json()["detail"] == "task is not paused or waiting for an answer"
+    assert h.handle.signal.await_count == 2
+
+
+async def test_a_replayed_direction_reaches_the_running_turn_once(task_db, monkeypatch):
+    h = await harness(task_db, monkeypatch)
+    h.token.subject = MEMBER
+    run = await seed_task(task_db, status="running", phase="working", question=None)
+    message = {"run_id": str(run.id), "message": "Add a timeline.", "request_id": str(uuid4())}
+
+    steered = await call(h, "send_project_task_message", **message)
+    replayed = await call(h, "send_project_task_message", **message)
+    assert steered["message"]["delivery"] == "steered"
+    assert replayed["message"]["entry_id"] == steered["message"]["entry_id"]
+    assert replayed["message"]["delivery"] == "queued"
+    assert h.runtime.sandboxes.control_task.await_count == 1
+    h.handle.signal.assert_not_awaited()
+
+
+async def test_an_apply_that_fails_at_once_can_be_approved_again(task_db, monkeypatch):
+    h = await harness(task_db, monkeypatch)
+    h.token.subject = MEMBER
+    diff = {"files": [{"path": "docs/charter.md", "state": "added"}], "sha256": "0" * 64}
+    run = await seed_task(task_db, phase="review", question=None, task_diff=diff)
+
+    async def apply_fails_at_once(name):
+        assert name == "approve"
+        await task_db.defer_task_approval(
+            run_id=run.id, summary="Tin could not apply the reviewed changes."
+        )
+
+    h.handle.signal.side_effect = apply_fails_at_once
+    await call(h, "approve_workflow_run", run_id=str(run.id))
+    deferred = await task_db.get_run(run.id)
+    assert deferred is not None
+    assert (deferred.status, deferred.task_phase) == (RunStatus.NEEDS_INPUT, "review")
+
+    h.handle.signal.side_effect = RuntimeError("temporal unreachable")
+    with pytest.raises(ToolError, match="delivery_failed: task approval was not accepted"):
+        await call(h, "approve_workflow_run", run_id=str(run.id))
+    reopened = await task_db.get_run(run.id)
+    assert reopened is not None
+    assert (reopened.status, reopened.task_phase) == (RunStatus.NEEDS_INPUT, "review")
+
+    h.handle.signal.side_effect = None
+    approved = await call(h, "approve_workflow_run", run_id=str(run.id))
+    assert (approved["status"], approved["task"]["phase"]) == ("running", "applying")
+    assert h.handle.signal.await_count == 3
+
+
+async def test_a_cancelled_approve_signal_returns_the_task_to_review() -> None:
+    earlier = "The last approval could not reach the task."
+    runs = {"current": task_run(task_phase="review", task_question=None, error_message=earlier)}
+
+    class Database:
+        async def get_run(self, run_id):
+            return runs["current"]
+
+        async def has_project_access(self, *, project_id, clerk_user_id):
+            return clerk_user_id == MEMBER
+
+        async def begin_task_approval(self, *, run_id, clerk_user_id):
+            runs["current"] = replace(
+                runs["current"],
+                status=RunStatus.RUNNING,
+                task_phase="applying",
+                error_message=None,
+            )
+            return runs["current"]
+
+        async def reopen_task_review(self, *, run_id, error_message=None):
+            runs["current"] = replace(
+                runs["current"],
+                status=RunStatus.NEEDS_INPUT,
+                task_phase="review",
+                error_message=error_message,
+            )
+
+    handle = SimpleNamespace(signal=AsyncMock(side_effect=asyncio.CancelledError()))
+    runtime = SimpleNamespace(
+        database=Database(),
+        temporal=SimpleNamespace(get_workflow_handle=Mock(return_value=handle)),
+    )
+    run_id = runs["current"].id
+
+    with pytest.raises(asyncio.CancelledError):
+        await approve_project_task(runtime=runtime, run_id=run_id, clerk_user_id=MEMBER)
+    reopened = runs["current"]
+    assert (reopened.status, reopened.task_phase) == (RunStatus.NEEDS_INPUT, "review")
+    assert reopened.error_message == earlier
+
+    handle.signal.side_effect = None
+    approved = await approve_project_task(runtime=runtime, run_id=run_id, clerk_user_id=MEMBER)
+    assert (approved.status, approved.task_phase) == (RunStatus.RUNNING, "applying")
+    assert handle.signal.await_count == 2
+
+
+async def test_a_cancelled_approval_can_be_approved_again(task_db, monkeypatch):
+    h = await harness(task_db, monkeypatch)
+    h.token.subject = MEMBER
+    diff = {"files": [{"path": "docs/charter.md", "state": "added"}], "sha256": "0" * 64}
+    run = await seed_task(task_db, phase="review", question=None, task_diff=diff)
+    earlier = "The last approval could not reach the task."
+    await task_db.pool.execute(
+        "UPDATE workflow_runs SET error_message = $2 WHERE id = $1", run.id, earlier
+    )
+
+    # An MCP disconnect or shutdown cancels the approval while the signal is in flight.
+    h.handle.signal.side_effect = asyncio.CancelledError()
+    with pytest.raises(asyncio.CancelledError):
+        await approve_project_task(runtime=h.runtime, run_id=run.id, clerk_user_id=MEMBER)
+    reopened = await task_db.get_run(run.id)
+    assert reopened is not None
+    assert (reopened.status, reopened.task_phase) == (RunStatus.NEEDS_INPUT, "review")
+    assert reopened.error_message == earlier
+
+    h.handle.signal.side_effect = None
+    approved = await call(h, "approve_workflow_run", run_id=str(run.id))
+    assert (approved["status"], approved["task"]["phase"]) == ("running", "applying")
+    assert h.handle.signal.await_count == 2
 
 
 async def test_mcp_approves_reviewed_task_changes_like_the_web(task_db, monkeypatch):
