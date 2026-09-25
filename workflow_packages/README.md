@@ -44,6 +44,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.syllabus_placement` | Feature map, onboarding plan, style guide, its earlier reports | founder sends | Partnerships and channel |
 | `outreach.campus_events` | onboarding plan, Feature map, style guide | founder pitches the organizer | Community and events |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
+| `growth.framework_starter` | Code map (required), Feature map, style guide | founder publishes starter repo and submits to gallery | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 
 The onboarding plan lists these under their programs in

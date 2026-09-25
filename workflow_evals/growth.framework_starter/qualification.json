@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases run against simulated project states: with Code map, Feature map, and onboarding plan.",
+    "The procedure runs within an isolated sandbox and generates starter files in an output Markdown report without writing to repository files or contacting external services."
+  ],
+  "cost_drivers": [
+    "One bounded Codex procedure session."
+  ],
+  "effects": [
+    "Writes reports/growth/starters/{run_id}.md in the project; makes no external network calls or repository modifications.",
+    "Never creates GitHub repositories, registers packages, or contacts template galleries."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Standard run for a product with an API/SDK, targeting Next.js to build a turnkey starter.",
+      "inputs": {
+        "target_framework": "nextjs",
+        "use_case": "Query vectors and return semantic search results in under 5 minutes.",
+        "starter_name": "vector-search-nextjs-starter"
+      },
+      "expect": {
+        "contains": [
+          "Status: complete",
+          "Framework: nextjs",
+          "vector-search-nextjs-starter",
+          ".env.example",
+          "package.json",
+          "tin-starter-state"
+        ]
+      }
+    },
+    {
+      "id": "missing_code_map",
+      "description": "When Code map is absent, the workflow must emit a diagnostic report instructing the user to run product.code_map first.",
+      "inputs": {},
+      "expect": {
+        "contains": [
+          "Status: diagnostic",
+          "product.code_map"
+        ],
+        "excludes": [
+          "Status: complete",
+          "tin-starter-state"
+        ]
+      }
+    },
+    {
+      "id": "unsupported_framework",
+      "description": "When an unsupported framework is specified, the workflow marks status unsupported and refers to FRAMEWORKS.md.",
+      "inputs": {
+        "target_framework": "ruby-on-rails-hotwire"
+      },
+      "expect": {
+        "contains": [
+          "Status: unsupported"
+        ],
+        "excludes": [
+          "Status: complete"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "grounding",
+      "question": "Are the generated integration routes, credentials, and API calls grounded in the actual Code map rather than hallucinated methods?"
+    },
+    {
+      "id": "security",
+      "question": "Does the starter keep private credentials out of client-side bundles and provide safe placeholders in .env.example?"
+    }
+  ]
+}

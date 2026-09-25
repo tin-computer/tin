@@ -407,7 +407,8 @@
         "workflows": [
           "research.deep_dive",
           "project.task",
-          "outreach.marketplace_listings"
+          "outreach.marketplace_listings",
+          "growth.framework_starter"
         ],
         "integrations": [],
         "founder_keeps": "accounts and submissions; Tin finds the directories and prepares listing copy",
@@ -626,6 +627,7 @@
     "outreach.marketplace_listings": "Get listed where your integrations' users already shop",
     "content.release_announce": "Announce a new release",
     "growth.score_quiz": "Draft an embeddable score quiz",
+    "growth.framework_starter": "Draft a turnkey framework starter repository",
     "product.analytics_brief": "Product analytics brief"
   },
   "workflow_scope": {
@@ -670,6 +672,7 @@
     "outreach.marketplace_listings": "Map the Code map's integrations to partner app marketplaces, check presence and listing rules, and fill in the forms for up to three listings to submit; needs the Code map first; never repeats a prepared listing, signs up or submits.",
     "content.release_announce": "Drafts an X post, LinkedIn post and newsletter email from one release's changelog, announcing only listed changes; never posts, sends or adds claims or links beyond the changelog and release link.",
     "growth.score_quiz": "Drafts a self-contained scored quiz widget (a lead magnet) with a call to action to the founder's signup link; never deploys it, adds other links, or runs model-written code.",
+    "growth.framework_starter": "Drafts a turnkey starter repository specification and template gallery submission packet for a supported developer framework, grounded in Code map endpoints and Feature map capabilities; never creates repositories, publishes packages or makes external calls.",
     "product.analytics_brief": "A recurring PostHog brief (needs the PostHog connection, read-only OAuth to one project): ordered activation, event trends, traffic, error signals and one supported breakdown with reproducible queries; read-only reporting, no product changes."
   }
 }
