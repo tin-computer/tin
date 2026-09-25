@@ -444,6 +444,10 @@ def test_sandbox_scripts_wire_the_camoufox_mcp_and_guard_the_identity_secret() -
     assert "mounted the `camoufox` MCP server" in bridge
     assert "only browser: use `navigate`" in bridge
     assert "Do not write helper scripts" in bridge
+    # The shared harness permits the capture package's images; the signup procedure
+    # retains its own restriction. A global ban silently prevented live brand evidence.
+    assert "Do not take screenshots" not in bridge
+    assert "`set_viewport` and `screenshot` when the procedure permits it" in bridge
     assert "chrome" not in bridge
     skill = (
         ROOT
