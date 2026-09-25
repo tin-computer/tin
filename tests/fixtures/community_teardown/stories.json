@@ -1,0 +1,67 @@
+{
+  "hits": [
+    {
+      "objectID": "44520001",
+      "title": "Ask HN: What's everyone using for bursty GPU batch jobs?",
+      "url": "",
+      "points": 86,
+      "num_comments": 42,
+      "author": "ana",
+      "created_at": "2026-06-01T08:00:00Z"
+    },
+    {
+      "objectID": "44520002",
+      "title": "Show HN: I built a collaborative whiteboard (zero traffic)",
+      "url": "https://example.com/board",
+      "points": 5,
+      "num_comments": 3,
+      "author": "solo",
+      "created_at": "2026-06-01T08:05:00Z"
+    },
+    {
+      "objectID": "44520003",
+      "title": "Anything self-hosted that keeps folder sync simple?",
+      "url": "",
+      "points": 74,
+      "num_comments": 58,
+      "author": "bob",
+      "created_at": "2026-06-01T08:10:00Z"
+    },
+    {
+      "objectID": "44520004",
+      "title": "Show HN: sqlite-like vector store in rust",
+      "url": "https://example.com/vec",
+      "points": 9,
+      "num_comments": 1,
+      "author": "rusty",
+      "created_at": "2026-06-01T08:15:00Z"
+    },
+    {
+      "objectID": "44520005",
+      "title": "Pricing pages: why is per-GPU cost always hidden?",
+      "url": "",
+      "points": 110,
+      "num_comments": 24,
+      "author": "cal",
+      "created_at": "2026-06-01T08:20:00Z"
+    },
+    {
+      "objectID": "44520006",
+      "title": "Job post: senior backend at fintech",
+      "url": "https://jobs.example.com/1",
+      "points": 12,
+      "num_comments": 0,
+      "author": "hr",
+      "created_at": "2026-06-01T08:25:00Z"
+    },
+    {
+      "objectID": "44520007",
+      "title": "Ask HN: What do you use to sync files across three devices?",
+      "url": "",
+      "points": 40,
+      "num_comments": 31,
+      "author": "dana",
+      "created_at": "2026-06-01T08:30:00Z"
+    }
+  ]
+}

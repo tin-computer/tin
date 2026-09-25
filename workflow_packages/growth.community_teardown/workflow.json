@@ -1,0 +1,136 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.community_teardown",
+    "title": "Teardown a community conversation",
+    "description": "Scan a founder-chosen community conversation - Hacker News or any Discourse-style product forum - around a category and deliver a ranked opportunity ledger: content topics, positioning phrases, product signals and who to help first, every item grounded in a verbatim quote. Works on any community the founder can connect.",
+    "version": "1.1.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "buyer_context": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000,
+          "title": "Category and buyers",
+          "description": "Who the product is for, the category it competes in, and the problem these builders are trying to solve.",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        },
+        "community": {
+          "type": "string",
+          "enum": [
+            "hacker_news",
+            "discourse"
+          ],
+          "default": "hacker_news",
+          "title": "Community to scan",
+          "description": "Where the buyers talk. hacker_news scans Hacker News through the Algolia JSON API; discourse scans any Discourse-style product forum. Point the custom.api.community connection at the matching origin: https://hn.algolia.com for hacker_news, or the forum's own origin for discourse.",
+          "x-tin-ui": {
+            "control": "select",
+            "order": 20
+          }
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 240,
+          "default": "",
+          "title": "Exact search",
+          "description": "Optional single search phrase for the chosen community. Leave empty to derive one to three tight searches from the category context.",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 30
+          }
+        },
+        "competitor": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "",
+          "title": "Competitor to scan",
+          "description": "Optional product, company or author name to also search for direct mentions of.",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 40
+          }
+        },
+        "community_base": {
+          "type": "string",
+          "maxLength": 200,
+          "default": "",
+          "title": "Forum origin (discourse)",
+          "description": "Required when community is discourse: the forum's public origin, for example https://community.example.com. Leave empty for hacker_news.",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 50
+          }
+        },
+        "window_days": {
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 730,
+          "default": 365,
+          "title": "Look back (days)",
+          "x-tin-ui": {
+            "control": "counter",
+            "order": 60
+          }
+        }
+      },
+      "required": [
+        "project_id",
+        "buyer_context"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "custom.api.community",
+        "capabilities": [
+          "http.read"
+        ],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/community-teardown/SKILL.md",
+        "skills/community-teardown/RANKING.md"
+      ],
+      "entry_skill": "community-teardown",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "services": {
+        "community": {
+          "provider_key": "custom.api.community",
+          "max_calls": 6,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMMUNITY_TEARDOWN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

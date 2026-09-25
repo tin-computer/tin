@@ -1,0 +1,34 @@
+{
+  "hits": [
+    {
+      "objectID": "comment-1",
+      "comment_text": "We moved our bursty batch jobs to a spot pool and the per-GPU cost dropped a lot.",
+      "author": "mlguru",
+      "created_at": "2026-06-01T09:11:00Z"
+    },
+    {
+      "objectID": "comment-2",
+      "comment_text": "",
+      "author": "nobody",
+      "created_at": "2026-06-01T09:12:00Z"
+    },
+    {
+      "objectID": "comment-3",
+      "comment_text": "Pricing pages hide the per-GPU cost, you have to email sales for a quote.",
+      "author": "devrel",
+      "created_at": "2026-06-01T09:15:00Z"
+    },
+    {
+      "objectID": "comment-4",
+      "comment_text": "Anything self-hosted that just syncs folders across three devices?",
+      "author": "syncseeker",
+      "created_at": "2026-06-02T07:30:00Z"
+    },
+    {
+      "objectID": "comment-5",
+      "comment_text": "Renting burst GPUs in bulk is way cheaper than keeping a big reserved cluster around.",
+      "author": "clusterfan",
+      "created_at": "2026-06-03T12:45:00Z"
+    }
+  ]
+}
