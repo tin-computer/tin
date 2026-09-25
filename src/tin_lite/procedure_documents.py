@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass, replace
 
+from tin_lite.brand_contract import VALIDATOR as BRAND_VALIDATOR
 from tin_lite.project_files import credential_findings, safe_project_file_path
 
 MAX_DOCUMENT_BYTES = 64_000
@@ -43,7 +44,7 @@ def parse_document_pair(output, definition):
     if (
         output.get("kind") != "project.artifact"
         or output.get("media_type") != "text/markdown"
-        or output.get("validator") is not None
+        or output.get("validator") not in {None, BRAND_VALIDATOR}
         or "section" in output
         or not isinstance(companion, dict)
         or set(companion) != {"path_template", "max_bytes", "label"}

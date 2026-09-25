@@ -585,6 +585,7 @@
     }
   ],
   "workflow_titles": {
+    "brand.capture": "Capture brand and design",
     "content.deliver": "Prepare article PR",
     "organic.traffic_system": "Run the organic traffic system",
     "style.capture": "Capture writing style",
@@ -629,6 +630,7 @@
     "product.analytics_brief": "Product analytics brief"
   },
   "workflow_scope": {
+    "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
     "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system. Optionally propose one technical fix as an unmerged GitHub PR. Does not write articles, send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",

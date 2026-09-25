@@ -56,6 +56,7 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Content programs](content-program-implementation.md), [draft generation](content-generation-implementation.md),
   [review and revisions](content-review.md) and [repository-aware delivery](repository-aware-content-delivery.md).
 - [Writing style capture](writing-style-capture.md) and [editorial judgment](content-editorial-judgment.md).
+- [Brand and design capture](brand-capture.md) and [reviewed document pairs](reviewed-project-documents.md).
 - [Organic system execution](organic-system-execution.md) and [content continuation](organic-content-continuation.md).
 - [Technical repair](technical-fix.md): finding selection, supported repairs and verification limits.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)

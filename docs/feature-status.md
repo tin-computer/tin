@@ -14,6 +14,7 @@ inputs, prerequisites and supported schedule modes.
 | Built-in workflows | Context, research, visibility/site audits, keyword and content planning, a paid ads assessment (Google Search, advisory), an approval-gated Google Ads launch and a daily Google Ads monitor, style capture, drafting, diagrams, product QA, video and email outreach. | Provider configuration, connected resources and workflow-specific execution limits still apply. |
 | Public workflow packages | Source validation and explicit maintainer registration for deterministic Python, multi-step managed-model Python, and Codex procedures. Catalog sync publishes pinned packages through the existing Registry. | Source support is not a production rollout. Unselected packages and shipped examples do not become customer workflows. Package runtime limits and normal billing still apply. |
 | Product analytics brief | Explicit public PostHog procedure package: ordered activation, trends, traffic, error signals and a screened breakdown. Manual, daily and weekly definitions reuse saved workflows. | One connected provider project; no identity joins, recommendations or external delivery. See [qualification limits](product-analytics-brief.md). Source registration is not deployment. |
+| Brand and design capture | Public first-capture package inspects a website and optional repository or source packet, then proposes BRAND.md and DESIGN.md for one atomic approval. Existing compatible documents stay unchanged. | Fixture-tested source support; updated browser image and catalog sync required. No site edits, refresh, live quality/cost acceptance or downstream renderer changes yet. See [capture scope](brand-capture.md). |
 | Stripe and PostHog connections | First-party read-only `payments.stripe` (founder-pasted restricted key, validated per resource) and `analytics.posthog` (OAuth with PKCE, one selected project, US/EU Cloud) connections. Registered operations return server-side projected records with cursor paging for code and procedure bindings; offline fakes support package tests. See [the guide](stripe-and-posthog-connections.md). | Reads only; HogQL limited to one bounded SELECT without OFFSET. PostHog needs `TIN_LITE_POSTHOG_OAUTH_ENABLED` and a public https origin. Fixture-tested; no live Stripe or PostHog acceptance yet. Self-hosted PostHog is not supported. |
 | Workflow creation and qualification | A repo-owned creator proposes packages and cases. Shared HTTP/MCP checks validate pinned files and assess existing run outputs and model costs; a CLI can start explicitly budgeted cases. | Creator installation uses private activation. No automatic publication, dashboard qualification editor or live analytics acceptance. Fixture checks do not establish model quality or measured cost. |
 | Organic traffic system | The current parent can plan, optionally prepare technical fixes, draft the next eligible planned item, wait for review/revisions and deliver the approved article as an unmerged GitHub PR. | GitHub delivery requires the selected connection. Without GitHub, or in draft-only mode, the approved Markdown remains in project Files. Plan dates are not an automatic six-month publishing schedule. |
@@ -88,8 +89,8 @@ See [billing coverage](workflow-billing-coverage.md),
 [self-hosted billing](self-hosted-billing.md).
 
 Public procedures have source support for [reviewed document pairs](reviewed-project-documents.md)
-and optional read-only repository evidence. Hosted acceptance requires an updated sandbox
-image and a registered consumer; this is not a deployed branding workflow.
+and optional read-only repository evidence. `brand.capture` is registered in source;
+hosted acceptance still requires an updated sandbox image and catalog sync.
 
 ## Deferred product work
 

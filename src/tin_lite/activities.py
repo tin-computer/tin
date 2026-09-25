@@ -2591,6 +2591,16 @@ class TinActivities:
             from tin_lite.procedure_repository import select_repository
 
             await select_repository(self._db, await self._require_run(run_id), procedure)
+        if procedure.output_validator == "brand-design-capture.v1":
+            from tin_lite.brand_capture import BrandCaptureSources
+
+            await self._await_with_heartbeats(
+                BrandCaptureSources(
+                    database=self._db, storage=self._storage, integrations=self._integrations
+                ).prepare(await self._require_run(run_id), procedure),
+                details={"stage": "brand_capture_preparation"},
+            )
+            return False
         from tin_lite import content_repository_delivery
 
         if _definition.id == content_repository_delivery.WORKFLOW_ID:
@@ -2708,6 +2718,10 @@ class TinActivities:
                 expected_head_sha = await self._storage.head_sha(repo, project.canonical_branch)
                 if procedure.content_draft_context is not None:
                     expected_head_sha = procedure.content_draft_context["project_revision"]
+                if procedure.brand_capture_context is not None:
+                    expected_head_sha = procedure.brand_capture_context["project_revision"]
+                elif procedure.output_validator == "brand-design-capture.v1":
+                    raise ValueError("Brand capture must pin its sources before compute")
                 # New revision packets pin current reference files separately from
                 # the original article's brief/style/evidence. Legacy packets keep
                 # their existing checkout semantics.
@@ -3685,6 +3699,13 @@ class TinActivities:
             from tin_lite.procedure_documents import validate_document
 
             validate_document(raw, procedure.documents.companion_max_bytes)
+            if procedure.output_validator == "brand-design-capture.v1":
+                from tin_lite.brand_capture import validate_pair
+
+                primary = await self._storage.read_procedure_checkpoint(
+                    repo_id=project.state_repo_id, revision=revision, path=procedure.output_path
+                )
+                await validate_pair(self._storage, project, run, primary, raw)
         elif procedure.output_validator == article_review.VALIDATOR:
             article_review.validate_notes(
                 raw, revision=procedure.review_revision_context is not None
@@ -5026,6 +5047,13 @@ class TinActivities:
                 run.id
             )
             procedure = replace(procedure, content_draft_context=prepared)
+        if procedure.output_validator == "brand-design-capture.v1":
+            from tin_lite.brand_capture import BrandCaptureSources
+
+            prepared = await BrandCaptureSources(database=self._db, storage=self._storage).saved(
+                run.id
+            )
+            procedure = replace(procedure, brand_capture_context=prepared)
         if run.review_source_run_id is not None:
             from tin_lite.workflow_reviews import saved_revision_context
 

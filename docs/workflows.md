@@ -73,7 +73,7 @@ Tin ships 32 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-12 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+13 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
@@ -102,6 +102,7 @@ Tin ships 32 built-in workflows. Every workflow also takes a `project_id`; requi
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
+| Capture brand and design (human review)<br>`brand.capture` | Inspect your website and optional repository once. Propose a concise brand guide for future marketing and document the product design you have today. Review both before using them; existing documents stay unchanged. | `product_url`, `notes`, `intent`, `include_repository`, `source_path` | `brand/proposals/{run_id}/BRAND.md` |
 | Draft an embeddable score quiz (human review)<br>`growth.score_quiz` | Draft a self-contained scored quiz widget to paste onto your own site: a few questions about the visitor's situation, an instant verdict and a call to action. A free interactive tool is a lead magnet, not another article or email. Draft only; Tin never deploys it, and the widget makes no network calls. | **`product_name`**, **`quiz_topic`**, `audience`, **`signup_url`**, `product_summary`, `voice_notes` | `reports/SCORE_QUIZ.md` |
 
 ## General

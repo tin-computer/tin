@@ -1,0 +1,110 @@
+{
+  "version": 1,
+  "assumptions": [
+    "One fresh project per case, with the supplied synthetic packet at its declared path and neither active document present.",
+    "Packet-only capture must attribute supplied observations and avoid claiming independent browser or code inspection.",
+    "Human review of both documents is required; no live model outputs or quality measurements exist yet."
+  ],
+  "effects": [
+    "Reads project context and supplied evidence; writes two run-owned proposal documents.",
+    "Only explicit exact-version approval applies brand/BRAND.md and DESIGN.md atomically.",
+    "No website edits, pull requests, external publication, provider mutation or asset generation."
+  ],
+  "cost_drivers": [
+    "One browser-profile Codex session, bounded to 900 seconds, with ordinary protected model usage accounting.",
+    "Source breadth and existing-document size affect tokens; configured budgets are not measured expected costs."
+  ],
+  "cases": [
+    {
+      "id": "expressive",
+      "description": "Supplied expressive identity; see sources/expressive.md and README for setup.",
+      "inputs": {
+        "source_path": "inputs/brand-expressive.md",
+        "include_repository": false,
+        "intent": "capture",
+        "notes": "Keep our tomato accent and Georgia headings."
+      },
+      "expect": {
+        "contains": [
+          "## Brand direction",
+          "## Visual style",
+          "## Generation rules",
+          "## Assessment and sources",
+          "tin-brand.v1",
+          "tin-brand-assessment.v1",
+          "#FFF5DC",
+          "#392317",
+          "#CB4428"
+        ]
+      }
+    },
+    {
+      "id": "technical",
+      "description": "Supplied technical identity; see sources/technical.md and README for setup.",
+      "inputs": {
+        "source_path": "inputs/brand-technical.md",
+        "include_repository": false,
+        "intent": "capture",
+        "notes": "Keep our blue and restrained technical presentation."
+      },
+      "expect": {
+        "contains": [
+          "## Brand direction",
+          "## Visual style",
+          "## Generation rules",
+          "## Assessment and sources",
+          "tin-brand.v1",
+          "tin-brand-assessment.v1",
+          "#FFFFFF",
+          "#17212B",
+          "#2366C4"
+        ]
+      }
+    },
+    {
+      "id": "protected",
+      "description": "Supplied protected identity; see sources/protected.md and README for setup.",
+      "inputs": {
+        "source_path": "inputs/brand-protected.md",
+        "include_repository": false,
+        "intent": "develop",
+        "notes": "Keep exactly #287A55 and Arial; modest supporting rules only."
+      },
+      "expect": {
+        "contains": [
+          "## Brand direction",
+          "## Visual style",
+          "## Generation rules",
+          "## Assessment and sources",
+          "tin-brand.v1",
+          "tin-brand-assessment.v1",
+          "#FAF8F0",
+          "#182B24",
+          "#287A55"
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "preservation",
+      "question": "Are exact founder colors, fonts and existing documents preserved without unrequested identity changes?"
+    },
+    {
+      "id": "grounding",
+      "question": "Do both documents distinguish supplied observations, unknowns and proposed guidance with attributable sources?"
+    },
+    {
+      "id": "specificity",
+      "question": "Would each guide produce recognizably different imagery and composition, rather than a shared generic house style?"
+    },
+    {
+      "id": "scope",
+      "question": "Is DESIGN.md factual about observed product design while marketing suggestions stay bounded, useful and free of website implementation work?"
+    },
+    {
+      "id": "tone",
+      "question": "Are findings concrete and nonjudgmental in prose, with quality classes confined to assessment JSON?"
+    }
+  ]
+}

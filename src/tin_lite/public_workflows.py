@@ -24,6 +24,7 @@ class PublicWorkflow:
 # in the next catalog sync. Keep IDs and keys stable; never reuse a retired identity.
 # Copyable example.* packages are deliberately not product Registry entries.
 PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
+    PublicWorkflow(UUID("a94f3a5d-d58c-4e91-b6bb-c1e047dc8372"), "brand.capture"),
     PublicWorkflow(UUID("0ddd88b9-6ded-44c3-9982-b7505c2e31b1"), "product.analytics_brief"),
     PublicWorkflow(UUID("543626b6-635f-4cef-b00e-e46225753c13"), "growth.score_quiz"),
     PublicWorkflow(UUID("ee456cef-e6a5-4da7-9447-a0834b5d107e"), "competitor.watch"),

@@ -186,6 +186,19 @@ async def start_workflow_run(
             raise WorkflowInputError(
                 "Choose a valid style source packet in this project's Files before starting."
             ) from None
+    if workflow.key == "brand.capture" and workflow.project_id is None and existing is None:
+        from tin_lite.brand_capture import BrandCaptureSources
+
+        if not await runtime.database.has_project_access(
+            project_id=project_id, clerk_user_id=started_by_clerk_user_id
+        ):
+            raise LookupError("project not found")
+        try:
+            await BrandCaptureSources(database=runtime.database, storage=runtime.storage).inspect(
+                project_id, normalized_inputs
+            )
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from exc
     if workflow.key == technical_fix.KEY:
         from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 

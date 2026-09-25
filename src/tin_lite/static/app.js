@@ -3073,7 +3073,7 @@ function renderDocument() {
             }
           : route.source !== "retained" && run?.status === "needs_input"
           ? {
-              label: repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
+              label: repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
               onActivate: (button) => approveRun(run.id, button, repositoryDeliveryAvailable(run) ? { delivery: "github_commit" } : {}),
             }
           : null,
@@ -4267,7 +4267,7 @@ function decisionApprovalHtml(decision, run) {
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr">Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit">Publish now</button>`;
   }
-  const label = run?.content_delivery?.approval_label || "Approve";
+  const label = run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
   return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
     <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
 }

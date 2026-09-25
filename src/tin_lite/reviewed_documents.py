@@ -143,7 +143,7 @@ class ReviewedDocuments:
                 await self.check_current(project, artifact)
             except (ReviewConflict, OutputConflictError) as exc:
                 conflict = str(exc)
-        return {
+        result = {
             "run_id": str(run.id),
             "project_id": str(run.project_id),
             "root_run_id": str(run.id),
@@ -164,6 +164,16 @@ class ReviewedDocuments:
             "conflict": conflict,
             "review_url": f"/document/{run.id}?project={run.project_id}&return=decisions",
         }
+        if spec.output_validator == "brand-design-capture.v1":
+            from tin_lite.brand_contract import tokens
+
+            raw = await self.storage.read_canonical_artifact(
+                repo_id=project.state_repo_id,
+                commit_sha=run.canonical_commit_sha,
+                path=run.artifact_path,
+            )
+            result["palette_preview"] = tokens(raw.decode())["light"]
+        return result
 
     async def approve(self, *, run_id, actor, token):
         run, spec, project = await self.source(run_id, actor)

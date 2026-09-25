@@ -403,6 +403,7 @@ async def test_required_companion_checkpoint_uses_its_declared_limit(publication
     revision = f.storage.repo.edit({path: content})
     procedure = SimpleNamespace(
         companion_path=path,
+        output_validator=None,
         documents=SimpleNamespace(companion_max_bytes=64_000),
         review_revision_context=None,
     )

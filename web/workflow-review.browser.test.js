@@ -193,7 +193,7 @@ for (const conflict of [null, "DESIGN.md changed during review; no documents wer
   } finally {await browser.close();}
 });
 
-test("reviewed pair uses the normal reader and Decisions approval", async () => {
+test("reviewed pair shows a safe palette in the reader and Decisions approval", async () => {
   const project = {id: "project", name: "Example project", workspace_id: "workspace", workspace_name: "Example workspace", memory: {}};
   const workflow = {id: "documents", key: "example.documents", title: "Capture documents", executor: "codex.procedure", status: "active", definition: {human_review: {eligible: true}, procedure: {output: {apply_on_approval: {primary: "brand/BRAND.md", companion: "DESIGN.md"}}}, input_schema: {type: "object", properties: {}}}};
   const run = {id: "pair", project_id: "project", workflow_id: "documents", workflow_name: "example.documents", status: "needs_input", review_required: true, review_version: 1, artifact_path: "brand/proposals/pair/BRAND.md", canonical_commit_sha: "a".repeat(40), created_at: "2026-09-24T12:00:00Z"};
@@ -219,7 +219,7 @@ test("reviewed pair uses the normal reader and Decisions approval", async () => 
     if (url.pathname.endsWith("/runs/pair")) return send(run);
     if (url.pathname.endsWith("/system")) return send({workflow_count: 0, running_count: 0, waiting_count: 1, runs_this_month: 1, timezone: "UTC"});
     if (url.pathname.endsWith("/decisions")) return send([{id: "decision", run_id: run.id, project_id: "project", workflow_key: workflow.key, workflow_title: workflow.title, kind: "review", title: "Review your documents", explanation: "Both documents are ready for review.", feedback_supported: false, items: [{file: run.artifact_path, revision: run.canonical_commit_sha, title: "Brand and design"}], created_at: run.created_at}]);
-    if (url.pathname.endsWith("/review")) return send({is_current: true, status: run.status, current_run_id: run.id, version: 1, can_approve: true, can_request_changes: false, review_token: "b".repeat(64), documents: [{destination: "brand/BRAND.md", change: "new"}, {destination: "DESIGN.md", change: "unchanged"}]});
+    if (url.pathname.endsWith("/review")) return send({is_current: true, status: run.status, current_run_id: run.id, version: 1, can_approve: true, can_request_changes: false, review_token: "b".repeat(64), palette_preview: {paper: "#FAF8F0", ink: "#182B24", accent: "#287A55", signal: "url(https://example.invalid/track)"}, documents: [{destination: "brand/BRAND.md", change: "new"}, {destination: "DESIGN.md", change: "unchanged"}]});
     if (url.pathname.endsWith("/artifact/document")) return send({filename: "BRAND.md", word_count: 25, reading_minutes: 1, html: '<h1 id="brand">Example identity</h1><p>Warm paper, precise typography and a quiet green accent.</p><h2 id="generation">Generation rules</h2><p>Keep the founder’s green. Give each composition generous space.</p>', related_documents: [{label: "Design", path: "brand/proposals/pair/DESIGN.md", revision: run.canonical_commit_sha, url: "/file?project=project&path=brand%2Fproposals%2Fpair%2FDESIGN.md"}]});
     return send([]);
   });
@@ -233,6 +233,10 @@ test("reviewed pair uses the normal reader and Decisions approval", async () => 
     await page.goto(`${base}/?project=project#document/pair?return=decisions`);
     await page.getByText("brand/BRAND.md: new · DESIGN.md: carried forward unchanged", {exact: true}).waitFor();
     await page.getByRole("link", {name: "Design", exact: true}).waitFor();
+    await page.getByRole("button", {name: "Use documents", exact: true}).waitFor();
+    await page.getByText("accent #287A55", {exact: true}).waitFor();
+    assert.equal(await page.locator(".review-palette i").count(), 3);
+    assert.equal(await page.locator(".review-palette").getByText(/signal/).count(), 0);
     if (process.env.TIN_REVIEW_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/reviewed-documents.png`, fullPage: true});
     await page.goto(`${base}/?project=project#decisions`);
     await page.getByText("brand/BRAND.md: new · DESIGN.md: carried forward unchanged", {exact: true}).waitFor();

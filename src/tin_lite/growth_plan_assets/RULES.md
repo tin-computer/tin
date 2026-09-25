@@ -345,3 +345,10 @@ Your agent records what you connected, and "not now: <reason>" after what you wi
 ````
 
 Keys, modes and integration names come from `tin_state` only. Keep the file under 40 KB.
+
+When visual marketing needs a durable identity or product-design reference and that context
+is known to be missing, `brand.capture` is one on-demand setup action: one inspection, one
+review, `brand/BRAND.md` and `DESIGN.md`. Use only when present in tin_state and relevant to the
+founder's plan. Do not claim files are absent without evidence; the agent can read get_brand_guide.
+It preserves existing documents and never redesigns the source website. Keep content.design_md
+available for the legacy repository-backed route; do not start both to obtain the same document.

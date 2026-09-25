@@ -23,6 +23,7 @@ from tin_lite import analytics, project_task_control, welcome_email
 from tin_lite.analytics import clip
 from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
+from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.content_delivery import DeliverySettings
 from tin_lite.content_delivery_api import SaveDelivery, delivery_service, retry_delivery
@@ -858,6 +859,43 @@ def create_mcp_app(
         register_billing_tools(server, runtime=runtime, settings=settings, caller=caller)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_brand_guide(project_id: str) -> dict[str, Any]:
+        """Prepare one brand/design capture without starting a run or model call.
+
+        Use supplied sources and permissions. Ask only for missing evidence or protected
+        choices. Local material reaches Tin only through an explicitly curated project packet.
+        """
+        from tin_lite.brand_capture import BrandCaptureSources
+
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, await caller(), tool_name="get_brand_guide")
+        result = brand_capture_preparation(project, include_guide=True)
+        try:
+            result["current"] = await BrandCaptureSources(
+                database=runtime().database, storage=runtime().storage
+            ).inspect(project, {}, require_source=False)
+        except ValueError as exc:
+            result["limitation"] = str(exc)
+        return result
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_brand(project_id: str, revision: str | None = None) -> dict[str, Any]:
+        """Read the active brand guide, tokens and advisory assessment at one project revision.
+
+        Proposals are never active. Reuse this revision for DESIGN.md. Missing guidance keeps
+        ordinary no-brand behavior; invalid core data requires correction before brand use.
+        """
+        from tin_lite.brand_capture import resolve_brand
+
+        project_id_ = _mcp_uuid(project_id, field="project_id")
+        await require_project(project_id_, await caller(), tool_name="get_brand")
+        project = await runtime().database.get_project(project_id_)
+        if revision is None:
+            repo = await runtime().storage.get_repo(project.state_repo_id)
+            revision = await runtime().storage.head_sha(repo, project.canonical_branch)
+        return await resolve_brand(runtime().storage, project, revision)
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_writing_style_guide(project_id: str) -> dict[str, Any]:
         """Begin style capture by leading a source-discovery conversation with the user.
 
@@ -1459,6 +1497,8 @@ def create_mcp_app(
                 **(
                     {"preparation": style_capture_preparation(parsed_project_id)}
                     if workflow.key == "style.capture" and workflow.project_id is None
+                    else {"preparation": brand_capture_preparation(parsed_project_id)}
+                    if workflow.key == "brand.capture" and workflow.project_id is None
                     else {}
                 ),
                 **workflow_source_view(workflow, settings),
@@ -2691,13 +2731,23 @@ def create_mcp_app(
         except PrerequisiteError as exc:
             # The JSON diagnostic names the upstream workflow and a replayable suggested call.
             raise ToolError(json.dumps(exc.diagnostic())) from exc
+        except WorkflowInputError as exc:
+            if workflow.key == "brand.capture" and workflow.project_id is None:
+                raise ToolError(
+                    json.dumps(
+                        {
+                            "error": str(exc),
+                            "preparation": brand_capture_preparation(parsed_project_id),
+                        }
+                    )
+                ) from exc
+            raise ToolError(str(exc)) from exc
         except (
             SideEffectConflictError,
             BillingError,
             IntegrationError,
             TemporalStartError,
             WorkflowExecutorUnavailableError,
-            WorkflowInputError,
         ) as exc:
             raise ToolError(str(exc)) from exc
         meanwhile: dict[str, Any] = {}
@@ -3387,6 +3437,13 @@ def create_mcp_app(
             "version": workflow.version_label,
             "project_id": str(parsed_project_id) if parsed_project_id is not None else None,
             **draft_preparation,
+            **(
+                {"preparation": brand_capture_preparation(parsed_project_id, include_guide=True)}
+                if parsed_project_id is not None
+                and workflow.key == "brand.capture"
+                and workflow.project_id is None
+                else {}
+            ),
             **(
                 {"preparation": style_capture_preparation(parsed_project_id, include_guide=True)}
                 if parsed_project_id is not None

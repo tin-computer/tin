@@ -1,0 +1,75 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "brand.capture",
+    "title": "Capture brand and design",
+    "description": "Inspect your website and optional repository once. Propose a concise brand guide for future marketing and document the product design you have today. Review both before using them; existing documents stay unchanged.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "creative-studio",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "reason": "Approval makes both documents active guidance for future work.",
+      "review_label": "Review brand and design",
+      "defer_label": "Not now",
+      "summary": "Read both proposed documents. Approval applies them together to brand/BRAND.md and DESIGN.md.",
+      "queue_clause": "Brand and design ready to use"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "product_url": {
+          "type": "string", "maxLength": 500, "default": "",
+          "title": "Product URL", "description": "Your public HTTPS website. Optional if a source packet or selected repository provides enough evidence.",
+          "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "notes": {
+          "type": "string", "maxLength": 2000, "default": "",
+          "title": "What should stay?", "description": "Colors, fonts, references or other choices you want to keep. Existing documents are always carried forward unchanged.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "intent": {
+          "type": "string", "enum": ["capture", "develop"], "default": "capture",
+          "title": "Direction", "description": "Capture records the existing identity. Develop permits modest supporting guidance for new marketing assets, within your notes. Neither changes your site.",
+          "x-tin-ui": {"control": "select", "order": 30}
+        },
+        "include_repository": {
+          "type": "boolean", "default": true,
+          "title": "Use connected repository", "description": "Read the selected GitHub repository when available. No source changes or pull request.",
+          "x-tin-ui": {"control": "segmented", "order": 40}
+        },
+        "source_path": {
+          "type": "string", "maxLength": 500, "default": "",
+          "title": "Reference packet (optional)", "description": "A Markdown path in project Files with attributed observations, links or an existing guide. No credentials or transcripts.",
+          "x-tin-ui": {"control": "text", "order": 50}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {"provider_key": "infra.github", "capabilities": ["contents.read"], "required": false}
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/brand-capture/SKILL.md", "skills/brand-capture/CONTRACT.md"],
+      "entry_skill": "brand-capture",
+      "workspace": {
+        "kind": "github.repository", "provider_key": "infra.github",
+        "capabilities": ["contents.read"], "optional": true, "enabled_input": "include_repository"
+      },
+      "sandbox": {"profile": "browser", "egress": "open", "timeout_seconds": 900},
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "brand/proposals/{run_id}/BRAND.md",
+        "media_type": "text/markdown", "max_bytes": 48000,
+        "validator": "brand-design-capture.v1",
+        "companion": {"path_template": "brand/proposals/{run_id}/DESIGN.md", "max_bytes": 64000, "label": "Design"},
+        "apply_on_approval": {"primary": "brand/BRAND.md", "companion": "DESIGN.md"}
+      }
+    }
+  }
+}

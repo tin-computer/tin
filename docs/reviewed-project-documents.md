@@ -28,8 +28,9 @@ Each proposal must have a distinct run-owned path, with one `{run_id}` substitut
 outputs are required, nonempty UTF-8 Markdown, at most 64,000 bytes each. Destinations are
 ordinary fixed Markdown paths, separate from proposals and managed runtime files. This
 contract requires `human_review.eligible: true`; it cannot combine with a section writer,
-output validator or external delivery. Private packages retain their existing narrower
-contract.
+arbitrary output validators or external delivery. The registered `brand-design-capture.v1`
+validator adds first-capture preservation and brand/design structure checks. Private packages
+retain their existing narrower contract.
 
 The sandbox writes only the two proposals. The switchboard validates and checkpoints both,
 then publishes them together for review. Neither active destination changes at this stage.

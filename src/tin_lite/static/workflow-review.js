@@ -71,6 +71,20 @@
         conflict.textContent = review.conflict;
         region.append(conflict);
       }
+      if (review.palette_preview) {
+        const preview = document.createElement("div");
+        preview.className = "review-palette";
+        const title = document.createElement("span");
+        title.textContent = "Palette preview"; preview.append(title);
+        for (const role of ["paper", "ink", "accent", "signal"]) {
+          const color = review.palette_preview[role];
+          if (typeof color !== "string" || !/^#[0-9a-f]{6}$/i.test(color)) continue;
+          const swatch = document.createElement("span"), chip = document.createElement("i");
+          chip.style.backgroundColor = color; chip.setAttribute("aria-hidden", "true");
+          swatch.append(chip, document.createTextNode(`${role} ${color}`)); preview.append(swatch);
+        }
+        region.append(preview);
+      }
       if (!review.is_current) {
         region.innerHTML = `<p class="review-version-notice">A newer version is available. <button type="button" class="system-action" data-current-review>Read current version →</button></p>`;
         region.querySelector("[data-current-review]").onclick = () => openRun(review.current_run_id);

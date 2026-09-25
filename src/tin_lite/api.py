@@ -3883,6 +3883,27 @@ async def stop_email_campaign(
     return RunView.model_validate(stopped)
 
 
+@router.get("/api/projects/{project_id}/brand")
+async def get_project_brand(
+    project_id: UUID,
+    request: Request,
+    revision: str | None = None,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    from tin_lite.brand_capture import resolve_brand
+
+    await _require_project_access(project_id, request, user)
+    runtime = request.app.state.runtime
+    project = await runtime.database.get_project(project_id)
+    if revision is None:
+        repo = await runtime.storage.get_repo(project.state_repo_id)
+        revision = await runtime.storage.head_sha(repo, project.canonical_branch)
+    try:
+        return await resolve_brand(runtime.storage, project, revision)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get("/api/projects/{project_id}/memory", response_model=ProjectMemoryView)
 async def get_project_memory(
     project_id: UUID,

@@ -17,7 +17,7 @@ const run = { id: "run", status: "failed", retained_output: {
 const calls = [];
 let actions;
 const context = vm.createContext({
-  state: { runs: [run], view: "workflows", documentCache: new Map(), documentRoute: null },
+  state: { runs: [run], workflows: [], runWorkflows: new Map(), view: "workflows", documentCache: new Map(), documentRoute: null },
   main: {},
   window: { TinMarkdownViewer: { mount: (_main, _doc, options) => { actions = options; } },
     setTimeout: () => {} },
@@ -32,7 +32,7 @@ const context = vm.createContext({
   showToast: (message) => { throw new Error(message); },
 });
 vm.runInContext([
-  "availableRunOutput", "outputReadUrl", "retainedOutputMessage", "isMarkdownPath",
+  "workflowForRun", "availableRunOutput", "outputReadUrl", "retainedOutputMessage", "isMarkdownPath",
   "openRunOutputFile", "openRunArtifact", "hasOutputConflict", "runFingerprint", "renderDocument",
 ].map(extract).join("\n"), context);
 assert.equal(context.availableRunOutput(run).source, "retained");
@@ -53,6 +53,10 @@ context.state.documentRoute.source = "canonical";
 context.state.documentCache.set("run:run:canonical", { markdown: "canonical" });
 context.renderDocument();
 assert.equal(actions.primaryAction.label, "Approve draft");
+run.workflow_id = "pair-template";
+context.state.workflows.push({id: "pair-template", definition: {procedure: {output: {apply_on_approval: {primary: "brand/BRAND.md", companion: "DESIGN.md"}}}}});
+context.renderDocument();
+assert.equal(actions.primaryAction.label, "Use documents");
 run.canonical_commit_sha = "published";
 run.artifact_path = "reports/RESULT.md";
 run.status = "failed";

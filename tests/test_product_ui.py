@@ -860,7 +860,8 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert "data-decision-not-now>Not now</button>" in script
     assert "Approved drafts stay in Tin until GitHub is connected." in script
     assert 'href="/integrations" data-decision-connect-github>Connect GitHub</a>' in script
-    assert 'const label = run?.content_delivery?.approval_label || "Approve"' in script
+    assert "const label = run?.content_delivery?.approval_label ||" in script
+    assert '? "Use documents" : "Approve"' in script
     assert "!run?.content_delivery?.system_run_id && isContentDraftReview(run)" in script
     assert 'main.querySelectorAll("[data-apply-decision]").forEach' in script
     assert "const delivery = button.dataset.delivery || null;" in script
