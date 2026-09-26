@@ -1,0 +1,99 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.pricing_friction_test",
+    "title": "Find the next pricing-page experiment",
+    "description": "Use first-party product analytics and the current pricing page to identify one evidence-backed pricing or packaging experiment a founder can test next.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "pricing_page_url": {
+          "type": "string",
+          "maxLength": 2048,
+          "default": "",
+          "title": "Pricing page URL (optional)"
+        },
+        "reporting_days": {
+          "type": "integer",
+          "minimum": 7,
+          "maximum": 90,
+          "default": 30,
+          "title": "Analytics window (days)"
+        },
+        "focus": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Pricing question or constraint (optional)",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 20
+          }
+        }
+      }
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.posthog",
+        "capabilities": ["query.read", "definitions.read"],
+        "required": true
+      }
+    ],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The onboarding plan gives the buyer, offer, pricing constraints and hard no's that bound any proposed experiment."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map describes plans, gating and features so the workflow can distinguish a pricing issue from a missing capability."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/pricing-friction-test/SKILL.md",
+        "skills/pricing-friction-test/QUERY_PATTERNS.md"
+      ],
+      "entry_skill": "pricing-friction-test",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "services": {
+        "analytics": {
+          "provider_key": "analytics.posthog",
+          "max_calls": 8,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/PRICING_FRICTION_TEST.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
