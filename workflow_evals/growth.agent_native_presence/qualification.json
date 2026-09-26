@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Codex procedure; no provider integrations. Public web + project files are untrusted evidence.",
+    "Example output in example_ordinary.md is a dry-run following the skill, not a live Tin activation (operator allowlist required for private package runs)."
+  ],
+  "effects": [
+    "Writes reports/AGENT_NATIVE_PRESENCE.md in project state.",
+    "No publish, email, spend, GitHub PR, or recursive workflow starts."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Tin Computer as product URL; technical-founder persona; full surface focus.",
+      "inputs": {
+        "product_url": "https://tin.computer/",
+        "buyer_persona": "Indie SaaS founder who prototypes in Cursor, discovers tools mid-task from skills/MCP/docs their agent loads, and ignores cold outreach.",
+        "product_one_liner": "",
+        "focus_surfaces": "all",
+        "known_competitors": "",
+        "constraints": "No Discord DMs, no drive-by GitHub issues, no fake social proof."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status: complete",
+          "## Moment map",
+          "## Surface inventory (scored)",
+          "## Ranked plan (top 5)",
+          "## Draft assets",
+          "## Anti-patterns (do not do)",
+          "TRUST veto"
+        ],
+        "excludes": [
+          "Status: incomplete"
+        ]
+      }
+    }
+  ]
+}

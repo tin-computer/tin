@@ -1,0 +1,96 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.agent_native_presence",
+    "title": "Map coding-agent discovery paths",
+    "description": "For founders selling to people who live in Cursor, Claude Code, or Codex: reverse-engineer when a buyer would notice you inside an agent session, rank realistic presence surfaces, draft useful (not spammy) assets, and hand off to existing Tin workflows.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "product_url", "buyer_persona"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "product_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 10,
+          "maxLength": 500,
+          "title": "Public product URL",
+          "description": "Public HTTPS marketing or product page used to ground positioning.",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "buyer_persona": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 2000,
+          "title": "Who buys, and how they work",
+          "description": "Describe the person (role, tools, day). Example: solo founder who prototypes in Cursor and only notices tools their agent can already use.",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "product_one_liner": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Optional one-liner",
+          "description": "Leave empty to derive from the site and project files.",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        },
+        "focus_surfaces": {
+          "type": "string",
+          "enum": [
+            "all",
+            "skills_and_rules",
+            "mcp_and_tools",
+            "prompts_and_docs",
+            "lists_and_social_proof"
+          ],
+          "default": "all",
+          "title": "Surface focus",
+          "description": "Narrow the inventory, or keep all for a first pass.",
+          "x-tin-ui": { "control": "select", "order": 40 }
+        },
+        "known_competitors": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Optional competitor names or URLs",
+          "description": "One per line. Used only to check whether they already show up in agent-native channels.",
+          "x-tin-ui": { "control": "textarea", "order": 50 }
+        },
+        "constraints": {
+          "type": "string",
+          "maxLength": 2000,
+          "default": "",
+          "title": "Constraints",
+          "description": "Brand voice, markets to skip, or hard bans (no cold DMs, no drive-by issues, etc.).",
+          "x-tin-ui": { "control": "textarea", "order": 60 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/agent-native-presence/SKILL.md",
+        "skills/agent-native-presence/SURFACES.md",
+        "skills/agent-native-presence/TRUST.md"
+      ],
+      "entry_skill": "agent-native-presence",
+      "workspace": { "kind": "project.state" },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/AGENT_NATIVE_PRESENCE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}
