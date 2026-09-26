@@ -1,0 +1,72 @@
+{
+  "account": {},
+  "customers": [
+    {
+      "id": "cus_recovery_001",
+      "object": "customer",
+      "created": 1788261000,
+      "email": "alex@example.test",
+      "name": "Alex Example",
+      "address": {"country": "US"},
+      "metadata": {},
+      "currency": "usd",
+      "delinquent": true
+    },
+    {
+      "id": "cus_recovery_002",
+      "object": "customer",
+      "created": 1788260000,
+      "email": "sam@example.test",
+      "name": "Sam Example",
+      "address": {"country": "CA"},
+      "metadata": {},
+      "currency": "cad",
+      "delinquent": true
+    }
+  ],
+  "subscriptions": [],
+  "invoices": [],
+  "prices": [],
+  "products": [],
+  "charges": [
+    {
+      "id": "ch_failed_001",
+      "object": "charge",
+      "customer": "cus_recovery_001",
+      "amount": 2900,
+      "amount_refunded": 0,
+      "currency": "usd",
+      "status": "failed",
+      "paid": false,
+      "refunded": false,
+      "created": 1788263000,
+      "failure_code": "card_declined"
+    },
+    {
+      "id": "ch_failed_002",
+      "object": "charge",
+      "customer": "cus_recovery_002",
+      "amount": 4900,
+      "amount_refunded": 0,
+      "currency": "cad",
+      "status": "failed",
+      "paid": false,
+      "refunded": false,
+      "created": 1788262500,
+      "failure_code": "expired_card"
+    },
+    {
+      "id": "ch_paid_003",
+      "object": "charge",
+      "customer": "cus_recovery_001",
+      "amount": 2900,
+      "amount_refunded": 0,
+      "currency": "usd",
+      "status": "succeeded",
+      "paid": true,
+      "refunded": false,
+      "created": 1788262000,
+      "failure_code": null
+    }
+  ]
+}
