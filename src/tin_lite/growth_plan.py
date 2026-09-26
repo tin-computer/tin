@@ -315,7 +315,7 @@ def founder_profile(inputs):
     from_priority = {
         "fun": ("min", "none", "patient"),
         "side": ("some", "under_500", "two_months"),
-        "main": ("lots", "500_2000", "weeks"),
+        "main": ("lots", "500_to_2000", "weeks"),
     }
     hours, budget, urgency = from_priority.get(inputs.get("priority") or "", (None, None, None))
     hours = inputs.get("founder_hours") or hours
@@ -325,9 +325,12 @@ def founder_profile(inputs):
     if hours in ("min", "some", "lots"):
         out["hours"] = hours
     if budget:
-        out["budget"] = {"none": "none", "under_500": "small", "500_2000": "real"}.get(
-            budget, "real" if "2000" in budget else None
-        )
+        out["budget"] = {
+            "none": "none",
+            "under_500": "small",
+            "500_to_2000": "real",
+            "more": "real",
+        }.get(budget)
     if urgency:
         out["urgency"] = {"weeks": "12", "two_months": "6", "patient": "0"}.get(urgency)
     return {k: v for k, v in out.items() if v}
@@ -1343,7 +1346,20 @@ async def build_plan(inputs, site, site_text, today, generate):
     )
     asked_n = len(understanding["founder_requests"])
     if {r["index"] for r in view["requests"]} != set(range(asked_n)):
-        view = await call("view", *view_prompt(context, roles, flags, scope), VIEW_SCHEMA, 16000)
+        missing = sorted(set(range(asked_n)) - {r["index"] for r in view["requests"]})
+        system, user = view_prompt(context, roles, flags, scope)
+        user += (
+            f"\n\nUNANSWERED REQUESTS: the last answer left out these indices of WHAT THE FOUNDER "
+            f"ASKED FOR: {json.dumps(missing)}. Answer every request this time."
+        )
+        # Its own stable step id: reusing "view" would replay the receipted answer. Best-effort and
+        # bought once: an unusable re-ask keeps the valid first view instead of failing the run.
+        try:
+            view = await generate(
+                "view:requests", system, user, VIEW_SCHEMA, 16000, POLICY["reasoning_effort"]
+            )
+        except UnusableModelResult:
+            pass
     unanswered = sorted(set(range(asked_n)) - {r["index"] for r in view["requests"]})
     rules = (
         f"You repair sentences in a founder's growth plan so they follow these rules.\n\n{WRITING}\n\nReturn every slot you were given, "

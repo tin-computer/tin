@@ -530,6 +530,41 @@ async def test_an_unusable_result_gets_one_replacement_under_its_own_step():
     assert result["report"]["retried_steps"] == ["scope: response was truncated"]
 
 
+async def test_a_view_that_skips_a_request_is_asked_again_under_its_own_step():
+    model = FakeModel(overrides={"view": lambda value, user: dict(value, requests=[])})
+    receipts = {}
+
+    async def receipted(step, *args):
+        # The activity replays a completed step's receipt instead of buying it again.
+        if step not in receipts:
+            receipts[step] = await model(step, *args)
+        return receipts[step]
+
+    result = await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, receipted)
+    assert model.calls.count("view") == 1 and "view:requests" in model.calls
+    assert result["report"]["unanswered_requests"] == []
+    assert "Delivered by Organic search content" in result["plan"]
+
+
+async def test_an_unusable_request_re_ask_keeps_the_original_view():
+    model = FakeModel(
+        overrides={"view": lambda value, user: dict(value, requests=[])},
+        unusable=["view:requests", "view:requests:retry"],
+    )
+    asked = {}
+
+    async def recording(step, system, user, *args):
+        asked[step] = user
+        return await model(step, system, user, *args)
+
+    result = await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, recording)
+    # The re-ask is best-effort: one extra request at most, and the valid first view stands.
+    assert model.calls.count("view:requests") == 1 and "view:requests:retry" not in model.calls
+    assert "UNANSWERED REQUESTS" in asked["view:requests"] and "[0]" in asked["view:requests"]
+    assert result["report"]["unanswered_requests"] == [0]
+    assert result["report"]["retried_steps"] == []
+
+
 async def test_two_unusable_results_fail_the_run_and_save_nothing():
     with pytest.raises(plan.UnusableModelResult):
         await plan.build_plan(
@@ -691,6 +726,20 @@ def test_scorer_ranks_all_systems_and_penalises_fair_failures():
     assert "priceBand" not in profile
 
 
+def test_every_form_budget_reaches_the_scorer():
+    # Each budget the onboarding form offers maps to a rubric value; "unknown" stays unset.
+    expected = {
+        "none": "none",
+        "under_500": "small",
+        "500_to_2000": "real",
+        "more": "real",
+        "unknown": None,
+    }
+    for budget, value in expected.items():
+        assert plan.founder_profile({"budget": budget}).get("budget") == value, budget
+    assert plan.founder_profile({"priority": "main"})["budget"] == "real"
+
+
 def resolver_for(table):
     async def resolve(host, port, **_kwargs):
         return [(None, None, None, None, (table[host], port))]
@@ -784,7 +833,7 @@ def step_of(schema_name):
     name = schema_name.removeprefix("growth_plan_")
     retry = name.endswith("_retry")
     name = name.removesuffix("_retry")
-    for prefix in ("system", "rewrite", "repair"):
+    for prefix in ("system", "rewrite", "repair", "view"):
         if name.startswith(prefix + "_"):
             name = f"{prefix}:{name[len(prefix) + 1 :]}"
     return name + (":retry" if retry else "")

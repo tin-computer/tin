@@ -9,6 +9,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
+import httpx
 import pytest
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -375,6 +376,36 @@ async def test_activities_refuse_a_worker_without_the_pinned_route() -> None:
     )
     with pytest.raises(ApplicationError, match="not configured"):
         await unconfigured.character_design(str(run.id))
+
+
+@pytest.mark.asyncio
+async def test_an_unreachable_product_page_is_recorded_and_the_design_goes_on(monkeypatch) -> None:
+    from tin_lite import character_design
+
+    def unreachable(request):
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    client = httpx.AsyncClient
+
+    async def public(url):
+        return None
+
+    monkeypatch.setattr(character_design, "_require_public_hostname", public)
+    monkeypatch.setattr(
+        character_design.httpx,
+        "AsyncClient",
+        lambda **kwargs: client(transport=httpx.MockTransport(unreachable), **kwargs),
+    )
+    run, project = _run_and_project()
+    activities = CharacterDesignActivities(
+        database=FakeDatabase(run, project),
+        storage=FakeStorage({}),
+        settings=SimpleNamespace(),
+        designer=FakeDesigner(),
+    )
+    context = await activities._context(run, project, {"product_url": "https://example.com/"})
+    assert context["page"] is None
+    assert context["page_error"] == "product page could not be read"
 
 
 def test_direct_workflow_is_registered_with_a_pinned_route_and_no_style_picker() -> None:

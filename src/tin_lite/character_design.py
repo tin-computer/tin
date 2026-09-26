@@ -358,30 +358,35 @@ async def fetch_product_page(url: str) -> ProductPage:
     }
     async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
         body = ""
-        for _hop in range(5):
-            await _require_public_hostname(current)
-            async with client.stream("GET", current, headers=headers) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise CharacterDesignError("product page redirect has no destination")
-                    current = _validated_public_url(urljoin(current, location))
-                    continue
-                if response.status_code >= 400:
-                    raise CharacterDesignError(f"product page returned HTTP {response.status_code}")
-                if "html" not in response.headers.get("content-type", "").casefold():
-                    raise CharacterDesignError("product URL did not return HTML")
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_PAGE_BYTES:
-                        raise CharacterDesignError("product page is too large to read")
-                    chunks.append(chunk)
-                body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-                break
-        else:
-            raise CharacterDesignError("product page redirected too many times")
+        try:
+            for _hop in range(5):
+                await _require_public_hostname(current)
+                async with client.stream("GET", current, headers=headers) as response:
+                    if response.status_code in {301, 302, 303, 307, 308}:
+                        location = response.headers.get("location")
+                        if not location:
+                            raise CharacterDesignError("product page redirect has no destination")
+                        current = _validated_public_url(urljoin(current, location))
+                        continue
+                    if response.status_code >= 400:
+                        raise CharacterDesignError(
+                            f"product page returned HTTP {response.status_code}"
+                        )
+                    if "html" not in response.headers.get("content-type", "").casefold():
+                        raise CharacterDesignError("product URL did not return HTML")
+                    chunks: list[bytes] = []
+                    size = 0
+                    async for chunk in response.aiter_bytes():
+                        size += len(chunk)
+                        if size > MAX_PAGE_BYTES:
+                            raise CharacterDesignError("product page is too large to read")
+                        chunks.append(chunk)
+                    body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
+                    break
+            else:
+                raise CharacterDesignError("product page redirected too many times")
+        except httpx.HTTPError as exc:
+            raise CharacterDesignError("product page could not be read") from exc
         parser = _PageParser()
         parser.feed(body)
         page_styles = "\n".join(parser.style_text)
