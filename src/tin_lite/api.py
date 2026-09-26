@@ -99,6 +99,7 @@ from tin_lite.projects import (
     provision_personal_project,
     provision_workspace_project,
 )
+from tin_lite.public_catalog_api import router as public_catalog_router
 from tin_lite.publication import RunOutput, read_run_output
 from tin_lite.run_service import (
     TemporalStartError,
@@ -140,6 +141,7 @@ router.include_router(content_delivery_router)
 router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
+router.include_router(public_catalog_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 
