@@ -49,7 +49,7 @@ hierarchy plus a complete connection list; the dependency cannot reliably render
 return path. Tin's finite dialect is
 validated before either renderer receives it.
 
-Nodes use an 8px size grid, 8px corners, 20px horizontal text padding, and a separate
+Nodes use an 8px size grid, default 8px corners, 20px horizontal text padding, and a separate
 16px lane for semantic marks. Names and facts wrap independently within 224px;
 word wrapping balances the lines and overlong tokens break at grapheme boundaries.
 The original logical lines remain intact in Mermaid and accessible labels. Type is
@@ -307,14 +307,15 @@ hierarchy remains the author’s tool for changing the reading order.
 
 ## Project brand guidance
 
-`content.diagram` 2.2 uses `tin-diagram.branded.v1`, an extension of the existing reviewed
+`content.diagram` 2.3 uses `tin-diagram.branded.v2`, an extension of the existing reviewed
 composition contract. Before compute, the trusted activity checks active `brand/BRAND.md`
 and optional `DESIGN.md` at the immutable project checkout revision. The agent reads those
 files for identity, composition guidance and product language. Unadopted proposals are not
 sources. A missing brand keeps Tin's appearance; invalid active guidance fails explicitly.
 
 One bounded `%% tin:brand` JSON comment immediately after the graph header carries the
-brand file's revision, SHA-256 and exact approved light/optional dark palettes. Publication
+brand file's revision, SHA-256, exact approved light/optional dark palettes and optional
+`shape` choice. Publication
 rejects a missing or changed snapshot. The existing source hash and independent offline
 render check bind the palette along with the diagram; retries resolve the same project
 revision. No new receipt table, artifact companion or workflow engine is required.
@@ -326,6 +327,30 @@ paper in dark UI; an explicitly supplied dark palette follows the reader theme. 
 figures, the Markdown reader and Registry diagrams retain Tin styling. Exported SVGs carry
 resolved colors and embedded bundled fonts and do not need a live brand lookup.
 
+Corner treatment reuses the existing `tin-brand.v1` shape token. DESIGN.md records observed
+radii and exceptions by role; the approved BRAND.md shape is the single downstream choice.
+The renderer never guesses radii from free-form DESIGN.md prose or applies site CSS directly.
+It translates shape into a small hierarchy in diagram pixels:
+
+| Approved shape | Edge-label background | Node card | Enclosing frame |
+| --- | ---: | ---: | ---: |
+| absent or `soft` | 4 | 8 | 12 |
+| `sharp` | 0 | 0 | 0 |
+| `round` | 6 | 12 | 16 |
+
+All card roles share the chosen corners. Storage cylinders, semantic circles, arrowheads,
+padding, text metrics and routing stay unchanged. The maximum node radius matches the
+router's 12px corner inset, so existing connector clearances remain valid. Explicit SVG
+attributes make the hierarchy local to the diagram and portable in exports. No per-node
+override, arbitrary CSS or new capture token schema is introduced.
+
+![Same synthetic graph with default, sharp, soft and round corners](diagram-studies/brand-corners.png)
+
+Version 2.2's pinned `tin-diagram.branded.v1` runs continue to resolve palette-only snapshots,
+even when their guide already had a shape token. Historical sources without shape keep their
+existing appearance. Version 2.3 copies an approved shape when present; omitting or changing
+it fails publication just like changing a palette. Existing guides are not rewritten.
+
 This slice retains measured Geist Sans/Mono. Font names in a guide do not silently substitute
 unavailable files. Repository font acquisition and measured custom-font layout remain separate
 work; no customer font binary enters this source distribution. The diagram source stays
@@ -333,7 +358,10 @@ editable, and the usual human review remains in place. Historical validators kee
 original contracts.
 
 Rebuild the isolated image and deploy it with the renderer before catalog activation. Branded
-runs check the image's `--brand-version` capability before paid execution. Fixture checks cover
+runs check the image's `--brand-version` capability before paid execution. Version 2.3 requires
+`tin-diagram.branded.v2`; the rebuilt checker still supports older palette-only sources. Fixture checks cover
 active-only resolution, revision/digest/palette binding, malformed or injected metadata,
 legacy parsing, multiple brands together, light/dark switching, Markdown embeds, offline
-checks and portable SVG export. These checks do not establish model quality or font fidelity.
+checks and portable SVG export. Corner fixtures additionally verify all seven node roles,
+frames, labels, identical routed geometry and old-run compatibility. These checks do not
+establish model quality or font fidelity.

@@ -3,7 +3,7 @@ import ELK from "elkjs/lib/elk.bundled.js";
 import { FONT_ADVANCES, FONT_VERTICAL } from "./diagram-font-metrics.js";
 
 import { parseSource, sourceForFlow } from "./diagram-contract.js";
-import { brandStyles } from "./diagram-brand.js";
+import { brandStyles, brandRadii } from "./diagram-brand.js";
 import { layoutComposition } from "./diagram-composition.js";
 
 const EDGE_COLOR = "var(--diagram-edge)";
@@ -113,7 +113,7 @@ function nodeSize(node) {
     height: Math.ceil((block.height + 26 + cap) / 8) * 8, block, cap };
 }
 
-function drawNode(document, node, data) {
+function drawNode(document, node, data, radii) {
   const { x, y, width, height } = node;
   const { kind } = data;
   const group = element(document, "g", { class: `node tin-diagram-${kind}`, "data-id": data.id,
@@ -122,7 +122,8 @@ function drawNode(document, node, data) {
   const fills = { step: "var(--paper-card)", surface: "var(--paper-card)", store: "var(--paper-card)",
     gate: "var(--diagram-gate-wash)", receipt: "var(--diagram-receipt-wash)", wait: "none", ghost: "none" };
   const strokes = { step: "var(--card-border)", surface: "var(--card-border)", ghost: "var(--diagram-ghost-border)" };
-  const shape = element(document, "rect", { x, y, width, height, rx: 8, ry: 8,
+  const radius = kind === "store" ? 8 : radii.node;
+  const shape = element(document, "rect", { x, y, width, height, rx: radius, ry: radius,
     fill: kind === "store" ? "none" : fills[kind], stroke: strokes[kind] || "none", "stroke-width": 0.75 });
   if (kind === "ghost") shape.setAttribute("stroke-dasharray", "3 3");
   group.append(shape);
@@ -209,6 +210,7 @@ function styleEdge(edge) {
 
 async function renderSource(source) {
   const flow = parseSource(source);
+  const radii = brandRadii(flow.brand);
   layoutEngine ||= new ELK();
   const edges = new Map(flow.edges.map((edge, index) => [`@edge:${index}`, edge]));
   const labelBlocks = new Map([...edges].filter(([, edge]) => edge.label).map(([id, edge]) =>
@@ -243,7 +245,7 @@ async function renderSource(source) {
   }
   for (const group of graph.groups || []) {
     const frame = element(document, "g", { class: "tin-diagram-group", "data-group-id": group.id });
-    if (group.kind === "frame") frame.append(element(document, "rect", { x: group.x, y: group.y, width: group.width, height: group.height, rx: 12, fill: "var(--diagram-frame-fill)", stroke: "var(--card-border)", "stroke-width": 0.75 }));
+    if (group.kind === "frame") frame.append(element(document, "rect", { x: group.x, y: group.y, width: group.width, height: group.height, rx: radii.frame, fill: "var(--diagram-frame-fill)", stroke: "var(--card-border)", "stroke-width": 0.75 }));
     frame.append(element(document, "text", { x: group.x + (group.kind === "frame" ? 24 : 0), y: group.y + (group.kind === "frame" ? 36 : 20), "font-family": "var(--diagram-sans)", "font-size": 13, "font-weight": 700, fill: "var(--ink-secondary)" }, group.label));
     svg.append(frame);
   }
@@ -266,7 +268,7 @@ async function renderSource(source) {
       const group = element(document, "g", { class: "edge-label", "aria-label": label.text,
         "data-from": data.from, "data-to": data.to });
       group.append(element(document, "rect", { x: label.x, y: label.y, width: label.width, height: label.height,
-        rx: 4, fill: "var(--paper-card)" }));
+        rx: radii.label, fill: "var(--paper-card)" }));
       const text = element(document, "text", { x: label.x + label.width / 2,
         "text-anchor": "middle", "font-family": "var(--diagram-mono)", "font-size": 10, "font-weight": 400,
         fill: "var(--ink-secondary)" });
@@ -277,7 +279,7 @@ async function renderSource(source) {
     }
   }
   const nodes = new Map(flow.nodes.map((node) => [node.id, node]));
-  for (const node of graph.children) svg.append(drawNode(document, node, nodes.get(node.id)));
+  for (const node of graph.children) svg.append(drawNode(document, node, nodes.get(node.id), radii));
   return new XMLSerializer().serializeToString(svg);
 }
 

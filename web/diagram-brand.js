@@ -1,13 +1,15 @@
-// A diagram carries its approved palette, never arbitrary CSS or remote font URLs.
+// A diagram carries approved palette/shape choices, never arbitrary CSS or font URLs.
 const PREFIX = "%% tin:brand ";
 
 function validateBrand(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) ||
       !["revision", "sha256", "light"].every((key) => Object.hasOwn(value, key)) ||
-      Object.keys(value).some((key) => !["revision", "sha256", "light", "dark"].includes(key)) ||
+      Object.keys(value).some((key) => !["revision", "sha256", "light", "dark", "shape"].includes(key)) ||
       typeof value.revision !== "string" || typeof value.sha256 !== "string" ||
       !/^[0-9a-f]{40}$/.test(value.revision) || !/^[0-9a-f]{64}$/.test(value.sha256))
     throw new Error("Invalid diagram brand snapshot.");
+  if (Object.hasOwn(value, "shape") && !["sharp", "soft", "round"].includes(value.shape))
+    throw new Error("Invalid diagram brand shape.");
   for (const mode of ["light", "dark"]) {
     if (!Object.hasOwn(value, mode)) continue;
     const palette = value[mode];
@@ -18,6 +20,17 @@ function validateBrand(value) {
       throw new Error("Invalid diagram brand palette.");
   }
   return value;
+}
+
+// The established 4/8/12 hierarchy is the default. Node corners never exceed
+// the composition router's 12px port inset; labels and frames keep their roles.
+function brandRadii(brand) {
+  if (brand) validateBrand(brand);
+  switch (brand?.shape) {
+    case "sharp": return { label: 0, node: 0, frame: 0 };
+    case "round": return { label: 6, node: 12, frame: 16 };
+    default: return { label: 4, node: 8, frame: 12 };
+  }
 }
 
 function parseBrand(line) {
@@ -49,4 +62,4 @@ function brandStyles(brand) {
   }).join(";");
 }
 
-export { PREFIX, validateBrand, parseBrand, brandStyles };
+export { PREFIX, validateBrand, parseBrand, brandStyles, brandRadii };

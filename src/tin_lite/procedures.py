@@ -79,9 +79,10 @@ _E164 = re.compile(r"^\+[1-9][0-9]{6,14}$")
 TIN_DIAGRAM_VALIDATOR = "tin-diagram.v1"
 TIN_DIAGRAM_COMPOSITION_VALIDATOR = "tin-diagram.v2"
 TIN_DIAGRAM_REVIEWED_VALIDATOR = "tin-diagram.reviewed.v1"
-TIN_DIAGRAM_BRANDED_VALIDATOR = "tin-diagram.branded.v1"
+TIN_DIAGRAM_BRANDED_VALIDATOR = "tin-diagram.branded.v2"
+BRANDED_DIAGRAM_VALIDATORS = frozenset({"tin-diagram.branded.v1", TIN_DIAGRAM_BRANDED_VALIDATOR})
 REVIEWED_DIAGRAM_VALIDATORS = frozenset(
-    {TIN_DIAGRAM_REVIEWED_VALIDATOR, TIN_DIAGRAM_BRANDED_VALIDATOR}
+    {TIN_DIAGRAM_REVIEWED_VALIDATOR, *BRANDED_DIAGRAM_VALIDATORS}
 )
 MEMORY_SECTION_VALIDATOR = "memory-section.v1"
 PRODUCT_AUDIT_VALIDATOR = "product-audit.v1"
@@ -1352,7 +1353,7 @@ def validate_procedure_artifact(
         _validate_signup_walkthrough(text)
     elif spec.output_validator == TIN_DIAGRAM_VALIDATOR:
         _validate_tin_diagram(text)
-    elif spec.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR:
+    elif spec.output_validator in BRANDED_DIAGRAM_VALIDATORS:
         from tin_lite.brand_diagrams import validate_output
 
         validate_output(text, spec.diagram_brand_context)

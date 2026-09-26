@@ -8,6 +8,8 @@ use white paper #FFFFFF, ink #17212B and blue accent #2366C4. The navigation and
 Arial; code samples use Courier New. Compact tables, aligned columns, fine horizontal rules
 and literal command/output samples recur. The clean generic page layout has no custom
 illustrations. Documentation navigation collapses on mobile; wide code samples scroll.
+Supplied computed-style notes: content cards use 8px border-radius, enclosing demo panels 12px,
+inputs and ordinary buttons 4px. These modest corners repeat across the supplied pages.
 
 The supplied pages do not show a hosted dashboard or authenticated application.
 Founder: retain the blue, the familiar font choices and restrained technical presentation.

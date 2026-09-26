@@ -1,4 +1,4 @@
-"""Approved project guidance and a portable, bounded diagram palette snapshot."""
+"""Approved project guidance and a portable, bounded diagram style snapshot."""
 
 import hashlib
 import json
@@ -9,7 +9,8 @@ from tin_lite.brand_capture import resolve_brand
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.procedure_documents import validate_document
 
-VALIDATOR = "tin-diagram.branded.v1"
+LEGACY_VALIDATOR = "tin-diagram.branded.v1"
+VALIDATOR = "tin-diagram.branded.v2"
 PREFIX = "%% tin:brand "
 
 
@@ -18,7 +19,7 @@ def validate_brand(value):
         not isinstance(value, dict)
         or not {"revision", "sha256", "light"}
         <= set(value)
-        <= {"revision", "sha256", "light", "dark"}
+        <= {"revision", "sha256", "light", "dark", "shape"}
         or not isinstance(value["revision"], str)
         or not re.fullmatch(r"[0-9a-f]{40}", value["revision"])
         or not isinstance(value["sha256"], str)
@@ -32,7 +33,7 @@ def validate_brand(value):
             {
                 "schema": "tin-brand.v1",
                 "name": "Diagram",
-                **{mode: value[mode] for mode in ("light", "dark") if mode in value},
+                **{key: value[key] for key in ("light", "dark", "shape") if key in value},
             }
         )
         + "\n```"
@@ -58,7 +59,9 @@ def parse_diagram(content):
     return flow
 
 
-async def prepare(storage, project, revision):
+async def prepare(storage, project, revision, *, validator=VALIDATOR):
+    if validator not in {LEGACY_VALIDATOR, VALIDATOR}:
+        raise ValueError("Unsupported diagram brand contract")
     brand = await resolve_brand(storage, project, revision)
     if brand["status"] == "brand_invalid":
         raise ValueError(
@@ -76,6 +79,10 @@ async def prepare(storage, project, revision):
                 mode: brand["tokens"][mode] for mode in ("light", "dark") if mode in brand["tokens"]
             },
         }
+        # Old pinned runs must still validate their original palette-only source,
+        # even if the approved guide already contained a shape token.
+        if validator == VALIDATOR and "shape" in brand["tokens"]:
+            snapshot["shape"] = brand["tokens"]["shape"]
     design = await storage.read_output_destination(
         repo_id=project.state_repo_id, revision=revision, path=brand_contract.DESIGN_PATH
     )
@@ -96,4 +103,4 @@ def validate_output(content, context):
     if context is None:
         raise ValueError("Diagram guidance must be resolved at the pinned project revision")
     if parse_diagram(content).get("brand") != context["brand"]:
-        raise ValueError("Diagram palette must match the pinned active brand guidance")
+        raise ValueError("Diagram palette and shape must match the pinned active brand guidance")

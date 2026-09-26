@@ -5,7 +5,7 @@ description: Compose an editable Tin diagram with clear hierarchy, lanes, and re
 
 # Content diagram
 
-Produce one editable Mermaid `.mmd` source file. Tin supplies packaged Geist fonts, approved project colors when available,
+Produce one editable Mermaid `.mmd` source file. Tin supplies packaged Geist fonts, approved project colors and corner treatment when available,
 measured wrapping, spacing, and open arrowheads. You own the meaning and the composition.
 
 Read relevant project documents when the brief names them, or when they are needed to understand
@@ -25,7 +25,10 @@ Do not read unadopted brand/proposals files or replace the protected palette fro
 When `diagram_brand.source_line` exists, copy that exact compact line immediately after
 `graph LR` or `graph TD`, before the optional composition comment. Tin checks it against the
 approved brand at the pinned revision. It carries light and optional dark palettes into the
-portable source; a light-only identity stays light inside the dark Tin reader. Without a brand,
+portable source, plus the approved optional shape. Tin maps sharp/soft/round to a bounded
+label/card/frame radius hierarchy; you do not choose per-node radii or derive overrides from
+DESIGN.md prose. Missing shape keeps Tin's existing corners. Storage cylinders, semantic marks
+and connector geometry keep their meaning. A light-only identity stays light inside the dark Tin reader. Without a brand,
 use ordinary Tin colors and omit the line. Fonts remain bundled Geist Sans/Mono in this slice:
 do not claim to reproduce custom brand typography or fetch fonts. Preserve shapes and labels
 that communicate human decisions, storage and evidence; do not encode meaning by color alone.

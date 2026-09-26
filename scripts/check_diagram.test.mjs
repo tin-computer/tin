@@ -5,6 +5,8 @@ import path from "node:path";
 import os from "node:os";
 import { createHash } from "node:crypto";
 import { checkDiagram } from "./check_diagram.mjs";
+import { brandShapeFixtures } from "../web/diagram-brand-fixtures.js";
+import { DOMParser } from "linkedom";
 
 test("candidate checker rejects syntax and produces real hash-bound theme previews", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "tin-checker-test-"));
@@ -33,6 +35,22 @@ test("candidate checker rejects syntax and produces real hash-bound theme previe
   assert.equal(final.passed, true);
   assert.deepEqual(final.themes, valid.themes, "publication check measures the same exact layout without previews");
   assert.deepEqual(final.previews, []);
+});
+
+test("corner hierarchy survives independent checking and standalone SVG export", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "tin-shape-checker-"));
+  for (const [index, fixture] of brandShapeFixtures.entries()) {
+    const candidate = path.join(root, `${fixture.id}.mmd`), output = path.join(root, fixture.id);
+    await fs.writeFile(candidate, fixture.source);
+    const report = await checkDiagram(candidate, output);
+    assert.equal(report.passed, true, JSON.stringify(report.issues));
+    assert.equal(report.source_sha256, createHash("sha256").update(fixture.source).digest("hex"));
+    for (const theme of ["light", "dark"]) {
+      const svg = new DOMParser().parseFromString(await fs.readFile(path.join(output, `${theme}.svg`), "utf8"), "image/svg+xml");
+      const actual = [".edge-label > rect", ".tin-diagram-step > rect", ".tin-diagram-group > rect"].map(selector => Number(svg.querySelector(selector).getAttribute("rx")));
+      assert.deepEqual(actual, [[4,8,12], [0,0,0], [4,8,12], [6,12,16]][index]);
+    }
+  }
 });
 
 

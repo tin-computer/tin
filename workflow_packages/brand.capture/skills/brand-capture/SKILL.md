@@ -29,7 +29,10 @@ subject and message; a classifier cannot grant permission to replace identity.
 
 When a URL exists, inspect the homepage and one representative deeper product, feature or
 documentation page with the available browser. Include relevant desktop and mobile views,
-computed CSS colors and font declarations. Use `camoufox.set_viewport(1440, 900)` and
+computed CSS colors, font declarations and representative corner radii for content cards,
+controls and enclosing panels. Inspect repeated surfaces, not just the hero CTA. Record units,
+role, source and meaningful exceptions; a visual estimate is not a measured CSS value.
+Use `camoufox.set_viewport(1440, 900)` and
 `camoufox.set_viewport(390, 844)`, verify the returned dimensions, and inspect
 `camoufox.screenshot()` at both sizes. Scroll and capture a representative lower section when
 needed. A narrow Firefox viewport proves responsive layout, not mobile Safari or touch behavior.
@@ -92,6 +95,10 @@ product design. Follow the four sections in CONTRACT.md. Include compact imagery
 medium, texture/material, light, perspective, crop and density where supported. Give one reusable
 art-direction sentence when useful. References need a concrete contribution, not just a brand
 name. Avoid empty adjectives such as “premium” without instructions an image model can use.
+Use the existing optional `shape` token to summarize a supported corner treatment, explained
+in Visual style. Keep the observed per-role radii and exceptions in DESIGN.md. Do not guess
+shape when the evidence is incomplete or contradictory, or rewrite an existing carried-forward
+guide to add it. Downstream renderers adapt the approved shape to their own semantic hierarchy.
 
 Design coverage: visible foundations, components, page roles, information architecture, flows
 and responsiveness actually observed, accessibility observations, unavailable states and source

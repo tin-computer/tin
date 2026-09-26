@@ -7,6 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { chromium } from "playwright";
 import { diagramFixtures } from "./diagram-fixtures.js";
+import { brandShapeFixtures } from "./diagram-brand-fixtures.js";
 import { routingFixtures } from "./diagram-routing-fixtures.js";
 import { auditDiagrams } from "./diagram-audit.js";
 
@@ -18,9 +19,9 @@ const catalog = JSON.parse(execFileSync("uv", ["run", "--frozen", "python", "-c"
 ].join("\n")], { encoding: "utf8" }));
 
 const brandFixtures = [
-  {light: {ink: "#18242C", paper: "#FFFFFF", accent: "#2265BD"}},
-  {light: {ink: "#492136", paper: "#FFF9ED", accent: "#CE9645"}},
-  {light: {ink: "#10241C", paper: "#EDF5EF", accent: "#58CC99"}, dark: {ink: "#EDF5EF", paper: "#10241C", accent: "#58CC99"}},
+  {shape: "sharp", light: {ink: "#18242C", paper: "#FFFFFF", accent: "#2265BD"}},
+  {shape: "soft", light: {ink: "#492136", paper: "#FFF9ED", accent: "#CE9645"}},
+  {shape: "round", light: {ink: "#10241C", paper: "#EDF5EF", accent: "#58CC99"}, dark: {ink: "#EDF5EF", paper: "#10241C", accent: "#58CC99"}},
 ].map((palette, index) => ({
   id: `brand-${index}`, title: `Synthetic brand ${index}`,
   source: `graph LR\n  %% tin:brand ${JSON.stringify({revision: "a".repeat(40), sha256: String(index + 1).repeat(64), ...palette})}\n  ask["Propose a change"]:::step\n  review["Human review"]:::gate\n  done["Verified evidence"]:::receipt\n  ask --> review\n  review --> done\n`,
@@ -78,7 +79,7 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
               stage.innerHTML = item.source ? await window.TinDiagramRenderer.renderSource(item.source) : (await window.TinDiagramRenderer.renderFlow(item.flow)).svg;
               section.append(heading, stage); root.append(section);
             }
-          }, { catalog: [...catalog, ...diagramFixtures, ...routingFixtures, ...studies, ...brandFixtures], theme, surface });
+          }, { catalog: [...catalog, ...diagramFixtures, ...routingFixtures, ...studies, ...brandFixtures, ...brandShapeFixtures], theme, surface });
           await page.evaluate(async () => {
             await Promise.all([400, 700].flatMap((weight) => ["Tin Diagram Sans", "Tin Diagram Mono"].map((family) => document.fonts.load(`${weight} 12px "${family}"`))));
             await document.fonts.ready;
@@ -112,10 +113,15 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
               arrow: getComputedStyle(document.querySelector(".tin-diagram-arrow")).stroke,
               shaft: getComputedStyle(document.querySelector(".edge")).stroke,
               arrowFill: getComputedStyle(document.querySelector(".tin-diagram-arrow")).fill,
+              corners: ["default", "sharp", "soft", "round"].map(shape => {
+                const svg = document.querySelector(`#corners-${shape} svg`);
+                return [".edge-label > rect", ".tin-diagram-step > rect", ".tin-diagram-group > rect"].map(selector => parseFloat(getComputedStyle(svg.querySelector(selector)).rx));
+              }),
             };
           });
           assert.deepEqual(measured.issues, [], `${theme}/${width}/${surface}`);
           assert.equal(measured.overflow, false, `${theme}/${width}/${surface}: page overflow`);
+          assert.deepEqual(measured.corners, [[4,8,12], [0,0,0], [4,8,12], [6,12,16]], `${theme}/${width}/${surface}: local radius hierarchy`);
           assert.equal(measured.fonts.length, 4);
           assert.ok(measured.fonts.every((font) => font.status === "loaded"));
           assert.equal(measured.unrelatedFont, "serif");
@@ -136,11 +142,13 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
         return [0,1,2].map(i => {
           const svg = document.querySelector(`#brand-${i} svg`);
           return {paper: getComputedStyle(svg).backgroundColor,
+            radius: parseFloat(getComputedStyle(svg.querySelector(".tin-diagram-step > rect")).rx),
             ink: getComputedStyle(svg.querySelector(".node tspan")).fill,
             accent: getComputedStyle(svg.querySelector(".tin-diagram-receipt circle")).fill};
         });
       }, theme);
       assert.equal(colors[0].paper, "rgb(255, 255, 255)");
+      assert.deepEqual(colors.map(c => c.radius), [0,8,12]);
       assert.equal(colors[1].paper, "rgb(255, 249, 237)");
       assert.equal(colors[1].ink, "rgb(73, 33, 54)");
       assert.equal(colors[1].accent, "rgb(206, 150, 69)");
@@ -160,10 +168,11 @@ test("catalog and varied diagrams keep balanced typography and clear routes acro
         filename: "workflow.md", html: article.innerHTML, word_count: 20, reading_minutes: 1,
       }, { mode: "in-app" });
       return source;
-    }, brandFixtures[2].source);
+    }, brandShapeFixtures[3].source);
     await page.locator(".md-diagram-stage svg").waitFor();
     assert.equal(await page.locator(".md-diagram-source code").textContent(), source);
-    assert.equal(await page.locator(".md-diagram-stage .node").count(), (brandFixtures[2].source.match(/:::/g) || []).length);
+    assert.equal(await page.locator(".md-diagram-stage .node").count(), (brandShapeFixtures[3].source.match(/:::/g) || []).length);
+    assert.equal(await page.locator(".md-diagram-stage .tin-diagram-step > rect").getAttribute("rx"), "12");
     await page.locator(".md-code-block.is-diagram-invalid").waitFor();
     assert.doesNotMatch(await page.locator("#diagrams").textContent(), /\[object Promise\]/);
     assert.deepEqual(errors, []);

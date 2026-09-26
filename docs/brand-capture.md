@@ -58,6 +58,14 @@ structure, bounded JSON, complete palettes, palette/prose consistency and declar
 references. This proves document shape, not taste or the truth of a model's observations.
 The exact schemas and instructions live in the [package contract](../workflow_packages/brand.capture/skills/brand-capture/CONTRACT.md).
 
+Capture 1.0.3 also samples corner treatment: a few representative cards, controls and panels,
+with computed, code-declared or visually estimated radii distinguished in DESIGN.md. Mixed
+roles remain explicit; a pill CTA does not make the whole identity round. Where supported,
+BRAND.md explains and records the existing optional `shape` token (`sharp`, `soft`, `round`).
+Ambiguous evidence leaves it absent. Diagrams translate that approved choice into their own
+bounded label/card/frame hierarchy. No new machine-readable design file or arbitrary CSS
+contract is needed, and carried-forward documents remain byte-for-byte unchanged.
+
 ## Review and consumption
 
 The run publishes two proposals under `brand/proposals/{run_id}/`, bounded to 48,000 and

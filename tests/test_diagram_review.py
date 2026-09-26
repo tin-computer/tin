@@ -121,7 +121,9 @@ def test_missing_candidate_uses_same_two_repair_bound(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("validator", ["tin-diagram.reviewed.v1", "tin-diagram.branded.v1"])
+@pytest.mark.parametrize(
+    "validator", ["tin-diagram.reviewed.v1", "tin-diagram.branded.v1", "tin-diagram.branded.v2"]
+)
 async def test_startup_timeout_does_not_mark_a_paid_attempt(monkeypatch, validator):
     import tin_lite.codex_api as api
 
@@ -139,6 +141,44 @@ async def test_startup_timeout_does_not_mark_a_paid_attempt(monkeypatch, validat
             conn=None, run=None, sandbox_id="sandbox", run_input=run_input
         )
     paid.assert_not_awaited()
+    prepare.assert_awaited_once_with(
+        sandbox_id="sandbox", brand_validator=validator if "branded" in validator else None
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "validator,image,ready",
+    [
+        ("tin-diagram.branded.v1", "tin-diagram.branded.v1", True),
+        ("tin-diagram.branded.v1", "tin-diagram.branded.v2", True),
+        ("tin-diagram.branded.v2", "tin-diagram.branded.v1", False),
+        ("tin-diagram.branded.v2", "tin-diagram.branded.v2", True),
+    ],
+)
+async def test_shape_runs_require_a_capable_image_before_compute(
+    monkeypatch, validator, image, ready
+):
+    import tin_lite.e2b_runtime as runtime_module
+
+    commands = AsyncMock(
+        side_effect=[SimpleNamespace(stdout="tin-diagram-check.v1"), SimpleNamespace(stdout=image)]
+    )
+    monkeypatch.setattr(
+        runtime_module.AsyncSandbox,
+        "connect",
+        AsyncMock(return_value=SimpleNamespace(commands=SimpleNamespace(run=commands))),
+    )
+    runtime = object.__new__(E2BRuntime)
+    runtime._timeout_seconds, runtime._api_key = 10, "test"
+    runtime._diagram_product_styles = AsyncMock()
+    if ready:
+        await runtime.prepare_diagram(sandbox_id="test", brand_validator=validator)
+        runtime._diagram_product_styles.assert_awaited_once()
+    else:
+        with pytest.raises(RuntimeError, match="rebuild"):
+            await runtime.prepare_diagram(sandbox_id="test", brand_validator=validator)
+        runtime._diagram_product_styles.assert_not_awaited()
 
 
 def test_source_change_requires_fresh_images(monkeypatch):

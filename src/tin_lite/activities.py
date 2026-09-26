@@ -89,12 +89,12 @@ from tin_lite.memory import (
 )
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.procedures import (
+    BRANDED_DIAGRAM_VALIDATORS,
     GITHUB_PULL_REQUEST_RESULT,
     GITHUB_REPOSITORY_WORKSPACE,
     IDENTITY_REUSE_ACTIVE,
     PROJECT_ARTIFACT_RESULT,
     REVIEWED_DIAGRAM_VALIDATORS,
-    TIN_DIAGRAM_BRANDED_VALIDATOR,
     PinnedCodexProcedure,
     artifact_host,
     build_procedure_pull_request_receipt,
@@ -224,7 +224,11 @@ class TinActivities:
         ):
             await self._sandboxes.prepare_diagram(
                 sandbox_id=sandbox_id,
-                branded=run_input.context["output"]["validator"] == TIN_DIAGRAM_BRANDED_VALIDATOR,
+                brand_validator=(
+                    run_input.context["output"]["validator"]
+                    if run_input.context["output"]["validator"] in BRANDED_DIAGRAM_VALIDATORS
+                    else None
+                ),
             )
         if run_input.api_url is not None:
             from tin_lite.codex_api import run_api_attempt
@@ -2742,10 +2746,15 @@ class TinActivities:
                     expected_head_sha = revision_sha
                 if expected_head_sha is None:
                     raise RuntimeError("project state repository has no canonical head")
-                if procedure.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR:
+                if procedure.output_validator in BRANDED_DIAGRAM_VALIDATORS:
                     from tin_lite.brand_diagrams import prepare
 
-                    await prepare(self._storage, project, expected_head_sha)
+                    await prepare(
+                        self._storage,
+                        project,
+                        expected_head_sha,
+                        validator=procedure.output_validator,
+                    )
                 if procedure.documents:
                     from tin_lite.procedure_documents import validate_document
 
@@ -5081,11 +5090,14 @@ class TinActivities:
                 run.id
             )
             procedure = replace(procedure, brand_capture_context=prepared)
-        if procedure.output_validator == TIN_DIAGRAM_BRANDED_VALIDATOR and run.expected_head_sha:
+        if procedure.output_validator in BRANDED_DIAGRAM_VALIDATORS and run.expected_head_sha:
             from tin_lite.brand_diagrams import prepare
 
             context = await prepare(
-                self._storage, await self._require_project(run.project_id), run.expected_head_sha
+                self._storage,
+                await self._require_project(run.project_id),
+                run.expected_head_sha,
+                validator=procedure.output_validator,
             )
             procedure = replace(procedure, diagram_brand_context=context)
         if run.review_source_run_id is not None:

@@ -66,6 +66,15 @@ include signal; consumers can otherwise use accent. Every color is six-digit hex
 Do not invent a dark palette from an unseen theme. Do not add unknown fields, duplicate keys,
 comments or a second block. Naming a font does not provide its files or trigger a download.
 
+`shape` is the overall corner treatment for future marketing surfaces: `sharp` for square
+or nearly square cards, `soft` for modest rounding, `round` for visibly rounded cards.
+Base it on repeated content surfaces, not a pill-shaped CTA, avatar or logo. Explain the
+choice and its evidence in Visual style; label a founder choice or supporting proposal as
+such. If patterns are mixed or evidence is insufficient, omit shape and describe the gap.
+Do not invent an exact radius scale. Diagrams translate this optional choice into their own
+small label/card/frame hierarchy; it does not turn every element into a pill or change
+semantic silhouettes such as storage cylinders.
+
 New DESIGN.md uses one title and exactly these second-level headings:
 
 1. `## Visual foundations`
@@ -76,5 +85,9 @@ New DESIGN.md uses one title and exactly these second-level headings:
 Describe useful knowns and specific gaps in each. Put coverage, source references, contradictions
 and explicitly labeled recommendations in the last section. At least one attributed source is
 required. No second palette token contract, assessments or machine-readable manifest is needed.
+In Visual foundations or Components and patterns, record a few representative observed corner
+radii by role (for example card, input and button), with the source and whether each value was
+measured from computed CSS, declared in code, or estimated visually. Preserve mixed patterns
+and exceptions; do not collapse pill buttons and square content cards into one site-wide radius.
 Existing compatible member documents are carried forward unchanged and need not use these new
 section layouts. Existing BRAND.md must retain a valid tin-brand.v1 block.

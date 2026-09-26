@@ -1366,7 +1366,7 @@ BUILTIN_WORKFLOWS = (
             "Its source stays editable in project Files."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.2.0",
+        version_label="2.3.0",
         review_policy=CONTENT_DIAGRAM_REVIEW_POLICY,
         schedule_modes=("on_demand",),
         input_schema={

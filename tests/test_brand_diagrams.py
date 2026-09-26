@@ -73,8 +73,61 @@ async def test_missing_brand_uses_tin_but_invalid_active_brand_never_uses_propos
         await brand_diagrams.prepare(storage(brand=b"invalid guide"), project, REVISION)
 
 
-def test_branded_source_parity_and_injection_rejection():
-    value = {"revision": REVISION, "sha256": "b" * 64, "light": PALETTE}
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", [None, "sharp", "soft", "round"])
+async def test_shape_is_approved_and_pinned_without_changing_legacy_run_snapshots(shape):
+    tokens = {**TOKENS, **({"shape": shape} if shape else {})}
+    guide = ("# Guidance\n```json\n" + json.dumps(tokens) + "\n```\n").encode()
+    store = storage(brand=guide, design=b"# Observations\nCards have 99px corners.")
+    project = SimpleNamespace(state_repo_id="project")
+    current = await brand_diagrams.prepare(store, project, REVISION)
+    legacy = await brand_diagrams.prepare(
+        store, project, REVISION, validator=brand_diagrams.LEGACY_VALIDATOR
+    )
+    assert current["brand"].get("shape") == shape
+    assert "shape" not in legacy["brand"]
+    assert current["brand"]["sha256"] == hashlib.sha256(guide).hexdigest()
+    for validator, context in [
+        (brand_diagrams.VALIDATOR, current),
+        (brand_diagrams.LEGACY_VALIDATOR, legacy),
+    ]:
+        source = SOURCE.replace("graph LR\n", "graph LR\n" + context["source_line"] + "\n")
+        spec = PinnedCodexProcedure(
+            workflow_key="content.diagram",
+            prompt="Draw",
+            entry_skill="content-diagram",
+            skill_files={},
+            output_validator=validator,
+            diagram_brand_context=context,
+        )
+        validate_procedure_artifact(source.encode(), spec=spec)
+        assert procedure_contract(validator) == DIAGRAM_CONTRACT
+        tampered = dict(context["brand"])
+        tampered["shape"] = "sharp" if shape != "sharp" else "round"
+        changed = SOURCE.replace(
+            "graph LR\n",
+            "graph LR\n"
+            + brand_diagrams.PREFIX
+            + json.dumps(tampered, separators=(",", ":"))
+            + "\n",
+        )
+        with pytest.raises(ValueError, match="shape"):
+            validate_procedure_artifact(changed.encode(), spec=spec)
+    if shape:
+        with pytest.raises(ValueError, match="shape"):
+            brand_diagrams.validate_output(
+                SOURCE.replace("graph LR\n", "graph LR\n" + legacy["source_line"] + "\n"), current
+            )
+
+
+@pytest.mark.parametrize("shape", [None, "sharp", "soft", "round"])
+def test_branded_source_parity_and_injection_rejection(shape):
+    value = {
+        "revision": REVISION,
+        "sha256": "b" * 64,
+        "light": PALETTE,
+        **({"shape": shape} if shape else {}),
+    }
     line = brand_diagrams.PREFIX + json.dumps(value, separators=(",", ":"))
     source = SOURCE.replace("graph LR\n", "graph LR\n" + line + "\n")
     bad = [
@@ -87,6 +140,17 @@ def test_branded_source_parity_and_injection_rejection():
         source.replace('"revision":"' + REVISION + '"', '"revision":["' + REVISION + '"]'),
         source.replace('"light":{', '"light":null,"extra":{'),
     ]
+    for unsupported in (None, 12, True, ["round"], {"node": 12}, "pill", "round;rx:99"):
+        invalid = {**value, "shape": unsupported}
+        bad.append(
+            SOURCE.replace(
+                "graph LR\n",
+                "graph LR\n"
+                + brand_diagrams.PREFIX
+                + json.dumps(invalid, separators=(",", ":"))
+                + "\n",
+            )
+        )
     for invalid in bad:
         with pytest.raises(ValueError):
             brand_diagrams.parse_diagram(invalid)

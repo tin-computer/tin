@@ -9,6 +9,9 @@ The supplied homepage mixes four heading sizes without clear role changes. Featu
 alternate centered and left-aligned copy. The scheduling page has more consistent hierarchy
 but dense mobile spacing. Stock leaf pictures convey gardening; no actual calendar or task
 detail appears in the homepage imagery. There is no logo source file or unseen-state evidence.
+Corners are also inconsistent: supplied computed-style notes record 0px on some feature cards
+and 24px on others. Scheduling controls were cropped; their radii are unknown. There is no
+founder preference or coherent content-surface pattern to promote to a shape token yet.
 
 Founder: keep exactly #287A55 and Arial. Modest improvements to future marketing are welcome;
 do not propose a rebrand or any HTML changes. A concrete calendar example, consistent

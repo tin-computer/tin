@@ -87,6 +87,10 @@
   ],
   "rubric": [
     {
+      "id": "corners",
+      "question": "Does DESIGN.md attribute per-role radius evidence and preserve exceptions? Does BRAND.md choose sharp for Sunroom despite its pill CTA, soft for Relaybench, and leave shape absent for Orchard's conflicting evidence rather than inventing a site-wide scale?"
+    },
+    {
       "id": "preservation",
       "question": "Are exact founder colors, fonts and existing documents preserved without unrequested identity changes?"
     },

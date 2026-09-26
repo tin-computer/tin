@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { DOMParser, parseHTML } from "linkedom";
 import { diagramFixtures } from "./diagram-fixtures.js";
+import { brandShapeFixtures, shapeSource } from "./diagram-brand-fixtures.js";
 import { routingFixtures } from "./diagram-routing-fixtures.js";
 import { planPorts } from "./diagram-ports.js";
 import { diagramQuality, readDiagramGeometry, acceptableRefinement } from "./diagram-quality.js";
@@ -16,6 +17,25 @@ globalThis.XMLSerializer = class XMLSerializer {
 globalThis.window = parseHTML("<html></html>").window;
 
 const renderer = await import("./diagram-renderer.js");
+
+test("approved corners preserve role hierarchy, semantic shapes and routed geometry", async () => {
+  const baseline = new DOMParser().parseFromString(await renderer.renderSource(shapeSource), "image/svg+xml");
+  const geometry = readDiagramGeometry(baseline);
+  for (const [index, fixture] of brandShapeFixtures.entries()) {
+    const [label, node, frame] = [[4,8,12], [0,0,0], [4,8,12], [6,12,16]][index];
+    const doc = new DOMParser().parseFromString(await renderer.renderSource(fixture.source), "image/svg+xml");
+    assert.deepEqual(readDiagramGeometry(doc), geometry, "corners do not change layout, labels or connectors");
+    for (const rect of doc.querySelectorAll(".node:not(.tin-diagram-store) > rect")) {
+      assert.equal(Number(rect.getAttribute("rx")), node);
+      assert.equal(Number(rect.getAttribute("ry")), node);
+    }
+    for (const rect of doc.querySelectorAll(".edge-label > rect")) assert.equal(Number(rect.getAttribute("rx")), label);
+    assert.equal(Number(doc.querySelector(".tin-diagram-group > rect").getAttribute("rx")), frame);
+    for (const selector of [".tin-diagram-store path", ".tin-diagram-store ellipse", ".tin-diagram-gate circle", ".tin-diagram-wait circle", ".tin-diagram-receipt circle"]) {
+      assert.equal(doc.querySelector(selector).outerHTML, baseline.querySelector(selector).outerHTML, "semantic silhouettes stay intact");
+    }
+  }
+});
 
 test("composition diagnostics measure painted routes and protect legibility", () => {
   const graph = {

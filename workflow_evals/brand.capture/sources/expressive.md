@@ -8,6 +8,8 @@ use warm paper #FFF5DC, brown ink #392317 and tomato accent #CB4428. Headings us
 body text uses Arial. Hand-cut paper food illustrations, close crops, uneven edges and
 generous whitespace recur on both pages. Recipe cards have narrow brown borders and square
 corners. Mobile stacks ingredients over steps, retaining the ingredient checkboxes.
+Supplied computed-style notes: repeated recipe cards use 0px border-radius; text inputs use
+2px. The single primary CTA is a 999px pill. That CTA is an exception, not the card pattern.
 
 No dark theme, login state or error state was supplied. Font declarations are known;
 successful loading was not independently checked. Founder: keep the tomato color and

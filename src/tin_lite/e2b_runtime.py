@@ -671,7 +671,11 @@ class E2BRuntime:
                 diagram_review=(
                     payload.get("diagram_review")
                     if run_input.context.get("output", {}).get("validator")
-                    in {"tin-diagram.reviewed.v1", "tin-diagram.branded.v1"}
+                    in {
+                        "tin-diagram.reviewed.v1",
+                        "tin-diagram.branded.v1",
+                        "tin-diagram.branded.v2",
+                    }
                     else None
                 ),
             )
@@ -726,7 +730,7 @@ class E2BRuntime:
             return
         await run_input.interrupted_output_sink(content)
 
-    async def prepare_diagram(self, *, sandbox_id: str, branded: bool = False) -> None:
+    async def prepare_diagram(self, *, sandbox_id: str, brand_validator: str | None = None) -> None:
         # Read-only startup checks precede the paid-attempt receipt. A transient
         # envd stream timeout must remain retryable without implying a model call.
         sandbox = await AsyncSandbox.connect(
@@ -741,13 +745,16 @@ class E2BRuntime:
         )
         if ready.stdout.strip() != "tin-diagram-check.v1":
             raise RuntimeError("sandbox lacks the offline diagram checker")
-        if branded:
+        if brand_validator:
             support = await sandbox.commands.run(
                 "node /opt/tin-lite/diagram/scripts/check_diagram.mjs --brand-version",
                 timeout=45,
                 request_timeout=30,
             )
-            if support.stdout.strip() != "tin-diagram.branded.v1":
+            supported = {"tin-diagram.branded.v2"}
+            if brand_validator == "tin-diagram.branded.v1":
+                supported.add("tin-diagram.branded.v1")
+            if support.stdout.strip() not in supported:
                 raise RuntimeError("sandbox lacks the branded diagram checker; rebuild its image")
         await self._diagram_product_styles(sandbox)
 
