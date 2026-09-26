@@ -1,0 +1,62 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.cold_read",
+    "title": "Cold-read your homepage",
+    "description": "Reads your public homepage the way a stranger would and reports, with quoted evidence, whether it answers what this is, who it's for, what to do next, and what it costs or how to start.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "product_url": {
+          "type": "string",
+          "format": "uri",
+          "minLength": 8,
+          "maxLength": 2000,
+          "title": "Homepage URL",
+          "description": "The public page a first-time visitor lands on.",
+          "x-tin-ui": { "control": "text", "order": 10 }
+        },
+        "additional_pages": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri", "maxLength": 2000 },
+          "maxItems": 2,
+          "default": [],
+          "title": "Pricing or about page (optional)",
+          "description": "Up to two more public pages a first-time visitor would click to, such as pricing or about. Leave empty to read only the homepage."
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Context for the reader (optional)",
+          "description": "Anything a stranger wouldn't know that changes what counts as a fair answer, for example that pricing is sales-only.",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        }
+      },
+      "required": ["project_id", "product_url"]
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/cold-read/SKILL.md"],
+      "entry_skill": "cold-read",
+      "workspace": { "kind": "project.state" },
+      "sandbox": {
+        "profile": "browser",
+        "egress": "open",
+        "timeout_seconds": 1800
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COLD_READ.md",
+        "media_type": "text/markdown",
+        "max_bytes": 40000
+      }
+    }
+  }
+}
