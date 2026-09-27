@@ -1,0 +1,97 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "launch.show_hn",
+    "title": "Prepare a Show HN launch",
+    "description": "Judges whether the product is ready to show on Hacker News, then drafts the Show HN title, post, first comment and answers to the hardest questions in your voice, recommends a concrete posting window, and checks the packet against HN's own rules. Remembers past attempts so it never suggests a repost too soon. Never posts, submits, upvotes or contacts anyone.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "what_to_show": {
+          "type": "string",
+          "title": "What you want to show (optional)",
+          "description": "The one thing a stranger could open and try, and why a technical audience should care. Leave empty to show what the Feature map and growth plan point to.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "target_url": {
+          "type": "string",
+          "title": "Link to show (optional)",
+          "description": "The exact https link people will open: the live product, a demo, or the repository. Leave empty to take it from project context.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "founder_available": {
+          "type": "string",
+          "title": "Day you can sit with the thread (optional)",
+          "description": "The earliest weekday (YYYY-MM-DD) you can be free to reply to every comment for the whole launch day. Leave empty to time it from today.",
+          "maxLength": 10,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 30 }
+        },
+        "past_launches": {
+          "type": "string",
+          "title": "Show HN posts done outside Tin (optional)",
+          "description": "URLs you already launched on Hacker News, so a repost is not suggested too soon. Targets prepared in earlier runs are remembered automatically.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 40 }
+        },
+        "tone_notes": {
+          "type": "string",
+          "title": "Voice notes (optional)",
+          "description": "How the title, post and first comment should sound. The project's writing style guide is used when present; these notes win where they differ.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 50 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map supplies the technical story and every product claim the launch makes."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan says who the business serves and records hard no's such as no founder posting."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes the drafted title, post and comment; tone_notes still win."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/show-hn-launch/SKILL.md", "skills/show-hn-launch/RUBRIC.md"],
+      "entry_skill": "show-hn-launch",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/launch/show-hn/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 150000
+      }
+    }
+  }
+}
