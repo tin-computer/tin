@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "assumptions": [
+    "No declared service or fixture-replayable API is involved; the agent's own web search supplies the dates, so the cases below check the report's contract and input handling, not live calendar facts.",
+    "Live qualification of whether each moment's date is this year's real date needs an explicitly authorized live case; nothing here fixture-replays that.",
+    "Static checking runs every case's inputs through the declared input_schema; cases only cover inputs that are schema-valid, since a schema-level rejection is already guaranteed by the schema itself.",
+    "Project context (reports/GROWTH_ONBOARDING_PLAN.md, wiki/INDEX.md Feature map and Code map, .agents/skills/writing-style/SKILL.md) is read when present; with no market input and no growth plan naming a buyer, the run ends with Status: needs context."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session on the existing pinned model pricing and spending ceiling; no managed-model routes are declared. The configured 900-second runtime ceiling is not an expected price.",
+    "Cost scales with how many candidate dates must be verified (at most 15 searches and 25 pages) and with max_moments, since each kept moment gets one draft per channel."
+  ],
+  "effects": [
+    "One project.artifact write to a run-owned reports/growth/moments/<run_id>.md; no other project files change.",
+    "Reads the growth plan, wiki/INDEX.md, the writing style guide and earlier reports in reports/growth/moments/ from project state, and public web pages (calendars, notices, the business's own pricing and checkout pages) through fenced web search.",
+    "No publishing, posting, sending, emailing, scheduling, ad buying, price or code change, form submission, credential access or recursive workflow start."
+  ],
+  "cases": [
+    {
+      "id": "ordinary_india",
+      "description": "An explicit market with the default horizon and cap: the report has a run sheet, dated moment sections, a checkout readiness block and the state.",
+      "inputs": {
+        "market": "India",
+        "horizon_days": 90,
+        "max_moments": 4,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "For:",
+          "## Run sheet",
+          "Date source:",
+          "Buyer job:",
+          "## Checkout readiness",
+          "Payment methods:",
+          "## Did it move?",
+          "## Excluded moments",
+          "utm_campaign=",
+          "```tin-moments-state"
+        ],
+        "excludes": [
+          "Status: needs context"
+        ]
+      }
+    },
+    {
+      "id": "market_from_project_context",
+      "description": "No market input: the buyer and market come from the growth plan, named on the For line, rather than being asked for or invented.",
+      "inputs": {
+        "market": "",
+        "horizon_days": 120,
+        "max_moments": 3,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "For:",
+          "Context:",
+          "```tin-moments-state"
+        ]
+      }
+    },
+    {
+      "id": "short_horizon_no_padding",
+      "description": "The shortest horizon with a large cap, to check that the report discloses a short list and missed channels honestly instead of padding it or rushing late channels.",
+      "inputs": {
+        "market": "Brazil",
+        "horizon_days": 30,
+        "max_moments": 8,
+        "context": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "## Excluded moments"
+        ],
+        "excludes": [
+          "Status: needs context"
+        ]
+      }
+    },
+    {
+      "id": "context_skips_a_moment",
+      "description": "The context asks to skip one moment and names one to include; the skipped moment appears only among exclusions.",
+      "inputs": {
+        "market": "India",
+        "horizon_days": 90,
+        "max_moments": 2,
+        "context": "Skip Christmas. Include the income tax return deadline if it falls in the window."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "## Excluded moments"
+        ],
+        "excludes": [
+          "## Christmas"
+        ]
+      }
+    }
+  ]
+}
