@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import copy
+import functools
 import hashlib
 import time
-from collections.abc import Awaitable, Callable
+from collections import OrderedDict
+from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -35,6 +38,14 @@ _TASK_DIFF_MAX_BYTES = 1_000_000
 _PUBLICATION_TEXT_MAX_BYTES = 1_000_000
 _PUBLICATION_BINARY_MAX_BYTES = 16_000_000
 _BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
+# Reads addressed by a full commit SHA are immutable, so one process keeps a bounded copy.
+# Workflow runs reload the same pinned package several times per run; see _PinnedReadCache.
+_PINNED_CACHE_MAX_BYTES = 48_000_000
+_PINNED_CACHE_MAX_ENTRY_BYTES = 1_000_000
+_PINNED_CACHE_KEY_OVERHEAD = 256
+# A repository handle is local configuration plus an existence check; see CodeStorage.get_repo.
+_REPO_HANDLE_TTL_SECONDS = 300.0
+_REPO_HANDLE_MAX_ENTRIES = 1024
 
 
 def _publication_limit(checkpoint: OutputCheckpoint) -> int:
@@ -101,11 +112,90 @@ def _project_commit_error(exc: RefUpdateError) -> Exception:
     return RuntimeError(f"code.storage rejected the project file commit ({exc.reason})")
 
 
+class _PinnedReadCache:
+    """A byte-bounded LRU of values addressed by (kind, repo_id, commit_sha, ...).
+
+    Only successful reads pinned to a full commit SHA belong here: a commit's tree and blobs
+    never change, so a hit is exactly what code.storage would return again. Branch, ref and
+    ephemeral reads, writes and failures are never stored. Callers authorize the repository
+    and revision before they reach storage, exactly as they do for an uncached read; the
+    repository ID in every key keeps projects apart.
+    """
+
+    def __init__(self, *, max_bytes: int, max_entry_bytes: int) -> None:
+        self._max_bytes = max_bytes
+        self._max_entry_bytes = max_entry_bytes
+        self._entries: OrderedDict[tuple[Hashable, ...], tuple[Any, int]] = OrderedDict()
+        self._bytes = 0
+
+    @property
+    def size_bytes(self) -> int:
+        return self._bytes
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    def get(self, key: tuple[Hashable, ...]) -> Any | None:
+        item = self._entries.get(key)
+        if item is None:
+            return None
+        self._entries.move_to_end(key)
+        return item[0]
+
+    def put(self, key: tuple[Hashable, ...], value: Any, size: int) -> None:
+        size += _PINNED_CACHE_KEY_OVERHEAD
+        if size > self._max_entry_bytes:
+            return
+        previous = self._entries.pop(key, None)
+        if previous is not None:
+            self._bytes -= previous[1]
+        self._entries[key] = (value, size)
+        self._bytes += size
+        while self._bytes > self._max_bytes:
+            _, (_, evicted) = self._entries.popitem(last=False)
+            self._bytes -= evicted
+
+    def discard_repo(self, repo_id: str) -> None:
+        for key in [key for key in self._entries if key[1] == repo_id]:
+            self._bytes -= self._entries.pop(key)[1]
+
+
 class CodeStorage:
+    _http: httpx.AsyncClient | None = None
+    _http_loop: asyncio.AbstractEventLoop | None = None
+
     def __init__(self, *, organization: str, private_key: str) -> None:
         self._organization = organization
         self._private_key = private_key
         self._client = GitStorage({"name": organization, "key": private_key})
+
+    # Per-instance and created on first use, so every CodeStorage has its own caches.
+    @functools.cached_property
+    def _pinned(self) -> _PinnedReadCache:
+        return _PinnedReadCache(
+            max_bytes=_PINNED_CACHE_MAX_BYTES, max_entry_bytes=_PINNED_CACHE_MAX_ENTRY_BYTES
+        )
+
+    @functools.cached_property
+    def _repos(self) -> OrderedDict[str, tuple[Repo, float]]:
+        return OrderedDict()
+
+    def _http_client(self) -> httpx.AsyncClient | None:
+        """One pooled client for the bounded reads this class makes itself.
+
+        httpx clients belong to the event loop that opened their connections; a call from
+        another loop (a one-off CLI helper, a test) falls back to a per-request client.
+        """
+        loop = asyncio.get_running_loop()
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=30.0)
+            self._http_loop = loop
+        return self._http if self._http_loop is loop else None
+
+    async def close(self) -> None:
+        client, self._http = self._http, None
+        if client is not None and not client.is_closed:
+            await client.aclose()
 
     async def ensure_repo(
         self,
@@ -147,18 +237,42 @@ class CodeStorage:
 
     async def delete_repo(self, repo_id: str) -> bool:
         """True when the repository is gone after this call; upstream cleanup is asynchronous."""
+        self._forget_repo(repo_id)
         try:
             await self._client.delete_repo(id=repo_id, ttl=300)
         except ApiError as exc:
             # 404: never created or already removed; 409: a deletion is already in progress.
             if exc.status_code not in {404, 409}:
                 raise
+        finally:
+            self._forget_repo(repo_id)
         return True
 
+    def _forget_repo(self, repo_id: str) -> None:
+        self._repos.pop(repo_id, None)
+        self._pinned.discard_repo(repo_id)
+
     async def get_repo(self, repo_id: str) -> Repo:
+        """Return a repository handle, reusing a recent successful lookup.
+
+        The SDK's Repo is built locally from this client's configuration, the ID and the
+        default branch; the lookup only proves the repository exists. Every operation on the
+        handle still authenticates and fails upstream if the repository has since gone, and
+        this process forgets it on delete_repo. Missing repositories are never remembered.
+        """
+        now = time.monotonic()
+        cached = self._repos.get(repo_id)
+        if cached is not None and cached[1] > now:
+            self._repos.move_to_end(repo_id)
+            return cached[0]
         repo = await self._client.find_one(id=repo_id)
         if repo is None:
+            self._repos.pop(repo_id, None)
             raise LookupError(f"code.storage repository {repo_id!r} does not exist")
+        self._repos[repo_id] = (repo, now + _REPO_HANDLE_TTL_SECONDS)
+        self._repos.move_to_end(repo_id)
+        while len(self._repos) > _REPO_HANDLE_MAX_ENTRIES:
+            self._repos.popitem(last=False)
         return repo
 
     async def head_sha(self, repo: Repo, branch: str) -> str | None:
@@ -194,12 +308,7 @@ class CodeStorage:
 
     async def read_ephemeral_artifact(self, *, repo_id: str, branch: str, path: str) -> bytes:
         repo = await self.get_repo(repo_id)
-        return await _read_file_with_retry(
-            repo,
-            path=path,
-            ref=branch,
-            ephemeral=True,
-        )
+        return await self._read_file(repo, path=path, ref=branch, ephemeral=True)
 
     async def read_ephemeral_artifact_if_exists(
         self, *, repo_id: str, branch: str, path: str
@@ -217,8 +326,15 @@ class CodeStorage:
             raise
 
     async def read_canonical_artifact(self, *, repo_id: str, commit_sha: str, path: str) -> bytes:
+        pinned = _is_commit_sha(commit_sha)
+        key = ("file", repo_id, commit_sha, path)
+        if pinned and (cached := self._pinned.get(key)) is not None:
+            return cached
         repo = await self.get_repo(repo_id)
-        return await _read_file_with_retry(repo, path=path, ref=commit_sha)
+        content = await self._read_file(repo, path=path, ref=commit_sha)
+        if pinned:
+            self._pinned.put(key, content, len(content) + len(path))
+        return content
 
     async def read_workflow_resource(self, *, repo_id: str, commit_sha: str, path: str) -> bytes:
         """New-format packages require bounded regular files at every path component."""
@@ -227,6 +343,10 @@ class CodeStorage:
         relative_path(path)
         if not _is_commit_sha(commit_sha):
             raise ValueError("workflow resource must pin a commit")
+        # Only a resource that passed every regular-file check below is remembered.
+        key = ("workflow_resource", repo_id, commit_sha, path)
+        if (cached := self._pinned.get(key)) is not None:
+            return cached
         repo = await self.get_repo(repo_id)
         try:
             entry = await self._publication_file(
@@ -236,6 +356,7 @@ class CodeStorage:
             raise ValueError("workflow resource must be a bounded regular file") from exc
         if entry is None:
             raise ValueError("declared workflow resource is missing")
+        self._pinned.put(key, entry[1], len(entry[1]) + len(path))
         return entry[1]
 
     async def read_canonical_artifact_if_exists(
@@ -257,23 +378,35 @@ class CodeStorage:
 
     async def _publication_json(self, repo: Repo, endpoint: str, **params: str) -> dict:
         """Bounded reads missing from the pinned SDK; auth stays on the switchboard."""
+        # Tree metadata at a full commit SHA is immutable; commit listings and ephemeral
+        # or branch reads are not.
+        key: tuple[Hashable, ...] | None = None
+        if (
+            endpoint == "files/metadata"
+            and "ephemeral" not in params
+            and _is_commit_sha(params.get("ref"))
+            and isinstance(getattr(repo, "id", None), str)
+        ):
+            key = ("metadata", repo.id, params["ref"], tuple(sorted(params.items())))
+            if (cached := self._pinned.get(key)) is not None:
+                return copy.deepcopy(cached)
         token = repo.generate_jwt(repo.id, {"permissions": ["git:read"], "ttl": 300})
         url = f"{repo.api_base_url}/api/repos/{quote(repo.id, safe='')}/{endpoint}"
-        async with httpx.AsyncClient(timeout=20) as client:
-            response = await client.get(
-                url,
-                params=params,
-                headers={
-                    "Authorization": f"Bearer {token}",
-                    "Code-Storage-Agent": get_user_agent(),
-                },
-            )
-            response.raise_for_status()
-            if len(response.content) > 2_000_000:
-                raise PublicationPendingError("publication metadata exceeds its read budget")
-            result = response.json()
+        headers = {"Authorization": f"Bearer {token}", "Code-Storage-Agent": get_user_agent()}
+        shared = self._http_client()
+        if shared is not None:
+            response = await shared.get(url, params=params, headers=headers, timeout=20)
+        else:
+            async with httpx.AsyncClient(timeout=20) as client:
+                response = await client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        if len(response.content) > 2_000_000:
+            raise PublicationPendingError("publication metadata exceeds its read budget")
+        result = response.json()
         if not isinstance(result, dict):
             raise PublicationPendingError("publication metadata is unavailable")
+        if key is not None:
+            self._pinned.put(key, copy.deepcopy(result), len(response.content))
         return result
 
     async def procedure_checkpoint_revision(self, *, repo_id: str, branch: str) -> str | None:
@@ -323,7 +456,7 @@ class CodeStorage:
             size = entry.get("size")
             if type(size) is not int or not 0 <= size <= max_bytes:
                 raise OutputConflictError("the output file exceeds the safe comparison limit")
-            content = await _read_file_with_retry(repo, path=path, ref=ref)
+            content = await self._read_file(repo, path=path, ref=ref)
             if len(content) != size:
                 raise PublicationPendingError("file read did not match its pinned metadata")
             return entry["mode"], content
@@ -334,15 +467,15 @@ class CodeStorage:
     ) -> bytes:
         if not _is_commit_sha(revision) or not _safe_repo_path(path):
             raise ValueError("procedure checkpoint requires an immutable revision and safe path")
+        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _PUBLICATION_TEXT_MAX_BYTES
+        key = ("checkpoint", repo_id, revision, path, max_bytes)
+        if (cached := self._pinned.get(key)) is not None:
+            return cached
         repo = await self.get_repo(repo_id)
-        result = await self._publication_file(
-            repo,
-            ref=revision,
-            path=path,
-            max_bytes=_PUBLICATION_BINARY_MAX_BYTES if binary else _PUBLICATION_TEXT_MAX_BYTES,
-        )
+        result = await self._publication_file(repo, ref=revision, path=path, max_bytes=max_bytes)
         if result is None:
             raise ValueError("procedure checkpoint has no declared output")
+        self._pinned.put(key, result[1], len(result[1]) + len(path))
         return result[1]
 
     async def stage_native_output(
@@ -819,6 +952,10 @@ class CodeStorage:
         repo_id: str,
         revision: str,
     ) -> list[str]:
+        pinned = _is_commit_sha(revision)
+        key = ("listing", repo_id, revision)
+        if pinned and (cached := self._pinned.get(key)) is not None:
+            return list(cached)
         repo = await self.get_repo(repo_id)
         result = await repo.list_files(ref=revision, ttl=300)
         paths = result.get("paths", [])
@@ -826,6 +963,8 @@ class CodeStorage:
             not isinstance(path, str) or not _safe_repo_path(path) for path in paths
         ):
             raise RuntimeError("project state repository returned an unsafe file path")
+        if pinned:
+            self._pinned.put(key, tuple(sorted(paths)), sum(len(path) + 64 for path in paths))
         return sorted(paths)
 
     async def search_canonical_files(
@@ -945,7 +1084,7 @@ class CodeStorage:
                     raise ValueError(f"project file does not exist: {change.path}")
                 if change.new_path in existing_paths:
                     raise ValueError(f"project file already exists: {change.new_path}")
-                content = await _read_file_with_retry(repo, path=change.path, ref=expected_head_sha)
+                content = await self._read_file(repo, path=change.path, ref=expected_head_sha)
                 content.decode("utf-8")
                 builder = builder.add_file(change.new_path, content).delete_path(change.path)
                 changed_paths.update((change.path, change.new_path))
@@ -1380,10 +1519,16 @@ class CodeStorage:
             headers={"alg": algorithm, "typ": "JWT"},
         )
 
-    @staticmethod
-    async def _file_equals(repo: Repo, *, ref: str, path: str, expected: bytes) -> bool:
+    async def _read_file(
+        self, repo: Repo, *, path: str, ref: str, ephemeral: bool = False
+    ) -> bytes:
+        return await _read_file_with_retry(
+            repo, path=path, ref=ref, ephemeral=ephemeral, client=self._http_client()
+        )
+
+    async def _file_equals(self, repo: Repo, *, ref: str, path: str, expected: bytes) -> bool:
         try:
-            return await _read_file_with_retry(repo, path=path, ref=ref) == expected
+            return await self._read_file(repo, path=path, ref=ref) == expected
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 404:
                 return False
@@ -1400,6 +1545,7 @@ async def _read_file_with_retry(
     path: str,
     ref: str,
     ephemeral: bool = False,
+    client: httpx.AsyncClient | None = None,
 ) -> bytes:
     values: dict[str, Any] = {"path": path, "ref": ref, "ttl": 300}
     if ephemeral:
@@ -1407,7 +1553,7 @@ async def _read_file_with_retry(
     for attempt in range(_FILE_READ_ATTEMPTS):
         try:
             if _supports_eager_file_read(repo):
-                return await _read_file_eager(repo, values=values)
+                return await _read_file_eager(repo, values=values, client=client)
             response = await repo.get_file_stream(**values)
             async with response:
                 return await response.aread()
@@ -1424,7 +1570,9 @@ def _supports_eager_file_read(repo: Repo) -> bool:
     )
 
 
-async def _read_file_eager(repo: Repo, *, values: dict[str, Any]) -> bytes:
+async def _read_file_eager(
+    repo: Repo, *, values: dict[str, Any], client: httpx.AsyncClient | None = None
+) -> bytes:
     """Buffer a bounded file without the SDK's prematurely closed stream wrapper."""
     token = repo.generate_jwt(  # type: ignore[attr-defined]
         repo.id, {"permissions": ["git:read"], "ttl": values["ttl"]}
@@ -1433,17 +1581,14 @@ async def _read_file_eager(repo: Repo, *, values: dict[str, Any]) -> bytes:
     if values.get("ephemeral"):
         params["ephemeral"] = "true"
     url = f"{repo.api_base_url}/api/v{repo.api_version}/repos/file"  # type: ignore[attr-defined]
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(
-            url,
-            params=params,
-            headers={
-                "Authorization": f"Bearer {token}",
-                "Code-Storage-Agent": get_user_agent(),
-            },
-        )
-        response.raise_for_status()
-        return response.content
+    headers = {"Authorization": f"Bearer {token}", "Code-Storage-Agent": get_user_agent()}
+    if client is not None:
+        response = await client.get(url, params=params, headers=headers, timeout=30.0)
+    else:
+        async with httpx.AsyncClient(timeout=30.0) as own:
+            response = await own.get(url, params=params, headers=headers)
+    response.raise_for_status()
+    return response.content
 
 
 def _basic_auth_header(token: str) -> str:
