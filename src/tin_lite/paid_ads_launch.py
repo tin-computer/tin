@@ -1225,18 +1225,29 @@ def render_setup(gate: dict, assessment: dict) -> dict[str, str]:
     return _bounded({"SETUP.md": "\n".join(lines)}, SETUP_DOCS)
 
 
+UNCONFIRMED_ENABLE = (
+    "Tin did not receive Google Ads' answer to switching the campaign on and could not read "
+    "its status back, so it may already be running. Tin keeps watching it as a live campaign: "
+    "the Google Ads monitor reads its real status on its next run. Pause it in Google Ads if "
+    "you do not want it on."
+)
+
+
 def render_result(plan: dict, created: dict, review: dict, gate_summary: str) -> dict[str, str]:
     enabled = created.get("enabled") is True
+    unconfirmed = created.get("enable_unconfirmed") is True
+    if unconfirmed:
+        state = UNCONFIRMED_ENABLE
+    elif enabled:
+        state = "The campaign is on. Google reviews new ads before showing them, usually within a day; until then they show little or nothing."
+    else:
+        state = "The campaign was created but left paused. Turn it on in Google Ads when you are ready, or run the launch again."
     lines = [
         "# Your Google Ads campaign",
         "",
         f"Campaign: {_md(plan['campaign_name'])} · Markets: {', '.join(plan['markets'])} · Landing page: {plan['landing_page']}",
         "",
-        (
-            "The campaign is on. Google reviews new ads before showing them, usually within a day; until then they show little or nothing."
-            if enabled
-            else "The campaign was created but left paused. Turn it on in Google Ads when you are ready, or run the launch again."
-        ),
+        state,
         "",
         "## What was created",
         "",
@@ -1279,7 +1290,7 @@ def render_result(plan: dict, created: dict, review: dict, gate_summary: str) ->
         "conversion_action": created.get("conversion_action"),
         "allowable_cpa_usd": plan.get("allowable_cpa_usd"),
         "target_cpa_usd": plan.get("target_cpa_usd"),
-        "enabled": enabled,
+        "enabled": None if unconfirmed else enabled,
         "enabled_at": created.get("enabled_at"),
         "created_at": created.get("created_at"),
         "paused_subscriptions": created.get("paused_subscriptions") or [],
@@ -1308,6 +1319,11 @@ def summary_line(outcome: str, plan: dict | None = None) -> str:
         return (
             f"Google Ads campaign live: {plan['campaign_name']} at "
             f"{_money(plan['daily_budget_usd'])} a day."
+        )
+    if outcome == "unconfirmed" and plan:
+        return (
+            f"Google Ads campaign may be running: {plan['campaign_name']} at "
+            f"{_money(plan['daily_budget_usd'])} a day. Tin keeps watching it."
         )
     if outcome == "needs_tracking":
         return "Install tracking, then run the launch again."

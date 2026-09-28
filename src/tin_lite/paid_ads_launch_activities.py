@@ -881,7 +881,30 @@ class PaidAdsLaunchActivities:
         enabled = await self._ads(
             run_id, "apply:enable", "mutate_resource", {"segment": segment, "body": body}
         )
-        if enabled.get("status") != "completed" or enabled.get("error"):
+        switched_on = enabled.get("status") == "completed" and not enabled.get("error")
+        unconfirmed = False
+        if enabled.get("status") == "unknown":
+            # The switch may have landed without its answer: read the campaign back first.
+            check = await self._ads(
+                run_id,
+                "apply:enable_check",
+                "search",
+                {"query": QUERIES["campaign_by_name"](plan["campaign_name"])},
+            )
+            state = next(
+                (
+                    row["campaign"].get("status")
+                    for row in _rows(check)
+                    if isinstance(row.get("campaign"), dict)
+                    and row["campaign"].get("resourceName") == resources["campaign"]
+                ),
+                None,
+            )
+            # Unreadable is not paused: the campaign may be spending, so the launch finishes
+            # live and the monitor keeps watching it instead of the row ending failed.
+            unconfirmed = state not in {"ENABLED", "PAUSED"}
+            switched_on = state == "ENABLED" or unconfirmed
+        if not switched_on:
             await self._refuse(
                 run_id,
                 "enable",
@@ -892,6 +915,7 @@ class PaidAdsLaunchActivities:
                     "or run the launch again",
                 ),
             )
+        # For an unconfirmed switch this is the earliest it could have started spending.
         enabled_at = datetime.now(UTC).isoformat()
         await self.db.update_paid_ads_campaign(
             run_id=run.id, enabled_at=datetime.fromisoformat(enabled_at)
@@ -907,7 +931,8 @@ class PaidAdsLaunchActivities:
                 "campaign_id": campaign_id,
                 "budget_id": str(resources.get("budget") or "").rsplit("/", 1)[-1] or None,
                 "shared_set_id": str(resources.get("shared_set") or "").rsplit("/", 1)[-1] or None,
-                "enabled": True,
+                "enabled": None if unconfirmed else True,
+                "enable_unconfirmed": unconfirmed,
                 "enabled_at": enabled_at,
                 "created_at": created.get("value", {}).get("observed_at") or enabled_at,
                 "paused_subscriptions": paused,
@@ -1065,7 +1090,9 @@ class PaidAdsLaunchActivities:
             )
             status = "live"
             event = "paid_ads_launch_ready"
-            summary = paid_ads_launch.summary_line("ready", draft["plan"])
+            summary = paid_ads_launch.summary_line(
+                "unconfirmed" if applied.get("enable_unconfirmed") else "ready", draft["plan"]
+            )
         else:
             rendered = paid_ads_launch.render_tracking(
                 applied["action"],

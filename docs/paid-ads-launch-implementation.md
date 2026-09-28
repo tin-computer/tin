@@ -67,7 +67,12 @@ run with the opaque code and nothing created. `apply:create` sends it for real; 
 atomically. If that attempt cannot be confirmed the receipt stays `unknown`, and the next
 attempt looks the campaign up by its marker name and adopts it rather than sending the bundle
 again. `apply:subscriptions` pauses any auto-apply recommendation subscriptions that read back
-enabled, and `apply:enable` switches the campaign on. Each step is its own receipt under
+enabled, and `apply:enable` switches the campaign on; if that answer is lost,
+`apply:enable_check` reads the campaign back. `PAUSED` ends the run with the campaign paused;
+`ENABLED` goes on. When the status cannot be read, the campaign may be spending, so the launch
+still finishes `live` with `enabled: null` in `campaign.json` and a result that says so, and the
+monitor keeps watching it instead of the row ending `failed`. A timed-out, dropped or unreadable answer to a write is `unknown`, never a
+refusal. Each step is its own receipt under
 `paid_ads_launch:{run}:apply:*`; a stop before `enable` leaves the campaign paused. `RESULT.md`
 and `campaign.json` (what the monitor consumes) publish under `ads/google/{run}/`, and
 `complete_paid_ads_launch` marks the campaign row `live`.

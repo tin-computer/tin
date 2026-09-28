@@ -10,7 +10,11 @@ from __future__ import annotations
 from uuid import UUID
 
 from tin_lite.google_ads_requests import bidding_body, budget_body
-from tin_lite.integrations import GoogleAdsCallError, IntegrationError
+from tin_lite.integrations import (
+    GoogleAdsCallError,
+    IntegrationDeliveryUnknownError,
+    IntegrationError,
+)
 
 OPERATION = "paid_ads_proposal_apply"
 
@@ -88,6 +92,8 @@ async def approve_paid_ads_proposal(*, runtime, proposal_id: UUID, clerk_user_id
                     outcome = {"status": "applied"}
                 except GoogleAdsCallError as exc:
                     outcome = {"status": "failed", "error_code": exc.code}
+                except IntegrationDeliveryUnknownError:
+                    outcome = {"status": "unknown"}
                 except IntegrationError as exc:
                     outcome = {"status": "failed", "error_code": type(exc).__name__[:60]}
                 except Exception:

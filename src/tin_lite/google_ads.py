@@ -42,6 +42,9 @@ RETRY_CODES = frozenset(
     }
 )
 RETRY_DELAYS = (5, 10, 20)
+# The request may have reached Google but its answer was lost or unreadable, so a write may
+# have been applied: a timeout, a dropped connection, or a reply Tin could not accept.
+UNCONFIRMED_CODES = frozenset({"timeout", "transport", "envelope"})
 _VERSION = re.compile(r"^v\d{1,3}$")
 
 

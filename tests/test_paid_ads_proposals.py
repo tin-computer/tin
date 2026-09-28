@@ -9,7 +9,11 @@ from uuid import UUID, uuid4
 import pytest
 from test_organic_audit import MemoryDB
 
-from tin_lite.integrations import GoogleAdsCallError, IntegrationUpstreamError
+from tin_lite.integrations import (
+    GoogleAdsCallError,
+    IntegrationDeliveryUnknownError,
+    IntegrationUpstreamError,
+)
 from tin_lite.paid_ads_proposals import (
     approve_paid_ads_proposal,
     discard_paid_ads_proposal,
@@ -199,6 +203,24 @@ async def test_an_unconfirmed_attempt_settles_unknown_and_a_retry_does_not_resen
     )
     assert again["status"] == "unknown"
     assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_lost_google_ads_answer_settles_unknown_not_failed():
+    async def lost(**kwargs):
+        raise IntegrationDeliveryUnknownError("Google Ads did not confirm the change")
+
+    runtime, db, proposal_id, calls = fixture(call=lost)
+    row = await approve_paid_ads_proposal(
+        runtime=runtime, proposal_id=proposal_id, clerk_user_id=USER
+    )
+    assert row["status"] == "unknown" and row["error_code"] is None
+    receipt = db.effects[f"paid_ads_proposal:{proposal_id}:apply"]
+    assert receipt.result == {"status": "unknown"}
+    again = await approve_paid_ads_proposal(
+        runtime=runtime, proposal_id=proposal_id, clerk_user_id=USER
+    )
+    assert again["status"] == "unknown" and len(calls) == 1
 
 
 @pytest.mark.asyncio
