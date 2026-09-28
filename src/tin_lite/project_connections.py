@@ -19,6 +19,7 @@ from tin_lite.integrations import (
     IntegrationDefinition,
     IntegrationError,
     IntegrationNotConfiguredError,
+    ServiceCallRefused,
     ServiceResponseTooLarge,
 )
 from tin_lite.usage_capture import borrowed_connection
@@ -363,6 +364,17 @@ def request_contract(payload):
     return payload
 
 
+class InvalidAPIResponse(ServiceCallRefused):
+    """The API answered with a body that is not JSON: a known outcome; the body is withheld."""
+
+    def __init__(self, status):
+        super().__init__(
+            f"The API answered HTTP {status} with a body that is not JSON; it was withheld.",
+            code="invalid_response",
+        )
+        self.status = status
+
+
 async def request_api(
     connection, secret, payload, *, maximum, operation_id, client=None, resolver=None
 ):
@@ -419,11 +431,14 @@ async def request_api(
                 raw.extend(chunk)
                 if len(raw) > maximum:
                     raise ServiceResponseTooLarge("API response exceeds its declared bound.")
+            if not raw.strip():
+                # No content, such as a 204 to a DELETE, is an answer with nothing to return.
+                return {"status": response.status_code, "data": None}
             try:
                 value = json.loads(raw)
                 safe = json.dumps(value, ensure_ascii=False, allow_nan=False)
             except (ValueError, UnicodeError, RecursionError):
-                raise IntegrationError("API response must be bounded JSON.") from None
+                raise InvalidAPIResponse(response.status_code) from None
             # Never let an auth echo become model context, a receipt or an artifact.
             for sensitive in {
                 secret,

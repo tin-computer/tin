@@ -5,11 +5,15 @@ import base64
 import json
 from contextlib import AsyncExitStack
 from copy import deepcopy
+from importlib.util import find_spec
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from e2b import CommandExitException
 from fastapi import FastAPI
 from pydantic import SecretStr
 from temporalio.testing import ActivityEnvironment
@@ -18,12 +22,14 @@ from test_private_workflows import ACTOR, structured
 from test_procedure_publication import publication_db as publication_db
 from test_workflow_code import setup, start
 
-from tin_lite.code_services import CodeServiceError
+from tin_lite.code_services import CodeServiceError, CodeServices
+from tin_lite.e2b_runtime import SERVICE_ERROR_EXIT, E2BRuntime
 from tin_lite.integrations import (
     CredentialCipher,
     IntegrationAuthorizationError,
     IntegrationError,
     IntegrationService,
+    ServiceCallRefused,
 )
 from tin_lite.project_connections import configuration, request_api, request_contract
 from tin_lite.project_connections_api import router, setup_user
@@ -259,6 +265,246 @@ async def test_http_preserves_resolver_preference_and_checks_every_address(addre
         assert len(seen) == 1
 
 
+async def test_http_answers_without_json_are_known_outcomes_with_their_status():
+    connection = SimpleNamespace(configuration={**CONFIG, "methods": ["GET", "DELETE"]})
+    replies = iter(
+        [
+            httpx.Response(204, stream=httpx.ByteStream(b"")),
+            httpx.Response(401, stream=httpx.ByteStream(b"<html>Sign in</html>")),
+        ]
+    )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: next(replies))) as client:
+        args = dict(maximum=8000, operation_id="stable-op", client=client, resolver=public_dns)
+        delete = {"method": "DELETE", "path": "/accounts/1", "params": {}, "body": None}
+        assert await request_api(connection, SECRET, delete, **args) == {
+            "status": 204,
+            "data": None,
+        }
+        # The body is withheld, but the provider answered: never an uncertain attempt.
+        with pytest.raises(ServiceCallRefused, match="HTTP 401") as refused:
+            await request_api(connection, SECRET, payload()["arguments"], **args)
+        assert refused.value.code == "invalid_response" and refused.value.status == 401
+        assert "Sign in" not in str(refused.value)
+
+
+def google_spec(provider, capability):
+    body = definition()
+    body["integration_requirements"] = [
+        {"provider_key": provider, "capabilities": [capability], "required": True}
+    ]
+    body["code"]["services"] = {
+        "google": {"provider_key": provider, "max_calls": 2, "max_response_bytes": 16000}
+    }
+    return validate_code_definition(body)
+
+
+@pytest.mark.parametrize(
+    ("provider", "capability", "operation", "arguments", "reason"),
+    [
+        (
+            "analytics.gsc",
+            "search_analytics.read",
+            "search_analytics.read",
+            {"start_date": "2026-09-10", "end_date": "2026-09-01"},
+            "date range",
+        ),
+        (
+            "analytics.gsc",
+            "search_analytics.read",
+            "search_analytics.read",
+            {"start_date": 20260801, "end_date": "2026-08-31"},
+            "YYYY-MM-DD",
+        ),
+        (
+            "analytics.gsc",
+            "search_analytics.read",
+            "search_analytics.read",
+            {"start_date": "2026-08-01", "end_date": "2026-08-31", "row_limit": 50000},
+            "row limit",
+        ),
+        (
+            "analytics.gsc",
+            "search_analytics.read",
+            "search_analytics.read",
+            {"start_date": "2026-08-01", "end_date": "2026-08-31", "dimensions": [["query"]]},
+            "dimensions",
+        ),
+        (
+            "analytics.gsc",
+            "search_analytics.read",
+            "search_analytics.read",
+            {"start_date": "2026-08-01"},
+            "",
+        ),
+        (
+            "workspace.google",
+            "gmail.messages.read",
+            "gmail.messages.search",
+            {"query": 7, "max_results": 10},
+            "search query",
+        ),
+        (
+            "workspace.google",
+            "gmail.messages.read",
+            "gmail.messages.search",
+            {"query": "from:founder", "max_results": "10"},
+            "result limit",
+        ),
+        (
+            "workspace.google",
+            "gmail.messages.read",
+            "gmail.thread.read",
+            {"thread_id": 42},
+            "thread ID",
+        ),
+        (
+            "workspace.google",
+            "calendar.events.read",
+            "calendar.events.list",
+            {
+                "time_min": "2026-09-02T00:00:00Z",
+                "time_max": "2026-09-01T00:00:00Z",
+                "query": "",
+                "max_results": 10,
+            },
+            "Calendar range",
+        ),
+        (
+            "workspace.google",
+            "calendar.events.read",
+            "calendar.events.list",
+            {"time_min": 1, "time_max": "2026-09-01T00:00:00Z", "query": "", "max_results": 10},
+            "ISO 8601",
+        ),
+    ],
+)
+async def test_google_service_values_are_contract_errors_before_any_receipt(
+    provider, capability, operation, arguments, reason
+):
+    # No database, run or connection: a malformed value must be refused before any of them.
+    services = CodeServices(database=None, integrations=None, authorize=None)
+    with pytest.raises(CodeServiceError, match="declared contract") as refused:
+        await services.call(
+            conn=None,
+            run=None,
+            workflow=None,
+            spec=google_spec(provider, capability),
+            payload={
+                "service": "google",
+                "step": "read",
+                "operation": operation,
+                "arguments": arguments,
+            },
+        )
+    assert reason in str(refused.value)
+
+
+def code_bridge(monkeypatch):
+    """A fake sandbox whose package makes `requests` bridge calls, then exits with `exit`."""
+    replies, outcomes = [], []
+    package = SimpleNamespace(requests=2, reraises=False, exit=None, result=b'{"ok": true}')
+
+    async def command(cmd, **kwargs):
+        if kwargs.get("on_stdout") is None:
+            return SimpleNamespace(stdout="")
+        for _ in range(package.requests):
+            await kwargs["on_stdout"]("TIN_MODEL_REQUEST\n")
+            if package.reraises and "error" in replies[-1]:
+                # The runner reports only that the service error escaped, by its exit status.
+                package.exit = SERVICE_ERROR_EXIT
+                break
+        if package.exit is not None:
+            raise CommandExitException(stderr="", stdout="", exit_code=package.exit, error=None)
+        return SimpleNamespace(stdout="")
+
+    async def read(path, **kwargs):
+        if path.endswith("request.json"):
+            return b'{"kind": "service"}'
+        if isinstance(package.result, Exception):
+            raise package.result
+        return package.result
+
+    async def write(path, data, **kwargs):
+        if path.endswith("response.tmp"):
+            replies.append(json.loads(data))
+
+    async def service(_request):
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    sandbox = SimpleNamespace(
+        sandbox_id="fixture-code-service",
+        commands=SimpleNamespace(run=command),
+        files=SimpleNamespace(read=read, write=write, rename=AsyncMock()),
+        kill=AsyncMock(return_value=True),
+    )
+    monkeypatch.setattr(
+        "tin_lite.e2b_runtime.AsyncSandbox.connect", AsyncMock(return_value=sandbox)
+    )
+    runtime = E2BRuntime(
+        api_key="synthetic", template="default", timeout_seconds=60, egress_allow_hosts=()
+    )
+    run = dict(sandbox_id="fixture-code-service", packet={"timeout_seconds": 5}, model_call=service)
+    return runtime, run, replies, outcomes, package
+
+
+async def test_code_bridge_hands_service_errors_to_authored_code(monkeypatch):
+    runtime, run, replies, outcomes, package = code_bridge(monkeypatch)
+    # A settled refusal reaches the package, which asks again under a new step.
+    outcomes[:] = [CodeServiceError("Stripe rate-limited this read (fixture)."), {"status": 200}]
+    assert await runtime.run_code_and_kill(**run) == b'{"ok": true}'
+    assert replies == [
+        {"error": "Stripe rate-limited this read (fixture)."},
+        {"result": {"status": 200}},
+    ]
+    # A package that lets the error escape still fails with Tin's own reason, not a generic one.
+    replies.clear()
+    package.requests, package.reraises = 1, True
+    outcomes[:] = [CodeServiceError("Service response unavailable or invalid; fixture.")]
+    with pytest.raises(CodeServiceError, match="Service response unavailable"):
+        await runtime.run_code_and_kill(**run)
+    assert replies == [{"error": "Service response unavailable or invalid; fixture."}]
+    # A run that lost its authority stops without handing anything back to authored code.
+    replies.clear()
+    package.exit = None
+    outcomes[:] = [CodeServiceError("The run no longer has permission.", fatal=True)]
+    with pytest.raises(CodeServiceError, match="no longer has permission"):
+        await runtime.run_code_and_kill(**run)
+    assert replies == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        # The package caught the refusal, then failed or ran out of time on its own.
+        dict(exit=1),
+        # E2B could not return the result after the package had handled the refusal.
+        dict(result=RuntimeError("fixture sandbox read failed")),
+    ],
+)
+async def test_code_bridge_keeps_a_handled_service_error_out_of_later_failures(
+    monkeypatch, failure
+):
+    runtime, run, replies, outcomes, package = code_bridge(monkeypatch)
+    package.requests = 1
+    for name, value in failure.items():
+        setattr(package, name, value)
+    outcomes[:] = [CodeServiceError("Stripe rate-limited this read (fixture).")]
+    with pytest.raises(RuntimeError, match="Code workflow failed") as failed:
+        await runtime.run_code_and_kill(**run)
+    assert not isinstance(failed.value, CodeServiceError)
+    assert replies == [{"error": "Stripe rate-limited this read (fixture)."}]
+
+
+def test_code_runner_and_bridge_agree_on_the_escaped_service_error_status():
+    # code_runner imports Unix-only modules, so read its constant without importing it.
+    source = Path(find_spec("tin_lite.code_runner").origin).read_text(encoding="utf-8")
+    assert f"\nSERVICE_ERROR_EXIT = {SERVICE_ERROR_EXIT}\n" in source
+
+
 class ServiceCompute:
     def __init__(self):
         self.calls = 0
@@ -473,6 +719,38 @@ async def test_oversized_service_response_is_named_settled_and_does_not_block_la
     await service.close()
 
 
+async def test_non_json_service_answer_is_settled_and_marks_a_rejected_credential(
+    billed, monkeypatch
+):
+    f = billed
+    service, _, code, run_id = await prepared(f, monkeypatch)
+    calls = []
+
+    def wire(request):
+        calls.append(request)
+        return httpx.Response(401, stream=httpx.ByteStream(b"<html>Sign in again</html>"))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(wire)) as client:
+        code.services.client, code.services.resolver = client, public_dns
+        with pytest.raises(Exception, match="HTTP 401 with a body that is not JSON"):
+            await ActivityEnvironment().run(code.execute, run_id)
+        connection = await f.db.get_integration_connection(
+            project_id=f.project.id, provider_key=PROVIDER
+        )
+        assert connection.status == "needs_attention"
+        assert connection.last_error_code == "authentication_failed"
+        assert len(calls) == 1
+        # The answered step is settled with Tin's message, never left as an unconfirmed attempt.
+        rows = await f.db.pool.fetch(
+            """SELECT status, result FROM effect_receipts
+               WHERE operation IN ('code_service_call_v1', 'external_usage_v1')"""
+        )
+        assert len(rows) == 2 and all(row["status"] == "completed" for row in rows)
+        assert "invalid_response" in [json.loads(row["result"]).get("error") for row in rows]
+        assert "Sign in" not in str([row["result"] for row in rows])
+    await service.close()
+
+
 async def test_search_console_service_forwards_paging_filters_and_bound(billed, monkeypatch):
     from dataclasses import replace
 
@@ -553,6 +831,24 @@ async def test_search_console_service_forwards_paging_filters_and_bound(billed, 
                     "arguments": {**arguments, "aggregation_type": "byPage"},
                 },
             )
+        # A bad value is the author's contract error, never an unresolved step blocking the run.
+        with pytest.raises(CodeServiceError, match="declared contract: Search Console date"):
+            await code.services.call(
+                conn=conn,
+                run=run,
+                workflow=changed,
+                spec=spec,
+                payload={
+                    **selected,
+                    "step": "reversed",
+                    "arguments": {**arguments, "end_date": "2026-07-01"},
+                },
+            )
+        assert len(seen) == 1
+        result = await code.services.call(
+            conn=conn, run=run, workflow=changed, spec=spec, payload={**selected, "step": "next"}
+        )
+        assert result["next_start_row"] == 200 and len(seen) == 2
     await service.close()
 
 
