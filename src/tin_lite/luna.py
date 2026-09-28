@@ -562,6 +562,7 @@ def _bounded_run_state(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         "review_required",
         "review_requested_at",
         "artifact_path",
+        "artifact_title",
         "error_message",
     )
     return [{field: run.get(field) for field in fields} for run in runs[:25]]

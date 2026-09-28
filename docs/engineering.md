@@ -196,8 +196,12 @@ table, E2B sandbox, DataForSEO dependency, or parallel execution engine.
 
 `content.answer_page` turns durable project context into one researched, reviewable Markdown page.
 It prefers the latest visibility audit and otherwise works from project memory, so its only input
-is `project_id`; GitHub access is not required. One forced-search Luna call publishes
-`reports/ANSWER_PAGE.md` and bounded evidence atomically through Temporal. Because this is
+is `project_id`; GitHub access is not required. One forced-search Luna call publishes the page
+at `content/answers/{date}-{question-slug}.md`, named from its date and title, with bounded
+evidence under `reports/answer-page/{run_id}/`, atomically through Temporal. The title becomes the
+run's artifact title, which Decisions, the run card and chat show. Pages drafted before per-page
+names keep `reports/ANSWER_PAGE.md`; a later page with the same date and title replaces the file
+at that path, and each run still reads its own pinned revision. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
 approval from the draft reader resumes and completes it. Workflows presents every live gate through
 one needs-you queue banner and one matching filter count; completed reviews remain historical

@@ -140,6 +140,12 @@ class AnswerPageDrafter:
         return markdown, evidence
 
 
+def page_title(markdown: str) -> str:
+    """The page's own H1 as plain words: its name in Decisions, Files and chat."""
+    title = re.search(r"(?m)^# (.+)$", markdown)
+    return _plain(title.group(1))[:160] if title else ""
+
+
 def extract_argument_plan(markdown: str) -> tuple[dict, str]:
     match = re.match(r"<!-- tin-answer-plan-v1\s*(\{.*?\})\s*-->\s*", markdown, re.S)
     if not match or len(match.group(1).encode()) > 16000:

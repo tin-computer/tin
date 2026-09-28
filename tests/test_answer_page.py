@@ -5,6 +5,7 @@ import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
@@ -246,6 +247,7 @@ class FakeDatabase:
             canonical_commit_sha=values["canonical_commit_sha"],
             artifact_ref=values["artifact_ref"],
             artifact_path=values["artifact_path"],
+            artifact_title=values.get("artifact_title"),
         )
         return self.run.review_required
 
@@ -354,6 +356,7 @@ async def test_answer_page_duplicate_execution_reuses_model_commit_and_projectio
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project, run, visibility_run = activity_fixture()
+    run = replace(run, created_at=datetime(2026, 9, 28, 17, 0, tzinfo=UTC))
     database = FakeDatabase(project=project, run=run, visibility_run=visibility_run)
     storage = FakeStorage()
     drafter = FakeDrafter()
@@ -389,7 +392,10 @@ async def test_answer_page_duplicate_execution_reuses_model_commit_and_projectio
     assert storage.publishes == 1
     assert database.projection_writes == 1
     assert database.run.status == RunStatus.SUCCEEDED
-    assert database.run.artifact_path == "reports/ANSWER_PAGE.md"
+    path = "content/answers/2026-09-28-how-to-keep-recurring-ai-work-reliable.md"
+    assert database.run.artifact_path == path
+    assert database.run.artifact_title == "How to keep recurring AI work reliable"
+    assert path in storage.documents and "reports/ANSWER_PAGE.md" not in storage.documents
     assert database.events == [
         "answer_page_drafted",
         "human_review_requested",
@@ -685,3 +691,20 @@ def test_delivery_writes_one_header_with_the_search_listing():
     assert merged.count("---\n") == 2 and "title: Title" in merged and "meta_title:" in merged
     assert new_page_header(plain, "Title", "2026-09-28", "slug") == ""
     assert page_frontmatter("# No frontmatter\n") == ({}, "# No frontmatter\n")
+
+
+def test_answer_page_names_come_from_the_date_and_question():
+    from tin_lite.answer_page import page_title
+    from tin_lite.domain import answer_page_path
+
+    title = page_title(
+        "---\nmeta_title: x\n---\n\n# Which *tools* work with [coding agents](https://x.y)?\n"
+    )
+    assert title == "Which tools work with coding agents?"
+    assert answer_page_path(title, "2026-09-28") == (
+        "content/answers/2026-09-28-which-tools-work-with-coding-agents.md"
+    )
+    assert answer_page_path("", "2026-09-28") == "content/answers/2026-09-28-answer-page.md"
+    assert (
+        len(answer_page_path("word " * 60, "2026-09-28")) <= len("content/answers/") + 11 + 80 + 3
+    )

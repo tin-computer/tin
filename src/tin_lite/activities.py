@@ -19,13 +19,13 @@ from temporalio.exceptions import ApplicationError
 from tin_lite.answer_page import (
     AnswerPageDrafter,
     AnswerPageSource,
+    page_title,
     validate_answer_page_artifacts,
 )
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
 from tin_lite.domain import (
-    ANSWER_PAGE_PATH,
     ANSWER_PAGE_WORKFLOW_NAME,
     ARTIFACT_PATH,
     CODEX_PROCEDURE_EXECUTOR,
@@ -52,6 +52,7 @@ from tin_lite.domain import (
     Workflow,
     WorkflowRun,
     answer_page_evidence_path,
+    answer_page_path,
     site_health_report_path,
     visibility_evidence_path,
     weekly_brief_evidence_path,
@@ -1949,11 +1950,15 @@ class TinActivities:
             details={"stage": "answer_page_draft"},
         )
         evidence_path = answer_page_evidence_path(run_id)
+        title = page_title(str(draft["markdown"]))
+        artifact_path = answer_page_path(
+            title, (run.created_at or datetime.now(UTC)).date().isoformat()
+        )
         page, evidence = reporter.build_artifacts(
             run_id=str(run_id),
             source_refs=[source.artifact_ref for source in sources],
             draft=draft,
-            artifact_path=ANSWER_PAGE_PATH,
+            artifact_path=artifact_path,
             evidence_path=evidence_path,
         )
         execution_key = f"{run_id}:answer_page_commit"
@@ -1967,7 +1972,7 @@ class TinActivities:
                     canonical_sha, changed = await self._storage.publish_state_documents(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
-                        documents={ANSWER_PAGE_PATH: page, evidence_path: evidence},
+                        documents={artifact_path: page, evidence_path: evidence},
                         workflow_key=ANSWER_PAGE_WORKFLOW_NAME,
                         execution_key=execution_key,
                         run_id=str(run_id),
@@ -1975,7 +1980,7 @@ class TinActivities:
                 await self._db.add_activity(
                     run_id=run_id,
                     event_type="answer_page_drafted",
-                    details={"source_count": len(sources), "changed": changed},
+                    details={"source_count": len(sources), "changed": changed, "title": title},
                     dedupe_key=f"{execution_key}:answer_page_drafted",
                 )
                 await self._db.complete_effect(
@@ -1983,7 +1988,8 @@ class TinActivities:
                     execution_key=execution_key,
                     result={
                         "canonical_commit_sha": canonical_sha,
-                        "artifact_path": ANSWER_PAGE_PATH,
+                        "artifact_path": artifact_path,
+                        "title": title,
                         "evidence_path": evidence_path,
                         "source_refs": [source.artifact_ref for source in sources],
                         "changed": changed,
@@ -2092,6 +2098,7 @@ class TinActivities:
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
+            artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
         )
 
     @activity.defn(name="record_answer_page_approval")
