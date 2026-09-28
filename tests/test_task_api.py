@@ -15,7 +15,12 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.activities import TinActivities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
-from tin_lite.codex_api import PROCEDURE_CONTRACT, attempt_key, execution_profile
+from tin_lite.codex_api import (
+    PROCEDURE_CONTRACT,
+    attempt_key,
+    execution_profile,
+    is_api_contract,
+)
 from tin_lite.codex_api_relay import CodexAPIRelay, router
 from tin_lite.domain import SideEffectConflictError
 from tin_lite.e2b_runtime import E2BRuntime, SandboxTaskResult
@@ -205,6 +210,78 @@ async def test_task_recovery_preserves_direction_received_after_checkpoint(bille
     assert entries[original.id].delivered_at is not None
     assert entries[later.id].delivered_at is None
     assert sandboxes.create.await_count == sandboxes.run_task_and_kill.await_count == 1
+
+
+async def test_task_transcript_keeps_a_queued_direction_behind_progress_events(billed, monkeypatch):
+    f = billed
+    run, activities, sandboxes = await task_fixture(f, monkeypatch)
+    direction = await f.db.append_task_entry(
+        run_id=run.id,
+        kind="direction",
+        source="founder",
+        content="Name the audience.",
+        author_clerk_user_id=ACTOR,
+    )
+    # A busy turn records two progress events per command after the direction was queued.
+    for index in range(60):
+        await f.db.append_task_event(run_id=run.id, entry_id=uuid4(), content=f"Step {index}.")
+    sandboxes.run_task_and_kill.return_value = SandboxTaskResult(
+        outcome="completed", summary="Ready", message="Summary", question=None, has_changes=False
+    )
+    payload = {"run_id": str(run.id), "turn_number": "1"}
+    assert await activities.run_project_task_turn(payload) == "completed"
+    supplied = sandboxes.run_task_and_kill.await_args.kwargs["run_input"]
+    assert {
+        "source": "founder",
+        "kind": "direction",
+        "content": "Name the audience.",
+    } in supplied.context["transcript"]
+    assert all(item["kind"] != "event" for item in supplied.context["transcript"])
+    assert str(direction.id) in supplied.context_delivery_ids
+    entries = {entry.id: entry for entry in await f.db.list_task_entries(run_id=run.id)}
+    assert entries[direction.id].delivered_at is not None
+
+
+async def unbilled_allowlisted_task(f, monkeypatch):
+    run, activities, sandboxes = await task_fixture(f, monkeypatch)
+    # An operator-allowlisted project without run billing admits tasks with no API budget.
+    await f.db.pool.execute("DELETE FROM billing_run_budgets WHERE run_id=$1", run.id)
+    await f.db.pool.execute("UPDATE billing_accounts SET run_billing_enabled=false")
+    return run, activities, sandboxes
+
+
+async def test_task_paused_before_its_first_turn_resumes_on_the_api(billed, monkeypatch):
+    f = billed
+    run, activities, sandboxes = await unbilled_allowlisted_task(f, monkeypatch)
+    await f.db.request_task_control(run_id=run.id, control="pause")
+    payload = {"run_id": str(run.id), "turn_number": "1"}
+    assert await activities.run_project_task_turn(payload) == "paused"
+    sandboxes.create.assert_not_awaited()
+    await f.db.clear_task_control(run_id=run.id)
+    resumed = await f.db.get_run(run.id)
+    assert resumed.task_turn_number == 1
+    async with f.db.pool.acquire() as conn:
+        auth = await auth_contract(f.db, conn, resumed, f.settings)
+    assert is_api_contract(auth)
+
+
+async def test_task_failed_first_preflight_is_not_read_as_an_oauth_turn(billed, monkeypatch):
+    f = billed
+    run, activities, sandboxes = await unbilled_allowlisted_task(f, monkeypatch)
+    f.settings.luna_api_key = None
+    payload = {"run_id": str(run.id), "turn_number": "1"}
+    with pytest.raises(ValueError, match="server-side OpenAI credential"):
+        await activities.run_project_task_turn(payload)
+    sandboxes.create.assert_not_awaited()
+    f.settings.luna_api_key = "synthetic"
+    sandboxes.run_task_and_kill.return_value = SandboxTaskResult(
+        outcome="completed", summary="Ready", message="Summary", question=None, has_changes=False
+    )
+    assert await activities.run_project_task_turn(payload) == "completed"
+    assert sandboxes.create.await_count == 1
+    assert is_api_contract(
+        (await f.db.get_effect(f"{run.id}:task_codex_auth")).result["codex_auth"]
+    )
 
 
 async def test_historical_task_keeps_oauth(billed, monkeypatch):

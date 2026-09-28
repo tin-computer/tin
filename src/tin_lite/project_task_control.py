@@ -8,6 +8,7 @@ surfaces never drift. Every read here is the Postgres projection; nothing reads 
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -127,6 +128,36 @@ async def load_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> Wor
     return run
 
 
+async def _resume_waiting_task(runtime, run: WorkflowRun) -> WorkflowRun:
+    """Wake a waiting task's workflow, then clear its waiting projection.
+
+    The signal goes first: if it fails, Postgres still shows the task waiting, so a retry
+    resumes it again instead of finding a running task that no turn will ever pick up.
+    """
+    handle = runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
+    await handle.signal("resume")
+    try:
+        return await runtime.database.clear_task_control(run_id=run.id)
+    except RuntimeError:
+        # The resumed turn already moved the task to running before this update.
+        current = await runtime.database.get_run(run.id)
+        if current is None or current.status is not RunStatus.RUNNING:
+            raise
+        return current
+
+
+async def resume_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> WorkflowRun:
+    """Resume a paused task, or one waiting at a saved checkpoint, without a message."""
+    run = await load_project_task(runtime=runtime, run_id=run_id, clerk_user_id=clerk_user_id)
+    # A resume sent to a running workflow would skip its next question or review.
+    if run.status not in {RunStatus.NEEDS_INPUT, RunStatus.PAUSED}:
+        raise ProjectTaskConflictError("task is not paused or waiting for an answer")
+    try:
+        return await _resume_waiting_task(runtime, run)
+    except Exception as exc:
+        raise ProjectTaskDeliveryError("task resume was not accepted") from exc
+
+
 async def send_project_task_message(
     *,
     runtime,
@@ -153,6 +184,7 @@ async def send_project_task_message(
     database = runtime.database
     waiting = run.status in {RunStatus.NEEDS_INPUT, RunStatus.PAUSED}
     kind = task_message_kind(run)
+    prior = None
     if request_id is not None:
         # A replay after the first attempt resumed the task must keep the entry it saved,
         # even though the task has since moved on and a fresh message would be direction.
@@ -178,10 +210,12 @@ async def send_project_task_message(
     except RuntimeError as exc:
         raise ProjectTaskConflictError(str(exc)) from exc
     try:
-        if waiting:
-            await database.clear_task_control(run_id=run_id)
-            handle = runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
-            await handle.signal("resume")
+        if prior is not None and not (waiting and prior.delivered_at is None):
+            # A replay never delivers its saved entry twice. The running turn already has it,
+            # or reads it as an undelivered direction when that turn ends.
+            delivery = "delivered" if prior.delivered_at is not None else "queued"
+        elif waiting:
+            await _resume_waiting_task(runtime, run)
             delivery = "resumed"
         else:
             delivered = await runtime.sandboxes.control_task(
@@ -216,10 +250,23 @@ async def approve_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> 
     if run.status is not RunStatus.NEEDS_INPUT or run.task_phase != "review":
         raise ProjectTaskConflictError("task changes are not waiting for approval")
     try:
-        handle = runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
-        await handle.signal("approve")
-        return await runtime.database.begin_task_approval(
+        # Applying is recorded before the signal, so an apply that fails at once can return
+        # the task to review for another approval.
+        approving = await runtime.database.begin_task_approval(
             run_id=run_id, clerk_user_id=clerk_user_id
         )
     except Exception as exc:
         raise ProjectTaskDeliveryError("task approval was not accepted") from exc
+    try:
+        handle = runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
+        await handle.signal("approve")
+    except BaseException as exc:
+        # Any interruption, including a cancelled caller, hands the task back to review with
+        # the note approval cleared; otherwise it stays applying with no approve delivered.
+        await asyncio.shield(
+            runtime.database.reopen_task_review(run_id=run_id, error_message=run.error_message)
+        )
+        if isinstance(exc, Exception):
+            raise ProjectTaskDeliveryError("task approval was not accepted") from exc
+        raise
+    return approving
