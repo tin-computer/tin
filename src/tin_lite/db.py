@@ -3224,16 +3224,25 @@ class Database:
                    workflow.key AS workflow_key,
                    workflow.title AS workflow_title,
                    COALESCE(decision.kind, 'review') AS kind,
-                   CASE WHEN workflow.key='content.generate' AND workflow.project_id IS NULL
-                       AND COALESCE(decision.title, 'Review workflow output')
-                           ='Review workflow output'
-                       THEN COALESCE('Review: ' || (
-                           SELECT receipt.result->'item'->>'title' FROM effect_receipts receipt
-                           WHERE receipt.execution_key=
-                               'content-draft:' || run.id::text || ':prepare'
-                             AND receipt.operation='content.generate' AND receipt.status='completed'
-                       ), 'Review ' || workflow.title)
-                       ELSE COALESCE(decision.title, 'Review ' || workflow.title) END AS title,
+                   -- Older reviews saved one generic title; name what they produced instead.
+                   CASE WHEN COALESCE(decision.title, 'Review workflow output')
+                           <>'Review workflow output'
+                       THEN decision.title
+                       ELSE 'Review: ' || COALESCE(
+                           CASE WHEN workflow.key='content.generate'
+                               AND workflow.project_id IS NULL THEN (
+                               SELECT receipt.result->'item'->>'title'
+                               FROM effect_receipts receipt
+                               WHERE receipt.execution_key=
+                                   'content-draft:' || run.id::text || ':prepare'
+                                 AND receipt.operation='content.generate'
+                                 AND receipt.status='completed'
+                           ) END,
+                           NULLIF(run.artifact_title, ''),
+                           CASE WHEN run.executor = 'project.task'
+                               THEN NULLIF(run.task_title, '') END,
+                           workflow.title
+                       ) END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -6857,11 +6866,16 @@ class Database:
                 )
             if review_required and row["review_decision"] is None:
                 filename = artifact_title or artifact_path.rsplit("/", 1)[-1]
-                revision_supported = await conn.fetchval(
-                    "SELECT project_id IS NULL "
+                workflow_row = await conn.fetchrow(
+                    "SELECT title, project_id IS NULL "
                     "AND key IN ('content.generate','content.public_article') "
-                    "FROM workflows WHERE id=$1",
+                    "AS revision_supported FROM workflows WHERE id=$1",
                     row["workflow_id"],
+                )
+                revision_supported = workflow_row and workflow_row["revision_supported"]
+                # Name what the run produced, or the workflow when the output has no title.
+                title = "Review: " + (
+                    artifact_title or (workflow_row and workflow_row["title"]) or "workflow output"
                 )
                 await conn.execute(
                     """
@@ -6870,12 +6884,13 @@ class Database:
                         items, response_schema, feedback_supported, status
                     )
                     VALUES (
-                        $5, $2, $1, 'review', 'Review workflow output', $3,
+                        $5, $2, $1, 'review', $7, $3,
                         '',
                         $4::jsonb, '{}'::jsonb, $6, 'pending'
                     )
                     ON CONFLICT (id) DO UPDATE SET
-                        run_id=EXCLUDED.run_id, explanation=EXCLUDED.explanation,
+                        run_id=EXCLUDED.run_id, title=EXCLUDED.title,
+                        explanation=EXCLUDED.explanation,
                         items=EXCLUDED.items, feedback_supported=EXCLUDED.feedback_supported,
                         status='pending', response=NULL, applied_at=NULL,
                         applied_by_clerk_user_id=NULL
@@ -6905,6 +6920,7 @@ class Database:
                     ),
                     row["review_root_run_id"] or run_id,
                     bool(revision_supported),
+                    title[:160],
                 )
                 await conn.execute(
                     """
