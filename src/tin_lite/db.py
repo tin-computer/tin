@@ -3290,7 +3290,11 @@ class Database:
             ) AS decision ON true
             WHERE run.project_id = $1
               AND run.status = 'needs_input'
-              AND (run.review_required OR run.executor = 'project.task')
+              -- A task asking a question waits on an answer, not a decision.
+              AND (run.review_required OR (
+                  run.executor = 'project.task' AND run.task_phase = 'review'
+                  AND run.task_has_changes IS NOT FALSE
+              ))
             UNION ALL
             SELECT run.id, run.id, run.project_id, workflow.key, workflow.title,
                    'output_conflict',
