@@ -1,6 +1,5 @@
 .compare-view { min-width: 0; --font-mono: var(--mono); --font-sans: var(--sans); }
 .compare-view .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
-.markdown-viewer.is-comparison-reader .markdown-context-bar .markdown-return { display: inline-flex; }
 .compare-context { display: flex; align-items: center; gap: 14px; padding: 15px 40px; border-bottom: 1px solid rgb(var(--ink-rgb) / 10%); }
 .compare-context button, .compare-legend button, .compare-notice button, .compare-footer > div button { border: 0; padding: 0; color: var(--accent-text); background: transparent; font-size: 12px; font-weight: 700; cursor: pointer; }
 .compare-context button { flex-shrink: 0; }

@@ -8149,11 +8149,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 }
 
 @media (max-width: 1199px) {
-  .markdown-context-bar .markdown-return,
-  .markdown-context-bar .markdown-context-separator {
-    display: none;
-  }
-
   .markdown-reader-layout {
     display: block;
     width: 680px;
