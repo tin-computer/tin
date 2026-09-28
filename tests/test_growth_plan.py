@@ -11,6 +11,7 @@ import pytest
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import growth_plan as plan
+from tin_lite import growth_plan_activities as plan_activities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import CodeStorage
 from tin_lite.domain import GROWTH_ONBOARDING_PLAN_PATH, GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME
@@ -1155,9 +1156,11 @@ async def activity_fixture(db, monkeypatch, *, model=None):
     f.storage.stage_native_output = AsyncMock(side_effect=stage)
     f.model = model or FakeModel()
 
-    async def generate(route_key, request):
+    async def generate(route_key, request, *, timeout_seconds=None):
         step = step_of(request.output_schema_name)
         assert route_key == plan.route_for(step).key
+        # Every plan step waits longer than the model client's 90-second default.
+        assert timeout_seconds == plan_activities.MODEL_TIMEOUT_SECONDS > 90
         try:
             parsed = await f.model(
                 step, request.system, request.messages[0].content, request.output_schema, 0, ""
