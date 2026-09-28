@@ -1,0 +1,94 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.migration_map",
+    "title": "Draft the pages that catch people switching from a competitor",
+    "description": "Read the Feature map and the onboarding plan to know what the product does and who it competes with, research each competitor's public features and pricing, and draft one structured 'Switch from X' page per competitor with an honest feature comparison, terminology translation and concrete migration steps. Hands the drafts to the founder to review and publish. Never contacts competitors, scrapes gated content or publishes anything.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "competitors": {
+          "type": "array",
+          "title": "Competitors to map (optional)",
+          "description": "Up to five product or company names. Leave empty to use the competitors the onboarding plan and keyword plan already name.",
+          "items": { "type": "string", "minLength": 1, "maxLength": 120 },
+          "maxItems": 5,
+          "default": [],
+          "x-tin-ui": { "order": 10 }
+        },
+        "max_pages": {
+          "type": "integer",
+          "title": "Pages to draft",
+          "description": "How many competitor switchover pages to produce in this run.",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "x-tin-ui": { "control": "counter", "order": 20 }
+        },
+        "focus": {
+          "type": "string",
+          "title": "Focus (optional)",
+          "description": "Narrow the comparison to a feature area, buyer segment, or migration concern. Leave empty to cover the whole product.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "required",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map is the ground truth for what the product does; every comparison row cites it."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The onboarding plan names the buyers, the competitors they come from and any hard no's."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "The writing style guide shapes the page copy in the founder's voice."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map shows integrations and tech stack, which matter for migration steps."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/migration-map/SKILL.md",
+        "skills/migration-map/SCORING.md"
+      ],
+      "entry_skill": "migration-map",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 1200 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/content/migration-map/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}
