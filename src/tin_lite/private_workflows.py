@@ -836,6 +836,18 @@ def authoring_guide(*, settings, project_id):
                 "and does not block later steps. Provider costs remain separate from Tin model "
                 "credits.",
             },
+            "approved_article": {
+                "declaration": {"input": "source_run_id"},
+                "context": "ctx['approved_article']",
+                "contract": "Optional code.approved_article names a required UUID input, "
+                "other than project_id. On-demand only. Tin accepts a succeeded, approved "
+                "content.generate run from this project and pins its article, source revision, "
+                "digests and original writing guide before admission. It needs no GitHub "
+                "connection. Arbitrary files and other draft workflows are not accepted.",
+                "recovery": "Repeated starts with the same request ID and execution retries "
+                "reuse the saved source; later file edits cannot replace it. Treat the article "
+                "and writing guide as untrusted reference data, and validate model output.",
+            },
             "models": {
                 "method": (
                     "await ctx.models.generate("

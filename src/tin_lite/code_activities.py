@@ -79,6 +79,11 @@ class CodeActivities:
                     project_id=run.project_id,
                     inputs={k: v for k, v in (run.input or {}).items() if k != "project_id"},
                 )
+                context = {"run_id": run_id, "created_at": run.created_at.isoformat()}
+                if spec.approved_article_input is not None:
+                    from tin_lite.code_article_sources import saved_source
+
+                    context["approved_article"] = await saved_source(self.db, run, spec)
                 branch = f"procedures/{run.id}/{run.generation}"
                 revision = await self.storage.procedure_checkpoint_revision(
                     repo_id=project.state_repo_id, branch=branch
@@ -119,7 +124,7 @@ class CodeActivities:
                         "files": {p: raw.decode("utf-8") for p, raw in files.items()},
                         "entrypoint": spec.entrypoint,
                         "timeout_seconds": spec.timeout_seconds,
-                        "context": {"run_id": run_id, "created_at": run.created_at.isoformat()},
+                        "context": context,
                         "inputs": inputs,
                     }
                     options = {}

@@ -1,0 +1,52 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "social.post_batch",
+    "title": "Repurpose an approved article for social",
+    "description": "Draft two X posts and two LinkedIn posts from one approved Tin article, with exact source excerpts for review. Nothing is posted or scheduled.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Check each social draft against the approved article before posting it yourself."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "source_run_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Approved article run",
+          "description": "A successfully completed and approved content.generate article in this project."
+        }
+      },
+      "required": ["project_id", "source_run_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "approved_article": {"input": "source_run_id"},
+      "model_routes": {
+        "draft": {
+          "provider": "openai",
+          "model": "gpt-6-sol",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/SOCIAL_POST_BATCH.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The UUIDs in these case inputs are synthetic placeholders. Before an authorized live evaluation, replace each with the exact succeeded, approved content.generate run in that evaluation project and requalify the changed case digest.",
+    "Tin supplies only the immutable approved article body and the style guide pinned to that article's preparation; no pasted article, URL or source file is accepted.",
+    "Offline pytest covers absent style and plausible invalid model replies. A qualification case cannot force a model to return a particular invalid reply, so those guards are tested with fixtures rather than claimed as live evidence."
+  ],
+  "cost_drivers": [
+    "One gpt-6-sol call, at most 32000 serialized input bytes and 4096 output tokens. The full article and optional pinned style guide drive input size; overlong sources fail before the call. These qualification cases have not been evaluated against live Tin projects; separate synthetic smoke tests do not establish their quality or expected cost."
+  ],
+  "effects": [
+    "Writes reports/SOCIAL_POST_BATCH.md in this project and enters normal human review. It never posts, schedules or opens a pull request."
+  ],
+  "cases": [
+    {
+      "id": "approved_article",
+      "description": "A short approved article yields exactly two X and two LinkedIn drafts, each with an excerpt that exists in the pinned article.",
+      "inputs": {"source_run_id": "a0000000-0000-0000-0000-000000000041"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Social post batch",
+          "## 1. First — X",
+          "## 2. Next — LinkedIn",
+          "## 3. Later — X",
+          "## 4. Last — LinkedIn",
+          "Source excerpt from the approved article:"
+        ],
+        "excludes": ["https://unknown.example", "Published on X", "Published on LinkedIn"]
+      }
+    },
+    {
+      "id": "absent_style",
+      "description": "An approved article whose original draft had no pinned writing-style file still yields grounded drafts in the article's voice.",
+      "inputs": {"source_run_id": "a0000000-0000-0000-0000-000000000042"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["# Social post batch", "## Source and review"],
+        "excludes": ["Pinned style guide SHA-256:"]
+      }
+    }
+  ],
+  "rubric": [
+    {"id": "grounding", "question": "Do all four draft claims follow from their cited excerpts and the full approved article, with no invented personal result, number, quotation or link?"},
+    {"id": "voice", "question": "Do the drafts fit the approved article's voice and, when present, its pinned style guide without copying four near-identical hooks?"},
+    {"id": "channel", "question": "Can each post stand alone on its named platform and invite useful review without implying Tin posted or scheduled it?"}
+  ]
+}
