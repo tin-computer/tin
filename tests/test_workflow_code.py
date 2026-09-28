@@ -226,6 +226,46 @@ async def test_mcp_code_zero_balance_and_duplicate_publication(billed, monkeypat
     assert sum(e.event_type == "code_workflow_ready" for e in events) == 1
 
 
+async def test_unknown_temporal_start_of_included_code_run_recovers_same_id(billed, monkeypatch):
+    from temporalio.common import WorkflowIDReusePolicy
+
+    from tin_lite.billing_recovery import recover_dispatches
+
+    f = billed
+    server, _common, _code = await setup(f, monkeypatch)
+    active = await activate_code(f, server)
+    f.runtime.temporal.start_workflow.side_effect = TimeoutError()
+    for _ in range(2):
+        with pytest.raises(ToolError, match="unconfirmed"):
+            await start(f, server, active)
+    run, child = [
+        await f.db.get_run(row["id"])
+        for row in await f.db.pool.fetch(
+            "SELECT id FROM workflow_runs WHERE executor='workflow.code' ORDER BY created_at"
+        )
+    ]
+    assert run.status == child.status == RunStatus.PENDING
+    # A run prepared under a billing parent is dispatched by that parent, never recovered.
+    await f.db.pool.execute(
+        """UPDATE effect_receipts SET result=jsonb_set(result,'{parent_run_id}',to_jsonb($2::text))
+           WHERE execution_key=$1""",
+        f"billing-included:{child.id}",
+        str(run.id),
+    )
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET created_at=now()-interval '1 minute' WHERE id=ANY($1::uuid[])",
+        [run.id, child.id],
+    )
+    f.runtime.temporal.start_workflow.side_effect = None
+    f.runtime.temporal.start_workflow.reset_mock()
+    await recover_dispatches(f.runtime, f.settings)
+    assert f.runtime.temporal.start_workflow.await_count == 1
+    kwargs = f.runtime.temporal.start_workflow.call_args.kwargs
+    assert kwargs["id"] == run.temporal_workflow_id
+    assert kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 0
+
+
 async def test_invalid_output_never_publishes(publication_db, monkeypatch):
     f = await fixture(publication_db)
     compute = SyntheticCompute({"path": OUTPUT, "content": "x" * 8001})

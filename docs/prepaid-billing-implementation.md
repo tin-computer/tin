@@ -131,7 +131,10 @@ subscription, key, or webhook was changed.
   redirects do not credit funds or start work. Refunds reserve only unused funds; charges consume
   the oldest top-up first. Ledger rows are append-only, including compensating dispute entries.
 - External/dashboard refunds and disputes suspend further spending pending operator review.
-  There is no automatic dispute-resolution or account-resume control in this pilot. An ambiguous
+  There is no automatic dispute-resolution or account-resume control in this pilot. An inquiry
+  that closes without a chargeback (`warning_closed`) restores its credits and is stored with
+  status `won`, avoiding a migration; like `won` and `lost`, it is terminal, so later events on
+  that dispute ID are ignored. An ambiguous
   payment/refund older than Stripe's protected retry window is not repurchased automatically;
   it needs operator reconciliation. Replay a missing `invoice.paid` event if its invoice link
   has not arrived.
