@@ -159,13 +159,24 @@ function clearConnectRequest() {
   } catch (_error) {}
 }
 
+const TIN_FOLDER_SHAPE = '<path d="M1.75 5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 13.5H3a1.25 1.25 0 0 1-1.25-1.25z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/>';
+const TIN_FOLDER_OPEN_SHAPE = '<path d="M1.75 8V5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25V8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M3.4 8.25H14l-1.4 4.6a.9.9 0 0 1-.86.65H2.75a.85.85 0 0 1-.82-1.08z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/>';
+
+// The tree draws this in place of a folder's chevron: a disclosure mark and a folder, closed or
+// open. The row's --tin-tree-open (projectFileTreeUnsafeCss) picks one, so no code edits the rows.
+const TIN_TREE_FOLDER_SYMBOL = `<symbol id="tin-tree-folder" viewBox="0 0 38 16">
+  <g style="opacity: calc(1 - var(--tin-tree-open, 0))"><path d="M5.5 5 8.5 8l-3 3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><g transform="translate(22 0)">${TIN_FOLDER_SHAPE}</g></g>
+  <g style="opacity: var(--tin-tree-open, 0)"><path d="M4 6.5 7 9.5l3-3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><g transform="translate(22 0)">${TIN_FOLDER_OPEN_SHAPE}</g></g>
+</symbol>`;
+
 const TIN_FILE_ICON_SPRITE = `<svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
   <symbol id="file-tree-icon-chevron" viewBox="0 0 16 16"><path d="M5.5 3.5 10 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width=".95" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="file-tree-icon-file" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
   <symbol id="file-tree-icon-dot" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1" fill="currentColor"/></symbol>
   <symbol id="file-tree-icon-lock" viewBox="0 0 16 16"><path d="M5 7V5.5a3 3 0 0 1 6 0V7m-7 0h8v6H4z" fill="none" stroke="currentColor" stroke-width=".95"/></symbol>
-  <symbol id="tin-folder" viewBox="0 0 16 16"><path d="M1.75 5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 13.5H3a1.25 1.25 0 0 1-1.25-1.25z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
-  <symbol id="tin-folder-open" viewBox="0 0 16 16"><path d="M1.75 8V5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25V8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M3.4 8.25H14l-1.4 4.6a.9.9 0 0 1-.86.65H2.75a.85.85 0 0 1-.82-1.08z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
+  <symbol id="tin-folder" viewBox="0 0 16 16">${TIN_FOLDER_SHAPE}</symbol>
+  <symbol id="tin-folder-open" viewBox="0 0 16 16">${TIN_FOLDER_OPEN_SHAPE}</symbol>
+  ${TIN_TREE_FOLDER_SYMBOL}
   <symbol id="tin-file" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
   <symbol id="tin-markdown" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3M5.5 8.5h5M5.5 11h3.25" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="tin-json" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M6.7 7.6c-.6 0-.9.3-.9.8v.7c0 .4-.25.6-.6.65.35.05.6.25.6.65v.7c0 .5.3.8.9.8M9.3 7.6c.6 0 .9.3.9.8v.7c0 .4.25.6.6.65-.35.05-.6.25-.6.65v.7c0 .5-.3.8-.9.8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -235,7 +246,6 @@ const state = {
   filesSearch: "",
   filesDirectory: "",
   filesTree: null,
-  filesTreeObserver: null,
   filesTreeSubscription: null,
   filesUpdated: false,
   fileCache: new Map(),
@@ -4693,15 +4703,8 @@ function projectFileTreeUnsafeCss() {
       justify-content: flex-start;
       gap: 8px;
     }
-    .tin-tree-disclosure {
-      width: 14px;
-      color: var(--ink-muted);
-      font-family: "Geist Mono", "SFMono-Regular", Consolas, monospace;
-      font-size: 11px;
-      line-height: 1;
-      text-align: center;
-    }
-    .tin-tree-folder { width: 16px; height: 16px; flex: 0 0 16px; }
+    [data-item-type="folder"] > [data-item-section="icon"] > svg { transform: none; }
+    [data-item-type="folder"][aria-expanded="true"] { --tin-tree-open: 1; }
     [data-item-type="folder"] > [data-item-section="content"] {
       display: flex;
       align-items: center;
@@ -4717,39 +4720,6 @@ function projectFileTreeUnsafeCss() {
       font-size: 11px;
     }
   `;
-}
-
-function decorateProjectFileTree() {
-  const container = state.filesTree?.getFileTreeContainer();
-  const root = container?.shadowRoot;
-  if (!root) return;
-  let scheduled = false;
-  const apply = () => {
-    scheduled = false;
-    root.querySelectorAll('[data-type="item"][data-item-type="folder"]').forEach((row) => {
-      const icon = row.querySelector('[data-item-section="icon"]');
-      if (icon && !icon.querySelector(".tin-tree-disclosure")) {
-        const open = row.getAttribute("aria-expanded") === "true";
-        icon.innerHTML = `<span class="tin-tree-disclosure">${open ? "⌄" : "›"}</span><svg class="tin-tree-folder" aria-hidden="true" viewBox="0 0 16 16"><use href="#${open ? "tin-folder-open" : "tin-folder"}"></use></svg>`;
-      } else if (icon) {
-        const open = row.getAttribute("aria-expanded") === "true";
-        const disclosure = icon.querySelector(".tin-tree-disclosure");
-        const glyph = open ? "⌄" : "›";
-        const href = `#${open ? "tin-folder-open" : "tin-folder"}`;
-        if (disclosure.textContent !== glyph) disclosure.textContent = glyph;
-        const use = icon.querySelector("use");
-        if (use?.getAttribute("href") !== href) use?.setAttribute("href", href);
-      }
-    });
-  };
-  const observer = new MutationObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    window.requestAnimationFrame(apply);
-  });
-  observer.observe(root, { attributes: true, childList: true, subtree: true });
-  state.filesTreeObserver = observer;
-  apply();
 }
 
 function mountProjectFileTree() {
@@ -4775,7 +4745,10 @@ function mountProjectFileTree() {
       set: "none",
       colored: false,
       spriteSheet: TIN_FILE_ICON_SPRITE,
-      remap: { "file-tree-icon-file": "tin-file" },
+      remap: {
+        "file-tree-icon-file": "tin-file",
+        "file-tree-icon-chevron": { name: "tin-tree-folder", width: 38, height: 16, viewBox: "0 0 38 16" },
+      },
       byFileExtension: { md: "tin-markdown", markdown: "tin-markdown", json: "tin-json" },
       byFileName: { "SKILL.md": "tin-skill" },
     },
@@ -4831,7 +4804,6 @@ function mountProjectFileTree() {
     Object.entries(styles).forEach(([name, value]) => container.style.setProperty(name, value));
   }
   state.filesTree = tree;
-  decorateProjectFileTree();
   revealFilesDirectory(tree, state.filesDirectory);
 }
 
@@ -4851,8 +4823,6 @@ function revealFilesDirectory(tree, directory) {
 }
 
 function disposeFilesTree() {
-  state.filesTreeObserver?.disconnect();
-  state.filesTreeObserver = null;
   state.filesTreeSubscription?.();
   state.filesTreeSubscription = null;
   state.filesTree?.cleanUp();

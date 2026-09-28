@@ -75,3 +75,35 @@ test("each folder in an open file's path opens that folder in Files", {timeout: 
     server.close();
   }
 });
+
+test("tree rows keep the right icon while folders open and close", {timeout: 120000}, async () => {
+  const {server, base} = await serveApp();
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/files"});
+    await page.locator('[data-item-path="brand/"]').waitFor();
+    const wrongIcons = () => page.evaluate(() => {
+      const root = [...document.querySelectorAll("#project-file-tree *")].find(node => node.shadowRoot).shadowRoot;
+      return [...root.querySelectorAll('[data-type="item"]')].flatMap(row => {
+        const icons = [...row.querySelectorAll('[data-item-section="icon"] svg use')].map(use => use.getAttribute("href"));
+        const expected = row.dataset.itemType === "folder" ? ["#tin-tree-folder"] : null;
+        const ok = expected ? icons.join() === expected.join() : icons.length === 1 && icons[0] !== "#tin-tree-folder";
+        return ok ? [] : [`${row.dataset.itemPath}: ${icons.join(" ") || "no icon"}`];
+      });
+    });
+    // Rows are reused as folders close and open; a reused row must not keep a folder's icon.
+    for (const folder of ["brand/", "reports/", "brand/", "context/", "reports/", "reports/answers/", "reports/keyword-plan/", "brand/"]) {
+      await page.locator(`[data-item-path="${folder}"]`).click();
+      await page.waitForTimeout(100);
+      assert.deepEqual(await wrongIcons(), [], `after toggling ${folder}`);
+    }
+    const open = await page.locator('[data-item-path="reports/"]').evaluate(row => getComputedStyle(row).getPropertyValue("--tin-tree-open").trim());
+    const closed = await page.locator('[data-item-path="brand/"]').evaluate(row => getComputedStyle(row).getPropertyValue("--tin-tree-open").trim());
+    assert.deepEqual([open, closed], ["1", ""]);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {
+    await browser.close();
+    server.close();
+  }
+});
