@@ -66,6 +66,12 @@ trusts a decoded-but-unverified audience or a token-supplied key URL. Every reso
 in either source must include Tin's exact resource. Conflicts and malformed claims fail
 closed. The expected resource never comes from Host, app-navigation or legacy origins.
 
+MCP runs stateless HTTP, so the shared verifier keeps a small in-process memory of
+completed successful verifications, keyed by the token's SHA-256 digest (the raw token is
+not stored). An entry lasts at most 60 seconds and never past the verified expiry;
+rejections and upstream errors are never remembered. A revocation at Clerk therefore takes
+effect within 60 seconds. Project membership is still checked on every request.
+
 For legacy clients that cannot obtain resource-bound tokens, an operator may explicitly
 authorize exact, case-sensitive IDs in `TIN_LITE_MCP_OAUTH_CLIENT_IDS`. This optional
 comma-separated policy defaults empty and is not needed for ordinary new connections.
