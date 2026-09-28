@@ -368,7 +368,8 @@ class TinActivities:
         )
         if not created and run.status == RunStatus.FAILED:
             return {}
-        if created:
+        # A retry can find the run it created before failing; it is not admitted yet.
+        if created or run.status == RunStatus.PENDING:
             if evaluation.blocking:
                 # A schedule cannot ask the founder to run something first; the failed run
                 # projection is how the missing prerequisite becomes visible.
@@ -438,13 +439,6 @@ class TinActivities:
                 )
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
-                run = await self._require_run(run_id)
-                from tin_lite import design_api
-                from tin_lite.codex_api import execution_profile, is_api_contract, select_contract
-
-                design = design_api.procedure(
-                    getattr(self._settings, "sandbox_timeout_seconds", 900)
-                )
                 previous = (existing.result or {}) if existing else {}
                 modern = existing is None or previous.get("runner") == "design-api-adapter-v1"
                 if existing is None:
@@ -454,6 +448,13 @@ class TinActivities:
                         execution_key=execution_key,
                         result={"runner": "design-api-adapter-v1"},
                     )
+                run = await self._require_run(run_id)
+                from tin_lite import design_api
+                from tin_lite.codex_api import execution_profile, is_api_contract, select_contract
+
+                design = design_api.procedure(
+                    getattr(self._settings, "sandbox_timeout_seconds", 900)
+                )
                 codex_auth = (existing.result or {}).get("codex_auth") if existing else None
                 if codex_auth is None:
                     codex_auth = (
@@ -2694,8 +2695,26 @@ class TinActivities:
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
             if existing is not None and existing.status == "completed":
                 return
+            if existing is not None and existing.status == "failed":
+                # Only sandbox creation is retryable here. The separate paid
+                # model-attempt receipt is never reset or repurchased.
+                await conn.execute(
+                    "UPDATE effect_receipts SET status='started', error_message=NULL "
+                    "WHERE execution_key=$1 AND operation='procedure_sandbox_create' "
+                    "AND status='failed'",
+                    execution_key,
+                )
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
+                previous = (existing.result or {}) if existing else {}
+                modern = existing is None or previous.get("runner") == "procedure-api-v1"
+                if existing is None:
+                    # A failed preflight is not an old OAuth receipt on retry.
+                    await self._db.save_effect_progress(
+                        conn,
+                        execution_key=execution_key,
+                        result={"runner": "procedure-api-v1"},
+                    )
                 _workflow_definition, procedure = await self._pinned_codex_procedure(run_id)
                 run = await self._require_run(run_id)
                 from tin_lite import content_draft
@@ -2708,12 +2727,12 @@ class TinActivities:
                 await self._check_private_attempt(run, _workflow_definition)
                 from tin_lite.codex_api import execution_profile, select_contract
 
-                codex_auth = (existing.result or {}).get("codex_auth") if existing else None
+                codex_auth = previous.get("codex_auth")
                 if codex_auth is None:
-                    # Existing create attempts predate this pilot and keep OAuth.
+                    # Unmarked create attempts predate this pilot and keep OAuth.
                     codex_auth = (
                         {"mode": "chatgpt_oauth"}
-                        if existing
+                        if not modern
                         else await select_contract(
                             db=self._db,
                             conn=conn,
@@ -2722,10 +2741,14 @@ class TinActivities:
                             settings=self._settings,
                         )
                     )
-                if existing is None or existing.status == "started":
-                    await self._db.save_effect_progress(
-                        conn, execution_key=execution_key, result={"codex_auth": codex_auth}
-                    )
+                await self._db.save_effect_progress(
+                    conn,
+                    execution_key=execution_key,
+                    result={
+                        "codex_auth": codex_auth,
+                        **({"runner": "procedure-api-v1"} if modern else {}),
+                    },
+                )
                 if run.status.value not in {"pending", "running"}:
                     raise StaleGenerationError("The procedure is no longer active")
                 project = await self._require_project(run.project_id)
