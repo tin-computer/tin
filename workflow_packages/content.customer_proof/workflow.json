@@ -1,0 +1,70 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.customer_proof",
+    "title": "Find customers to interview for a proof story",
+    "description": "Uses a bounded Stripe paid-tenure signal to identify plausible case-study interview candidates, then prepares questions and story hypotheses to investigate. Tenure is not evidence of customer success or publication permission.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "retention_days": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 730,
+          "default": 180,
+          "title": "Minimum paid tenure for an interview candidate",
+          "x-tin-ui": {"control": "counter", "order": 10}
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 180,
+          "maximum": 1095,
+          "default": 730,
+          "title": "How far back to inspect subscriptions",
+          "x-tin-ui": {"control": "counter", "order": 20}
+        },
+        "exclude_domains": {
+          "type": "array",
+          "maxItems": 20,
+          "uniqueItems": true,
+          "default": [],
+          "items": {"type": "string", "minLength": 3, "maxLength": 253},
+          "title": "Your own and test email domains to exclude"
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {"provider_key": "payments.stripe", "capabilities": ["subscriptions.read"], "required": true}
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "services": {
+        "stripe": {"provider_key": "payments.stripe", "max_calls": 8, "max_response_bytes": 64000}
+      },
+      "model_routes": {
+        "brief": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 16000,
+          "max_output_tokens": 1024
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/content/CUSTOMER_PROOF.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

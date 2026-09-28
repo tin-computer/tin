@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Stripe subscriptions and expanded customers are read only through Tin's payments.stripe connection.",
+    "Paid tenure begins at trial_end when later than subscription start; trials do not count.",
+    "Current active and past-due subscription chains meeting retention_days are candidate signals only; they do not prove customer success or consent.",
+    "Model output selects only predefined question and angle IDs. Offline fake model responses, including unusable results, are exercised in tests/test_content_customer_proof.py."
+  ],
+  "cost_drivers": [
+    "At most eight bounded Stripe reads and one managed gpt-6-luna call. Provider and model costs are governed by their existing Tin contracts.",
+    "Model input contains sanitized indexed billing facts only; it excludes customer names, email addresses, Stripe IDs, domains, product summary text, and metadata."
+  ],
+  "effects": [
+    "Read-only payments.stripe subscriptions.list calls through the project's restricted Stripe connection.",
+    "One Markdown artifact at reports/content/CUSTOMER_PROOF.md, using the fixed-path workflow.code artifact contract.",
+    "No customer contact, provider mutation, publishing, or workflow starts."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A current work-domain customer with sufficient paid tenure is listed as a candidate. The report must label test-mode evidence and state that tenure does not establish success or permission.",
+      "inputs": {"retention_days": 180, "lookback_days": 730},
+      "expect": {
+        "contains": ["# Customer Proof Discovery Brief", "Candidate 1", "Paid tenure", "TEST MODE", "does not establish customer success", "Permission to request"],
+        "excludes": ["@studio0.io", "cus_", "sub_"]
+      }
+    },
+    {
+      "id": "trial_boundary",
+      "description": "A subscription old enough by creation date but with a recent trial_end has less than the paid-tenure threshold and must not be selected.",
+      "inputs": {"retention_days": 180, "lookback_days": 730},
+      "expect": {"contains": ["No candidates met the selection rule", "trial days do not count"]}
+    },
+    {
+      "id": "filtered_candidates",
+      "description": "Only personal-email and excluded-domain accounts are present. No candidate or interview recommendation may be produced.",
+      "inputs": {"retention_days": 180, "lookback_days": 730, "exclude_domains": ["internal.example"]},
+      "expect": {"contains": ["No eligible candidates found", "Personal email domains"], "excludes": ["Candidate 1"]}
+    },
+    {
+      "id": "incomplete_read",
+      "description": "More subscriptions remain after eight pages. The report must say coverage is incomplete and identify the call limit.",
+      "inputs": {"retention_days": 180, "lookback_days": 730},
+      "expect": {"contains": ["INCOMPLETE", "eight-call limit", "fitted="]}
+    },
+    {
+      "id": "unusable_model_result",
+      "description": "The offline test supplies unknown candidate/question/angle IDs, unexpected fields, and malformed model data and verifies deterministic safe-template fallback. This qualification case checks the resulting report's invariant interpretation; qualification inputs do not inject a model response.",
+      "inputs": {"retention_days": 180, "lookback_days": 730},
+      "expect": {"contains": ["Important Interpretation", "Story hypotheses to investigate", "Evidence Still Needed"], "excludes": ["success is proven"]}
+    }
+  ],
+  "rubric": [
+    {"id": "privacy", "question": "Are full emails, customer names, Stripe IDs and unrestricted metadata absent from the model payload and report?"},
+    {"id": "honesty", "question": "Does the report describe paid tenure only as a candidate signal and avoid success, attribution, outcome or consent claims?"},
+    {"id": "coverage", "question": "Does the report disclose fitted pages and any incomplete read caused by the eight-call cap?"}
+  ]
+}
