@@ -3,12 +3,25 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 
 MAX_ANSWER_PAGE_SOURCE_BYTES = 300_000
 MAX_ANSWER_PAGE_BYTES = 150_000
 MAX_ANSWER_PAGE_EVIDENCE_BYTES = 1_000_000
 MAX_WEB_SOURCES = 30
+# A pinned suite carrying this marker asks for the search-structured page; older pins keep
+# their four searches and the original page checks.
+SEARCH_STRUCTURE_MARKER = "ANSWER_SEO_V1"
+SEARCH_STRUCTURE = "answer-seo-v1"
+MAX_SEARCH_CALLS = 4
+MAX_STRUCTURED_SEARCH_CALLS = 12
+MAX_META_TITLE = 60
+META_DESCRIPTION_RANGE = (70, 160)
+ANSWER_WORDS_RANGE = (25, 90)  # The skill asks for 40-60 words; this catches a missing answer.
+MIN_CITED_SOURCES = 3
+MIN_INLINE_CITATIONS = 2
+MAX_PARAGRAPH_WORDS = 150
 
 
 class ResponsesClient(Protocol):
@@ -33,11 +46,18 @@ class AnswerPageDrafter:
         self._responses = responses
         self._skill_suite = skill_suite
 
-    async def draft(self, *, project_name: str, sources: list[AnswerPageSource]) -> dict[str, Any]:
+    async def draft(
+        self,
+        *,
+        project_name: str,
+        sources: list[AnswerPageSource],
+        today: str | None = None,
+    ) -> dict[str, Any]:
         source_bytes = sum(len(source.content.encode()) for source in sources)
         if source_bytes > MAX_ANSWER_PAGE_SOURCE_BYTES:
             raise ValueError(f"answer-page sources exceed {MAX_ANSWER_PAGE_SOURCE_BYTES} bytes")
-        reference = {
+        structured = SEARCH_STRUCTURE_MARKER in self._skill_suite
+        reference: dict[str, Any] = {
             "project_name": project_name,
             "sources": [
                 {
@@ -48,6 +68,8 @@ class AnswerPageDrafter:
                 for source in sources
             ],
         }
+        if structured:
+            reference["today"] = today or datetime.now(UTC).date().isoformat()
         response = await self._responses.create(
             {
                 "instructions": self._skill_suite,
@@ -56,15 +78,20 @@ class AnswerPageDrafter:
                 "tools": [{"type": "web_search"}],
                 "tool_choice": {"type": "web_search"},
                 "include": ["web_search_call.action.sources"],
-                "max_tool_calls": 4,
+                "max_tool_calls": MAX_STRUCTURED_SEARCH_CALLS if structured else MAX_SEARCH_CALLS,
                 "text": {"verbosity": "medium"},
             }
         )
         result = _normalize_response(response)
         if "ANSWER_PLAN_V1" in self._skill_suite:
             result["argument_plan"], result["markdown"] = extract_argument_plan(result["markdown"])
+        if structured:
+            result["markdown"] = normalize_search_metadata(
+                result["markdown"], today=reference["today"]
+            )
+            result["structure"] = SEARCH_STRUCTURE
         result["model"] = self._responses.model
-        validate_answer_page(result["markdown"].encode())
+        validate_answer_page(result["markdown"].encode(), structured=structured)
         return result
 
     @staticmethod
@@ -96,6 +123,7 @@ class AnswerPageDrafter:
                         if "argument_plan" in draft
                         else {}
                     ),
+                    **({"structure": draft["structure"]} if "structure" in draft else {}),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -133,16 +161,147 @@ def extract_argument_plan(markdown: str) -> tuple[dict, str]:
     return plan, markdown[match.end() :].lstrip()
 
 
-def validate_answer_page(content: bytes) -> None:
+def normalize_search_metadata(markdown: str, *, today: str) -> str:
+    """Give the page search-listing frontmatter and a last-updated line that code can trust.
+
+    Code, not the model, owns the quoting and the length limits. A missing or oversized value
+    is rebuilt from the page's own title and opening answer instead of failing a paid draft.
+    """
+    fields: dict[str, str] = {}
+    match = re.match(r"\A\s*---[ \t]*\n(.*?)\n---[ \t]*\n+", markdown, re.S)
+    if match is not None:
+        for line in match.group(1).splitlines():
+            key, separator, value = line.partition(":")
+            if separator and key.strip() in {"meta_title", "meta_description"}:
+                fields.setdefault(key.strip(), " ".join(value.strip().strip("\"'").split()))
+        markdown = markdown[match.end() :]
+    page = markdown.lstrip()
+    title = re.match(r"# (.+)", page)
+    if title is not None and not re.search(
+        r"(?m)^Last updated: \d{4}-\d{2}-\d{2}$", re.split(r"(?m)^## ", page)[0]
+    ):
+        page = f"{title.group(0)}\n\nLast updated: {today}\n{page[title.end() :]}"
+    heading = _plain(title.group(1)) if title else ""
+    answer = next(
+        (
+            _plain(block)
+            for block in _prose_blocks(re.split(r"(?m)^## ", page)[0])
+            if not block.startswith(("# ", "Last updated:"))
+        ),
+        "",
+    )
+    meta_title = fields.get("meta_title") or heading
+    if len(meta_title) > MAX_META_TITLE:
+        meta_title = _clip(meta_title, MAX_META_TITLE)
+    low, high = META_DESCRIPTION_RANGE
+    description = fields.get("meta_description", "")
+    if not low <= len(description) <= high:
+        description = _clip(answer, high) if len(answer) >= low else description[:high]
+    header = "".join(
+        f"{key}: {json.dumps(value, ensure_ascii=False)}\n"
+        for key, value in (("meta_title", meta_title), ("meta_description", description))
+    )
+    return f"---\n{header}---\n\n{page}"
+
+
+def _plain(markdown: str) -> str:
+    text = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", markdown)
+    return " ".join(re.sub(r"[`*_]", "", text).split())
+
+
+def _clip(text: str, limit: int) -> str:
+    """Cut at a sentence end when one fits, otherwise at a word boundary."""
+    if len(text) <= limit:
+        return text
+    cut = text[: limit + 1]
+    sentence = max(cut.rfind(". "), cut.rfind("? "), cut.rfind("! "))
+    if sentence >= limit // 2:
+        return cut[: sentence + 1]
+    return cut.rsplit(" ", 1)[0].rstrip(",;:-") if " " in cut else text[:limit]
+
+
+def validate_answer_page(content: bytes, *, structured: bool = False) -> None:
     if not content or len(content) > MAX_ANSWER_PAGE_BYTES:
         raise ValueError(f"answer page must contain between 1 and {MAX_ANSWER_PAGE_BYTES} bytes")
     text = content.decode("utf-8")
+    if structured:
+        text = _validate_search_metadata(text)
     if not text.startswith("# "):
         raise ValueError("answer page must begin with a Markdown title")
     if "\n## Sources\n" not in text:
         raise ValueError("answer page must contain a Sources section")
     if len(re.findall(r"^## ", text, flags=re.MULTILINE)) < 3:
         raise ValueError("answer page must contain at least three sections")
+    if structured:
+        _validate_search_structure(text)
+
+
+def _validate_search_metadata(text: str) -> str:
+    """Check the frontmatter written by normalize_search_metadata; return the page after it."""
+    match = re.match(r'\A---\nmeta_title: (".*")\nmeta_description: (".*")\n---\n\n', text)
+    if match is None:
+        raise ValueError("answer page must begin with meta_title and meta_description frontmatter")
+    title, description = json.loads(match.group(1)), json.loads(match.group(2))
+    if not 0 < len(title) <= MAX_META_TITLE:
+        raise ValueError(f"answer page meta_title must be 1-{MAX_META_TITLE} characters")
+    low, high = META_DESCRIPTION_RANGE
+    if not low <= len(description) <= high:
+        raise ValueError(f"answer page meta_description must be {low}-{high} characters")
+    return text[match.end() :]
+
+
+def _validate_search_structure(text: str) -> None:
+    """Catch the missing pieces of a search-structured page, not matters of taste."""
+    sections = re.split(r"(?m)^## ", text)
+    lead, body = sections[0], sections[1:]
+    if not re.search(r"(?m)^Last updated: \d{4}-\d{2}-\d{2}$", lead):
+        raise ValueError("answer page must show a 'Last updated: YYYY-MM-DD' line under its title")
+    lead_paragraphs = [
+        block
+        for block in _prose_blocks(lead)
+        if not block.startswith("# ") and not block.startswith("Last updated:")
+    ]
+    words = len(lead_paragraphs[0].split()) if lead_paragraphs else 0
+    low, high = ANSWER_WORDS_RANGE
+    if not low <= words <= high:
+        raise ValueError(
+            f"answer page must open with a direct answer of about 40-60 words (found {words})"
+        )
+    headings = [section.split("\n", 1)[0].strip() for section in body]
+    if headings[-1] != "Sources":
+        raise ValueError("answer page must end with its Sources section")
+    faq = [
+        section
+        for section in body
+        if re.match(r"(FAQ|Frequently asked questions)\s*$", section.split("\n", 1)[0].strip())
+    ]
+    if not faq or len(re.findall(r"(?m)^### .+\?\s*$", faq[0])) < 2:
+        raise ValueError("answer page must include an FAQ section with at least two questions")
+    questions = [heading for heading in headings if heading.endswith("?")]
+    if len(questions) < 2:
+        raise ValueError("answer page must phrase at least two section headings as questions")
+    cited = set(re.findall(r"\]\((https?://[^)\s]+)\)", body[-1]))
+    if len(cited) < MIN_CITED_SOURCES:
+        raise ValueError(f"answer page must list at least {MIN_CITED_SOURCES} sources")
+    inline = re.findall(r"\]\((https?://[^)\s]+)\)", "## ".join([lead, *body[:-1]]))
+    if len(inline) < MIN_INLINE_CITATIONS:
+        raise ValueError("answer page must cite its sources inline, next to the claims")
+    for block in _prose_blocks(text):
+        if len(block.split()) > MAX_PARAGRAPH_WORDS:
+            raise ValueError(
+                f"answer page paragraphs must stay under {MAX_PARAGRAPH_WORDS} words; split them"
+            )
+
+
+def _prose_blocks(text: str) -> list[str]:
+    """Paragraphs of running prose: not headings, lists, tables, quotes or code."""
+    text = re.sub(r"(?ms)^```.*?^```\s*$", "", text)
+    blocks = []
+    for block in re.split(r"\n\s*\n", text):
+        block = block.strip()
+        if block and not re.match(r"(#{1,6} |[-*+] |\d+[.)] |\||>|<!--)", block):
+            blocks.append(block)
+    return blocks
 
 
 def validate_answer_page_artifacts(
@@ -152,13 +311,13 @@ def validate_answer_page_artifacts(
     artifact_path: str,
     evidence_path: str,
 ) -> None:
-    validate_answer_page(content)
     if not evidence or len(evidence) > MAX_ANSWER_PAGE_EVIDENCE_BYTES:
         raise ValueError(
             "answer-page evidence must contain between 1 and "
             f"{MAX_ANSWER_PAGE_EVIDENCE_BYTES} bytes"
         )
     payload = json.loads(evidence)
+    validate_answer_page(content, structured=payload.get("structure") == SEARCH_STRUCTURE)
     if payload.get("artifact_path") != artifact_path:
         raise ValueError("answer-page evidence points to the wrong artifact")
     if not evidence_path.endswith("/evidence.json"):

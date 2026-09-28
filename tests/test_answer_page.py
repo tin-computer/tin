@@ -498,3 +498,190 @@ def test_argument_plan_is_saved_separately_from_reader_copy():
     assert metadata == plan and article.startswith("# A useful answer")
     with pytest.raises(AnswerPageProtocolError):
         extract_argument_plan("# Unsupported comparison")
+
+
+def structured_page(
+    *,
+    frontmatter: str = (
+        "---\nmeta_title: Which tools keep recurring AI work reliable?\n"
+        "meta_description: Durable workflow runners keep recurring AI work reliable by saving "
+        "run state outside the model and retrying safely.\n---\n\n"
+    ),
+    updated: str = "Last updated: 2026-09-28\n\n",
+    faq: str = (
+        "## FAQ\n\n### Do I need a workflow runner?\n\nYes, once work repeats weekly.\n\n"
+        "### Can a cron job do this?\n\nOnly for work without retries or review.\n\n"
+    ),
+) -> str:
+    answer = (
+        "Durable workflow runners keep recurring AI work reliable because they save each run's "
+        "state outside the model, retry failed steps without repeating paid calls, and keep "
+        "every output readable after the run ends. Compare runners by how they recover, how "
+        "they record provenance and what a reviewer sees before anything ships."
+    )
+    return (
+        f"{frontmatter}# Which tools keep recurring AI work reliable?\n\n{updated}{answer}\n\n"
+        "## What does reliability require?\n\nRun state lives outside the model "
+        "([Temporal docs](https://docs.temporal.io/workflows)).\n\n"
+        "## How do the options compare?\n\n| Option | Recovery |\n| --- | --- |\n"
+        "| Runner | Durable ([guide](https://example.com/runner)) |\n\n"
+        f"{faq}"
+        "## Sources\n\n- [Temporal docs](https://docs.temporal.io/workflows)\n"
+        "- [Runner guide](https://example.com/runner)\n- [Review notes](https://example.org/review)\n"
+    )
+
+
+def structured_responses(text: str) -> FakeResponses:
+    responses = FakeResponses()
+    original = responses.create
+
+    async def create(payload: dict) -> dict:
+        response = await original(payload)
+        response["output"][1]["content"][0]["text"] = text
+        return response
+
+    responses.create = create  # type: ignore[method-assign]
+    return responses
+
+
+@pytest.mark.asyncio
+async def test_search_structured_suite_researches_more_and_saves_a_checked_page() -> None:
+    responses = structured_responses(structured_page())
+    drafter = AnswerPageDrafter(responses=responses, skill_suite="# Rules\nANSWER_SEO_V1")
+
+    draft = await drafter.draft(project_name="Tin", sources=[], today="2026-09-28")
+    page, evidence = drafter.build_artifacts(
+        run_id="run-1",
+        source_refs=[],
+        draft=draft,
+        artifact_path="content/answers/2026-09-28-reliable-ai-work.md",
+        evidence_path="reports/answer-page/run-1/evidence.json",
+    )
+
+    payload = responses.payloads[0]
+    assert payload["max_tool_calls"] == 12
+    assert json.loads(payload["input"])["today"] == "2026-09-28"
+    assert page.decode().startswith(
+        '---\nmeta_title: "Which tools keep recurring AI work reliable?"\nmeta_description: "'
+    )
+    assert json.loads(evidence)["structure"] == "answer-seo-v1"
+    validate_answer_page_artifacts(
+        page,
+        evidence,
+        artifact_path="content/answers/2026-09-28-reliable-ai-work.md",
+        evidence_path="reports/answer-page/run-1/evidence.json",
+    )
+
+
+@pytest.mark.asyncio
+async def test_earlier_pinned_suite_keeps_four_searches_and_the_original_page() -> None:
+    responses = FakeResponses()
+    drafter = AnswerPageDrafter(responses=responses, skill_suite="# Answer-page rules")
+
+    draft = await drafter.draft(project_name="Tin", sources=[])
+
+    assert responses.payloads[0]["max_tool_calls"] == 4
+    assert "today" not in json.loads(responses.payloads[0]["input"])
+    assert draft["markdown"] == markdown_page() and "structure" not in draft
+
+
+def test_missing_search_listing_and_date_are_rebuilt_from_the_page():
+    from tin_lite.answer_page import normalize_search_metadata, validate_answer_page
+
+    page = normalize_search_metadata(
+        structured_page(frontmatter="", updated=""), today="2026-09-28"
+    )
+
+    assert page.startswith('---\nmeta_title: "Which tools keep recurring AI work reliable?"\n')
+    description = json.loads(page.split("\n")[2].removeprefix("meta_description: "))
+    assert 70 <= len(description) <= 160 and description.startswith("Durable workflow runners")
+    assert "\nLast updated: 2026-09-28\n" in page
+    validate_answer_page(page.encode(), structured=True)
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda page: page.replace("## FAQ", "## Questions"), "FAQ section"),
+        (lambda page: page.replace("## How do the options compare?", "## Options"), "questions"),
+        (
+            lambda page: page.replace("- [Review notes](https://example.org/review)\n", ""),
+            "3 sources",
+        ),
+        (
+            lambda page: page.replace(
+                "([Temporal docs](https://docs.temporal.io/workflows))", ""
+            ).replace("Durable ([guide](https://example.com/runner))", "Durable"),
+            "inline",
+        ),
+        (
+            lambda page: (
+                page.replace("Durable workflow runners keep", "Runners keep", 1).split(" because")[
+                    0
+                ]
+                + ".\n\n## What does"
+                + page.split("## What does", 1)[1]
+            ),
+            "direct answer",
+        ),
+        (
+            lambda page: page.replace(
+                "Run state lives outside the model", " ".join(["word"] * 160)
+            ),
+            "150 words",
+        ),
+        (lambda page: page.replace("## Sources", "## Sources and notes"), "Sources"),
+    ],
+)
+def test_search_structure_checks_catch_missing_pieces(change, message):
+    from tin_lite.answer_page import normalize_search_metadata, validate_answer_page
+
+    page = change(normalize_search_metadata(structured_page(), today="2026-09-28"))
+    with pytest.raises(ValueError, match=message):
+        validate_answer_page(page.encode(), structured=True)
+
+
+def test_pages_saved_before_search_structure_keep_their_original_checks():
+    evidence = json.dumps(
+        {
+            "artifact_path": "reports/ANSWER_PAGE.md",
+            "source_refs": [],
+            "search_calls": 1,
+        }
+    ).encode()
+    validate_answer_page_artifacts(
+        markdown_page().encode(),
+        evidence,
+        artifact_path="reports/ANSWER_PAGE.md",
+        evidence_path="reports/answer-page/run-1/evidence.json",
+    )
+
+
+def test_pinned_answer_page_suite_carries_the_search_structure_rules():
+    from tin_lite.catalog import BUILTIN_WORKFLOWS
+    from tin_lite.native_skill_pins import pinned_suite
+
+    workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.answer_page")
+    definition, _ = workflow.definition_and_resource_files()
+    suite = pinned_suite(definition, "content.answer_page")
+    assert "ANSWER_PLAN_V1" in suite and "ANSWER_SEO_V1" in suite
+    assert workflow.version_label == "1.3.0"
+
+
+def test_delivery_writes_one_header_with_the_search_listing():
+    from tin_lite.answer_page import normalize_search_metadata
+    from tin_lite.content_delivery import DeliverySettings, new_page_header, page_frontmatter
+
+    page = normalize_search_metadata(structured_page(), today="2026-09-28")
+    metadata, article = page_frontmatter(page)
+    assert metadata["meta_title"] == "Which tools keep recurring AI work reliable?"
+    assert article.startswith("# Which tools keep recurring AI work reliable?")
+
+    plain = DeliverySettings.model_construct(frontmatter={})
+    configured = DeliverySettings.model_construct(frontmatter={"title": "{title}"})
+    only_page = new_page_header(plain, "Title", "2026-09-28", "slug", metadata)
+    merged = new_page_header(configured, "Title", "2026-09-28", "slug", metadata)
+    assert only_page.count("---\n") == 2 and "meta_description:" in only_page
+    assert merged.count("---\n") == 2 and "title: Title" in merged and "meta_title:" in merged
+    assert new_page_header(plain, "Title", "2026-09-28", "slug") == ""
+    assert page_frontmatter("# No frontmatter\n") == ({}, "# No frontmatter\n")

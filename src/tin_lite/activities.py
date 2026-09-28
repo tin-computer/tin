@@ -1943,6 +1943,7 @@ class TinActivities:
                 execute=lambda: reporter.draft(
                     project_name=project.name,
                     sources=sources,
+                    today=(run.created_at or datetime.now(UTC)).date().isoformat(),
                 ),
             ),
             details={"stage": "answer_page_draft"},

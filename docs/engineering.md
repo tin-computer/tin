@@ -205,6 +205,18 @@ Activity events rather than permanent stages on finished rows. Report and memory
 pause for review. The workflow does not edit or publish the customer's website, create an E2B
 sandbox, or add a provider credential path.
 
+Answer page 1.3.0 pins the `answer-page/10-search-and-answer-engines` skill (`ANSWER_SEO_V1`).
+The model opens the official pages of every product it names, cites inline and aims for five or
+more sources, with up to twelve search calls instead of four. The page carries `meta_title` and
+`meta_description` frontmatter, a `Last updated` date, a 40-60 word opening answer, question
+headings, a comparison table where options are compared, an FAQ and Sources last. Code writes
+the frontmatter and the date line itself, rebuilding a missing or oversized listing from the
+title and the opening answer. It then checks the pieces a model can leave out: the answer's
+length, two question headings, an FAQ with two questions, three listed sources, two inline
+citations and paragraphs under 150 words. The evidence records `structure: answer-seo-v1`, so
+pages drafted under an earlier pin keep the original checks. Delivery merges the page's
+frontmatter with the configured header instead of writing two.
+
 `project.weekly_brief` summarizes the previous seven days of durable project runs, artifacts,
 memory, and product Activity into a dated Markdown report under `reports/weekly/`. It is intended
 to be configured from the Registry and scheduled—for example, every Tuesday at 09:00 in the

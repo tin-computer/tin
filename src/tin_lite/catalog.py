@@ -1106,7 +1106,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.2.0",
+        version_label="1.3.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
