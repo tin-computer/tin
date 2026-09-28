@@ -1232,7 +1232,8 @@ class GrowthOnboardingPlanWorkflow:
             await workflow.execute_activity(
                 "growth_plan_write",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=20),
+                # About ten rounds of parallel steps, each allowed a 225-second model call.
+                start_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(minutes=6),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
