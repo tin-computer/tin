@@ -15,7 +15,7 @@ from test_procedure_publication import publication_db as publication_db
 
 import tin_lite.auth as auth_module
 from tin_lite.api import router
-from tin_lite.auth import AuthContext, ClerkAuth
+from tin_lite.auth import AuthContext, ClerkAuth, VerifiedOAuthTokenCache
 from tin_lite.domain import Project, ProjectInvitation, ProjectMembership, Workspace
 
 USER_A = "user_Alpha123"
@@ -112,6 +112,7 @@ async def test_oauth_token_uses_clerks_format_agnostic_verification_endpoint() -
     identity = object.__new__(ClerkAuth)
     identity._secret_key = "test-secret"  # noqa: S105, SLF001
     identity._oauth_client_ids = frozenset({"client_codex"})  # noqa: SLF001
+    identity._oauth_cache = VerifiedOAuthTokenCache()  # noqa: SLF001
     identity._oauth_resource = "https://tin.test/mcp"  # noqa: SLF001
     identity._oauth_issuer = "https://clerk.tin.test"  # noqa: SLF001
     identity._client = httpx.AsyncClient(  # noqa: SLF001
@@ -145,6 +146,7 @@ async def test_oauth_token_rejects_clerk_verification_failure_or_revocation() ->
     identity = object.__new__(ClerkAuth)
     identity._secret_key = "test-secret"  # noqa: S105, SLF001
     identity._oauth_client_ids = frozenset({"client_codex"})  # noqa: SLF001
+    identity._oauth_cache = VerifiedOAuthTokenCache()  # noqa: SLF001
     identity._client = httpx.AsyncClient(  # noqa: SLF001
         headers={"Authorization": "Bearer test-secret"},
         transport=httpx.MockTransport(verify),

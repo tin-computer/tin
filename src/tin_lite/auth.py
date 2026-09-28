@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import json
 import math
 import time
-from dataclasses import dataclass, field
+from collections import OrderedDict
+from dataclasses import dataclass, field, replace
 from typing import Annotated, Any
 
 import httpx
@@ -35,6 +37,66 @@ class AuthContext:
     resource: str | None = None
 
 
+OAUTH_VERIFY_CACHE_SECONDS = 60
+OAUTH_VERIFY_CACHE_ENTRIES = 4096
+
+
+class VerifiedOAuthTokenCache:
+    """Bounded memory of completely verified OAuth results for the identical token.
+
+    MCP runs stateless HTTP, so every request would otherwise repeat Clerk
+    introspection. Only successful results of the full verification are kept, keyed
+    by a SHA-256 digest; the raw token is never stored. An entry lives at most
+    OAUTH_VERIFY_CACHE_SECONDS and never past the verified token expiry, which bounds
+    how long a revocation at Clerk can go unnoticed. Rejections are never cached.
+    """
+
+    def __init__(
+        self,
+        *,
+        ttl_seconds: float = OAUTH_VERIFY_CACHE_SECONDS,
+        max_entries: int = OAUTH_VERIFY_CACHE_ENTRIES,
+    ) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._entries: OrderedDict[bytes, tuple[float, AuthContext]] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._entries)
+
+    @staticmethod
+    def _key(token: str) -> bytes:
+        return hashlib.sha256(token.encode("utf-8", "surrogatepass")).digest()
+
+    def get(self, token: str) -> AuthContext | None:
+        key = self._key(token)
+        entry = self._entries.get(key)
+        if entry is None:
+            return None
+        deadline, context = entry
+        if time.time() >= deadline:
+            del self._entries[key]
+            return None
+        self._entries.move_to_end(key)
+        return replace(context, raw_token=token)
+
+    def put(self, token: str, context: AuthContext) -> None:
+        now = time.time()
+        deadline = now + self._ttl_seconds
+        if context.expires_at is not None:
+            deadline = min(deadline, context.expires_at)
+        if deadline <= now or self._max_entries <= 0:
+            return
+        key = self._key(token)
+        self._entries[key] = (deadline, replace(context, raw_token=""))
+        self._entries.move_to_end(key)
+        if len(self._entries) > self._max_entries:
+            for expired in [k for k, (until, _) in self._entries.items() if until <= now]:
+                del self._entries[expired]
+        while len(self._entries) > self._max_entries:
+            self._entries.popitem(last=False)
+
+
 class ClerkAuth:
     """One verifier for browser sessions and Clerk-issued MCP OAuth tokens."""
 
@@ -56,6 +118,9 @@ class ClerkAuth:
             timeout=10,
             headers={"Authorization": f"Bearer {self._secret_key}"},
         )
+        # Per verifier instance: results also depend on this instance's fixed
+        # issuer, resource and legacy client policy, so entries never cross them.
+        self._oauth_cache = VerifiedOAuthTokenCache()
 
     async def close(self) -> None:
         await self._client.aclose()
@@ -117,6 +182,16 @@ class ClerkAuth:
         )
 
     async def authenticate_oauth_token(self, token: str) -> AuthContext | None:
+        """The shared MCP and connection-setup verifier, with a short success cache."""
+        cached = self._oauth_cache.get(token)
+        if cached is not None:
+            return cached
+        context = await self._verify_oauth_token(token)
+        if context is not None:
+            self._oauth_cache.put(token, context)
+        return context
+
+    async def _verify_oauth_token(self, token: str) -> AuthContext | None:
         try:
             response = await self._client.post(
                 "https://api.clerk.com/oauth_applications/access_tokens/verify",
