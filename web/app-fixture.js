@@ -31,6 +31,8 @@ const documentHtml = [
   ...Array.from({length: 4}, () => `<p>${paragraph}</p>`),
   '<h2 id="compare">How they compare</h2>',
   ...Array.from({length: 4}, () => `<p>${paragraph}</p>`),
+  '<h2 id="questions">Questions</h2>',
+  ...Array.from({length: 4}, () => `<p>${paragraph}</p>`),
 ].join("");
 
 export async function serveApp({decisionCount = 4} = {}) {

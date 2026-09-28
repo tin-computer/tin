@@ -1817,6 +1817,7 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .main {
+  container: view / inline-size;
   min-width: 0;
   flex: 1;
 }
@@ -4455,7 +4456,8 @@ html[data-theme="dark"] .markdown-logo::before {
 .decision-list {
   display: flex;
   width: 380px;
-  flex: 0 0 380px;
+  min-width: 260px;
+  flex: 0 1 380px;
   flex-direction: column;
 }
 
@@ -5744,8 +5746,11 @@ button.activity-ref {
 .project-diagram-help { margin: 0; color: var(--ink-muted); font: 11px/16px var(--sans); }
 .project-diagram-help[hidden], .project-diagram-zoom[hidden] { display: none; }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .project-file-view.project-diagram-view { height: calc(100dvh - var(--top-menu-height)); }
+}
+
+@media (max-width: 900px) {
   .project-diagram-view .project-diagram-body { padding: 12px; gap: 10px; }
   .project-diagram-view .project-file-context { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .project-diagram-view .project-file-path { flex: 1 1 120px; }
@@ -6614,7 +6619,8 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   opacity: 1;
 }
 
-@media (max-width: 900px) {
+/* Below 1100px the rail becomes the top menu, so a browser side panel leaves the page its width. */
+@media (max-width: 1100px) {
   .app-shell {
     display: block;
   }
@@ -7337,11 +7343,15 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .system-template-setup-body {
     grid-template-columns: minmax(0, 1fr) 300px;
   }
+}
 
+@media (max-width: 1100px) {
   .decisions-view {
     min-height: calc(100svh - var(--top-menu-height));
   }
+}
 
+@container view (max-width: 1000px) {
   .decisions-layout {
     gap: 20px;
   }
@@ -7349,6 +7359,26 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .decision-list {
     width: 300px;
     flex-basis: 300px;
+  }
+}
+
+/* A narrow page lists the decisions above the open card; the list scrolls on its own. */
+@container view (max-width: 760px) {
+  .decisions-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .decision-list {
+    width: auto;
+    min-width: 0;
+    max-height: min(320px, 40svh);
+    flex: none;
+    overflow-y: auto;
+  }
+
+  .decision-detail-card {
+    flex: none;
   }
 }
 
@@ -7519,6 +7549,10 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   overflow-x: clip;
 }
 
+.markdown-viewer {
+  container: markdown-viewer / inline-size;
+}
+
 .viewer-loading,
 .viewer-error {
   display: grid;
@@ -7659,7 +7693,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 
 .markdown-reader-layout.has-no-map {
   display: block;
-  width: 680px;
+  width: min(680px, 100%);
   transform: none;
 }
 
@@ -7696,7 +7730,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 
 .markdown-document {
   min-width: 0;
-  width: 680px;
+  width: min(680px, 100%);
   padding: 64px 0 96px;
   color: var(--ink);
   font-family: var(--sans);
@@ -8148,10 +8182,11 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   stroke-width: 1.5px;
 }
 
-@media (max-width: 1199px) {
+/* The map and the offset reading column need about 1040px of the viewer's own width. */
+@container markdown-viewer (max-width: 1100px) {
   .markdown-reader-layout {
     display: block;
-    width: 680px;
+    width: min(680px, 100%);
     transform: none;
   }
 
@@ -8723,9 +8758,14 @@ html[data-theme="dark"] .lock-page-line {
   stroke-width: 1.5px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .lock-page {
     min-height: calc(100svh - var(--top-menu-height));
+  }
+}
+
+@media (max-width: 900px) {
+  .lock-page {
     padding: 32px 18px 64px;
   }
 
