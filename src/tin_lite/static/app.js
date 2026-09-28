@@ -4832,6 +4832,22 @@ function mountProjectFileTree() {
   }
   state.filesTree = tree;
   decorateProjectFileTree();
+  revealFilesDirectory(tree, state.filesDirectory);
+}
+
+// Files opened from a folder in a file's path: expand that folder and its parents, select it
+// and scroll to it. A folder that no longer exists leaves the tree as it is.
+function revealFilesDirectory(tree, directory) {
+  const segments = String(directory || "").split("/").filter(Boolean);
+  if (!segments.length) return;
+  segments.forEach((_segment, index) => {
+    const item = tree.getItem(`${segments.slice(0, index + 1).join("/")}/`);
+    if (item?.isDirectory() && !item.isExpanded()) item.expand();
+  });
+  const folder = tree.getItem(`${segments.join("/")}/`);
+  if (!folder) return;
+  folder.select();
+  tree.scrollToPath(folder.getPath(), { focus: false, offset: "nearest" });
 }
 
 function disposeFilesTree() {
@@ -4871,14 +4887,46 @@ function filesSearchResults(paths, query) {
     }).join("")}</div>`;
 }
 
-function filesBreadcrumb(directory) {
+function filesBreadcrumb(directory, { root = true } = {}) {
   const segments = directory ? directory.split("/").filter(Boolean) : [];
-  const crumbs = ['<button type="button" data-files-directory="">Project</button>'];
+  const crumbs = root ? ['<button type="button" data-files-directory="">Project</button>'] : [];
   segments.forEach((segment, index) => {
     const path = segments.slice(0, index + 1).join("/");
-    crumbs.push(`<span>/</span><button type="button" data-files-directory="${escapeHtml(path)}">${escapeHtml(segment)}</button>`);
+    crumbs.push(`${crumbs.length ? "<span>/</span>" : ""}<button type="button" data-files-directory="${escapeHtml(path)}">${escapeHtml(segment)}</button>`);
   });
   return crumbs.join("");
+}
+
+// An open file's path: each folder opens that folder in Files, and the file name stays text.
+// A file opened from a comparison may not exist in the project, so its path stays plain.
+function projectFilePathHtml(route) {
+  if (route.compareRun) return escapeHtml(route.path);
+  const segments = String(route.path).split("/");
+  const name = segments.pop();
+  const folders = filesBreadcrumb(segments.join("/"), { root: false });
+  return `${folders}${folders ? "<span>/</span>" : ""}<span aria-current="page">${escapeHtml(name)}</span>`;
+}
+
+function projectFilePathElement(route, className = "project-file-path") {
+  const path = document.createElement("nav");
+  path.className = className;
+  path.setAttribute("aria-label", "File path");
+  path.title = route.path;
+  path.innerHTML = projectFilePathHtml(route);
+  bindFilesDirectoryLinks(path);
+  return path;
+}
+
+function bindFilesDirectoryLinks(root) {
+  root?.querySelectorAll("[data-files-directory]").forEach((button) => {
+    button.addEventListener("click", () => openFilesDirectory(button.dataset.filesDirectory));
+  });
+}
+
+function openFilesDirectory(directory) {
+  state.filesDirectory = directory;
+  state.filesSearch = "";
+  navigate("files");
 }
 
 function filesDrillName(entry) {
@@ -5082,6 +5130,7 @@ async function downloadProjectFile(route, open = false) {
 }
 
 function bindFileContextActions(route, returnView = "files") {
+  bindFilesDirectoryLinks(document.querySelector(".project-file-context .project-file-path"));
   const back = document.querySelector("[data-back-files]");
   if (route.compareRun && back) back.textContent = `← ${comparisonFileReturnLabel(route)}`;
   back?.addEventListener("click", () => route.compareRun || route.backTo ? returnFromComparisonFile(route) : navigate(returnView));
@@ -5113,6 +5162,7 @@ function renderDelimitedProjectFile(route, file) {
     : `${type} · ${table.totalRows} rows · ${table.headers.length} columns · ${formatFileSize(file.bytes)} · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`;
   state.documentCleanup = window.TinDelimitedViewer.mount(main, file, {
     contextLabel: route.path,
+    pathElement: projectFilePathElement(route),
     factsText: facts,
     returnLabel: comparisonFileReturnLabel(route),
     onReturn: () => returnFromComparisonFile(route),
@@ -5155,6 +5205,7 @@ function renderJsonProjectFile(route, file) {
   state.documentCleanup = window.TinJsonViewer.mount(main, file, {
     view: route.jsonView,
     contextLabel: route.path,
+    pathElement: projectFilePathElement(route),
     sizeLabel: `${file.tooLarge && !file.exactSize ? "over " : ""}${formatFileSize(file.bytes)}`,
     revisionLabel: route.compareRun
       ? `${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`
@@ -5184,7 +5235,7 @@ function renderTextProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy</button>
       <button type="button" data-download-file>Download raw</button>
@@ -5261,7 +5312,7 @@ function renderMediaProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy path</button>
       <button type="button" data-download-file>Download</button>
@@ -5288,7 +5339,7 @@ function renderDiagramProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy path</button>
       <button type="button" data-download-file>Download source</button>
@@ -5384,6 +5435,7 @@ function renderFile() {
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached.document, {
       mode: "in-app",
       contextLabel: route.path,
+      pathElement: projectFilePathElement(route, "markdown-filename"),
       factsText: `markdown · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`,
       returnTo: { label: comparisonFileReturnLabel(route), onActivate: () => returnFromComparisonFile(route) },
       rawAction: { label: "View raw", onActivate: () => downloadProjectFile(route, true) },

@@ -190,7 +190,7 @@
     back.type = "button";
     back.addEventListener("click", options.onReturn);
     const separator = element("span", "project-file-context-separator");
-    const path = element("code", "project-file-path", options.contextLabel);
+    const path = options.pathElement || element("code", "project-file-path", options.contextLabel);
     path.title = options.contextLabel;
     location.append(back, separator, path);
     const controls = element("div", "project-json-controls");

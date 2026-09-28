@@ -5403,6 +5403,33 @@ button.activity-ref {
   white-space: nowrap;
 }
 
+/* Folders in an open file's path open that folder in Files. */
+.project-file-context .project-file-path button,
+.markdown-context-bar .markdown-filename button {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.project-file-context nav.project-file-path button:hover,
+.project-file-context nav.project-file-path button:focus-visible,
+.markdown-context-bar .markdown-filename button:hover,
+.markdown-context-bar .markdown-filename button:focus-visible {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.project-file-path [aria-current="page"],
+.markdown-filename [aria-current="page"] {
+  color: var(--ink);
+}
+
 .project-file-facts {
   margin-left: auto;
   white-space: nowrap;

@@ -10,6 +10,7 @@ export const revision = "c".repeat(40);
 export const projectFiles = [
   "brand/BRAND.md",
   "brand/DESIGN.md",
+  "brand/logo.png",
   "brand/proposals/2026-09-28-1a2b3c4d/BRAND.md",
   "brand/proposals/2026-09-28-1a2b3c4d/DESIGN.md",
   "context/positioning.md",

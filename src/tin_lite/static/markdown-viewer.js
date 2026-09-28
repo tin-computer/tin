@@ -43,7 +43,8 @@
       bar.append(returnButton, makeSeparator());
     }
 
-    const filename = makeElement(
+    // The app may pass its own path element, with links to each folder.
+    const filename = options.pathElement || makeElement(
       "span",
       "markdown-filename",
       options.contextLabel || documentData.filename,
