@@ -230,8 +230,8 @@ async def test_invalid_screening_is_saved_never_rebought_or_published():
     activities, db, storage, provider, model = await fixture(modern=True)
     original = model.generate.side_effect
 
-    async def invalid(route, request):
-        result = await original(route, request)
+    async def invalid(route, request, **options):
+        result = await original(route, request, **options)
         return (
             replace(result, parsed={}) if request.output_schema_name == "keyword_triage" else result
         )

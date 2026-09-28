@@ -40,12 +40,23 @@ from tin_lite.keyword_plan import (
     serp_items,
     validate_review,
 )
-from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
+from tin_lite.model_providers import (
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+    model_failure_reason,
+)
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, canonical_json, digest
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.usage_capture import external_usage_scope
 from tin_lite.workflow_evidence import integration_inventory
+
+# How long the worker waits for one model response, by stage. Kept outside the pinned policy:
+# waiting longer never changes the request. Screening and review return one verdict for every
+# candidate, so they can run for minutes; seed proposals keep the provider's default wait.
+MODEL_TIMEOUT_SECONDS = {"triage": 240, "review": 420}
+STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review": "keyword review"}
 
 CONTRACTS = {
     POLICY["version"]: (POLICY, INSTRUCTIONS, SCHEMAS),
@@ -123,7 +134,9 @@ class KeywordPlanActivities:
             await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
             return True
 
-    async def _paid(self, run_id: str, stage: str, request: dict, amount: str, call):
+    async def _paid(
+        self, run_id: str, stage: str, request: dict, amount: str, call, *, classify=None
+    ):
         key, fingerprint = self.key(run_id, stage), digest(request)
         async with self.db.effect_lock(key, KEY) as (conn, existing):
             saved = (existing.result or {}) if existing else {}
@@ -169,11 +182,15 @@ class KeywordPlanActivities:
                 except Exception as exc:
                     from tin_lite.billing_contracts import BillingError
 
-                    # Raw SDK/provider errors, headers and credentials never enter evidence.
+                    # Raw SDK/provider errors, headers and credentials never enter evidence;
+                    # a model call keeps only a fixed label for why it failed.
                     result = (
                         {"status": "unavailable", "reason": "spending_limit"}
                         if isinstance(exc, BillingError)
-                        else {"status": "unknown", "reason": "provider_result_unavailable"}
+                        else {
+                            "status": "unknown",
+                            "reason": classify(exc) if classify else "provider_result_unavailable",
+                        }
                     )
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
@@ -193,9 +210,11 @@ class KeywordPlanActivities:
             max_output_tokens=policy[f"{'seed' if stage == 'seeds' else stage}_output_tokens"],
         )
 
+        timeout = MODEL_TIMEOUT_SECONDS.get(stage)
+
         async def call():
-            async with asyncio.timeout(120):
-                result = await self.router.generate(ROUTE_KEY, request)
+            async with asyncio.timeout(timeout + 30 if timeout else 120):
+                result = await self.router.generate(ROUTE_KEY, request, timeout_seconds=timeout)
             parsed = result.parsed
             if not isinstance(parsed, dict):
                 raise ValueError("Keyword model result must be a JSON object.")
@@ -213,9 +232,14 @@ class KeywordPlanActivities:
             {"route": ROUTE_KEY, **asdict(request)},
             policy[f"{'seed' if stage == 'seeds' else stage}_reservation_usd"],
             call,
+            classify=model_failure_reason,
         )
         if result["status"] != "completed":
-            await self._save(run_id, "failure", {"code": "model_unavailable", "stage": stage})
+            await self._save(
+                run_id,
+                "failure",
+                {"code": "model_unavailable", "stage": stage, "reason": result.get("reason")},
+            )
             raise ApplicationError(
                 "The keyword model result was unavailable; no replacement was purchased.",
                 non_retryable=True,
@@ -867,7 +891,7 @@ class KeywordPlanActivities:
             )
         elif failure.get("code") == "model_unavailable":
             message = (
-                "Keyword planning stopped because a model result could not be confirmed. "
+                f"Keyword planning stopped because {model_failure_cause(failure)}. "
                 "Saved research was retained; no replacement call was purchased."
             )
         await self.db.project_failure(
@@ -879,3 +903,29 @@ class KeywordPlanActivities:
                 "uncertain requests were not purchased again."
             ),
         )
+
+
+def model_failure_cause(failure: dict) -> str:
+    """Say in plain words why a model step stopped, from its stage and fixed reason label."""
+    stage = STAGE_NAMES.get(failure.get("stage"), "keyword")
+    reason = failure.get("reason") or ""
+    if reason == "provider_timeout":
+        seconds = MODEL_TIMEOUT_SECONDS.get(failure.get("stage"))
+        limit = f"within {seconds // 60} minutes" if seconds else "in time"
+        return f"the {stage} model call did not finish {limit}"
+    if reason.startswith("provider_status_") and reason.removeprefix("provider_status_").isdigit():
+        code = reason.removeprefix("provider_status_")
+        if code == "429":
+            return f"the model provider rate-limited the {stage} call (HTTP 429)"
+        return f"the model provider rejected the {stage} call (HTTP {code})"
+    if reason == "provider_connection":
+        return f"the connection to the model provider failed during the {stage} call"
+    if reason == "invalid_result":
+        return f"the {stage} model call returned a result Tin could not use"
+    if reason == "route_unavailable":
+        return f"the model for the {stage} step is not configured on this worker"
+    if reason == "spending_limit":
+        return f"the {stage} model call would have gone past the run's spending limit"
+    if reason == "unconfirmed_previous_request":
+        return f"an earlier {stage} model call stopped before its result was confirmed"
+    return "a model result could not be confirmed"

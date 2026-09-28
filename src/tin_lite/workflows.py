@@ -1058,7 +1058,8 @@ class KeywordPlanWorkflow:
             for name in ("keyword_review", "keyword_publish", "keyword_project"):
                 if self._stopped:
                     return
-                await execute(name)
+                # The review's model call may wait seven minutes; the activity must outlast it.
+                await execute(name, minutes=10 if name == "keyword_review" else 5)
         except BaseException:
             if not self._stopped:
                 await execute("keyword_failure")
