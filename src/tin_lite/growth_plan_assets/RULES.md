@@ -32,9 +32,8 @@ assumed conservatively and the assumption is stated.
 
 An empty `product_url` means the business has no public site. Do not search for one. Build the
 business from the form, `notes` and memory; mark the site fields `unknown` where nothing says
-otherwise. In the systems table, every system that reads or edits a site (organic search
-content, technical SEO, AI visibility, conversion and trust, product-led growth where it walks
-the signup) gets availability "needs a public site first" and an empty job cell. The four
+otherwise. In the systems table, every system that reads or edits a site (the organic traffic
+system, technical SEO, conversion and trust, product-led growth where it walks the signup) gets availability "needs a public site first" and an empty job cell. The four
 systems use only workflows that run without a site (research, the outreach desk once a mailbox
 is connected, article and diagram drafts, one-off tasks). The first paragraph says in one
 sentence that most systems unlock once a site exists, and the outlook says what changes then.
@@ -50,7 +49,7 @@ Say in the first paragraph, in one sentence, what is already running.
 
 ## 2. Score the marketing systems (not shared)
 
-The fifteen programs in `programs.json` are the marketing systems. Rank them with the rubric,
+The fourteen programs in `programs.json` are the marketing systems. Rank them with the rubric,
 not by feel. `rubric.json` holds the parameters and each system's weights, rolled up from the
 115-play growth catalogue; `score.py` computes the fit. Run `python3 score.py --describe` to see
 every parameter and its legal values.
@@ -133,6 +132,15 @@ one run a week by default: a weekly schedule may name several weekdays, and a sy
 volume (answer pages when the audit found many unanswered questions, articles when search
 demand is proven) gets three a week or daily; a system that needs care (outreach sends, pull
 requests) gets one or two. Say the number in the sentence.
+
+The organic traffic system is Tin's default. When the business has a live public site and sells
+in the US, GB, CA or AU, code makes it the first system Tin suggests, whatever the ranking says,
+and starts its research run once at setup: it audits the site, researches buyer searches, builds
+the content plan and drafts the first article for review, then drafts the next planned article
+each week. AI visibility is part of this system: the weekly check of whether assistants name the
+product and the answer pages sit beside the articles. The other suggestions build around it.
+Never configure a separate audit or keyword research run next to it: its research run already
+does both.
 
 Three short lists, one line per item with a brief reason:
 
@@ -301,7 +309,7 @@ Assumed, because you did not say: <bullets, or omit the line>
 
 ## Marketing systems
 | Rank | System | Current status | Availability in Tin | What Tin can run for you | Integrations needed |
-(all fifteen rows; the job cell one or two sentences, availability under fifteen words, the rest under twelve)
+(all fourteen rows; the job cell one or two sentences, availability under fifteen words, the rest under twelve)
 
 ## Proposed scope
 Systems to enable

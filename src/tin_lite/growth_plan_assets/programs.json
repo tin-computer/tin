@@ -1,19 +1,21 @@
 {
-  "note": "Growth programs one level below the ten strategy families. `tin.coverage` says how much of the program Tin runs today: full (Tin does the work up to a founder review), partial (Tin does a named part), none (stays with the founder). `tin.workflows` are registry keys; the live runnable state per project comes from the plan run's `tin_state` input (system rows map to `system_*` run inputs via `input`), never from this file. `workflow_titles` maps every key to the title the founder sees in Tin; use titles in founder-facing text. `workflow_scope` is what each workflow actually does; never aim a workflow at work outside its scope. `rubric.json` and `score.py` rank these fifteen systems for a business; the plan never shows the profile or the scores. `tin.impact` is the share of a system's work Tin can carry today (0 to 1); the proposed scope and the levels order systems by fit × impact, the table by fit alone.",
+  "note": "Growth programs one level below the ten strategy families. `tin.coverage` says how much of the program Tin runs today: full (Tin does the work up to a founder review), partial (Tin does a named part), none (stays with the founder). `tin.workflows` are registry keys; the live runnable state per project comes from the plan run's `tin_state` input (system rows map to `system_*` run inputs via `input`), never from this file. `workflow_titles` maps every key to the title the founder sees in Tin; use titles in founder-facing text. `workflow_scope` is what each workflow actually does; never aim a workflow at work outside its scope. `rubric.json` and `score.py` rank these fourteen systems for a business; the plan never shows the profile or the scores. `tin.impact` is the share of a system's work Tin can carry today (0 to 1); the proposed scope and the levels order systems by fit × impact, the table by fit alone.",
   "programs": [
     {
-      "id": "organic-search-content",
-      "name": "Organic search content",
+      "id": "organic-traffic",
+      "name": "Organic traffic system",
       "family": "Search",
-      "what": "Editorial, comparison, alternative and answer pages that win the searches buyers already make.",
+      "what": "Editorial, comparison, alternative and answer pages that win the searches buyers already make, and get the product named when buyers ask AI assistants for tools.",
       "fits_when": [
         "buyers search for the problem or the category by name",
         "the site can take new pages",
-        "the founder can wait months for compounding traffic"
+        "the founder can wait months for compounding traffic",
+        "buyers ask assistants which tool to use"
       ],
       "weak_when": [
         "the category is too new to be searched",
-        "nobody can publish to the site"
+        "nobody can publish to the site",
+        "buying is local, offline or relationship-led"
       ],
       "needs": {
         "founder_hours": "some",
@@ -23,13 +25,16 @@
       "tin": {
         "coverage": "full",
         "workflows": [
+          "organic.traffic_system",
           "organic.audit",
           "organic.keyword_plan",
           "content.plan",
           "style.capture",
           "content.generate",
-          "content.answer_page",
           "content.public_article",
+          "content.answer_page",
+          "visibility.audit",
+          "organic.mention_backlinks",
           "organic.error_surface",
           "competitor.watch"
         ],
@@ -38,7 +43,7 @@
         ],
         "founder_keeps": "publishing to the site and the final voice",
         "impact": 0.7,
-        "impact_note": "Tin researches, plans and drafts every piece; the founder publishes and keeps the voice."
+        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants name the product; the founder publishes and keeps the voice."
       }
     },
     {
@@ -74,38 +79,6 @@
         "founder_keeps": "merging and deploying the pull requests",
         "impact": 0.8,
         "impact_note": "Tin audits and opens the fix as a pull request; the founder merges."
-      }
-    },
-    {
-      "id": "ai-visibility",
-      "name": "AI visibility",
-      "family": "Search",
-      "what": "Being found, cited and recommended when buyers ask AI assistants for tools and vendors.",
-      "fits_when": [
-        "buyers ask assistants which tool to use",
-        "named competitors already come up in AI answers",
-        "the product has a clear category"
-      ],
-      "weak_when": [
-        "buying is local, offline or relationship-led"
-      ],
-      "needs": {
-        "founder_hours": "some",
-        "budget": "none",
-        "time_to_signal": "months"
-      },
-      "tin": {
-        "coverage": "full",
-        "workflows": [
-          "visibility.audit",
-          "organic.audit",
-          "content.answer_page",
-          "organic.mention_backlinks"
-        ],
-        "integrations": [],
-        "founder_keeps": "publishing the pages and proof",
-        "impact": 0.6,
-        "impact_note": "Tin measures weekly and drafts answer pages; being cited still depends on what gets published."
       }
     },
     {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rank the fifteen marketing systems against one business's parameters.
+"""Rank the fourteen marketing systems against one business's parameters.
 
 A weighted fit: every system holds a signed weight against every parameter value, the
 business's values fire the matching cells, the cells sum, and the ranking falls out.

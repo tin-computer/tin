@@ -486,6 +486,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Files, the keyword inventory",
         "watch": "the content plan uses it within days",
     },
+    "organic.traffic_system": {
+        "first": "research in about half an hour, then the first article draft",
+        "lands": "Files, the audit, keyword research and content plan; Decisions, the first article",
+        "watch": "the content plan in My system and the first draft; the next planned article follows weekly",
+    },
     "ads.assessment": {
         "first": "about fifteen minutes",
         "lands": "Files, reports/paid-ads/<run>/ASSESSMENT.md",
