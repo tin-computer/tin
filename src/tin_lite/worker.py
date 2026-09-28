@@ -14,6 +14,7 @@ async def run_worker() -> None:
         if runtime.luna is not None:
             await runtime.luna.close()
         await runtime.model_router.close()
+        await runtime.storage.close()
         if runtime.codex_api is not None:
             await runtime.codex_api.close()
         await runtime.database.close()

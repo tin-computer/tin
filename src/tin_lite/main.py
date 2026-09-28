@@ -82,6 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if runtime.luna is not None:
                 await runtime.luna.close()
             await runtime.integrations.close()
+            await runtime.storage.close()
             await runtime.studio.close()
             await runtime.model_router.close()
             if runtime.codex_api is not None:
