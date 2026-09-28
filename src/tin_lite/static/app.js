@@ -4282,7 +4282,7 @@ function decisionApprovalHtml(decision, run) {
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr">Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit">Publish now</button>`;
   }
-  const label = run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
+  const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
   return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
     <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
 }
@@ -4303,13 +4303,26 @@ function bindPageUrls() {
   });
 }
 
+function decisionSubtitle(decision, run) {
+  const waited = waitingLabel(decision.created_at);
+  return [
+    run?.workflow_name === "project.task" ? run.task_title : null,
+    waited === "now" ? "Just arrived" : `Waiting ${waited}`,
+    decision.kind === "output_conflict" ? "result saved" : null,
+  ].filter(Boolean).join(" · ");
+}
+
 function decisionDetailHtml(decision) {
   if (!decision) return "";
   const outputs = decision.items || [];
+  const run = state.runs.find((item) => item.id === decision.run_id);
+  const isTask = run?.workflow_name === "project.task";
+  // A task's changes are already loaded with its run; show them here rather than behind a link.
+  const taskChanges = isTask ? taskReviewView(run) : "";
   // Output rows already open the review. Keep a run action only when it is
   // distinct (conflicts), or when there is no output row to open.
   const showRunAction = decision.kind === "output_conflict" || !outputs.length;
-  const run = state.runs.find((item) => item.id === decision.run_id);
+  const runActionLabel = isTask ? "Open task" : "Open run";
   const deliveryNote = decision.kind !== "output_conflict" && isContentDraftReview(run) && !connectedRepository()
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
@@ -4317,14 +4330,14 @@ function decisionDetailHtml(decision) {
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
-      <span><strong>${escapeHtml(decision.workflow_title)}</strong><code>${escapeHtml(decision.workflow_key)} · ${escapeHtml(shortRunId(decision.run_id))} · ${escapeHtml(waitingLabel(decision.created_at))}${decision.kind === "output_conflict" ? " · result saved" : ""}</code></span>
-      ${showRunAction ? `<button type="button" data-decision-read="${escapeHtml(decision.id)}">Observe →</button>` : ""}
+      <span><strong>${escapeHtml(decision.workflow_title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(decisionSubtitle(decision, run))}</code></span>
+      ${showRunAction ? `<button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>` : ""}
     </header>
     <div class="decision-detail-body">
       <p>${escapeHtml(decision.explanation)}</p>
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
       <div class="decision-outputs">
-        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : '<span class="decision-no-output">Open the run to review its proposed changes.</span>'}
+        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : taskChanges || `<span class="decision-no-output">${isTask ? "Open the task to review its proposed changes." : "Open the run to review its output."}</span>`}
       </div>
     </div>
     <footer${consequence || deliveryNote ? "" : ' class="is-actions-only"'}>
@@ -4372,6 +4385,9 @@ function renderDecisions() {
   });
   main.querySelectorAll("[data-decision-read], [data-decision-output]").forEach((button) => {
     button.addEventListener("click", () => openDecisionReview(decision, button));
+  });
+  main.querySelectorAll(".decision-detail-card [data-task-document]").forEach((button) => {
+    button.addEventListener("click", () => openTaskDocument(decision.run_id, button.dataset.taskDocument));
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));

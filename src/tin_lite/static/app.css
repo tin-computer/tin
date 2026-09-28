@@ -4664,6 +4664,10 @@ p.page-url-line[hidden],
   line-height: 18px;
 }
 
+.decision-outputs .task-diff {
+  margin: 0;
+}
+
 .decision-output code,
 .decision-no-output {
   color: var(--ink-muted);

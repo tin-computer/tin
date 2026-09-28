@@ -194,7 +194,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     ordinaryReview.items = [];
     await page.reload();
     await page.locator(".decision-detail-card").waitFor();
-    assert.equal(await page.getByRole("button", {name: "Observe →", exact: true}).count(), 1);
+    assert.equal(await page.getByRole("button", {name: "Open run →", exact: true}).count(), 1);
     assert.equal(await page.getByRole("button", {name: "Read →", exact: true}).count(), 0);
     ordinaryReview = null;
     await page.setViewportSize({width: 1440, height: 1000});
@@ -247,7 +247,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     await page.getByRole("heading", { name: "System", exact: true }).waitFor();
     await page.goto(`${base}/#decisions`);
     await page.locator(".decision-detail-card").waitFor();
-    await page.getByRole("button", {name: "Observe →", exact: true}).click();
+    await page.getByRole("button", {name: "Open run →", exact: true}).click();
     await page.getByRole("heading", {name: "Activity", exact: true}).waitFor();
     assert.equal(new URL(page.url()).pathname, "/activity");
     await page.goto(`${base}/#decisions`);

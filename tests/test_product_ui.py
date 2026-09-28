@@ -560,7 +560,8 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "${escapeHtml(item.title)}</strong></span>" in script
     assert "${escapeHtml(item.workflow_title)}</strong><small>" not in script
     assert "${escapeHtml(decision.title)}</h2>" not in script
-    assert 'data-decision-read="${escapeHtml(decision.id)}">Observe →' in script
+    assert 'data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →' in script
+    assert 'const runActionLabel = isTask ? "Open task" : "Open run";' in script
     assert 'const showRunAction = decision.kind === "output_conflict" || !outputs.length;' in script
     assert '${showRunAction ? `<button type="button" data-decision-read=' in script
     assert 'const consequence = String(decision.consequence || "").trim();' in script
