@@ -383,7 +383,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "clearIntegrationCallbackUrl(connected.project_id)" in script
     assert "clearIntegrationCallbackUrl(error.detail.project_id)" in script
     assert "function clearIntegrationCallbackUrl(projectId = null)" in script
-    assert 'if (projectId) callbackUrl.searchParams.set("project", projectId)' in script
+    assert 'if (project) callbackUrl.searchParams.set("project", project)' in script
     assert (
         "await bootstrap(invitedProject?.id || integrationReturn?.projectId || null, "
         "integrationReturn)" in script

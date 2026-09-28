@@ -63,10 +63,12 @@ if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
 const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
-function routeUrl(route, base = window.location.href) {
+// `carry` names the only current query parameters that survive; null keeps the rest.
+function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
+  if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
   for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
@@ -86,7 +88,8 @@ function currentRoute() {
   return `${window.location.pathname.replace(/^\//, "")}${window.location.search}`;
 }
 function goToRoute(route) {
-  const target = routeUrl(route);
+  // Moving inside the dashboard keeps only the project; sign-in and callback leftovers stay behind.
+  const target = routeUrl(route, window.location.href, ["project"]);
   if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) window.history.pushState(null, "", target);
   routeChanged();
 }
@@ -6290,7 +6293,7 @@ function resetProjectState(project) {
   state.taskRoute = null;
   state.fileRoute = null;
   state.compareRoute = null;
-  window.history.replaceState(null, "", routeUrl(nextView));
+  window.history.replaceState(null, "", routeUrl(nextView, window.location.href, ["project"]));
 }
 
 async function loadProject(project, { announce = false, integrationReturn = null } = {}) {
@@ -6523,10 +6526,10 @@ function callbackProjectId() {
 
 function clearIntegrationCallbackUrl(projectId = null) {
   const callbackUrl = new URL(window.location.href);
-  for (const key of ["code", "state", "installation_id", "setup_action", "error", "error_description"]) {
-    callbackUrl.searchParams.delete(key);
-  }
-  if (projectId) callbackUrl.searchParams.set("project", projectId);
+  // Providers add their own parameters (GitHub sends `iss`); keep only the project.
+  const project = projectId || callbackUrl.searchParams.get("project");
+  callbackUrl.search = "";
+  if (project) callbackUrl.searchParams.set("project", project);
   callbackUrl.pathname = "/integrations";
   callbackUrl.hash = "";
   window.history.replaceState(null, "", `${callbackUrl.pathname}${callbackUrl.search}${callbackUrl.hash}`);

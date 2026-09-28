@@ -1,5 +1,6 @@
 // Packaged dashboard, synthetic HTTP only. No live credentials or projects.
-// A decision card shows what it asks you to approve in plain words.
+// A decision card shows what it asks you to approve in plain words, and the address bar
+// keeps only the project once sign-in or a connection callback has finished.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import http from "node:http";
@@ -115,5 +116,30 @@ test("decision card shows a task's proposed changes and plain labels", async () 
     assert.equal(await card.getByRole("button", {name: "Approve", exact: true}).count(), 1);
     assert.deepEqual(errors, []);
     await context.close();
+  } finally { await browser.close(); server.close(); }
+});
+
+test("the address bar keeps only the project after a connection callback and while moving around", async () => {
+  const {server, base} = await serve();
+  const browser = await chromium.launch({headless: true});
+  try {
+    const callback = "/integrations/callback/github?code=synthetic&state=synthetic&installation_id=7&setup_action=install&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth";
+    const {page, context, errors} = await open(browser, base, callback);
+    await page.getByText("example/site", {exact: true}).waitFor();
+    let current = new URL(page.url());
+    assert.equal(current.pathname, "/integrations");
+    assert.deepEqual([...current.searchParams.keys()], ["project"]);
+    await page.keyboard.press("Escape");
+    await context.close();
+
+    // A leftover from an earlier sign-in does not follow the person to the next page.
+    const again = await open(browser, base, "/system?project=project-1&iss=https%3A%2F%2Fgithub.com%2Flogin%2Foauth");
+    await again.page.locator('.nav-item[data-view="decisions"]').click();
+    await again.page.locator(".decision-detail-card").waitFor();
+    current = new URL(again.page.url());
+    assert.equal(current.pathname, "/decisions");
+    assert.deepEqual([...current.searchParams.entries()], [["project", "project-1"]]);
+    assert.deepEqual([...errors, ...again.errors], []);
+    await again.context.close();
   } finally { await browser.close(); server.close(); }
 });
