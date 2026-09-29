@@ -49,8 +49,10 @@ readable result. This release does not add an action to apply a conflicting resu
 
 Migration `024_retained_procedure_output.sql` adds nullable `workflow_runs.retained_output`.
 Old rows remain valid. Public run views expose only path, revision, media type, byte count,
-and `publication_pending`, `reconciliation_pending`, `output_conflict`, or
-`execution_interrupted` reason.
+and `publication_pending`, `reconciliation_pending`, `output_conflict`,
+`execution_interrupted` or `not_published` reason. `not_published` marks a finished result
+that its validator kept as a diagnostic and Tin will not publish, such as an analytics brief
+that measured nothing.
 
 - `GET /api/workflows/runs/{id}/artifact?source=retained` returns validated checkpoint bytes.
 - The existing `/artifact/document` adapter accepts the same `source` option for Markdown.
@@ -76,7 +78,8 @@ Before destroying an interrupted isolated sandbox, Tin revokes its model admissi
 one bounded attempt to retain changed Markdown. The installed isolation helper first kills
 the author and freezes regular files; unchanged, missing, linked, oversized, non-UTF-8, or
 credential-bearing output is excluded. The switchboard revalidates the pinned output contract.
-This covers default/isolated plain Markdown research and `memory-section.v1` code maps; section
+This covers default/isolated plain Markdown research, `memory-section.v1` code maps and
+`analytics-brief.v1` reports, whose partial text is checked only for size; section
 ownership still applies. Browser/Studio profiles, identity-enabled procedures, companion
 documents and other validators remain excluded.
 
