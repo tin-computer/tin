@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
 
@@ -3540,6 +3540,99 @@ class Database:
                     revision,
                 )
         return bool(stored)
+
+    async def decline_review(
+        self, *, run_id: UUID, clerk_user_id: str, summary: str
+    ) -> WorkflowRun:
+        """Turn down a waiting proposal: the run ends as declined and nothing it proposed is used.
+
+        One decision per run, like an approval. The accepted command ends the waiting durable
+        run through the review dispatcher, which retries until Temporal accepts it.
+        """
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if row is None:
+                raise LookupError(f"run {run_id} does not exist")
+            if row["review_decision"] == "declined":
+                return _run(row)
+            if (
+                not row["review_required"]
+                or row["review_decision"] is not None
+                or row["status"] != RunStatus.NEEDS_INPUT.value
+            ):
+                raise RuntimeError("This proposal is no longer waiting for a decision.")
+            if await conn.fetchval(
+                "SELECT true FROM workflow_review_commands WHERE source_run_id = $1", run_id
+            ):
+                raise RuntimeError("This proposal already has a review decision.")
+            artifact = {
+                "run_id": str(run_id),
+                "path": row["artifact_path"],
+                "revision": row["canonical_commit_sha"],
+            }
+            token = hashlib.sha256(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            await conn.execute(
+                """
+                INSERT INTO workflow_review_commands (
+                    id, project_id, request_id, actor_clerk_user_id, source_run_id, root_run_id,
+                    artifact_run_id, coordinator_run_id, action, request_digest, review_token,
+                    artifact
+                )
+                VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 'decline', $6, $6, $7::jsonb)
+                """,
+                uuid4(),
+                row["project_id"],
+                uuid5(NAMESPACE_URL, f"tin:decline:{run_id}"),
+                clerk_user_id,
+                run_id,
+                token,
+                json.dumps(artifact),
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', review_decision = 'declined', reviewed_at = now(),
+                    reviewed_by_clerk_user_id = $2, finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    progress_summary = 'Discarded. The current guide is unchanged.',
+                    progress_updated_at = now()
+                WHERE id = $1
+                RETURNING *
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"declined"}'::jsonb,
+                    applied_at = now(), applied_by_clerk_user_id = $2
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="human_review_declined",
+                details={
+                    "kind": "your_edits",
+                    "decision": "declined",
+                    "actor_clerk_user_id": clerk_user_id,
+                },
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{run_id}:human_review_declined",
+            )
+            await self._track_run(run_id, "run_review_recorded", conn=conn, decision="declined")
+        assert row is not None
+        return _run(row)
 
     async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(

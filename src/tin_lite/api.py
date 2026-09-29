@@ -884,7 +884,8 @@ class DecisionView(BaseModel):
 class DecisionApply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve"]
+    # "decline" turns down a proposed writing style or brand guide; the current one stays.
+    action: Literal["approve", "decline"]
     feedback: str | None = Field(default=None, max_length=8000)
     review_token: str | None = Field(default=None, max_length=64)
     # Content drafts only: where this approved document goes, and whether to keep the pick.
@@ -2609,6 +2610,20 @@ async def apply_decision(
             status_code=status.HTTP_409_CONFLICT,
             detail="Use Request changes to revise the draft. Approval does not apply feedback.",
         )
+    if payload.action == "decline":
+        from tin_lite.proposal_decline import decline_proposal
+
+        if decision["kind"] != "review":
+            raise HTTPException(status_code=409, detail="Only a proposal can be discarded.")
+        try:
+            declined = await decline_proposal(
+                database=database, run_id=decision["run_id"], actor=user.clerk_user_id
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="decision not found") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RunView.model_validate(declined)
     if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
         result = await approve_project_task(decision["run_id"], request, user)
     else:
