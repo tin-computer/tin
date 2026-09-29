@@ -1037,15 +1037,17 @@ class TinActivities:
                 if not artifact or len(artifact) > 1_000_000:
                     raise ValueError("DESIGN.md must contain between 1 byte and 1 MB")
                 artifact.decode("utf-8")
-                canonical_sha = await self._storage.create_canonical_commit(
-                    repo_id=project.state_repo_id,
-                    branch=project.canonical_branch,
-                    expected_head_sha=run.expected_head_sha,
-                    artifact_path=ARTIFACT_PATH,
-                    artifact=artifact,
-                    execution_key=execution_key,
-                    run_id=str(run_id),
-                )
+                async with self._db.project_state_lock(conn, project.id):
+                    canonical_sha = await self._storage.create_canonical_commit(
+                        repo_id=project.state_repo_id,
+                        branch=project.canonical_branch,
+                        expected_head_sha=run.expected_head_sha,
+                        artifact_path=ARTIFACT_PATH,
+                        artifact=artifact,
+                        execution_key=execution_key,
+                        run_id=str(run_id),
+                        validate_lease=lambda: self._validate_procedure_publication_lease(run),
+                    )
                 await self._db.complete_effect(
                     conn,
                     execution_key=execution_key,
@@ -4582,6 +4584,9 @@ class TinActivities:
                         expected_head_sha=current_head_sha,
                         raw_diff=raw_diff,
                         expected_diff_sha256=expected_diff_sha,
+                        original_base_sha=run.expected_head_sha,
+                        reviewed_files=run.task_diff["files"],
+                        validate_lease=lambda: self._validate_procedure_publication_lease(run),
                         execution_key=execution_key,
                         run_id=str(run_id),
                     )

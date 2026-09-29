@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import AsyncExitStack, asynccontextmanager
+from contextvars import ContextVar
 from decimal import Decimal
 
 import httpx
@@ -34,6 +36,10 @@ ENDPOINTS = {
 PAID_BOUNDS = {"batch": 40, "ads_depth": 20, "ranked_paid_rows": 50}
 # The traffic forecast answers with one aggregate row per request rather than an items list.
 ROW_RESULT_KINDS = frozenset({"ad_traffic"})
+# The client a batch of lookups shares, with the adapter that opened it.
+_SESSION: ContextVar[tuple[KeywordData, httpx.AsyncClient] | None] = ContextVar(
+    "keyword_data_session", default=None
+)
 
 
 def request_for(kind: str, *, market: str, value, tag: str) -> dict:
@@ -108,23 +114,50 @@ class KeywordData:
         self._auth = httpx.BasicAuth(login, password)
         self._transport = transport
 
+    def _client(self) -> httpx.AsyncClient:
+        return httpx.AsyncClient(
+            auth=self._auth,
+            timeout=45,
+            follow_redirects=False,
+            trust_env=False,
+            transport=self._transport,
+        )
+
+    @asynccontextmanager
+    async def session(self):
+        """Let the lookups inside share one client and its open connections.
+
+        Each lookup keeps its own timeout, size bound and receipt; only the connection
+        pool is shared. Nested sessions reuse the outer client.
+        """
+        current = _SESSION.get()
+        if current is not None and current[0] is self:
+            yield
+            return
+        async with self._client() as client:
+            token = _SESSION.set((self, client))
+            try:
+                yield
+            finally:
+                _SESSION.reset(token)
+
     async def query(self, kind: str, *, market: str, value, tag: str) -> dict:
         request = request_for(kind, market=market, value=value, tag=tag)
         observation = await begin_observation("dataforseo", "tool", ENDPOINTS[kind])
+        shared = _SESSION.get()
         try:
-            async with (
-                asyncio.timeout(50),
-                httpx.AsyncClient(
-                    auth=self._auth,
-                    timeout=45,
-                    follow_redirects=False,
-                    trust_env=False,
-                    transport=self._transport,
-                ) as client,
-                client.stream(
-                    "POST", f"https://api.dataforseo.com/v3/{ENDPOINTS[kind]}", json=[request]
-                ) as response,
-            ):
+            async with AsyncExitStack() as stack:
+                await stack.enter_async_context(asyncio.timeout(50))
+                client = (
+                    shared[1]
+                    if shared is not None and shared[0] is self
+                    else await stack.enter_async_context(self._client())
+                )
+                response = await stack.enter_async_context(
+                    client.stream(
+                        "POST", f"https://api.dataforseo.com/v3/{ENDPOINTS[kind]}", json=[request]
+                    )
+                )
                 response.raise_for_status()
                 body = bytearray()
                 async for chunk in response.aiter_bytes():

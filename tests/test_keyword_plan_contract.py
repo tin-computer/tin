@@ -23,7 +23,7 @@ from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.domain import RunStatus, SideEffectConflictError
 from tin_lite.keyword_plan import KEY, paths
-from tin_lite.keyword_plan_activities import KeywordPlanActivities
+from tin_lite.keyword_plan_activities import LOOKUP_CONCURRENCY, KeywordPlanActivities
 from tin_lite.mcp_server import create_mcp_app
 from tin_lite.organic_audit import canonical_json
 from tin_lite.run_service import WorkflowExecutorUnavailableError, start_workflow_run
@@ -210,6 +210,30 @@ async def test_cannot_stop_published_run_waiting_on_projection(publication_db):
         )
     await activities.keyword_project(str(run.id))
     assert (await publication_db.get_run(run.id)).status == RunStatus.SUCCEEDED
+
+
+@pytest.mark.asyncio
+async def test_batched_samples_share_one_ledger_on_postgres(publication_db):
+    from test_keyword_plan_concurrency import track
+
+    project, workflow, runtime, settings, activities, provider = await fixture(publication_db)
+    state = track(provider)
+    run = await start(runtime, settings, workflow, project)
+    run_id = str(run.id)
+    await activities.keyword_prepare(run_id)
+    await activities.keyword_collect(run_id)
+    count = await activities.keyword_sample_count(run_id)
+    # Concurrent samples each hold their receipt lock and reserve on that same connection.
+    await asyncio.gather(*(activities.keyword_inspect_batch(run_id) for _ in range(2)))
+    await activities.keyword_review(run_id)
+    await activities.keyword_publish(run_id)
+    await activities.keyword_project(run_id)
+    assert (await publication_db.get_run(run.id)).status == RunStatus.SUCCEEDED
+    serps = [call for call in provider.query.await_args_list if call.args[0] == "serp"]
+    assert count > LOOKUP_CONCURRENCY and len(serps) == count
+    assert state["serp_peak"] > 1
+    ledger = (await publication_db.get_effect(activities.key(run_id, "budget"))).result
+    assert {f"serp:{index}" for index in range(count)} <= set(ledger)
 
 
 @pytest.mark.asyncio

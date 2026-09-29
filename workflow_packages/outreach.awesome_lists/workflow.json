@@ -5,7 +5,7 @@
     "title": "Get your product into the awesome lists that will actually accept it",
     "description": "A founder with a public product or repository gets the curated GitHub lists whose own rules it meets, ranked, with the exact entry and pull request text for each, and the one fix that would unlock the most others. Submit to awesome lists sends the entries you approve from your GitHub account.",
     "executor": "codex.procedure",
-    "version": "1.2.0",
+    "version": "1.2.1",
     "schedule_modes": [
       "on_demand"
     ],

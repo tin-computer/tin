@@ -7,6 +7,7 @@ again. They contain no prompts, model output, provider errors, or credentials.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Iterator
@@ -27,6 +28,7 @@ from tin_lite.model_providers import (
     ModelResult,
     ModelRoute,
     ModelUsage,
+    model_failure_reason,
 )
 
 OPERATION = "native_model_usage_v1"
@@ -130,9 +132,22 @@ class ModelUsageRecorder:
             await self.db.save_effect_progress(conn, execution_key=key, result=record)
             try:
                 result = await call()
-            except ModelProviderError as exc:
-                if exc.observation is not None:
+            except BaseException as exc:
+                if isinstance(exc, ModelProviderError) and exc.observation is not None:
                     await self._observed(conn, key, record, exc.observation, "invalid_output")
+                else:
+                    await self.db.save_effect_progress(
+                        conn,
+                        execution_key=key,
+                        result={
+                            **record,
+                            "failure_reason": (
+                                "execution_interrupted"
+                                if isinstance(exc, asyncio.CancelledError)
+                                else model_failure_reason(exc)
+                            ),
+                        },
+                    )
                 raise
             await self._observed(
                 conn,

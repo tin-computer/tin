@@ -39,6 +39,9 @@ from tin_lite.paid_ads_sources import pinned_bundle
 from tin_lite.usage_capture import external_usage_scope
 
 STEP_TOTAL = 5
+# The provider's own wait for one model step, just inside the step's 240-second budget. Without
+# it the client stops at its 90-second default and a slow but valid answer is lost.
+MODEL_TIMEOUT_SECONDS = 225
 READS = (
     ("campaign_7d", "campaign_health", 7),
     ("campaign_14d", "campaign_health", 14),
@@ -182,7 +185,9 @@ class PaidAdsMonitorActivities:
         async def call():
             try:
                 async with asyncio.timeout(240):
-                    result = await self.router.generate(route, request)
+                    result = await self.router.generate(
+                        route, request, timeout_seconds=MODEL_TIMEOUT_SECONDS
+                    )
             except ModelProviderError as exc:
                 return {"unusable": (str(exc)[:160] or "unusable model result")}
             parsed = result.parsed
