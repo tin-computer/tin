@@ -55,13 +55,28 @@ _warned_unknown_workflow_system_ids: set[str] = set()
 
 # One cheap, Postgres-only eligibility predicate for Decisions and its count: a run with
 # something to approve. A task asking a question waits on an answer, not a decision, and a
-# reviewed task that changed nothing has nothing to approve.
+# reviewed task that changed nothing has nothing to approve. While a task revising a run's
+# saved output waits or applies, only the newer version shows: the older one stays out of
+# Decisions and every count until that task is resolved.
 _DECISION_RUN_SQL = """
     run.status = 'needs_input'
     AND (run.review_required OR (
         run.executor = 'project.task' AND run.task_phase = 'review'
         AND run.task_has_changes IS NOT FALSE
     ))
+    AND NOT EXISTS (
+        SELECT 1 FROM workflow_runs AS newer
+        WHERE newer.project_id = run.project_id
+          AND newer.executor = 'project.task'
+          AND newer.id <> run.id
+          AND run.artifact_path IS NOT NULL
+          AND newer.task_diff->'files'
+              @> jsonb_build_array(jsonb_build_object('path', run.artifact_path))
+          AND (
+              (newer.status = 'needs_input' AND newer.task_phase = 'review')
+              OR (newer.status = 'running' AND newer.task_phase = 'applying')
+          )
+    )
 """
 
 # Decisions saved before outputs carried their heading and first sentence: the review line
