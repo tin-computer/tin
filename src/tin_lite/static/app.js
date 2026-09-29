@@ -4249,9 +4249,20 @@ function selectedDecision() {
   return state.decisions.find((item) => item.id === state.decisionId) || state.decisions[0];
 }
 
-function decisionItemHtml(decision, item, index) {
-  const title = item.title || item.file || `Output ${index + 1}`;
-  const facts = [item.file, item.words ? `${item.words} words` : null, item.sources ? `${item.sources} sources` : null]
+function sameText(left, right) {
+  return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+}
+
+// The row names the file without repeating the card title or its own name in the path.
+function decisionItemHtml(decision, item, index, cardTitle = "") {
+  const path = String(item.file || "");
+  const name = path.split("/").at(-1) || "";
+  const runNamed = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i.test(name);
+  const title = item.title && !sameText(item.title, cardTitle)
+    ? item.title
+    : (runNamed ? "Draft" : name) || `Output ${index + 1}`;
+  const where = sameText(title, item.title) && !sameText(title, name) ? path : path.split("/").slice(0, -1).join("/");
+  const facts = [where, item.words ? `${item.words} words` : null, item.sources ? `${item.sources} sources` : null]
     .filter(Boolean)
     .join(" · ");
   return `<article class="decision-output">
@@ -4349,13 +4360,42 @@ function bindPageUrls() {
   });
 }
 
-function decisionSubtitle(decision, run) {
+// The card leads with what the run produced; the workflow and the wait follow in plain words.
+function decisionHeading(decision, run) {
+  const output = decision.output_title || (run?.workflow_name === "project.task" ? run.task_title : "") || "";
   const waited = waitingLabel(decision.created_at);
-  return [
-    run?.workflow_name === "project.task" ? run.task_title : null,
-    waited === "now" ? "Just arrived" : `Waiting ${waited}`,
-    decision.kind === "output_conflict" ? "result saved" : null,
-  ].filter(Boolean).join(" · ");
+  return {
+    title: output || decision.workflow_title || "Decision",
+    subtitle: [
+      output && !sameText(output, decision.workflow_title) ? decision.workflow_title : null,
+      waited === "now" ? "Just arrived" : `Waiting ${waited}`,
+      decision.kind === "output_conflict" ? "result saved" : null,
+    ].filter(Boolean).join(" · "),
+  };
+}
+
+function taskChangeLine(run) {
+  const files = run?.task_diff?.files || [];
+  if (!files.length) return "";
+  if (files.length === 1) return `Edits ${files[0].path}`;
+  let shared = String(files[0].path || "").split("/").slice(0, -1);
+  for (const file of files.slice(1)) {
+    const parts = String(file.path || "").split("/");
+    let index = 0;
+    while (index < shared.length && shared[index] === parts[index]) index += 1;
+    shared = shared.slice(0, index);
+  }
+  return `Edits ${files.length} files${shared.length ? ` in ${shared.join("/")}` : ""}`;
+}
+
+// Older reviews saved a sentence that only restates the workflow; it never reaches the card.
+const GENERIC_REVIEW_LINE = /^(?:[^.]*\bis ready for your review|Review the complete output before this workflow continues|Review the proposed project changes before they are applied)\.\s*/;
+
+function decisionBodyLine(decision, run, heading) {
+  const line = run?.workflow_name === "project.task"
+    ? String(run.task_summary || "").trim() || taskChangeLine(run)
+    : String(decision.explanation || "").replace(GENERIC_REVIEW_LINE, "").trim();
+  return [heading.title, heading.subtitle].some((text) => sameText(text, line)) ? "" : line;
 }
 
 function decisionDetailHtml(decision) {
@@ -4373,6 +4413,8 @@ function decisionDetailHtml(decision) {
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
   const consequence = String(decision.consequence || "").trim();
+  const heading = decisionHeading(decision, run);
+  const bodyLine = decisionBodyLine(decision, run, heading);
   const version = decisionVersionLabel(decision, run);
   const footerNote = [
     version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
@@ -4382,15 +4424,15 @@ function decisionDetailHtml(decision) {
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
-      <span><strong>${escapeHtml(decision.workflow_title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(decisionSubtitle(decision, run))}</code></span>
+      <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
       ${showRunAction ? `<button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>` : ""}
     </header>
     <div class="decision-detail-body">
-      <p>${escapeHtml(decision.explanation)}</p>
+      ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
       ${decisionRevisionHtml(decision)}
       <div class="decision-outputs">
-        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : taskChanges || `<span class="decision-no-output">${isTask ? "Open the task to review its proposed changes." : "Open the run to review its output."}</span>`}
+        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index, heading.title)).join("") : taskChanges || `<span class="decision-no-output">${isTask ? "Open the task to review its proposed changes." : "Open the run to review its output."}</span>`}
       </div>
     </div>
     <footer${footerNote ? "" : ' class="is-actions-only"'}>

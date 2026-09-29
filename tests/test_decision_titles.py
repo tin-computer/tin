@@ -8,10 +8,12 @@ import pytest
 from test_procedure_publication import PATH, activity_fixture
 from test_procedure_publication import publication_db as publication_db
 
+from tin_lite.content_delivery import summary_line
+
 SHA = "b" * 40
 
 
-async def review_run(db, *, artifact_title=None):
+async def review_run(db, *, artifact_title=None, explanation=None):
     _, _, run, _ = await activity_fixture(db, review=True)
     await db.request_human_review(
         run_id=run.id,
@@ -20,6 +22,7 @@ async def review_run(db, *, artifact_title=None):
         artifact_path=PATH,
         summary="Research is ready for your review.",
         artifact_title=artifact_title,
+        explanation=explanation,
     )
     return run
 
@@ -103,3 +106,63 @@ async def test_only_tasks_with_changes_to_review_are_decisions(publication_db):
             db, workflow_id, phase=phase, has_changes=has_changes, title="Pick a tone"
         )
         assert not await db.list_pending_decisions(project_id=project_id)
+
+
+@pytest.mark.asyncio
+async def test_the_card_line_says_what_the_output_contains(publication_db):
+    run = await review_run(
+        publication_db,
+        artifact_title="Release announcements for Tin",
+        explanation="What shipped: Public workflow packages anyone can contribute.",
+    )
+    [decision] = await publication_db.list_pending_decisions(project_id=run.project_id)
+    assert decision["output_title"] == "Release announcements for Tin"
+    assert (
+        decision["explanation"] == "What shipped: Public workflow packages anyone can contribute."
+    )
+    # Activity keeps the review notice; only the card carries the output's own line.
+    summary = await publication_db.pool.fetchval(
+        "SELECT summary FROM activity_events WHERE run_id=$1 "
+        "AND event_type='human_review_requested'",
+        run.id,
+    )
+    assert summary == "Research is ready for your review."
+
+
+RELEASE = b"""# Release announcements for Tin
+
+## What shipped
+
+### Features (1)
+- Public workflow packages anyone can [contribute](https://example.com/contribute). More soon.
+
+*2 internal change(s) left out of the announcements.*
+
+---
+
+## X post
+
+> Tin 0.9 is out.
+"""
+
+
+@pytest.mark.parametrize(
+    ("document", "line"),
+    [
+        (RELEASE, "What shipped: Public workflow packages anyone can contribute."),
+        (
+            b"# Which tools work with coding agents?\n\nMost of them expose an MCP server. "
+            b"Some ship a CLI.\n",
+            "Most of them expose an MCP server.",
+        ),
+        (
+            b"---\ntitle: Notes\n---\n# Notes\n\n```\ncode line\n```\n> quoted\n\n"
+            b"| a | b |\n\nThe *real* first line\n",
+            "The real first line",
+        ),
+        (b"# Only a title\n\n## And a section\n", None),
+        (b"\xff\xfe not text", None),
+    ],
+)
+def test_summary_line_reads_the_first_thing_a_reader_sees(document, line):
+    assert summary_line(document) == line

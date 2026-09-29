@@ -3255,21 +3255,7 @@ class Database:
                    CASE WHEN COALESCE(decision.title, 'Review workflow output')
                            <>'Review workflow output'
                        THEN decision.title
-                       ELSE 'Review: ' || COALESCE(
-                           CASE WHEN workflow.key='content.generate'
-                               AND workflow.project_id IS NULL THEN (
-                               SELECT receipt.result->'item'->>'title'
-                               FROM effect_receipts receipt
-                               WHERE receipt.execution_key=
-                                   'content-draft:' || run.id::text || ':prepare'
-                                 AND receipt.operation='content.generate'
-                                 AND receipt.status='completed'
-                           ) END,
-                           NULLIF(run.artifact_title, ''),
-                           CASE WHEN run.executor = 'project.task'
-                               THEN NULLIF(run.task_title, '') END,
-                           workflow.title
-                       ) END AS title,
+                       ELSE 'Review: ' || COALESCE(output.title, workflow.title) END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -3307,9 +3293,27 @@ class Database:
                        AS created_at,
                    NULL::jsonb AS output_resolution,
                    COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
-                   ({_OUTPUT_REVISION_SQL}) AS revision
+                   ({_OUTPUT_REVISION_SQL}) AS revision,
+                   output.title AS output_title
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            -- What the run produced, in its own words: the document's heading, the planned
+            -- article's brief, or the task's title.
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(
+                    NULLIF(run.artifact_title, ''),
+                    CASE WHEN workflow.key='content.generate' AND workflow.project_id IS NULL
+                        THEN (
+                        SELECT receipt.result->'item'->>'title' FROM effect_receipts receipt
+                        WHERE receipt.execution_key=
+                            'content-draft:' || run.id::text || ':prepare'
+                          AND receipt.operation='content.generate'
+                          AND receipt.status='completed'
+                    ) END,
+                    CASE WHEN run.executor = 'project.task'
+                        THEN NULLIF(run.task_title, '') END
+                ) AS title
+            ) AS output ON true
             LEFT JOIN LATERAL (
                 SELECT pending.*
                 FROM run_decisions AS pending
@@ -3338,7 +3342,7 @@ class Database:
                        'media_type', run.retained_output->>'media_type',
                        'source', 'retained'
                    )), '{{}}'::jsonb, false, 'pending', NULL::timestamptz,
-                   run.created_at, run.output_resolution, run.created_at, NULL::jsonb
+                   run.created_at, run.output_resolution, run.created_at, NULL::jsonb, NULL
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
             WHERE run.project_id = $1 AND ({_PENDING_OUTPUT_CONFLICT_SQL})
@@ -6851,8 +6855,12 @@ class Database:
         artifact_path: str,
         summary: str = "Answer page draft is ready for your review.",
         artifact_title: str | None = None,
+        explanation: str | None = None,
     ) -> bool:
-        """Expose a reviewable artifact and pause only when this run pinned review."""
+        """Expose a reviewable artifact and pause only when this run pinned review.
+
+        `summary` goes to Activity; `explanation`, when given, is the decision card's line.
+        """
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE",
@@ -6944,7 +6952,7 @@ class Database:
                     """,
                     run_id,
                     row["project_id"],
-                    summary[:2000],
+                    (summary if explanation is None else explanation)[:2000],
                     json.dumps(
                         [
                             {

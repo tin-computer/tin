@@ -12,7 +12,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision} = {}) {
+async function serve({draft: revision, release} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -36,6 +36,18 @@ async function serve({draft: revision} = {}) {
   const integrations = [{key: "infra.github", name: "GitHub", badge: "GH", description: "Repositories", unlocks: [], configured: true, status: "available", connection_id: null}];
   const writes = [];
   const runs = [task, report];
+  if (release) {
+    // A release announcement, as saved now (with its heading and first line) or by an older version.
+    const announcement = {id: "7e1e0000-0000-4000-8000-000000000004", project_id: project.id, workflow_id: "release", workflow_name: "workflow.code",
+      status: "needs_input", review_required: true, artifact_path: "reports/RELEASE_ANNOUNCE.md", canonical_commit_sha: "e".repeat(40), created_at: minutesAgo(60)};
+    runs.push(announcement);
+    decisions.splice(0, decisions.length, {id: "release-decision", run_id: announcement.id, project_id: project.id, workflow_key: "content.release_announce",
+      workflow_title: "Announce a new release", kind: "review", consequence: "", created_at: announcement.created_at, version_saved_at: announcement.created_at,
+      items: [{file: announcement.artifact_path, revision: announcement.canonical_commit_sha, title: "RELEASE_ANNOUNCE.md"}],
+      ...(release === "saved"
+        ? {title: "Review: Release announcements for Tin", output_title: "Release announcements for Tin", explanation: "What shipped: Public workflow packages anyone can contribute."}
+        : {title: "Review: Announce a new release", output_title: null, explanation: "Announce a new release is ready for your review."})});
+  }
   if (revision !== undefined) {
     // An answer page draft saved two days ago, with GitHub ready to publish it.
     const draft = {id: "d7af0000-0000-4000-8000-000000000003", project_id: project.id, workflow_id: "answer-page", workflow_name: "content.answer_page",
@@ -43,7 +55,8 @@ async function serve({draft: revision} = {}) {
     runs.push(draft);
     Object.assign(integrations[0], {connection_id: "github-1", status: "connected", project_id: project.id, configuration: {selected_repository: "example/site"}});
     decisions.splice(0, decisions.length, {id: "draft-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.answer_page",
-      workflow_title: "Draft an answer page", kind: "review", title: "Review: Which tools work with coding agents?", explanation: "Answer page draft is ready for your review.",
+      workflow_title: "Draft an answer page", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
+      explanation: "Most marketing tools reach coding agents through an MCP server or a command-line tool.",
       consequence: "", items: [{file: draft.artifact_path, revision: draft.canonical_commit_sha, title: "ANSWER_PAGE.md"}], created_at: draft.created_at,
       version_saved_at: draft.created_at,
       revision: revision && {run_id: task.id, title: "Revise answer page draft", state: revision, revision: revision === "applied" ? "c".repeat(40) : null, at: minutesAgo(1)}});
@@ -106,7 +119,9 @@ test("decision card shows a task's proposed changes and plain labels", async () 
     // The list names each decision; the card subtitle reads as words, IDs only on hover.
     assert.deepEqual(await page.locator(".decision-list-item strong").allTextContents(), ["Review: Update the FAQ", "Review: Research a question deeply"]);
     const subtitle = card.locator(":scope > header code");
-    assert.equal(await subtitle.textContent(), "Update the FAQ · Waiting 5m");
+    assert.equal(await card.locator(":scope > header strong").textContent(), "Update the FAQ");
+    assert.equal(await subtitle.textContent(), "One-off project task · Waiting 5m");
+    assert.equal(await card.locator(".decision-summary").textContent(), "Edits 2 files");
     assert.match(await subtitle.getAttribute("title"), /^project\.task · run_5a7e$/);
     // The changes are on the card, with the same controls the task page offers.
     assert.equal(await card.locator(".task-diff h2").textContent(), "Review the proposed files");
@@ -126,7 +141,10 @@ test("decision card shows a task's proposed changes and plain labels", async () 
     // A review with nothing attached names the one link it offers.
     await page.goto(`${base}/decisions?project=project-1`);
     await page.locator('[data-decision-id="report-decision"]').click();
+    assert.equal(await card.locator(":scope > header strong").textContent(), "Research a question deeply");
     assert.equal(await subtitle.textContent(), "Just arrived");
+    // "<workflow> is ready for your review." only repeated the title, so it is left out.
+    assert.equal(await card.locator(".decision-summary").count(), 0);
     assert.equal(await card.getByRole("button", {name: "Open run →", exact: true}).count(), 1);
     assert.equal(await card.locator(".decision-no-output").textContent(), "Open the run to review its output.");
     assert.equal(await card.getByRole("button", {name: "Approve", exact: true}).count(), 1);
@@ -209,4 +227,38 @@ test("after a revision is applied the older draft can only stay in Tin", async (
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); server.close(); }
+});
+
+test("a release announcement card says what the draft is without repeating itself", async () => {
+  for (const release of ["saved", "older"]) {
+    const {server, base} = await serve({release});
+    const browser = await chromium.launch({headless: true});
+    try {
+      const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+      const card = page.locator(".decision-detail-card");
+      await card.waitFor();
+      const text = async selector => (await card.locator(selector).allTextContents()).map(item => item.trim());
+      const [title] = await text(":scope > header strong");
+      const [subtitle] = await text(":scope > header code");
+      const summary = await text(".decision-summary");
+      const [file] = await text(".decision-output strong");
+      const [where] = await text(".decision-output code");
+      if (release === "saved") {
+        assert.equal(title, "Release announcements for Tin");
+        assert.equal(subtitle, "Announce a new release · Waiting 1h");
+        assert.deepEqual(summary, ["What shipped: Public workflow packages anyone can contribute."]);
+      } else {
+        // Saved before outputs carried their heading: the workflow names it and nothing repeats.
+        assert.equal(title, "Announce a new release");
+        assert.equal(subtitle, "Waiting 1h");
+        assert.deepEqual(summary, []);
+      }
+      assert.equal(file, "RELEASE_ANNOUNCE.md");
+      assert.equal(where, "reports");
+      const shown = [title, subtitle, ...summary, file, where, ...(await text(".decision-version"))];
+      assert.equal(new Set(shown.map(item => item.toLowerCase())).size, shown.length, `repeated text: ${shown.join(" | ")}`);
+      assert.deepEqual(errors, []);
+      await context.close();
+    } finally { await browser.close(); server.close(); }
+  }
 });

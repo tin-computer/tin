@@ -3974,32 +3974,30 @@ class TinActivities:
         from tin_lite.content_delivery import ContentDelivery
 
         delivery = await ContentDelivery(database=self._db, storage=self._storage).status(run)
-        artifact_title = None
-        declared = ((workflow_definition.definition or {}).get("code") or {}).get("output") or {}
-        if workflow_definition.key in {"content.generate", "content.public_article"} or (
-            "{" in str(declared.get("path", "")) and path.endswith(".md")
-        ):
-            # These drafts live at a run-owned path, so their heading is the readable label.
-            from tin_lite.content_delivery import display_title
+        artifact_title = lede = None
+        if path.casefold().endswith((".md", ".markdown")):
+            # A document's own heading names it better than its file name, and its first
+            # paragraph says what the reviewer is about to read.
+            from tin_lite.content_delivery import display_title, summary_line
 
-            artifact_title = display_title(
-                await self._storage.read_canonical_artifact(
-                    repo_id=project.state_repo_id, commit_sha=sha, path=path
-                )
+            raw = await self._storage.read_canonical_artifact(
+                repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
+            artifact_title, lede = display_title(raw), summary_line(raw)
+        destination = (
+            f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
+            + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
+            if delivery and delivery.get("approval_label")
+            else ""
+        )
         required = await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=artifact_title,
-            summary=(
-                f"{workflow_definition.title} is ready for your review. Approval opens an unmerged "
-                f"GitHub PR in {delivery['repository']}"
-                + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
-                if delivery and delivery.get("approval_label")
-                else f"{workflow_definition.title} is ready for your review."
-            ),
+            summary=f"{workflow_definition.title} is ready for your review. {destination}".strip(),
+            explanation=" ".join(part for part in (lede, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress

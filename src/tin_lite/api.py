@@ -875,6 +875,7 @@ class DecisionView(BaseModel):
     output_resolution: dict | None = None
     version_saved_at: datetime | None = None
     revision: dict | None = None
+    output_title: str | None = None
 
 
 class DecisionApply(BaseModel):

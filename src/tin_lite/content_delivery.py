@@ -162,6 +162,44 @@ def display_title(raw):
     return " ".join(title.split())[:160].strip() or None
 
 
+def summary_line(raw):
+    """One sentence from a saved document that says what it contains, or None.
+
+    The first paragraph or list item after the title, skipping notes set entirely in
+    emphasis, quotes, tables, rules and code. A list item keeps its section's name.
+    """
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except (AttributeError, UnicodeDecodeError):
+        return None
+    if lines and lines[0].strip() == "---":  # front matter
+        closing = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), 0)
+        lines = lines[closing + 1 :]
+    section, fenced = None, False
+    for line in lines:
+        text = line.strip()
+        if text.startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if fenced or not text or text.startswith(("|", ">", "<", "![", "---", "***")):
+            continue
+        heading = re.match(r"(#+)\s+(.*)", text)
+        if heading:
+            section = heading.group(2).strip() if len(heading.group(1)) == 2 else section
+            continue
+        if re.fullmatch(r"([*_]).+\1", text):
+            continue
+        item = re.match(r"(?:[-*+]|\d+[.)])\s+(.*)", text)
+        body = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", item.group(1) if item else text)
+        body = " ".join(re.sub(r"[`*_]", "", body).split())
+        sentence = re.match(r"(.+?[.!?])(?:\s|$)", body)
+        body = sentence.group(1) if sentence else body
+        if item and section:
+            body = f"{section}: {body}"
+        return body[:240].strip() or None
+    return None
+
+
 def new_page_header(settings, title, date, slug, page_metadata=None):
     values = {"title": title, "date": date, "slug": slug}
     metadata = {
