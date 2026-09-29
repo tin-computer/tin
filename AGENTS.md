@@ -189,8 +189,10 @@ outside marketing, or were written without ever being run. Full rules:
 - Markdown readers remain generic and content-only. Generation notes are separate files
   linked in product context, never inserted into article copy. Raw files are untrusted;
   preserve safe download, sandbox and preview behavior.
-- Approved GitHub delivery creates an unmerged PR through the selected integration.
-  Without GitHub, approved Markdown remains in Files. Approval is not website publication.
+- Approved GitHub delivery follows the project's delivery setting through the selected
+  integration: an unmerged PR, or a commit to main. Tin merges its own adaptation PR only when
+  the setting is commit to main, the PR adds nothing but the approved page and GitHub reports it
+  clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
   Email-send approval, recipients and pacing are a separate contract.
 
 ## Verification and contributions
