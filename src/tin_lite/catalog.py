@@ -238,6 +238,17 @@ ANSWER_PAGE_REVIEW_POLICY = HumanReviewPolicy(
     queue_clause="Answer-page draft ready to finish",
 )
 
+STYLE_CAPTURE_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Future drafts follow this guide.",
+    review_label="Review guide",
+    defer_label="Not now",
+    summary=(
+        "Your writing style guide is ready. Approve it to save it for future drafts; "
+        "until then your current guide stays in place."
+    ),
+    queue_clause="Writing style guide ready to review",
+)
+
 PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     reason="Produces a public-facing article draft.",
     review_label="Review article",
@@ -653,10 +664,12 @@ BUILTIN_WORKFLOWS = (
         title="Capture writing style",
         description=(
             "Use your coding agent to select writing samples, or add samples here. "
-            "Save an editable voice guide for future content. Nothing is published."
+            "Review the proposed voice guide in Decisions; once you approve it, future "
+            "content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
+        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=style_capture.ROUTE,

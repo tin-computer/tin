@@ -21,6 +21,12 @@ ROUTE = ModelRoute(
     capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
 )
 POLICY = {"version": 1, "max_source_bytes": MAX_SOURCE_BYTES, "max_output_tokens": 6000}
+PROPOSAL_DIR = "style/proposals"
+
+
+def proposal_path(run_id, created_at) -> str:
+    """A run-owned file for the proposed guide; the active guide changes only on approval."""
+    return f"{PROPOSAL_DIR}/{created_at.date().isoformat()}-writing-style-{str(run_id)[:8]}.md"
 
 
 class Sample(BaseModel):

@@ -6369,7 +6369,8 @@ class Database:
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
-                  AND status NOT IN ('failed', 'stopped', 'superseded') AND NOT review_required
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                  AND (NOT review_required OR review_decision = 'approved')
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
                 """,
@@ -6395,6 +6396,20 @@ class Database:
             await self.complete_effect(
                 conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
             )
+
+    async def clear_style_review_projection(self, run_id: UUID) -> None:
+        """After approval, a style run's proposal stops being its result; saving the guide
+        projects the real one through the ordinary publication and conflict path."""
+        await self.pool.execute(
+            """
+            UPDATE workflow_runs
+            SET canonical_commit_sha = NULL, artifact_ref = NULL, artifact_path = NULL,
+                artifact_title = NULL
+            WHERE id = $1 AND executor = 'style.capture' AND review_decision = 'approved'
+              AND status = 'running' AND artifact_path LIKE 'style/proposals/%'
+            """,
+            run_id,
+        )
 
     async def retain_procedure_output(
         self,

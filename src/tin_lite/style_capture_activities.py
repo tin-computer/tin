@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import asdict
+from datetime import UTC, datetime
 from uuid import UUID
 
 from temporalio import activity
@@ -15,6 +17,8 @@ from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.writing_style import STYLE_PATH
+
+WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
 
 
 class StyleCaptureActivities:
@@ -149,17 +153,9 @@ class StyleCaptureActivities:
                     non_retryable=True,
                 ) from None
 
-    @activity.defn(name="style_publish")
-    async def publish(self, run_id: str):
-        run = await self.db.get_run(UUID(run_id))
-        if run and run.executor == style.KEY and run.status.value == "succeeded":
-            return
-        run = await self.active(run_id)
-        project = await self.db.get_project(run.project_id)
-        context = (await self.db.get_effect(f"{run.id}:style_context")).result
-        model = (await self.db.get_effect(f"{run.id}:style_model")).result
+    def rendered(self, run, context, model):
         try:
-            content = style.render_guide(
+            return style.render_guide(
                 model["data"],
                 style.SourcePacket.model_validate(context["packet"]),
                 source_path=run.input["source_path"],
@@ -172,6 +168,131 @@ class StyleCaptureActivities:
                 "The extracted guide is invalid. The current guide is unchanged.",
                 non_retryable=True,
             ) from None
+
+    @activity.defn(name="style_propose")
+    async def propose(self, run_id: str) -> bool:
+        """Save the guide as a proposal and ask for review; the active guide stays unchanged."""
+        run = await self.db.get_run(UUID(run_id))
+        if not run or run.executor != style.KEY:
+            raise ValueError("Style capture is no longer active.")
+        if not run.review_required:
+            return False  # Runs pinned before review publish exactly as they did.
+        if run.status.value not in {"pending", "running", "needs_input"}:
+            raise ApplicationError("Style capture is no longer active.", non_retryable=True)
+        project = await self.db.get_project(run.project_id)
+        key = f"{run.id}:style_proposal"
+        async with self.db.effect_lock(key, style.KEY) as (conn, saved):
+            if saved and saved.status == "completed":
+                proposal = saved.result
+            else:
+                context = (await self.db.get_effect(f"{run.id}:style_context")).result
+                model = (await self.db.get_effect(f"{run.id}:style_model")).result
+                content = self.rendered(run, context, model)
+                path = style.proposal_path(run.id, run.created_at or datetime.now(UTC))
+                await self.db.start_effect(conn, execution_key=key, operation=style.KEY)
+                async with self.db.project_state_lock(conn, project.id):
+                    head = await self.storage.head_sha(
+                        await self.storage.get_repo(project.state_repo_id),
+                        project.canonical_branch,
+                    )
+                    sha = await self.storage.create_canonical_commit(
+                        repo_id=project.state_repo_id,
+                        branch=project.canonical_branch,
+                        expected_head_sha=head,
+                        artifact_path=path,
+                        artifact=content,
+                        execution_key=key,
+                        run_id=str(run.id),
+                        workflow_key=style.KEY,
+                    )
+                proposal = {"canonical_commit_sha": sha, "artifact_path": path}
+                await self.db.complete_effect(conn, execution_key=key, result=proposal)
+        await self.progress(run.id, "review", 2, "Your writing guide is ready to review")
+        sha, path = proposal["canonical_commit_sha"], proposal["artifact_path"]
+        return await self.db.request_human_review(
+            run_id=run.id,
+            canonical_commit_sha=sha,
+            artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{path}",
+            artifact_path=path,
+            artifact_title="Proposed writing style guide",
+            summary=(
+                "Your writing style guide is ready. Approve it to save it for future drafts; "
+                "until then your current guide stays in place."
+            ),
+        )
+
+    @activity.defn(name="style_record_approval")
+    async def record_approval(self, run_id: str):
+        """Bind the approval to the proposal as it stands now, including edits made in Files."""
+        run = await self.db.get_run(UUID(run_id))
+        await self.db.record_human_review(
+            run_id=run.id, decision="approved", summary="You approved the writing style guide."
+        )
+        key = f"{run.id}:style_approval"
+        async with self.db.effect_lock(key, style.KEY) as (conn, saved):
+            if not saved or saved.status != "completed":
+                project = await self.db.get_project(run.project_id)
+                path = (await self.db.get_effect(f"{run.id}:style_proposal")).result[
+                    "artifact_path"
+                ]
+                head = await self.storage.head_sha(
+                    await self.storage.get_repo(project.state_repo_id), project.canonical_branch
+                )
+                content = await self.storage.read_canonical_artifact_if_exists(
+                    repo_id=project.state_repo_id, commit_sha=head, path=path
+                )
+                try:
+                    if not content or len(content) > style.MAX_GUIDE_BYTES:
+                        raise ValueError
+                    content.decode("utf-8")
+                except ValueError:
+                    raise ApplicationError(
+                        "The proposed guide was removed or is too large. "
+                        "Your current guide is unchanged; start capture again.",
+                        non_retryable=True,
+                    ) from None
+                await self.db.start_effect(conn, execution_key=key, operation=style.KEY)
+                await self.db.complete_effect(
+                    conn,
+                    execution_key=key,
+                    result={
+                        "revision": head,
+                        "artifact_path": path,
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    },
+                )
+        # The proposal was only the review's document; saving the guide projects the result.
+        await self.db.clear_style_review_projection(run.id)
+
+    async def approved(self, run, project):
+        receipt = await self.db.get_effect(f"{run.id}:style_approval")
+        if run.review_decision != "approved" or not receipt or receipt.status != "completed":
+            raise ApplicationError(WAITING_FOR_APPROVAL, non_retryable=True)
+        approval = receipt.result
+        content = await self.storage.read_canonical_artifact(
+            repo_id=project.state_repo_id,
+            commit_sha=approval["revision"],
+            path=approval["artifact_path"],
+        )
+        if hashlib.sha256(content).hexdigest() != approval["sha256"]:
+            raise ValueError("The approved guide does not match its approval.")
+        return content
+
+    @activity.defn(name="style_publish")
+    async def publish(self, run_id: str):
+        run = await self.db.get_run(UUID(run_id))
+        if run and run.executor == style.KEY and run.status.value == "succeeded":
+            return
+        if run and run.review_required and run.review_decision != "approved":
+            raise ApplicationError(WAITING_FOR_APPROVAL, non_retryable=True)
+        run = await self.active(run_id)
+        project = await self.db.get_project(run.project_id)
+        if run.review_required:
+            content = await self.approved(run, project)
+        else:
+            context = (await self.db.get_effect(f"{run.id}:style_context")).result
+            model = (await self.db.get_effect(f"{run.id}:style_model")).result
+            content = self.rendered(run, context, model)
         await self.progress(run.id, "save", 2, "Saving the editable writing guide")
         checkpoint_key = f"{run.id}:style_artifact_persist"
         async with self.db.effect_lock(checkpoint_key, style.KEY) as (conn, saved):
