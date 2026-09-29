@@ -143,6 +143,7 @@ async def mcp_consent_page(request: Request) -> Response:
         )
     from tin_lite.api import ASSET_VERSION
     from tin_lite.fonts import private_font_stylesheet
+    from tin_lite.traffic_sensor import TRAFFIC_SENSOR_MARKER, traffic_sensor_script
 
     # Clerk retains the original client, state, PKCE, scope and callback parameters.
     query = request.url.query
@@ -161,6 +162,7 @@ async def mcp_consent_page(request: Request) -> Response:
     for marker, value in replacements.items():
         html = html.replace(marker, escape(str(value), quote=True))
     html = html.replace("<!--PRIVATE_FONTS_STYLESHEET-->", private_font_stylesheet(settings))
+    html = html.replace(TRAFFIC_SENSOR_MARKER, traffic_sensor_script(settings))
     return HTMLResponse(
         html,
         headers={
