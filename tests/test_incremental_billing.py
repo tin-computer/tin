@@ -276,7 +276,7 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed):
         ),
     )
     runs = [
-        await direct(f, "organic.keyword_plan", KEYWORDS, project_id=p)
+        await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 10}, project_id=p)
         for p in (f.project.id, sibling.id)
     ]
     results = await asyncio.gather(

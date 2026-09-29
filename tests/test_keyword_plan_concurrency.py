@@ -65,11 +65,11 @@ def track(provider, *, delays=None, serp_delay=0.02):
     return state
 
 
-async def collected(*, budget=10, delays=None, inputs=None):
+async def collected(*, budget=10, delays=None, inputs=None, modern="current"):
     activities, db, storage, provider, model = await fixture(
         prepare=False,
         budget=budget,
-        modern="current",
+        modern=modern,
         inputs={"seed_phrases": SEEDS, **(inputs or {})},
     )
     db.run = replace(db.run, id=RUN_ID)
@@ -147,14 +147,15 @@ async def test_batch_inspection_keeps_receipts_fingerprints_and_sample_order():
 
 @pytest.mark.asyncio
 async def test_binding_ceiling_refuses_the_same_samples_in_a_batch():
+    # v6 reserves at most $1.65 under a $2 floor, so only an older policy's ceiling binds.
     # Find what collection reserves, then leave room for exactly three search-result samples.
-    activities, db, *_ = await collected()
+    activities, db, *_ = await collected(modern="v5")
     ledger = db.effects[activities.key(str(RUN_ID), "budget")].result
     serp = activities._policy(await activities._result(str(RUN_ID), "scope"))[
         "serp_reservation_usd"
     ]
     budget = sum(Decimal(value) for value in ledger.values()) + 3 * Decimal(serp)
-    count, one_by_one, batch, _, _ = await inspect_both_ways(budget=budget)
+    count, one_by_one, batch, _, _ = await inspect_both_ways(budget=budget, modern="v5")
     refused = {index for index, receipt in batch[0].items() if receipt["status"] != "completed"}
     assert all(batch[0][index]["reason"] == "spending_limit" for index in refused)
     assert refused == set(range(3, count))

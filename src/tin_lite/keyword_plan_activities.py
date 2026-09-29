@@ -18,6 +18,7 @@ from tin_lite import keyword_plan_v2 as v2
 from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v4 as v4
 from tin_lite import keyword_plan_v5 as v5
+from tin_lite import keyword_plan_v6 as v6
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -62,6 +63,8 @@ STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review"
 # How many provider lookups one activity keeps in flight. Each holds one database connection
 # for its receipt lock (the pool allows ten), and DataForSEO's live endpoints accept far more.
 LOOKUP_CONCURRENCY = 4
+# The lowest ceiling any supported policy accepts; the pinned policy may require more.
+MINIMUM_CEILING = Decimal(v6.POLICY["minimum_ceiling_usd"])
 
 CONTRACTS = {
     POLICY["version"]: (POLICY, INSTRUCTIONS, SCHEMAS),
@@ -69,7 +72,10 @@ CONTRACTS = {
     v3.POLICY["version"]: (v3.POLICY, v3.INSTRUCTIONS, v3.SCHEMAS),
     v4.POLICY["version"]: (v4.POLICY, v4.INSTRUCTIONS, v4.SCHEMAS),
     v5.POLICY["version"]: (v5.POLICY, v5.INSTRUCTIONS, v5.SCHEMAS),
+    v6.POLICY["version"]: (v6.POLICY, v6.INSTRUCTIONS, v6.SCHEMAS),
 }
+# Research and seed contracts shared by later policies; v6 only resizes reservations.
+BUYER_JOB_SEEDS = {v5.POLICY["version"], v6.POLICY["version"]}
 
 
 def modern_scope(scope):
@@ -78,6 +84,7 @@ def modern_scope(scope):
         v3.POLICY["version"],
         v4.POLICY["version"],
         v5.POLICY["version"],
+        v6.POLICY["version"],
     }
 
 
@@ -365,7 +372,9 @@ class KeywordPlanActivities:
                 "request": request,
             }
 
-        amount = POLICY["serp_reservation_usd" if kind == "serp" else "labs_reservation_usd"]
+        amount = self._policy(scope)[
+            "serp_reservation_usd" if kind == "serp" else "labs_reservation_usd"
+        ]
         result = await self._paid(
             run_id, stage, {"endpoint": ENDPOINTS[kind], "request": request}, amount, call
         )
@@ -437,9 +446,9 @@ class KeywordPlanActivities:
 
     @activity.defn
     async def keyword_prepare(self, run_id: str) -> None:
-        if await self._result(run_id, "scope"):
+        if scope := await self._result(run_id, "scope"):
             # A crash between scope pinning and reservation must not spend the review budget.
-            await self._reserve(run_id, "review", POLICY["review_reservation_usd"])
+            await self._reserve(run_id, "review", self._policy(scope)["review_reservation_usd"])
             await self.db.mark_run_running(UUID(run_id))
             return
         run = await self._active(run_id)
@@ -453,11 +462,11 @@ class KeywordPlanActivities:
             or self.router is None
             or not getattr(self.settings, "luna_api_key", None)
             or not maximum.is_finite()
-            or maximum < 5
+            or maximum < MINIMUM_CEILING
         ):
             raise ApplicationError(
                 "Configure DataForSEO, the native model, "
-                "and a keyword-plan ceiling of at least $5.",
+                f"and a keyword-plan ceiling of at least ${MINIMUM_CEILING}.",
                 non_retryable=True,
             )
         if not run.definition_commit_sha:
@@ -490,6 +499,14 @@ class KeywordPlanActivities:
             raise ApplicationError(
                 "The pinned keyword definition is not supported by this worker.", non_retryable=True
             )
+        # Policies before v6 reserve $4 for the review alone and keep their $5 floor.
+        floor = Decimal(policy.get("minimum_ceiling_usd", "5"))
+        if maximum < floor:
+            raise ApplicationError(
+                "Configure DataForSEO, the native model, "
+                f"and a keyword-plan ceiling of at least ${floor}.",
+                non_retryable=True,
+            )
         url, target = await self.provider.validate_target(run.input["site_url"])
         scope = {
             "url": url,
@@ -501,7 +518,7 @@ class KeywordPlanActivities:
             "max_cost_usd": str(maximum),
             "policy_version": policy["version"],
         }
-        if policy["version"] == v5.POLICY["version"]:
+        if policy["version"] in BUYER_JOB_SEEDS:
             scope["integrations"] = await integration_inventory(self.db, run.project_id)
         if run.input.get("audit_run_id"):
             scope["audit"] = await self._audit_context(
@@ -536,7 +553,7 @@ class KeywordPlanActivities:
                     "reason": "No connected Search Console property matches this exact website.",
                 }
         await self._save(run_id, "scope", scope)
-        await self._reserve(run_id, "review", POLICY["review_reservation_usd"])
+        await self._reserve(run_id, "review", policy["review_reservation_usd"])
         if modern_scope(scope):
             await self._reserve(run_id, "triage", policy["triage_reservation_usd"])
         await self.db.mark_run_running(run.id)
@@ -592,13 +609,13 @@ class KeywordPlanActivities:
         core_seeds = scope.get("policy_version") in {
             v3.POLICY["version"],
             v4.POLICY["version"],
-            v5.POLICY["version"],
+            *BUYER_JOB_SEEDS,
         }
         value = await self._model(run_id, "seeds", v3.seed_input(scope) if core_seeds else scope)
         try:
             return (
                 v5.seed_values(value)
-                if scope.get("policy_version") == v5.POLICY["version"]
+                if scope.get("policy_version") in BUYER_JOB_SEEDS
                 else v3.seed_values(value)
                 if core_seeds
                 else phrases(Seeds.model_validate(value).seeds)
@@ -687,14 +704,13 @@ class KeywordPlanActivities:
     async def keyword_collect(self, run_id: str) -> None:
         if await self._result(run_id, "collection"):
             return
-        if not await self._reserve(run_id, "review", POLICY["review_reservation_usd"]):
+        scope = await self._result(run_id, "scope")
+        policy = self._policy(scope)
+        if not await self._reserve(run_id, "review", policy["review_reservation_usd"]):
             raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
         run = await self._active(run_id)
-        scope = await self._result(run_id, "scope")
         modern = modern_scope(scope)
-        if modern and not await self._reserve(
-            run_id, "triage", v2.POLICY["triage_reservation_usd"]
-        ):
+        if modern and not await self._reserve(run_id, "triage", policy["triage_reservation_usd"]):
             raise ApplicationError("Keyword screening budget is unavailable.", non_retryable=True)
         await self.db.project_run_progress(
             run_id=run.id,
