@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -163,6 +164,39 @@ def _mcp_input_schema(definition: dict[str, Any]) -> dict[str, Any]:
     """Return the workflow inputs a caller supplies, excluding Tin-bound project state."""
 
     return client_input_schema(definition)
+
+
+SHORT_DESCRIPTION_CHARS = 160
+
+
+def _one_line(text: str | None) -> str:
+    """The first sentence of a description on one line, cut to a bounded length."""
+    words = " ".join((text or "").split())
+    sentence = re.split(r"(?<=[.!?])\s", words, maxsplit=1)[0]
+    if len(sentence) <= SHORT_DESCRIPTION_CHARS:
+        return sentence
+    return sentence[: SHORT_DESCRIPTION_CHARS - 1].rstrip() + "…"
+
+
+def _short_workflow_view(workflow: Any, readiness: dict[str, Any]) -> dict[str, Any]:
+    """The few facts an agent needs to pick a workflow; get_workflow returns the rest."""
+    schema = _mcp_input_schema(workflow.definition)
+    properties = schema.get("properties") or {}
+    return {
+        "key": workflow.key,
+        "title": workflow.title,
+        "description": _one_line(workflow.description),
+        "schedule_modes": workflow.definition.get(
+            "schedule_modes", ["on_demand", "daily", "weekly"]
+        ),
+        "readiness": readiness["state"],
+        # Inputs the caller must supply: required and without a default Tin fills in.
+        "required_inputs": [
+            name
+            for name in schema.get("required") or []
+            if "default" not in (properties.get(name) or {})
+        ],
+    }
 
 
 def _mcp_workflow(workflows: list[Any], identifier: str, *, parameter: str = "workflow_id") -> Any:
@@ -1529,12 +1563,19 @@ def create_mcp_app(
         )
 
     @server.tool()
-    async def list_workflows(project_id: str) -> list[dict[str, Any]]:
+    async def list_workflows(
+        project_id: str, detail: Literal["full", "short"] = "full"
+    ) -> list[dict[str, Any]]:
         """List callable workflow definitions for one accessible Tin project.
 
         Each entry carries its declared prerequisites and a project-level readiness
         (ready, advisory or blocked) computed without inputs; exact scopes, via_input run ids
         and {placeholder} paths are only checked against real inputs at start_workflow.
+
+        detail="short" returns a small listing for choosing a workflow: per entry only key,
+        title, a one-line description, schedule_modes, readiness (the state) and
+        required_inputs (input names the caller must supply). Then call get_workflow for the
+        chosen key to read its full input schema. The default "full" listing is large.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -1558,6 +1599,8 @@ def create_mcp_app(
             project_id=parsed_project_id,
             workflows=workflows,
         )
+        if detail == "short":
+            return [_short_workflow_view(item, readiness[item.id]) for item in workflows]
         return [
             {
                 "id": str(workflow.id),

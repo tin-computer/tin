@@ -819,3 +819,46 @@ async def test_list_workflows_and_get_workflow_expose_prerequisites_and_readines
         ).json()
     assert {w["key"]: w["readiness"]["state"] for w in catalog}["product.deep_dive"] == "blocked"
     assert one["readiness"]["state"] == "blocked" and one["prerequisites"][0]["level"] == "required"
+
+
+async def test_short_listing_names_only_what_an_agent_needs_to_choose(publication_db, monkeypatch):
+    f = await project_fixture(publication_db)
+    for builtin in BUILTIN_WORKFLOWS:
+        await f.db.upsert_registry_workflow(
+            workflow_id=builtin.id,
+            key=builtin.key,
+            executor=builtin.executor,
+            title=builtin.title,
+            description=builtin.description,
+            definition_repo_id="registry/workflows",
+            definition_path=builtin.definition_path,
+            current_commit_sha=A,
+            version_label=builtin.version_label,
+            definition=builtin.definition,
+        )
+    tools = server(f, monkeypatch)
+    full = structured(await tools.call_tool("list_workflows", {"project_id": str(f.project.id)}))
+    short = structured(
+        await tools.call_tool(
+            "list_workflows", {"project_id": str(f.project.id), "detail": "short"}
+        )
+    )
+    full_rows, short_rows = full["result"], short["result"]
+    assert [row["key"] for row in short_rows] == [row["key"] for row in full_rows]
+    assert all(
+        set(row)
+        == {"key", "title", "description", "schedule_modes", "readiness", "required_inputs"}
+        for row in short_rows
+    )
+    by_key = {row["key"]: row for row in short_rows}
+    deep_dive = by_key["product.deep_dive"]
+    assert deep_dive["readiness"] == "blocked"
+    assert deep_dive["required_inputs"] == ["product_url"]
+    assert deep_dive["schedule_modes"] == next(
+        row["schedule_modes"] for row in full_rows if row["key"] == "product.deep_dive"
+    )
+    # visibility.audit requires target, but Tin fills its default, so the caller need not.
+    assert by_key["visibility.audit"]["required_inputs"] == []
+    descriptions = [row["description"] for row in short_rows]
+    assert all("\n" not in text and len(text) <= 160 for text in descriptions)
+    assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))
