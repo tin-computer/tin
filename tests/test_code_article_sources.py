@@ -188,23 +188,102 @@ async def test_mcp_lists_approved_choices_and_http_uses_same_guard(publication_d
     )
     assert contract["preparation"]["source_input"] == "article_run"
     assert contract["preparation"]["articles"][0]["run_id"] == str(f.source.id)
+    assert contract["preparation"]["sources"][0]["candidates"][0]["read_url"].endswith(
+        f"/document/{f.source.id}?project={f.project.id}"
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
+        choices = await client.get(f"/api/projects/{f.project.id}/workflow-sources/{f.consumer.id}")
+        assert choices.status_code == 200, choices.text
+        assert choices.json()["slots"][0]["candidates"][0]["run_id"] == str(f.source.id)
+        assert (
+            choices.json()["slots"][0]["candidates"]
+            == contract["preparation"]["sources"][0]["candidates"]
+        )
         response = await client.post(
             f"/api/workflows/{f.consumer.id}/runs",
             json={"project_id": str(f.project.id), "inputs": f.consumer_inputs},
             headers={"Idempotency-Key": str(uuid4())},
         )
         assert response.status_code == 202, response.text
+        run = await client.get(f"/api/workflows/runs/{response.json()['id']}")
+        source = run.json()["selected_sources"]["approved_article"]
+        assert source["run_id"] == str(f.source.id)
+        assert source["revision"] == f.source.canonical_commit_sha
+        assert "article" not in source and "style" not in source
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f, "outsider")), base_url="https://tin.test"
     ) as client:
+        choices = await client.get(f"/api/projects/{f.project.id}/workflow-sources/{f.consumer.id}")
+        assert choices.status_code == 404
         denied = await client.post(
             f"/api/workflows/{f.consumer.id}/runs",
             json={"project_id": str(f.project.id), "inputs": f.consumer_inputs},
         )
         assert denied.status_code == 404
+
+
+async def test_source_discovery_filters_unapproved_article(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch, approved=False)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        choices = await client.get(f"/api/projects/{f.project.id}/workflow-sources/{f.consumer.id}")
+    assert choices.status_code == 200, choices.text
+    slot = choices.json()["slots"][0]
+    assert slot["candidates"] == []
+    assert "Review" in slot["missing_reason"]
+    contract = structured(
+        await mcp(f, monkeypatch).call_tool(
+            "get_workflow", {"project_id": str(f.project.id), "workflow_id": str(f.consumer.id)}
+        )
+    )
+    assert contract["preparation"]["sources"][0]["candidates"] == []
+    assert contract["readiness"]["state"] == "blocked"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        workflow = await client.get(
+            f"/api/workflows/{f.consumer.id}", params={"project_id": str(f.project.id)}
+        )
+        listing = await client.get("/api/workflows", params={"project_id": str(f.project.id)})
+    assert workflow.json()["readiness"]["state"] == "blocked"
+    listed = next(item for item in listing.json() if item["id"] == str(f.consumer.id))
+    assert listed["readiness"]["state"] == "blocked"
+
+
+async def test_invalid_publication_proof_is_not_a_source(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET canonical_commit_sha=$2 WHERE id=$1", f.source.id, "f" * 40
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        choices = await client.get(f"/api/projects/{f.project.id}/workflow-sources/{f.consumer.id}")
+        workflow = await client.get(
+            f"/api/workflows/{f.consumer.id}", params={"project_id": str(f.project.id)}
+        )
+    assert choices.json()["slots"][0]["candidates"] == []
+    assert workflow.json()["readiness"]["state"] == "blocked"
+
+
+async def test_mcp_start_replay_reports_existing_run(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    server = mcp(f, monkeypatch)
+    arguments = {
+        "project_id": str(f.project.id),
+        "workflow_id": str(f.consumer.id),
+        "inputs": f.consumer_inputs,
+        "request_id": str(uuid4()),
+    }
+    first = structured(await server.call_tool("start_workflow", arguments))
+    replay = structured(await server.call_tool("start_workflow", arguments))
+    assert first["id"] == replay["id"]
+    assert first["already_started"] is False
+    assert replay["already_started"] is True
+    assert "Tin already started" in " ".join(replay["relay"])
 
 
 async def test_execution_reuses_source_and_publishes_one_reviewable_artifact(

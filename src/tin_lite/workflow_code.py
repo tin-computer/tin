@@ -42,6 +42,15 @@ class CodeModelRoute:
         return f"workflow.code:{self.provider}:{self.model}"
 
 
+@dataclass(frozen=True)
+class EvidenceSlot:
+    name: str
+    input: str
+    workflow_key: str
+    max_bytes: int
+    required: bool
+
+
 def supported_models() -> str:
     return ", ".join(f"{provider}/{model}" for provider, model in sorted(MODEL_TARGETS))
 
@@ -94,6 +103,7 @@ class CodeSpec:
     model_routes: tuple[CodeModelRoute, ...] = ()
     services: tuple[ServiceBinding, ...] = ()
     approved_article_input: str | None = None
+    evidence: tuple[EvidenceSlot, ...] = ()
 
     @property
     def policy(self):
@@ -132,7 +142,7 @@ def validate_code_definition(definition) -> CodeSpec:
     code = definition.get("code")
     if (
         not isinstance(code, dict)
-        or set(code) - {"model_routes", "services", "approved_article"}
+        or set(code) - {"model_routes", "services", "approved_article", "evidence"}
         != {"runtime", "entrypoint", "files", "timeout_seconds", "output"}
         or code["runtime"] != RUNTIME
     ):
@@ -169,6 +179,9 @@ def validate_code_definition(definition) -> CodeSpec:
     if type(maximum) is not int or not 1 <= maximum <= MAX_OUTPUT_BYTES:
         raise ValueError("code output exceeds its byte limit")
     article_input = approved_article_input(definition)
+    evidence = evidence_specs(definition)
+    if article_input is not None and any(slot.input == article_input for slot in evidence):
+        raise ValueError("approved article and evidence slots must use different inputs")
     return CodeSpec(
         entrypoint,
         tuple(files),
@@ -179,6 +192,7 @@ def validate_code_definition(definition) -> CodeSpec:
         model_routes(code.get("model_routes", {})),
         service_bindings(code.get("services", {}), definition.get("integration_requirements")),
         article_input,
+        evidence,
     )
 
 
@@ -203,6 +217,57 @@ def approved_article_input(definition):
     ):
         raise ValueError("approved_article requires a required UUID input and on-demand execution")
     return name
+
+
+def evidence_specs(definition) -> tuple[EvidenceSlot, ...]:
+    """Bounded, named approved-output inputs; optionality comes from the input schema."""
+    value = definition.get("code", {}).get("evidence")
+    if value is None:
+        return ()
+    if (
+        definition.get("executor") != EXECUTOR
+        or definition.get("schedule_modes") != ["on_demand"]
+        or not isinstance(value, dict)
+        or not 1 <= len(value) <= 4
+    ):
+        raise ValueError("code evidence requires 1-4 named on-demand source slots")
+    schema = definition.get("input_schema", {})
+    properties = schema.get("properties", {})
+    required = schema.get("required", [])
+    slots = []
+    used_inputs = set()
+    for name, raw in value.items():
+        if (
+            not isinstance(name, str)
+            or not re.fullmatch(r"[a-z][a-z0-9_]{0,47}", name)
+            or name == "approved_article"
+            or not isinstance(raw, dict)
+            or set(raw) != {"kind", "input", "workflow_key", "max_bytes"}
+            or raw["kind"] != "approved_output"
+        ):
+            raise ValueError("invalid code evidence slot")
+        input_name = raw["input"]
+        field = properties.get(input_name) if isinstance(input_name, str) else None
+        if (
+            not isinstance(input_name, str)
+            or input_name == "project_id"
+            or input_name in used_inputs
+            or not isinstance(field, dict)
+            or field.get("type") != "string"
+            or field.get("format") != "uuid"
+            or not isinstance(raw["workflow_key"], str)
+            or not re.fullmatch(r"[a-z][a-z0-9_.-]{0,79}", raw["workflow_key"])
+            or type(raw["max_bytes"]) is not int
+            or not 1 <= raw["max_bytes"] <= 64_000
+        ):
+            raise ValueError("evidence slots need distinct UUID inputs and bounded producers")
+        used_inputs.add(input_name)
+        slots.append(
+            EvidenceSlot(
+                name, input_name, raw["workflow_key"], raw["max_bytes"], input_name in required
+            )
+        )
+    return tuple(slots)
 
 
 def validate_code_resources(spec, files):

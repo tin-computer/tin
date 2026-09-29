@@ -4,7 +4,7 @@
     "key": "custom.workflow_create",
     "title": "Create a workflow",
     "description": "Turn a brief into a candidate Tin package and versioned qualification cases. Review and qualify the candidate before activation or public contribution.",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand"

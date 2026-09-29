@@ -1812,6 +1812,17 @@ function bindWorkflowResultControls(root) {
       form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
     });
     bindWorkflowFieldValidation(form);
+    if (form.dataset.workflowField?.startsWith("input:")) {
+      const configured = state.projectWorkflows.find((item) => item.id === form.dataset.projectWorkflowId);
+      const workflow = state.workflows.find((item) => item.id === configured?.workflow_id);
+      if (workflow?.definition?.executor === "workflow.code") {
+        const context = currentProjectContext();
+        window.TinCodeSetup.bindSources(form, {
+          workflow, configured, projectId: context.projectId, fetch: authorizedFetch,
+          isCurrent: () => isCurrentProjectContext(context),
+        });
+      }
+    }
   });
   root.querySelectorAll(".workflow-config-form, .system-config-form").forEach((form) => {
     const workflow = state.workflows.find((item) => item.id === form.dataset.workflowId);
@@ -2207,6 +2218,12 @@ function systemRunDetailHtml(run, includeClose = true) {
       ? `<button type="button" data-run-detail-artifact="${escapeHtml(run.id)}">${run.status === "failed" ? "Retry revision" : "Previous copy"} →</button>`
       : "—";
   const detail = state.runDetails.get(run.id);
+  const selectedSources = Object.entries(run.selected_sources || {}).map(([slot, source]) => `<span>
+    <code>${escapeHtml(humanize(slot))} · approved copy</code>
+    ${source.present
+      ? `<strong>${escapeHtml(source.title || source.workflow_key || "Reviewed result")}</strong><a href="${escapeHtml(source.read_url)}">Read reviewed copy →</a>`
+      : "<strong>No source selected</strong>"}
+  </span>`).join("");
   return `<div class="system-run-detail">
     <div class="system-run-facts">
       <span><code>started</code><strong>${escapeHtml(systemRunDetailTime(run.started_at || run.created_at))}</strong></span>
@@ -2214,6 +2231,7 @@ function systemRunDetailHtml(run, includeClose = true) {
       <span><code>status</code><strong>${escapeHtml(systemRunProgressLabel(run))}</strong></span>
       <span><code>result</code><strong>${output}</strong></span>
     </div>
+    ${selectedSources ? `<div class="system-run-facts is-sources">${selectedSources}</div>` : ""}
     ${run.error_message ? `<p class="system-run-error">${escapeHtml(run.error_message)}</p>` : ""}
     ${run.status === "failed" && run.progress_summary ? `<p class="system-run-error">Last update before it stopped: ${escapeHtml(run.progress_summary)}</p>` : ""}
     ${run.retained_output && (!run.error_message || run.retained_output.reason === "execution_interrupted") ? `<p class="system-run-error">${escapeHtml(retainedOutputMessage(run))}</p>` : ""}
@@ -3858,6 +3876,7 @@ function readWorkflowInputs(form, schema) {
     if (name === "project_id") continue;
     const field = form.elements[`input:${name}`];
     if (!field) continue;
+    if (field.dataset.approvedSourcePicker && !field.value) continue;
     inputs[name] = readWorkflowInputValue(field, definition);
   }
   return inputs;
@@ -3913,7 +3932,11 @@ async function saveProjectWorkflowField(event) {
     const inputName = fieldName.slice("input:".length);
     const definition = configured.input_schema.properties?.[inputName];
     if (!definition) return;
-    inputs[inputName] = readWorkflowInputValue(form.elements.value, definition);
+    if (form.elements.value.dataset.approvedSourcePicker && !form.elements.value.value) {
+      delete inputs[inputName];
+    } else {
+      inputs[inputName] = readWorkflowInputValue(form.elements.value, definition);
+    }
   }
   try {
     const saved = await api(

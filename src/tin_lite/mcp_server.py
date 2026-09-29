@@ -124,6 +124,12 @@ from tin_lite.workflow_inputs import (
     normalize_workflow_inputs,
 )
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
+from tin_lite.workflow_source_inputs import (
+    discover_slots,
+    selected_run_sources,
+    source_readiness,
+    source_readiness_for_workflows,
+)
 from tin_lite.writing_style import style_capture_preparation
 
 MCP_SCOPE = "openid"
@@ -1557,6 +1563,14 @@ def create_mcp_app(
             project_id=parsed_project_id,
             workflows=workflows,
         )
+        readiness = await source_readiness_for_workflows(
+            database=services.database,
+            storage=getattr(services, "storage", None),
+            settings=settings,
+            project_id=parsed_project_id,
+            workflows=workflows,
+            readiness=readiness,
+        )
         return [
             {
                 "id": str(workflow.id),
@@ -2468,6 +2482,9 @@ def create_mcp_app(
         await require_project(run.project_id, token, tool_name="get_run")
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
+        selected_sources = await selected_run_sources(
+            database=runtime().database, settings=settings, run=run
+        )
         return {
             "id": str(run.id),
             "project_id": str(run.project_id),
@@ -2489,6 +2506,7 @@ def create_mcp_app(
             "output_resolution": run.output_resolution,
             "review_required": run.review_required,
             "review_decision": run.review_decision,
+            "selected_sources": selected_sources,
             "allowed_actions": _run_allowed_actions(run),
             "error": run.error_message,
             "review_summary": review_summary,
@@ -2792,6 +2810,13 @@ def create_mcp_app(
                 supplied_inputs[key] = FOUNDER_DEFAULTS[key]
                 assumed[key] = FOUNDER_DEFAULTS[key]
         _require_style_sources(workflow, parsed_project_id, supplied_inputs)
+        existing_run = (
+            await runtime().database.get_run_by_start_key(
+                project_id=parsed_project_id, start_idempotency_key=start_key
+            )
+            if start_key is not None
+            else None
+        )
         try:
             run = await start_workflow_run(
                 runtime=runtime(),
@@ -2833,18 +2858,26 @@ def create_mcp_app(
         meanwhile: dict[str, Any] = {}
         if workflow.executor == GROWTH_ONBOARDING_KEY:
             meanwhile = await _while_the_plan_is_written(parsed_project_id)
+        replayed = existing_run is not None and existing_run.id == run.id
         return {
             "id": str(run.id),
             "project_id": str(run.project_id),
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
             "status": run.status.value,
+            "already_started": replayed,
             "advisories": (run.prerequisite_evidence or {}).get("advisories", []),
             **({"assumed": assumed} if assumed else {}),
             **({"meanwhile": meanwhile} if meanwhile else {}),
             **_founder_words(
                 relay=(
-                    [
+                    (
+                        f"Tin already started {workflow.title}. Run {run.id} is {run.status.value}."
+                        if replayed
+                        else f"Tin has {workflow.title} run {run.id} ({run.status.value})."
+                    )
+                    if replayed or run.status not in {RunStatus.PENDING, RunStatus.RUNNING}
+                    else [
                         *([_assumed_line(assumed).strip()] if assumed else []),
                         "Tin is writing your plan now. It reads your site and scores fifteen "
                         "marketing systems; that takes three to six minutes. I will check in "
@@ -3409,6 +3442,13 @@ def create_mcp_app(
                 "A workflow key is also accepted."
             ),
         ] = None,
+        project_workflow_id: Annotated[
+            str | None,
+            Field(
+                description="Optional saved configuration UUID; inspect its pinned definition "
+                "and sources."
+            ),
+        ] = None,
     ) -> dict[str, Any]:
         """Inspect a workflow by workflow_id or unambiguous workflow_key.
 
@@ -3455,6 +3495,30 @@ def create_mcp_app(
         else:
             workflows = await runtime().database.list_workflows(project_id=parsed_project_id)
             workflow = _mcp_workflow(workflows, identifier, parameter=parameter)
+        if project_workflow_id is not None:
+            if parsed_project_id is None:
+                raise ToolError("project_id is required for a saved workflow")
+            configured = await runtime().database.get_project_workflow(
+                _mcp_uuid(project_workflow_id, field="project_workflow_id")
+            )
+            if (
+                configured is None
+                or configured.project_id != parsed_project_id
+                or configured.workflow_id != workflow.id
+            ):
+                raise ToolError("project workflow not found")
+            from tin_lite.workflow_definitions import resolve_execution_contract
+
+            try:
+                workflow = await resolve_execution_contract(
+                    storage=getattr(runtime(), "storage", None),
+                    workflow=workflow,
+                    project_id=parsed_project_id,
+                    revision=configured.definition_commit_sha,
+                    input_schema=configured.input_schema,
+                )
+            except (LookupError, ValueError) as exc:
+                raise ToolError(str(exc)) from exc
         readiness = (
             await project_readiness(
                 database=runtime().database,
@@ -3467,25 +3531,40 @@ def create_mcp_app(
         )
         draft_preparation = {}
         if parsed_project_id is not None and workflow.executor == "workflow.code":
-            from tin_lite.approved_article import discover as discover_approved_articles
-            from tin_lite.workflow_code import approved_article_input
-
-            source_input = approved_article_input(workflow.definition)
-            if source_input is not None:
+            try:
+                source_slots = await discover_slots(
+                    database=runtime().database,
+                    storage=runtime().storage,
+                    settings=settings,
+                    project_id=parsed_project_id,
+                    definition=workflow.definition,
+                    inputs=configured.inputs if project_workflow_id is not None else None,
+                )
+            except (LookupError, ValueError) as exc:
+                raise ToolError(str(exc)) from exc
+            if source_slots:
+                readiness[workflow.id] = source_readiness(readiness.get(workflow.id), source_slots)
+                article_slot = next(
+                    (slot for slot in source_slots if slot["kind"] == "approved_article"), None
+                )
                 draft_preparation = {
                     "preparation": {
-                        "articles": await discover_approved_articles(
-                            runtime().database, parsed_project_id
+                        "sources": source_slots,
+                        **(
+                            {
+                                "articles": article_slot["candidates"],
+                                "source_input": article_slot["input"],
+                            }
+                            if article_slot
+                            else {}
                         ),
-                        "source_input": source_input,
-                        "instruction": "Choose an approved article by title from "
-                        "preparation.articles "
-                        "and supply its run_id in the named source_input. Tin pins its approved "
-                        "revision and writing guide. If empty, ask the user to review an existing "
-                        "content.generate draft in Decisions. Do not approve or generate "
-                        "an article "
+                        "instruction": "Choose an approved source by title from "
+                        "preparation.sources "
+                        "(or preparation.articles for an article) and supply its run_id in "
+                        "the named input. Tin pins the reviewed revision. If no source is listed, "
+                        "review an existing draft in Decisions; do not approve or generate one "
                         "merely to test this workflow. Reuse request_id for an ambiguous start. "
-                        "This source selection does not publish or post the article.",
+                        "Selecting a source does not publish or post it.",
                     }
                 }
         if (
@@ -3548,6 +3627,7 @@ def create_mcp_app(
             "description": workflow.description,
             "version": workflow.version_label,
             "project_id": str(parsed_project_id) if parsed_project_id is not None else None,
+            **({"project_workflow_id": project_workflow_id} if project_workflow_id else {}),
             **draft_preparation,
             **(
                 {"preparation": brand_capture_preparation(parsed_project_id, include_guide=True)}

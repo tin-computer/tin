@@ -63,6 +63,19 @@ Keep rubric questions independent; no overall score. Maintainers review cases an
   Private profile isolated/fenced, on_demand, bounded timeout up to 3600 seconds. One project
   artifact, or a separately reviewed GitHub PR contract. Existing model budgets remain binding.
   Choosing this executor does not grant recursion, scheduling or extra integrations.
+- Approved text inputs: on-demand code packages may declare `code.evidence` with up to four
+  named slots. Each has `kind: approved_output`, `input` (a UUID field), `workflow_key`
+  (the allowed producer), and `max_bytes` (1–64000). Requiredness follows input_schema;
+  total source text is at most 128000 bytes and serialized context at most 256000 bytes,
+  including any accompanying approved article and writing guide. The slot name
+  `approved_article` is reserved for the article contract. `ctx["evidence"][slot]` contains `present`,
+  the selected `content`, and its run/path/revision/digest metadata; omitted optional slots
+  have `present: false`. Only approved, succeeded primary text outputs from supported code
+  and procedure runs qualify. Project files, unreviewed reports, binary outputs, native
+  outputs, document pairs and GitHub PR receipts are not this source kind. Tin pins inputs
+  before execution and reuses them on retry. Use `code.approved_article: {"input": "source_run_id"}`
+  instead when the consumer needs an approved content.generate article body and original
+  writing guide in `ctx["approved_article"]`. Both contracts keep model request bounds intact.
 - API services: declare integration_requirements plus code.services or procedure.services.
   Up to four aliases, eight total provider calls, 16000-byte requests, and responses bounded
   to 1024–64000 bytes per alias. Use these exact byte counts, not KiB conversions.

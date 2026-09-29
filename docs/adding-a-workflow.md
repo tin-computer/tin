@@ -71,6 +71,11 @@ source-run UUID input. Tin supplies the pinned article and its original writing
 guide in `ctx["approved_article"]`. This works for public and private on-demand
 code packages; see [article sources and social drafts](social-post-batch.md).
 
+For other approved text results, declare named `code.evidence` inputs. Tin supplies the exact
+selected text and its provenance in `ctx["evidence"]`; the dashboard and MCP offer the same
+eligible sources. The input schema decides which selections are required. See
+[approved project evidence](approved-project-evidence.md) for the contract and limits.
+
 ### Codex procedures
 
 Use `codex.procedure` when choosing the steps is part of the job: investigating a question,

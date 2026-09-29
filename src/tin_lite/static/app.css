@@ -3738,6 +3738,18 @@ html[data-theme="dark"] .markdown-logo::before {
   gap: 16px;
 }
 
+.system-run-facts.is-sources {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--card-hairline);
+}
+
+.system-run-facts.is-sources a {
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .system-run-facts > span {
   display: flex;
   min-width: 0;

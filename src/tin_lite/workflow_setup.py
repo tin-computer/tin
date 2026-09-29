@@ -4,7 +4,7 @@ from tin_lite.billing_contracts import usd
 from tin_lite.code_models import model_terms
 from tin_lite.integrations import IntegrationError, parse_integration_requirements
 from tin_lite.private_workflows import require_private_execution
-from tin_lite.workflow_code import validate_code_definition
+from tin_lite.workflow_code import approved_article_input, evidence_specs, validate_code_definition
 from tin_lite.workflow_costs import configured_terms
 from tin_lite.workflow_definitions import resolve_execution_contract
 from tin_lite.workflow_inputs import normalize_workflow_inputs
@@ -54,6 +54,41 @@ async def code_readiness(
         issues.append(
             "Complete this workflow's required earlier work or project files before running."
         )
+    evidence_snapshot = None
+    article_source = None
+    if evidence_specs(workflow.definition):
+        from tin_lite import code_evidence
+
+        try:
+            evidence_snapshot = await code_evidence.select(
+                database=database,
+                storage=storage,
+                project_id=project_id,
+                definition=workflow.definition,
+                inputs=inputs,
+            )
+        except (LookupError, ValueError) as exc:
+            issues.append(str(exc))
+    if approved_article_input(workflow.definition) is not None:
+        from tin_lite import code_article_sources
+
+        try:
+            article_source = await code_article_sources.select(
+                database=database,
+                storage=storage,
+                project_id=project_id,
+                definition=workflow.definition,
+                inputs=inputs,
+            )
+        except (LookupError, ValueError) as exc:
+            issues.append(str(exc))
+    if evidence_snapshot is not None:
+        from tin_lite.code_evidence import bound_context
+
+        try:
+            bound_context(evidence_snapshot, article_source)
+        except ValueError as exc:
+            issues.append(str(exc))
     terms = (
         configured_terms(model_terms(workflow.definition), workflow.definition, inputs)
         if spec.model_routes

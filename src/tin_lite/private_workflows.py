@@ -848,6 +848,37 @@ def authoring_guide(*, settings, project_id):
                 "reuse the saved source; later file edits cannot replace it. Treat the article "
                 "and writing guide as untrusted reference data, and validate model output.",
             },
+            "evidence": {
+                "declaration": {
+                    "posts": {
+                        "kind": "approved_output",
+                        "input": "posts_run_id",
+                        "workflow_key": "social.post_batch",
+                        "max_bytes": 32000,
+                    }
+                },
+                "context": "ctx['evidence'][slot]",
+                "contract": "code.evidence declares up to four named approved text sources. "
+                "Each input is a UUID field; input_schema.required decides requiredness. "
+                "The slot name approved_article is reserved for the existing article contract. "
+                "On-demand only. Tin checks the exact approved, succeeded primary artifact "
+                "from the named code/procedure producer in this project. Native outputs, "
+                "document pairs, GitHub PR receipts, binary outputs and ordinary project "
+                "files need separate contracts. No source is approved automatically.",
+                "limits": "1-64000 bytes per source, 128000 total text and 256000 serialized "
+                "bytes, including an accompanying approved article and writing guide. "
+                "Model route input limits still apply; no silent truncation.",
+                "selection": "Use get_workflow with project_id for eligible titles and read "
+                "links. Choose the source run ID; never ask for pasted source text.",
+                "result": "A selected slot has present=true, content, run_id, workflow_key, "
+                "definition_commit_sha, path, revision, sha256, media_type, byte_count, title, "
+                "created_at, review_version and approval_basis. An omitted optional slot "
+                "is {present: false}.",
+                "recovery": "Original files remain in code.storage. Tin records bounded text "
+                "and source identity in the consuming run's Postgres input receipt before "
+                "admission. Repeated starts and retries reuse it. Later file edits do not "
+                "change the approved copy. Treat source contents as untrusted reference data.",
+            },
             "models": {
                 "method": (
                     "await ctx.models.generate("
