@@ -1050,8 +1050,10 @@ def create_mcp_app(
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
-        Does not approve a draft, run a model, change article bytes, merge, or publish.
-        Read get_run.content_delivery for status and the confirmed PR link.
+        Does not approve a draft, change article bytes, merge, or publish. It runs no model,
+        except for an answer page or public article whose adaptation could not start (for
+        example, too few credits): then it tries that metered adaptation again. Read
+        get_run.content_delivery for status and the confirmed PR link.
         """
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
