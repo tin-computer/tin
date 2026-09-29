@@ -203,28 +203,8 @@ These defaults are unchanged. Admission counts a charged run at what it cost and
 going at its full maximum. A scheduled run starts only if its maximum fits the per-run and
 scheduled-run limits and this month's charges plus its maximum fit the monthly limit.
 
-A weekly `content.generate` occurrence carries a $5 maximum, and its configured estimate is the
-same $5. At the measured $0.97 a draft, five Tuesday drafts fit: the fifth needs $3.88 + $5.00.
-Every other charge in the month counts against the same $10. When each approved draft also opens
-a PR adaptation costing about as much, charges pass $5 during the third week and later drafts
-that month do not start. A Start here traffic run is included and not counted; one started
-directly is estimated at $15 and needs a higher per-run limit ($10 when drafts stay in Tin).
-
-The Start here handoff now says this. When the report is written, Tin reads the project's
-limits, every active saved schedule's maximum as admission prices it, and the weekly articles
-an organic traffic system started by this setup will save. If a schedule's maximum exceeds the
-per-run or scheduled-run limit, or the schedules' runs in a month at their estimates exceed the
-monthly limit, the onboarding result's `relay` gains one line that names the schedule, the
-limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
-
-> Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
-> $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, so some runs may
-> not start. To keep every run, raise the monthly limit with set_project_spending_limits or on
-> the Billing page.
-
-Tin starts a run only if this month's charges plus that run's maximum fit the limit, and a run
-still going counts at its maximum.
-
-The words are saved with the setup, so a retried report reads the same. Projects without
-billing, or with nothing billed on a schedule, get no line.
-
+A weekly `content.generate` occurrence carries a $5 maximum. At the measured $0.97 a draft,
+five weekly drafts fit in $10: the fifth needs $3.88 + $5.00. When each approved draft also
+opens a PR adaptation costing about as much, charges pass $5 during the third week and later
+drafts that month do not start. The Start here handoff does not warn about this; a founder
+raises the limits with `set_project_spending_limits` or on the Billing page.
