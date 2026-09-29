@@ -4558,12 +4558,13 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 14px;
 }
 
-.decision-detail-card > header button {
-  padding: 0;
-  background: transparent;
-  color: var(--accent-text);
+.decision-detail-card > header .button-secondary {
+  align-self: center;
+  min-height: 30px;
+  padding: 6px 13px;
+  border-radius: 4px;
   font-size: 12.5px;
-  font-weight: 700;
+  line-height: 16px;
   cursor: pointer;
 }
 
@@ -4683,10 +4684,6 @@ p.page-url-line[hidden],
   border-top: 1px solid var(--card-hairline);
 }
 
-.decision-detail-card > footer.is-actions-only {
-  justify-content: flex-end;
-}
-
 .decision-detail-card > footer .decision-remember {
   display: inline-flex;
   align-items: center;
@@ -4736,24 +4733,19 @@ p.page-url-line[hidden],
   line-height: 16px;
 }
 
-/* The footer's line never wraps; when the card is too narrow for its actions, they move to a
-   second row on the right instead. "Not now" and "Discard" read as text, as in the design. */
+/* The footer holds controls only: the "future drafts" box on the left, the buttons on the right.
+   When the card is too narrow, the buttons wrap to a second row on the right. */
 .decision-detail-card > footer {
   flex-wrap: wrap;
   justify-content: flex-end;
   row-gap: 10px;
 }
 
-.decision-detail-card > footer > span:has(> .decision-version) {
-  flex: 1 0 auto;
-  white-space: nowrap;
-}
-
 .decision-detail-card > footer .button-quiet {
   padding-inline: 2px;
 }
 
-/* A quiet way to turn down a proposal, before "Not now". */
+/* A quiet way to turn down what is waiting, just before the approval. */
 .decision-detail-card > footer .decision-discard {
   align-self: center;
   padding: 7px 0;

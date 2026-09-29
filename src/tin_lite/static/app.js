@@ -1126,13 +1126,8 @@ function updateRail() {
   projectName.textContent = state.project.name;
   projectSwitcher.setAttribute("aria-label", `Current project: ${state.project.name}`);
   const active = state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
-  // One count everywhere: this line, the Decisions badge and the Decisions list.
-  const needsYou = state.decisions.length;
-  projectSummary.textContent = [
-    state.project.workspace_name,
-    `${active} running`,
-    needsYou ? `${needsYou} ${needsYou === 1 ? "needs" : "need"} you` : null,
-  ].filter(Boolean).join(" · ");
+  // What waits for you is counted once, on the Decisions badge.
+  projectSummary.textContent = [state.project.workspace_name, `${active} running`].filter(Boolean).join(" · ");
   const runningCount = state.systemSummary?.running_count ?? state.runs.filter(
     (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
   ).length;
@@ -4320,10 +4315,15 @@ async function publishDelivery(run, fallback = "github_commit") {
   return repositoryDeliveryAvailable(run) && fallback ? { delivery: fallback } : {};
 }
 
-function publishButtonHtml(decisionId, preview, blocked) {
+// Anything waiting for approval can be discarded; Discard sits just before the approval.
+function discardButtonHtml(decision) {
+  return decision.kind === "review" ? '<button class="decision-discard" type="button" data-decision-discard>Discard</button>' : "";
+}
+
+function publishButtonHtml(decision, preview, blocked) {
   const waiting = preview.loading ? " disabled" : blocked;
-  return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="decision-approval" type="button" data-apply-decision="${escapeHtml(decisionId)}" data-delivery="${escapeHtml(preview.mode || "")}" data-adapted="true"${waiting}>Publish</button>`;
+  return `${discardButtonHtml(decision)}
+      <button class="decision-approval" type="button" data-apply-decision="${escapeHtml(decision.id)}" data-delivery="${escapeHtml(preview.mode || "")}" data-adapted="true"${waiting}>Publish</button>`;
 }
 
 function decisionApprovalHtml(decision, run) {
@@ -4332,54 +4332,34 @@ function decisionApprovalHtml(decision, run) {
   // A waiting revision must be resolved first: every approval shows it is blocked. Once
   // applied, the older copy may stay in Tin but never be published; the server refuses both.
   const blocked = revision?.state === "waiting" ? ' disabled data-blocked="true"' : "";
-  const notNow = '<button class="button-quiet" type="button" data-decision-not-now>Not now</button>';
+  const discard = discardButtonHtml(decision);
   if (revision?.state === "applied" && isContentDraftReview(run)) {
-    return `${notNow}
+    return `${discard}
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
   }
   const adapted = publishPreview(run);
-  if (adapted) return publishButtonHtml(decision.id, adapted, blocked);
+  if (adapted) return publishButtonHtml(decision, adapted, blocked);
   if (repositoryDeliveryAvailable(run)) {
     return `${blocked ? "" : '<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>'}
-      ${notNow}
+      ${discard}
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
   }
   if (isProposal(decision)) {
-    return `<button class="decision-discard" type="button" data-decision-discard>Discard</button>
-      ${notNow}
+    return `${discard}
       <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>Approve guide</button>`;
   }
   const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
-  return `${notNow}
+  return `${discard}
     <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>${escapeHtml(label)}</button>`;
 }
 
-function versionTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "earlier";
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
-  const format = (zone) => {
-    const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: zone });
-    const time = date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: zone });
-    return `${day}, ${time}`;
-  };
-  try {
-    return format(timeZone);
-  } catch {
-    return format(undefined);
-  }
-}
-
-// Names the exact copy an approval uses ("Draft from Sep 28, 22:50"), or that a newer revision
-// of it exists, so an older copy cannot go out unnoticed.
-function decisionVersionLabel(decision, run) {
-  if (decision.kind === "output_conflict") return "";
-  const revision = decision.revision?.state;
-  if (revision === "waiting") return "A newer revision is waiting";
-  if (revision === "applied") return "A newer revision was applied";
-  const noun = isProposal(decision) ? "Proposal" : run?.workflow_name === "project.task" ? "Changes" : "Draft";
-  return `${noun} from ${versionTime(decision.version_saved_at || decision.created_at)}`;
+// Only the newest version of a page is listed, so a card names an older copy just once a task
+// has revised it: the revised copy is in Files, and this one can only stay in Tin.
+function revisionNote(decision) {
+  return decision.revision?.state === "applied"
+    ? "A one-off task revised this after it was saved. The revised copy is in Files; this one can only stay in Tin."
+    : "";
 }
 
 function pageUrlLine(run, mode = "card") {
@@ -4444,49 +4424,46 @@ function decisionBodyLine(decision, run, heading) {
 
 function decisionDetailHtml(decision) {
   if (!decision) return "";
-  const outputs = decision.items || [];
   const run = state.runs.find((item) => item.id === decision.run_id);
-  const isTask = run?.workflow_name === "project.task";
-  const runActionLabel = isTask ? "Open task" : outputs.length && decision.kind !== "output_conflict" ? "Open draft" : "Open run";
   const deliveryNote = decision.kind !== "output_conflict" && isContentDraftReview(run) && !connectedRepository()
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
   const consequence = String(decision.consequence || "").trim();
   const heading = decisionHeading(decision, run);
   const bodyLine = decisionBodyLine(decision, run, heading);
-  const version = decisionVersionLabel(decision, run);
   const conflict = decision.kind === "output_conflict";
-  // One short footer line. A review's consequence or delivery note reads in the body instead.
-  const footerNote = conflict
-    ? escapeHtml(consequence)
-    : version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "";
-  const bodyNote = conflict ? "" : [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" ");
+  // The footer holds only controls; what a decision does reads in the body.
+  const bodyNote = [escapeHtml(consequence), conflict ? "" : escapeHtml(revisionNote(decision)), conflict ? "" : deliveryNote]
+    .filter(Boolean).join(" ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
       <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
-      <button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>
+      <button class="button-secondary" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
     </header>
     <div class="decision-detail-body">
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
       ${bodyNote ? `<p class="decision-note">${bodyNote}</p>` : ""}
     </div>
-    <footer${footerNote ? "" : ' class="is-actions-only"'}>
-      ${footerNote ? `<span>${footerNote}</span>` : ""}
-      ${decision.kind === "output_conflict" ? `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
+    <footer>
+      ${conflict ? `<button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
     </footer>
   </article>`;
 }
 
+// The badge already counts what waits; the heading only adds a deadline when one exists.
 function decisionsPace() {
-  if (!state.decisions.length) return "nothing waiting";
   const nearestDeadline = state.decisions
     .map((item) => item.deadline_at)
     .filter(Boolean)
     .sort()[0];
-  return `${state.decisions.length} waiting${nearestDeadline ? ` · nearest deadline ${systemDateTime(nearestDeadline)}` : ""}`;
+  return nearestDeadline ? `nearest deadline ${systemDateTime(nearestDeadline)}` : "";
+}
+
+// Older decisions were saved as "Review: <name>"; the list is all reviews, so the word adds nothing.
+function decisionListTitle(item) {
+  return String(item.title || "").replace(/^Review:\s*/, "");
 }
 
 function renderDecisions() {
@@ -4494,11 +4471,11 @@ function renderDecisions() {
   const decision = selectedDecision();
   if (decision && state.decisionId !== decision.id) state.decisionId = decision.id;
   main.innerHTML = `<section class="product-view decisions-view">
-    <header class="decisions-header"><h1>Decisions</h1><code>${escapeHtml(decisionsPace())}</code></header>
+    <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
     ${state.decisions.length ? `<div class="decisions-layout">
       <div class="decision-list">${state.decisions.map((item) => `<button class="decision-list-item ${item.id === decision.id ? "is-active" : ""}" type="button" data-decision-id="${escapeHtml(item.id)}">
         <span class="activity-marker is-needs-you" aria-hidden="true"></span>
-        <span><strong>${escapeHtml(item.title)}</strong></span>
+        <span><strong>${escapeHtml(decisionListTitle(item))}</strong></span>
         <code>${escapeHtml(waitingLabel(item.created_at))}</code>
       </button>`).join("")}</div>
       ${decisionDetailHtml(decision)}
@@ -4511,17 +4488,13 @@ function renderDecisions() {
     });
   });
   main.querySelector("[data-open-system]")?.addEventListener("click", () => navigate("workflows"));
-  main.querySelector("[data-decision-not-now]")?.addEventListener("click", () => {
-    state.decisionId = state.decisions.find((item) => item.id !== decision.id)?.id || decision.id;
-    renderDecisions();
-  });
   main.querySelectorAll("[data-decision-read]").forEach((button) => {
     button.addEventListener("click", () => openDecisionReview(decision));
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
   });
-  main.querySelector("[data-decision-discard]")?.addEventListener("click", (event) => discardProposal(decision, event.currentTarget));
+  main.querySelector("[data-decision-discard]")?.addEventListener("click", (event) => discardDecision(decision, event.currentTarget));
   main.querySelector("[data-decision-connect-github]")?.addEventListener("click", (event) => {
     event.preventDefault();
     navigate("integrations");
@@ -4589,28 +4562,37 @@ async function applyDecision(decision, button) {
   }
 }
 
-// The proposal is dropped and its run ends as declined; the current guide stays as it is.
-async function discardProposal(decision, button) {
+// Discarding ends what is waiting without using it: a draft or proposal ends as declined and stays
+// in Files, and a task stops without applying its changes. Drafts ask once first.
+function discardToast(decision) {
+  if (isProposal(decision)) return "Proposal discarded. The current guide is unchanged.";
+  if (decision.workflow_key === "project.task") return "Task stopped. Its changes were not applied.";
+  return "Discarded. It stays in Files, and nothing was published.";
+}
+
+async function discardDecision(decision, button) {
+  const run = state.runs.find((item) => item.id === decision.run_id);
+  if (isContentDraftReview(run) && !window.confirm("Discard this draft? It stays in Files, and nothing is published.")) return;
   const context = currentProjectContext();
   const actions = [...main.querySelectorAll("[data-apply-decision], [data-decision-discard]")];
   const disabled = actions.map((item) => item.disabled);
   actions.forEach((item) => { item.disabled = true; });
   try {
-    const run = await api(`/api/decisions/${encodeURIComponent(decision.id)}/apply`, {
+    const result = await api(`/api/decisions/${encodeURIComponent(decision.id)}/apply`, {
       method: "POST",
       body: JSON.stringify({ action: "decline" }),
     });
     if (!isCurrentProjectContext(context)) return;
-    upsertRun(run);
+    upsertRun(result);
     state.decisions = state.decisions.filter((item) => item.id !== decision.id);
     state.decisionId = state.decisions[0]?.id || null;
     render();
-    showToast("Proposal discarded. The current guide is unchanged.");
+    showToast(discardToast(decision));
     schedulePolling({ immediate: true });
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
     actions.forEach((item, index) => { item.disabled = disabled[index]; });
-    showToast(`Could not discard the proposal: ${error.message}`);
+    showToast(`Could not discard: ${error.message}`);
   }
 }
 
