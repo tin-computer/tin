@@ -162,7 +162,7 @@ the worst case one run can reach, so a normal run is never refused. Charges stay
 | Workflow | Before | After | Why |
 | --- | --- | --- | --- |
 | `organic.keyword_plan` (new runs) | $10 default, $5 floor | $2 default and floor | Keyword policy v6 reserves at most $1.65 for a full run |
-| `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.92 |
+| `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
 | `organic.traffic_system` | $26 ($31 with a technical fix) | $15 ($20); $10 draft-only | $2 keywords + $2 audit + $1 content plan + $5 draft + $5 PR adaptation |
 | `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
 
@@ -182,9 +182,11 @@ runs keep theirs. From list prices checked September 29, 2026:
   costs about $0.95, even with the model calls at their bounds. The measured $0.73 covered the
   audit too, so a typical keyword run costs less than that; $2 is roughly three times it.
 
-The audit makes at most 28 searched and 52 unsearched calls plus one crawl. With every input at
-its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per search), 6,000 output
-tokens and three $0.01 searches per searched call, a run costs $1.92. The traffic system's
+Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
+unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With
+every input at its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per
+search), 6,000 output tokens and three $0.01 searches per searched call, a v10 run costs $1.83
+($1.92 under v9). The traffic system's
 content plan share is $1: its one call is under $0.10 at long-context rates. Standalone
 `content.plan` runs keep the $2 native maximum. These composition changes apply to every
 traffic definition; a saved configuration keeps its own keyword limit (for example $9 gives

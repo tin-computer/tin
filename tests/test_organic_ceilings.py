@@ -59,7 +59,8 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
             + policy["max_output_tokens"] * rate["output"]
             + searches * CARD["web_search_call_nanos"]
         )
-    assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
+    # v10 asks at most 8 questions three times: 28 searched and 44 unsearched calls, $1.83.
+    assert Decimal("1.8") < total < AUDIT_MAXIMUM_USD
     terms = service_terms(SPECS["organic.audit"].definition)
     assert terms["maximum_nanos"] == AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR == 2 * NANOS_PER_DOLLAR
 
