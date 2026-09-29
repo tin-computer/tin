@@ -1153,8 +1153,11 @@ BUILTIN_WORKFLOWS = (
             WorkflowPrerequisite(
                 kind="run",
                 level="recommended",
-                workflow=VISIBILITY_AUDIT_WORKFLOW_NAME,
-                reason="The latest AI visibility audit supplies the questions the page answers.",
+                workflow=AUDIT_KEY,
+                reason=(
+                    "The latest organic audit's AI buyer questions supply the questions the "
+                    "page answers."
+                ),
             ),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,

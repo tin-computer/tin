@@ -23,6 +23,7 @@ from tin_lite.organic_audit import (
 from tin_lite.organic_audit_ai import (
     AI_CONTRACT,
     LEGACY_AI_CONTRACT,
+    V9_AI_SCHEMAS,
     AuditValidationError,
     classify_absent_target,
     payload,
@@ -47,6 +48,11 @@ def negative_judgment():
         "selected_first": False,
         "first_choice_quote": "",
     }
+
+
+def graded_judgment():
+    """The v10 judge also grades whether the answer evaluates the target."""
+    return {**negative_judgment(), "evaluated": False, "evaluation_quote": ""}
 
 
 def scored(index, *, cited=False):
@@ -274,7 +280,11 @@ async def test_worker_accepts_exact_legacy_definition_but_rejects_mixed_contract
     run_id = str(db.run.id)
     del db.effects[activities.key(run_id, "scope")]
     definition = json.loads(storage.read_canonical_artifact.return_value)
-    definition.update(audit_policy=LEGACY_AUDIT_POLICY, audit_instructions=LEGACY_AI_CONTRACT)
+    definition.update(
+        audit_policy=LEGACY_AUDIT_POLICY,
+        audit_instructions=LEGACY_AI_CONTRACT,
+        audit_schemas=V9_AI_SCHEMAS,
+    )
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     assert await activities._policy_version(run_id) == LEGACY_AUDIT_POLICY["version"]

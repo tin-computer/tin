@@ -101,22 +101,25 @@ async def interpret_questions(activities, run_id, questions, scope, suffix):
     }
 
 
-def limit_panel(panel: dict, *, max_jobs: int, repetitions: int) -> dict:
+def limit_panel(panel: dict, *, max_jobs: int, repetitions: int, unsearched: bool = False) -> dict:
     """Keep the first proposed buyer jobs before any answer is measured.
 
     The selection depends only on the proposal's order, never on answers or scores. The
-    question-set digest covers exactly the questions that will be asked.
+    question-set digest covers exactly the questions that will be asked. With `unsearched`,
+    each question also gets one answer without web search, after all searched answers.
     """
     jobs = list(dict.fromkeys(question["job"] for question in panel["questions"]))[:max_jobs]
     value = {
         key: item for key, item in panel.items() if key not in {"sha256", "planned_observations"}
     }
     value["questions"] = [q for q in panel["questions"] if q["job"] in jobs]
+    planned = len(value["questions"]) * (repetitions + (1 if unsearched else 0))
     return {
         **value,
         "sha256": digest(value),
-        "planned_observations": len(value["questions"]) * repetitions,
+        "planned_observations": planned,
         "repetitions": repetitions,
+        **({"unsearched": True} if unsearched else {}),
     }
 
 
@@ -152,6 +155,7 @@ async def reuse_panel(activities, run_id, scope):
             or source_scope.get("host") != scope["host"]
             or source_scope.get("market") != scope["market"]
             or panel.get("repetitions") != policy["repetitions"]
+            or bool(panel.get("unsearched")) != bool(policy.get("unsearched_answers"))
         ):
             continue
         observations = [
@@ -297,6 +301,7 @@ async def prepare_panel(activities, run_id):
                             candidate,
                             max_jobs=policy["max_panel_jobs"],
                             repetitions=policy["repetitions"],
+                            unsearched=bool(policy.get("unsearched_answers")),
                         )
                     review_data = {**evidence, "panel": candidate}
                     if policy.get("standalone_question_review"):

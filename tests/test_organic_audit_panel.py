@@ -23,6 +23,7 @@ from tin_lite.organic_audit_ai import (
     V3_AI_CONTRACT,
     V4_AI_CONTRACT,
     V6_AI_CONTRACT,
+    V9_AI_SCHEMAS,
     AuditValidationError,
     ai_contract,
     read_response,
@@ -169,8 +170,9 @@ async def test_research_then_no_tool_draft_then_validation_freezes_once():
     )
     run_id = str(db.run.id)
     for _ in range(2):
-        # v10 asks every frozen question three times: 4 questions, 12 observations.
-        assert await activities.organic_prepare_panel(run_id) == 12
+        # v10 asks every frozen question three times with web search and once without:
+        # 4 questions, 16 observations.
+        assert await activities.organic_prepare_panel(run_id) == 16
     requests = [call.args[0] for call in activities.responses.create.await_args_list]
     assert len(requests) == 7
     assert "text" not in requests[0]
@@ -203,8 +205,8 @@ async def test_bad_panel_gets_one_grounded_correction_without_research_repeat(fa
         create=AsyncMock(side_effect=[*calls, draft(), *interpretations(), review()])
     )
     run_id = str(db.run.id)
-    assert await activities.organic_prepare_panel(run_id) == 12
-    assert await activities.organic_prepare_panel(run_id) == 12
+    assert await activities.organic_prepare_panel(run_id) == 16
+    assert await activities.organic_prepare_panel(run_id) == 16
     assert activities.responses.create.await_count == len(calls) + 6
     requests = [call.args[0] for call in activities.responses.create.await_args_list]
     assert sum(bool(req["tools"]) for req in requests) == 1
@@ -241,7 +243,7 @@ async def test_only_known_research_failure_can_use_one_recovery(unknown):
         create=AsyncMock(side_effect=[failed, research(), draft(), *interpretations(), review()])
     )
     run_id = str(db.run.id)
-    assert await activities.organic_prepare_panel(run_id) == (0 if unknown else 12)
+    assert await activities.organic_prepare_panel(run_id) == (0 if unknown else 16)
     await activities.organic_prepare_panel(run_id)
     assert activities.responses.create.await_count == (1 if unknown else 8)
     receipt = await activities._result(run_id, "panel_research")
@@ -268,7 +270,9 @@ async def test_exact_v2_definition_keeps_single_call_panel_and_old_payload():
     run_id = str(db.run.id)
     del db.effects[activities.key(run_id, "scope")]
     definition = json.loads(storage.read_canonical_artifact.return_value)
-    definition.update(audit_policy=V2_AUDIT_POLICY, audit_instructions=V2_AI_CONTRACT)
+    definition.update(
+        audit_policy=V2_AUDIT_POLICY, audit_instructions=V2_AI_CONTRACT, audit_schemas=V9_AI_SCHEMAS
+    )
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
@@ -286,7 +290,9 @@ async def test_exact_v3_definition_keeps_original_three_step_prompts():
     run_id = str(db.run.id)
     del db.effects[activities.key(run_id, "scope")]
     definition = json.loads(storage.read_canonical_artifact.return_value)
-    definition.update(audit_policy=V3_AUDIT_POLICY, audit_instructions=V3_AI_CONTRACT)
+    definition.update(
+        audit_policy=V3_AUDIT_POLICY, audit_instructions=V3_AI_CONTRACT, audit_schemas=V9_AI_SCHEMAS
+    )
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
@@ -329,7 +335,7 @@ async def test_standalone_review_cannot_use_job_labels_to_rescue_an_ambiguous_qu
             ]
         )
     )
-    assert await activities.organic_prepare_panel(str(db.run.id)) == 12
+    assert await activities.organic_prepare_panel(str(db.run.id)) == 16
     calls = activities.responses.create.await_args_list
     for index in (6, 12):
         request = calls[index].args[0]
@@ -360,7 +366,7 @@ async def test_exact_prior_definition_keeps_its_original_reviewer_and_evidence_b
     run_id = str(db.run.id)
     del db.effects[activities.key(run_id, "scope")]
     definition = json.loads(storage.read_canonical_artifact.return_value)
-    definition.update(audit_policy=policy, audit_instructions=contract)
+    definition.update(audit_policy=policy, audit_instructions=contract, audit_schemas=V9_AI_SCHEMAS)
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
