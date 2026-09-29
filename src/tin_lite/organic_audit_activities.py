@@ -676,7 +676,9 @@ class OrganicAuditActivities:
             return await self._poll_provider(run_id)
         crawl_was_final = await self._result(run_id, "crawl") is not None
         crawl_final = await self._poll_provider(run_id)
-        if not await self._collect_page_facts(run_id, scope, seconds=30):
+        # Provider reads take up to 80 s at worst; 20 s of page reads (each at most 15 s once
+        # started) keeps the attempt inside its two-minute limit.
+        if not await self._collect_page_facts(run_id, scope, seconds=20):
             return False
         if not crawl_was_final and scope.get("pagespeed") == "configured":
             return False  # Keep this attempt short; speed is read on the next poll.

@@ -101,7 +101,7 @@ async def test_page_reads_resume_after_the_time_limit_without_rereading(monkeypa
 
     monkeypatch.setattr(organic_audit_activities, "read_pages", limited)
     result = await run_audit(site=site)
-    assert budgets[:2] == [120, 30]
+    assert budgets[:2] == [120, 20]
     page_reads = [url for url in site.requests if not url.endswith((".txt", ".xml"))]
     assert len(page_reads) == len(set(page_reads)) == 100
     assert result.evidence["site"]["pages_status"] == "complete"
