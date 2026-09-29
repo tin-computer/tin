@@ -33,7 +33,7 @@ async function withPage(run) {
 
 test("the call sites put one line under the card's sentence and at the top of the document column", async () => {
   const app = await fs.readFile("src/tin_lite/static/app.js", "utf8");
-  assert.match(app, /<p>\$\{escapeHtml\(decision\.explanation\)\}<\/p>\n\s*\$\{decision\.kind !== "output_conflict" \? pageUrlLine\(run\) : ""\}/);
+  assert.match(app, /<p class="decision-summary">\$\{escapeHtml\(bodyLine\)\}<\/p>` : ""\}\n\s*\$\{decision\.kind !== "output_conflict" \? pageUrlLine\(run\) : ""\}/);
   assert.match(app, /querySelector\?\.\("\.markdown-document"\)/);
   assert.match(app, /readerColumn\.insertAdjacentHTML\("afterbegin", pageUrlLine\(run, "document"\)\)/);
   const index = await fs.readFile("src/tin_lite/static/index.html", "utf8");
