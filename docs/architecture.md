@@ -84,7 +84,7 @@ This is a selection, not a complete catalog. The live Registry lists current inp
 
 | Workflow | What it does | Needs | Your call? |
 |---|---|---|---|
-| `organic.audit` | Crawls up to 100 public pages for technical SEO issues, asks a fixed panel of buyer questions to an AI adviser, reports whether the answers mention, cite, or recommend you | nothing | no |
+| `organic.audit` | Reads robots.txt, sitemaps and Search Console, inspects up to 100 chosen public pages by default for crawl, indexation, on-page and search issues, asks a fixed panel of buyer questions to an AI adviser, and reports whether the answers mention, cite, or recommend you | nothing | no |
 | `visibility.audit` | Asks five buyer questions to a model with and without web search and scores where you appear | nothing | no |
 | `content.answer_page` | Drafts one researched page for the strongest unanswered buyer question | nothing | yes |
 | `site.health_improve` | One small evidenced fix on one public page, as a pull request | GitHub | the PR is yours to merge |
