@@ -78,7 +78,7 @@ needs no new storage read.
 
 ## MCP-first journey
 
-1. `list_workflows(project_id)` discovers the workflow and input schema.
+1. `list_workflows(project_id)` finds the workflow; `get_workflow` returns its input schema.
 2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`
    (plus `refresh_questions` from v10), and an optional stable UUID `request_id`. Reuse
    it after an uncertain client response. HTTP retains the existing `Idempotency-Key`
@@ -279,6 +279,11 @@ the presence and types of JSON-LD or microdata. JavaScript is never run. Answers
 like bot protection (HTTP 401, 403 or 429, or a 503 challenge page) are recorded as refused:
 the page's checks are unknown, not errors, and a refused robots.txt or sitemap is unknown,
 not missing.
+
+The request deadline includes DNS resolution. Tin requests uncompressed HTTP bodies and
+leaves facts unknown if a server ignores that request, so automatic HTTP decompression
+cannot bypass the byte cap. Gzipped sitemap files keep their separate bounded decoder.
+The optional PageSpeed key is sent in Google's `X-Goog-Api-Key` header, never in the URL.
 
 ### Search Console
 

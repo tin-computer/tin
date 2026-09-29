@@ -218,8 +218,10 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
     article = procedures[PUBLIC_ARTICLE_WORKFLOW_NAME]
     article_definition, article_files = article.definition_and_resource_files()
     assert article_definition["procedure"]["entry_skill"] == "public-article"
+    # Named by the run's date and the start of its ID, so Files lists them by day.
     assert (
-        article_definition["procedure"]["output"]["path_template"] == "content/articles/{run_id}.md"
+        article_definition["procedure"]["output"]["path_template"]
+        == "content/articles/{run_folder}.md"
     )
     assert article_definition["human_review"] == {
         "eligible": True,
@@ -1016,3 +1018,45 @@ def test_procedure_bridge_uses_explicit_skills_web_search_and_one_output() -> No
     assert 'STATE_DIR = Path(os.environ.get("TIN_PROCEDURE_STATE_DIR"' in bridge
     assert "is a read-only snapshot of the connected" in bridge
     assert "replace that section in full" in bridge
+
+
+async def test_public_articles_are_named_by_date_and_short_run_id():
+    from copy import deepcopy
+    from datetime import UTC, datetime
+    from uuid import UUID
+
+    from tin_lite.organic_audit import canonical_json
+    from tin_lite.procedures import load_pinned_codex_procedure, validate_codex_procedure_definition
+
+    article = next(w for w in BUILTIN_WORKFLOWS if w.key == PUBLIC_ARTICLE_WORKFLOW_NAME)
+    definition, resources = article.definition_and_resource_files()
+    run_id = UUID("1a2b3c4d-0000-4000-8000-000000000031")
+    started = datetime(2026, 9, 29, 23, 30, tzinfo=UTC)
+
+    async def pinned(value):
+        files = {article.definition_path: canonical_json(value), **resources}
+
+        async def read(**kw):
+            return files[kw["path"]]
+
+        procedure = await load_pinned_codex_procedure(
+            storage=SimpleNamespace(read_canonical_artifact=read, read_workflow_resource=read),
+            repo_id="registry/workflows",
+            commit_sha="d" * 40,
+            definition_path=article.definition_path,
+        )
+        return procedure.resolve_inputs({}, started_at=started, run_id=run_id)
+
+    resolved = await pinned(definition)
+    assert resolved.output_path == "content/articles/2026-09-29-1a2b3c4d.md"
+    assert resolved.companion_path == "content/articles/2026-09-29-1a2b3c4d.generation.md"
+    # Runs pinned before 1.5.0 keep their run-ID file name.
+    older = deepcopy(definition)
+    older["procedure"]["output"]["path_template"] = "content/articles/{run_id}.md"
+    assert (await pinned(older)).output_path == f"content/articles/{run_id}.md"
+    # Any other readable folder name stays reserved for reviewed document pairs.
+    report = deepcopy(definition)
+    report["procedure"]["output"].pop("validator")
+    report["procedure"]["output"]["path_template"] = "reports/{run_folder}.md"
+    with pytest.raises(ValueError, match="reserved for reviewed documents"):
+        validate_codex_procedure_definition(report)

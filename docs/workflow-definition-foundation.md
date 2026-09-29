@@ -81,12 +81,44 @@ HTTP (409) and MCP (`ToolError` JSON) return `{code, message, prerequisites[]}` 
 item carries the upstream `workflow_key`, `workflow_id`, `how_to_satisfy` and a replayable
 `suggested_call` for `start_workflow` with the matching inputs carried over.
 
+### A prerequisite that is still running
+
+When an unmet prerequisite's upstream workflow (the `run` workflow, or the `producer` of an
+artifact or identity) has a pending or running run in the same project that would meet it
+(same `via_input` run, same `match` scope, same identity host), admission attaches that run as
+`running_run_id`. What happens next depends on whether the executor can wait:
+
+- `content.answer_page` and Codex procedures read project state only after admission, so the
+  run is admitted, required or recommended, and waits. The start response and evidence list it
+  under `waiting`, and the Temporal start carries the `tin_prerequisite_wait` memo with the
+  awaited run ids. Behind `workflow.patched("prerequisite-wait-v1")` the workflow polls the
+  `prerequisite_wait` activity every 30 seconds on a durable timer, holding no compute, for up
+  to 30 minutes. When the awaited runs end or the time runs out, the activity re-checks the
+  prerequisites, pins the result under `waited` with plain `notes`, and either lets the run go
+  on (reading the finished result, or without it when recommended) or refuses a still-missing
+  required prerequisite with a `PrerequisiteMissing` failure before any work. Scheduled
+  dispatch passes the memo to the child it starts; parent-dispatched children do not wait.
+- `workflow.code` pins its project files at admission, and content drafts and brand capture pin
+  their sources, so a result that lands later cannot reach them; other native executors have no
+  wait step. For these the start says so instead: a required prerequisite is refused with
+  "`<workflow>` run `<id>` is still running; call get_run …" and a `get_run` suggested call, and
+  a recommended one starts without it and the note says why.
+
+Every admission view of an unmet prerequisite carries a plain `note`, collected as
+`prerequisite_notes` on the MCP start response and on `get_run`.
+
 What the gate resolved is pinned on the run as `prerequisite_evidence` (migration 030): upstream
 run ids and revisions, the identity id, the artifact path and HEAD revision, plus the advisories.
 `list_workflows`, `get_workflow` and the HTTP catalog add the declaration and an input-free
 `readiness` (`ready`, `advisory`, `blocked`) computed with at most one runs query, one identity
 query, one HEAD listing and one index read for any catalog size; run scopes, `via_input` ids and
 placeholder paths are only checked against real inputs at start, and the response says so.
+The full listing runs to well over 100K characters, too much for an agent's context, so
+`list_workflows(project_id)` is short by default: per workflow only `id`, `key`, `title`, a
+one-line `description`, `schedule_modes`, the `readiness` state, `required_inputs` (required
+names without a default), `needs` (required connections) and, when blocked, `blocked_because`.
+That is about 370 characters per workflow, or about 37K for 100 workflows. `get_workflow` then
+gives the chosen one's full contract; `detail="full"` still returns every definition.
 
 Private packages may declare `run` prerequisites naming built-in or their own active `custom.*`
 workflows and `artifact` prerequisites on ordinary project files; identities and `producer`

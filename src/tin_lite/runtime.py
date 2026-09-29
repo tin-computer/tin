@@ -389,6 +389,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic.organic_project,
         organic.organic_failure,
         activity_instance.dispatch_scheduled_workflow,
+        activity_instance.prerequisite_wait,
         activity_instance.create_design_sandbox,
         activity_instance.persist_design_artifact,
         activity_instance.commit_design_canonically,

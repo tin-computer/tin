@@ -17,6 +17,7 @@ from tin_lite.organic_system import (
     STEPS,
     check_inputs,
     drafts_articles,
+    falls_back_to_saved_plan,
     policy_steps,
     schedules_articles,
     system_facts,
@@ -57,6 +58,31 @@ async def founder_timezone(database, project_id):
         except (ZoneInfoNotFoundError, ValueError):
             continue
     return "UTC"
+
+
+# The newest content program whose plan finished, other than the one this run just saved.
+SAVED_PLAN_SQL = """
+    SELECT pw.id, pw.name, pw.created_at, max(plan.finished_at) AS planned_at
+    FROM project_workflows pw
+    JOIN workflows w ON w.id = pw.workflow_id AND w.key = 'content.plan'
+    JOIN workflow_runs plan ON plan.project_workflow_id = pw.id AND plan.status = 'succeeded'
+    WHERE pw.project_id = $1 AND pw.status <> 'archived' AND pw.request_id IS DISTINCT FROM $2
+    GROUP BY pw.id, pw.name, pw.created_at
+    ORDER BY planned_at DESC NULLS LAST, pw.created_at DESC
+    LIMIT 1
+"""
+
+
+def fallback_section(fallback):
+    planned = (fallback.get("planned_at") or "")[:10]
+    return [
+        "## Content plan used",
+        "",
+        "This run's content plan did not finish, so the article draft and the weekly "
+        f"articles use the plan saved{' on ' + planned if planned else ''} in "
+        f"{fallback['name']!r}.",
+        "",
+    ]
 
 
 def weekly_section(weekly):
@@ -173,6 +199,43 @@ class OrganicSystemActivities:
             summary="Auditing the website and researching buyer searches.",
         )
 
+    async def saved_plan(self, run):
+        """The earlier content program this run falls back to, chosen once per run.
+
+        Only a pinned v4 recipe falls back, and only when its own content step did not
+        succeed. The choice is saved so a retried step or a later weekly save reads the same
+        program; None means the project has no finished plan to use.
+        """
+        prepared = await self.saved(run.id, "prepare")
+        if not prepared or not falls_back_to_saved_plan(prepared["policy"]):
+            return None
+        key = f"traffic:{run.id}:content_fallback"
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result.get("program") or None
+            row = await self.db.pool.fetchrow(
+                SAVED_PLAN_SQL, run.project_id, uuid5(run.id, "content-program")
+            )
+            program = (
+                {
+                    "program_id": str(row["id"]),
+                    "name": row["name"],
+                    "planned_at": row["planned_at"].isoformat() if row["planned_at"] else None,
+                }
+                if row
+                else None
+            )
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(conn, execution_key=key, result={"program": program})
+            return program
+
+    async def content_program(self, run, content):
+        """This run's content program, or the saved fallback when its plan did not finish."""
+        if content["status"] == "succeeded" and content["project_workflow_id"]:
+            return content["project_workflow_id"]
+        fallback = await self.saved_plan(run)
+        return fallback["program_id"] if fallback else None
+
     async def _child_inputs(self, run, step):
         inputs = run.input
         facts = await system_facts(database=self.db, project_id=run.project_id, run_id=run.id)
@@ -229,11 +292,11 @@ class OrganicSystemActivities:
                 "amendment_id": "",
             }, None
         if step == "draft":
-            if children["content"]["status"] != "succeeded":
+            program_id = await self.content_program(run, children["content"])
+            if program_id is None:
                 return None, "content_plan_unavailable"
             from tin_lite.content_draft_sources import ContentDraftSources
 
-            program_id = children["content"]["project_workflow_id"]
             discovery = await ContentDraftSources(database=self.db, storage=self.storage).discover(
                 project_id=run.project_id, program_id=UUID(program_id)
             )
@@ -442,7 +505,8 @@ class OrganicSystemActivities:
             return {"status": "skipped", "reason": "weekly_articles_off"}
         facts = await system_facts(database=self.db, project_id=run.project_id, run_id=run.id)
         content = next(row for row in facts["steps"] if row["step"] == "content")
-        if content["status"] != "succeeded" or not content["project_workflow_id"]:
+        program_id = await self.content_program(run, content)
+        if program_id is None:
             return {"status": "skipped", "reason": "content_plan_unavailable"}
         definition = prepared["definitions"]["draft"]
         schedule = WorkflowSchedule(
@@ -471,7 +535,7 @@ class OrganicSystemActivities:
             inputs=normalize_workflow_inputs(
                 schema=definition["input_schema"],
                 project_id=run.project_id,
-                inputs={"program_id": content["project_workflow_id"]},
+                inputs={"program_id": program_id},
             ),
             input_schema=definition["input_schema"],
             schedule=schedule.model_dump(mode="json"),
@@ -488,7 +552,7 @@ class OrganicSystemActivities:
         return {
             "status": "succeeded",
             "project_workflow_id": str(configured.id),
-            "program_id": content["project_workflow_id"],
+            "program_id": program_id,
             "weekdays": saved.weekdays,
             "local_time": saved.local_time,
             "timezone": saved.timezone,
@@ -569,6 +633,9 @@ class OrganicSystemActivities:
                         "",
                     ]
                 )
+        fallback = await self.db.get_effect(f"traffic:{run.id}:content_fallback")
+        if fallback and fallback.status == "completed" and fallback.result.get("program"):
+            lines.extend(fallback_section(fallback.result["program"]))
         weekly = facts.get("weekly_articles")
         if weekly and weekly.get("reason") != "not_in_pinned_recipe":
             lines.extend(weekly_section(weekly))

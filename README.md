@@ -102,7 +102,7 @@ These are the main areas covered by the current catalog. Availability depends on
 
 For work that does not fit a template, `project.task` gives you a separate Codex task with its own conversation and controls. It can ask questions, pause, and resume. Changes to project files require approval of the proposed diff.
 
-A content plan's dates are editorial targets, not automatic publication times. You can start generation individually; the current organic traffic system can also continue from planning into the next eligible draft, review and delivery. Tin can report that an item is already covered or needs better evidence instead of forcing out another article. Approved content becomes an unmerged PR when GitHub delivery is selected; otherwise its Markdown stays in project Files. This does not schedule six months of automatic drafting or publish a website.
+A content plan's dates are editorial targets, not automatic publication times. You can start generation individually; the current organic traffic system can also continue from planning into the next eligible draft, review and delivery. Tin can report that an item is already covered or needs better evidence instead of forcing out another article. With GitHub connected, approved content follows the project's delivery setting: an unmerged PR, or a commit to main; otherwise its Markdown stays in project Files. This does not schedule six months of automatic drafting or publish a website.
 
 The live Registry is the source for each workflow's inputs and requirements. [docs/architecture.md](docs/architecture.md) explains how the main pieces fit together.
 

@@ -110,6 +110,7 @@ def service_terms(definition, *, inputs=None):
             if definition.get("organic_system_policy", {}).get("version") in {
                 "organic-traffic-v2",
                 "organic-traffic-v3",
+                "organic-traffic-v4",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly

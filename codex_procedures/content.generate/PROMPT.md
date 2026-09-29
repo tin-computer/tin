@@ -53,6 +53,8 @@ if a useful part cannot be supported, narrow it and explain that limitation in t
 Write exactly two UTF-8 Markdown files at the declared `output.path` and
 `output.companion_path`. For `draft`, the primary file is public copy only: start with a `# Title`,
 then the complete article/page draft with factual sources beside the supported claims.
+Shape it with the search-and-answer-engines skill: answer first, question headings, a table
+when comparing options, an FAQ where it fits and `## Sources` last.
 No Tin frontmatter, checklists, generation notes or approval commentary belongs in this file.
 For any no-draft outcome, write a short assessment instead of an article. Its exact format is
 `# Content assessment`, a blank line, the exact `rationale` string from the judgment below,
