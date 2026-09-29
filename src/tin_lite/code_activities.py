@@ -90,6 +90,15 @@ class CodeActivities:
                     from tin_lite.code_article_sources import saved_source
 
                     context["approved_article"] = await saved_source(self.db, run, spec)
+                if spec.evidence:
+                    from tin_lite.code_evidence import bound_context
+                    from tin_lite.code_evidence import saved_source as saved_evidence
+
+                    context["evidence"] = await saved_evidence(self.db, run, spec)
+                    bound_context(
+                        {"version": 1, "slots": context["evidence"]},
+                        context.get("approved_article"),
+                    )
                 branch = f"procedures/{run.id}/{run.generation}"
                 revision = await self.storage.procedure_checkpoint_revision(
                     repo_id=project.state_repo_id, branch=branch

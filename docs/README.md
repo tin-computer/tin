@@ -46,6 +46,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   managed-model Python and Codex procedures, with explicit maintainer registration.
 - [Article-to-social drafts](social-post-batch.md): one approved article, four reviewable
   posts, and the reusable approved-article input for code workflows.
+- [Approved project evidence](approved-project-evidence.md): named, bounded inputs from
+  approved text results, shared source selection, and immutable inputs across retries.
 - [Product analytics brief](product-analytics-brief.md): the public PostHog package and qualification limits.
 - [Private activation](private-workflow-activation.md), [code workflows](code-workflows.md),
   [managed model steps](code-model-workflows.md) and [code schedules](code-workflow-schedules.md).

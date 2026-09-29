@@ -8,6 +8,10 @@ This page records the code-only foundation. The deployed executor also has later
 and [eligible schedules](code-workflow-schedules.md). Slice A's limits and acceptance below
 do not claim coverage of those later capabilities; see [current feature status](feature-status.md).
 
+On-demand code workflows can also declare [approved text inputs](approved-project-evidence.md).
+The selected contents arrive as bounded context, with their exact source revisions; this does
+not grant an unrestricted project filesystem reader.
+
 Private describes project ownership and access. `workflow.code` is a separately registered
 Temporal executor for ordinary Python functions. Existing reusable `codex.procedure` packages,
 interactive `project.task` runs, and their historical contracts remain supported.

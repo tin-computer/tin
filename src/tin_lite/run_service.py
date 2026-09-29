@@ -302,8 +302,8 @@ async def start_workflow_run(
     from tin_lite import content_repository_delivery
 
     if workflow.executor == "workflow.code" and existing is None:
-        from tin_lite import code_article_sources
-        from tin_lite.workflow_code import approved_article_input
+        from tin_lite import code_article_sources, code_evidence
+        from tin_lite.workflow_code import approved_article_input, evidence_specs
 
         if approved_article_input(workflow.definition) is not None:
             try:
@@ -316,6 +316,27 @@ async def start_workflow_run(
                 )
             except (ValueError, LookupError) as exc:
                 raise WorkflowInputError(str(exc)) from exc
+        if evidence_specs(workflow.definition):
+            try:
+                create_arguments["approved_evidence_source"] = await code_evidence.select(
+                    database=runtime.database,
+                    storage=runtime.storage,
+                    project_id=project_id,
+                    definition=workflow.definition,
+                    inputs=normalized_inputs,
+                )
+                code_evidence.bound_context(
+                    create_arguments["approved_evidence_source"],
+                    create_arguments.get("approved_article_source"),
+                )
+            except (ValueError, LookupError, UnicodeError) as exc:
+                # Another identical start may have committed while this request
+                # inspected the source. create_run will verify actor, inputs and
+                # pinned definition before returning that existing run.
+                if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
+                    project_id=project_id, start_idempotency_key=start_idempotency_key
+                ):
+                    raise WorkflowInputError(str(exc)) from exc
 
     if workflow.id == content_repository_delivery.WORKFLOW_ID and existing is None:
         try:
@@ -395,7 +416,10 @@ async def start_workflow_run(
     except ValueError as exc:
         if workflow.key in {content_draft.KEY, content_repository_delivery.KEY} or (
             workflow.executor == "workflow.code"
-            and workflow.definition.get("code", {}).get("approved_article") is not None
+            and (
+                workflow.definition.get("code", {}).get("approved_article") is not None
+                or workflow.definition.get("code", {}).get("evidence") is not None
+            )
         ):
             raise WorkflowInputError(str(exc)) from exc
         raise
