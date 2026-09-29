@@ -3,6 +3,8 @@
 import json
 import re
 
+import yaml
+
 VALIDATOR = "public-article.v2"
 PATH_TEMPLATE = "content/articles/{run_id}.md"
 REVISION_INSTRUCTION = """
@@ -31,8 +33,41 @@ def revision_prompt(context):
     return REVISION_INSTRUCTION + json.dumps(context, ensure_ascii=False, sort_keys=True)
 
 
+SEARCH_LISTING_KEYS = frozenset({"meta_title", "meta_description"})
+
+
+def search_listing(text):
+    """Split an article's optional search-listing frontmatter from its copy.
+
+    Only what delivery can merge into a site header is accepted: `meta_title` and
+    `meta_description` as plain one-line strings. Lengths are guidance, not checks.
+    """
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n+", text, re.S)
+    if not match:
+        return {}, text
+    try:
+        listing = yaml.safe_load(match[1])
+    except yaml.YAMLError:
+        listing = None
+    if (
+        not isinstance(listing, dict)
+        or not listing
+        or not set(listing) <= SEARCH_LISTING_KEYS
+        or any(
+            not isinstance(value, str) or not value.strip() or "\n" in value
+            for value in listing.values()
+        )
+    ):
+        raise ValueError(
+            "Write the search listing as quoted one-line meta_title and meta_description "
+            "values, or leave it out."
+        )
+    return listing, text[match.end() :]
+
+
 def validate_article(content):
     text = content.decode("utf-8").strip()
+    _listing, text = search_listing(text)
     if not text.startswith("# ") or len(text) < 200:
         raise ValueError("Write a complete article with a title.")
     if re.search(

@@ -596,7 +596,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.6.0",
+        version_label="1.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -1304,7 +1304,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.4.1",
+        version_label="1.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
