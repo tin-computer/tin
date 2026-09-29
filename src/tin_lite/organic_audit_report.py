@@ -559,7 +559,19 @@ def report_lines(
             )
 
     inspection = analysis["view"].inspection
-    if inspection.get("results"):
+    if inspection.get("results") and not any(
+        row.get("status") == "observed" for row in inspection["results"]
+    ):
+        lines.extend(
+            [
+                "## Google index status",
+                "",
+                "Search Console URL Inspection returned no usable result for the "
+                f"{len(inspection['results'])} key pages asked about.",
+                "",
+            ]
+        )
+    elif inspection.get("results"):
         lines.extend(
             [
                 "## Google index status",
