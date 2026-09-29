@@ -75,8 +75,10 @@ documents. The run saves the extracted guide to a run-owned file,
 `style/proposals/<date>-writing-style-<run>.md`, and waits in Decisions. The active guide stays
 unchanged until a member approves. Approval binds the proposal as it stands at that moment,
 including edits made to it in Files, and only then is it saved as the guide. A proposal removed or
-emptied before approval fails the run and leaves the current guide alone. Runs pinned to 1.0.0
-save the guide directly, as before.
+emptied before approval fails the run and leaves the current guide alone. "Discard" on the
+Decisions card turns the proposal down instead: the run ends as declined, the proposal file stays
+readable in Files, and the current guide is unchanged. Runs pinned to 1.0.0 save the guide
+directly, as before.
 
 The result is `.agents/skills/writing-style/SKILL.md`. The same canonical publication mechanism
 used for saved procedure outputs checks whether that destination changed since capture began.
