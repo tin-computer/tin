@@ -79,9 +79,7 @@ def test_core_and_specific_seeds_are_deduplicated_and_use_only_explicit_context(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "contract, version", [(v3, "v3"), (v4, "v4"), (v5, "v5"), (v6, "current")]
-)
+@pytest.mark.parametrize("contract, version", [(v3, "v3"), (v4, "v4"), (v5, "v5"), (v6, "current")])
 async def test_core_seed_versions_reuse_calls_and_publish_one_complete_inventory(contract, version):
     activities, db, storage, provider, model = await fixture(
         modern=version, inputs={"seed_phrases": []}
