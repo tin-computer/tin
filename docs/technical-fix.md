@@ -51,7 +51,7 @@ change Tin may make:
 | --- | --- |
 | `metadata.title_missing`, `metadata.description_missing` | Add the title or meta description |
 | `robots.sitemap_reference_missing` | Add a `Sitemap:` line (or a new allow-all robots.txt naming it) |
-| `robots.ai_search_crawlers_blocked` | Let OAI-SearchBot, ChatGPT-User and PerplexityBot crawl; every other crawler's rules stay the same |
+| `robots.ai_search_crawlers_blocked` | Let the blocked AI search crawlers (OAI-SearchBot, ChatGPT-User, PerplexityBot, Perplexity-User, Claude-SearchBot, Claude-User, Bingbot) crawl; every other crawler's rules stay the same |
 | `sitemap.non_indexable_urls`, `sitemap.ad_landing_urls` | Remove those pages' `<url>` entries |
 | `sitemap.missing_search_pages` | Add `<url>` entries for pages with search impressions |
 | `indexation.utility_pages_indexable`, `indexation.ad_landing_pages_indexable` | Add `<meta name="robots" content="noindex">` |

@@ -23,6 +23,7 @@ from tin_lite import technical_fix
 from tin_lite import technical_site_rules as rules
 from tin_lite.integrations import GitHubRepositoryBinding
 from tin_lite.organic_audit import digest
+from tin_lite.organic_audit_site import AI_SEARCH_CRAWLERS
 from tin_lite.technical_fix_execution import TechnicalFixExecution
 from tin_lite.technical_fix_live import LiveRecheck, present
 from tin_lite.technical_fix_sources import finding_rank
@@ -85,8 +86,10 @@ def test_robots_sitemap_line_may_add_only_the_sitemap():
 def test_allowing_ai_search_crawlers_leaves_every_other_crawler_alone():
     before = "User-agent: *\nDisallow: /\n\nUser-agent: Googlebot\nAllow: /\n"
     need = rules.robots_needs("robots_allow_ai_search", {"status": "observed", "text": before})
-    assert need == {"needed": True, "agents": ["ChatGPT-User", "OAI-SearchBot", "PerplexityBot"]}
-    group = "\nUser-agent: OAI-SearchBot\nUser-agent: ChatGPT-User\nUser-agent: PerplexityBot\n"
+    # Every AI search crawler the audit names; Googlebot already had its own group.
+    agents = sorted(AI_SEARCH_CRAWLERS)
+    assert need == {"needed": True, "agents": agents}
+    group = "\n" + "".join(f"User-agent: {agent}\n" for agent in agents)
     rules.verify_robots_change(
         before, before + group + "Allow: /\n", "robots_allow_ai_search", need
     )

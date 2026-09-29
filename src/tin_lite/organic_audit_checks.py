@@ -378,12 +378,13 @@ def _robots_findings(view: SiteView, host: str, important: dict[str, str]) -> li
                 evidence=[
                     ", ".join(row["agent"] for row in closed)
                     + " cannot fetch the homepage under your robots.txt.",
-                    "Training crawlers (GPTBot, ClaudeBot, Google-Extended, CCBot) are a separate "
-                    "choice and can stay blocked.",
+                    "Training crawlers (GPTBot, ClaudeBot, Google-Extended, Applebot-Extended, "
+                    "CCBot) are a separate choice and can stay blocked.",
                 ],
                 fix=(
-                    "If you want to be cited in ChatGPT search and Perplexity answers, allow "
-                    "OAI-SearchBot, ChatGPT-User and PerplexityBot in robots.txt."
+                    "If you want AI search answers to cite you, allow "
+                    + ", ".join(row["agent"] for row in closed)
+                    + " in robots.txt."
                 ),
                 priority="high_impact",
                 evidence_kind="site_files",
