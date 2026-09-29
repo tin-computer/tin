@@ -385,8 +385,9 @@ compared between runs. From v10:
 - Language is checked against the URL's language prefix, not detected from the content.
 - Search Console omits rare and anonymized queries; query totals are below page totals.
 - These are observations and hypotheses, not ranking guarantees.
-- The growth plan's frozen program copy (`growth_plan_assets/programs.json`) keeps the
-  earlier one-line audit description; it is part of that plan's pinned contract.
+- The growth plan's program copy (`growth_plan_assets/programs.json`) is part of that plan's
+  pinned contract; the 0.5 change below edits it once, so plan runs admitted before a deploy
+  that changes it fail the worker's contract check instead of mixing contracts.
 
 Question-set reuse, three answers per question and the comparison table are covered
 by `tests/test_organic_audit_questions.py`.
@@ -400,3 +401,84 @@ with no clicks; an indexable `/sign-in` ranking 1.5 for the brand with an old ti
 and a canonical to `/`; `/nl/` pages declaring `lang="en"` without hreflang; indexable
 `/offer/` pages in the sitemap; and `/about` missing from the sitemap. No live provider or
 production run has been made with v10.
+
+## 0.5 — more angles and one AI measure (organic-audit-v10, continued)
+
+v10 is not deployed yet, so these additions keep its policy name and findings schema 3.
+
+### What else Tin reads
+
+- Each page's HTML facts now include text length, headings (the first eight H2/H3, and how
+  many are phrased as questions), the lead paragraph, meta description length, viewport,
+  Open Graph tags, images without alt text, external links, dates, authors, analytics tags
+  and JSON-LD parsed as JSON and checked for the common types' required fields.
+- Site files add `/llms.txt`, the plain-HTTP homepage (does it redirect to HTTPS?) and a
+  made-up URL that should answer 404.
+- A redirecting page is followed within the audited site, up to five hops, to find loops.
+- The homepage and one selected page are read once as a browser and once with each AI
+  crawler's user agent (GPTBot, OAI-SearchBot, ChatGPT-User, PerplexityBot, ClaudeBot,
+  Claude-SearchBot). A CDN that serves the browser and refuses a crawler likely blocks it;
+  CDNs can verify crawlers by IP address, so the finding says "likely".
+- Search Console adds page rows for the 28 days before the audit window, and URL
+  Inspection for up to ten key pages (the homepage, the pages with the most impressions and
+  pages Tin found noindexed or canonicalized elsewhere), within Google's 2,000-a-day quota.
+- PageSpeed Insights also returns Lighthouse SEO, accessibility and best-practice scores in
+  the same call. Field data for the whole site is labelled site-wide, not the page's own.
+
+### New findings
+
+| Check | What it says |
+| --- | --- |
+| `rendering.content_not_in_html` | Content appears only after JavaScript runs; replaces sitewide "no H1" for those pages |
+| `access.readers_refused` | Bot protection refused Tin's reader; the pages' other checks are unknown |
+| `access.ai_crawlers_refused` | A crawler is refused where a browser is served (likely) |
+| `robots.wildcard_blocks_other_crawlers` | `User-agent: *` closes the site to every crawler it does not name |
+| `robots.ai_search_crawlers_blocked` | Now covers Perplexity-User, Claude-SearchBot, Claude-User and Bingbot too |
+| `indexation.soft_404` | Missing pages answer 200, or pages say "not found" with status 200 |
+| `redirects.loop` | A redirect path returns to an address already in it |
+| `https.http_not_redirected` | The plain-HTTP homepage does not move to HTTPS |
+| `indexation.not_indexed_by_google`, `indexation.google_canonical_differs` | URL Inspection results for key pages |
+| `onpage.title_length`, `onpage.description_length`, `onpage.viewport_missing`, `onpage.image_alt_missing`, `onpage.open_graph_missing` | Page basics |
+| `schema.invalid` | JSON-LD that does not parse or lacks required fields; missing recommended fields alone are not reported |
+| `aeo.llms_txt_missing` | Low severity; no major assistant has confirmed it reads llms.txt |
+| `aeo.dates_missing`, `trust.author_missing` | Articles without a date or author |
+| `trust.about_contact_missing` | No about or contact page in the sitemap or pages read |
+| `measurement.analytics_inconsistent` | A tag on some pages and not others (a hypothesis: bundled analytics are invisible) |
+| `lighthouse.failed_audits` | Lighthouse scores under 90 with the failing audits |
+| `search.decay` | Pages that lost at least 40% of 10+ clicks since the previous 28 days |
+| `aeo.answer_structure` | The model's review of the top five content pages (see below) |
+| `ai.cited_instead` | The sites AI answers cite when they cite yours in fewer than half |
+
+Cannibalization now treats translations of one page (`/de/pricing` and `/pricing`) as one
+page and needs 10 impressions for a search before two pages count as competing.
+
+### One AI measure
+
+The organic audit now grades answers on the AI visibility audit's ladder: found (named, or
+the site read or cited while answering), mentioned, evaluated against the buyer's needs,
+shortlisted and picked first, and it reports where most answers stop. Each question also
+gets one answer without web search, which shows what the model knows before it searches.
+The judge's evaluation must quote a passage naming the target, like every other grade.
+
+The panel decides the grading, not the run's policy: panels drafted for the ladder carry
+`unsearched: true`, and an explicit answer completion of an older audit keeps grading the
+way that audit did. Answer pages take their questions from the newest organic or AI
+visibility audit, and Start here no longer suggests a separate AI visibility audit beside
+the organic traffic system. `visibility.audit` stays runnable for saved configurations.
+
+### Answer structure of top pages
+
+One text-model call reviews the five content pages with the most impressions, from their
+outline: title, H1, first headings, lead paragraph and top searches. The model judges only
+whether the lead answers the main search (quoting the answering sentence exactly from the
+lead), whether sections stand alone, and whether the page carries specific facts. Dates,
+authors, sources and question-shaped headings come from the measured page facts. A result
+that names a page that was not supplied, or quotes a sentence the lead does not contain,
+is discarded and the review is reported as unavailable.
+
+### Limits
+
+- Crawler comparison, URL Inspection and the content review are offline-tested only.
+- Subdomains are still out of scope. Backlinks, competitor pages and search features are
+  not measured; they need a paid data source.
+
