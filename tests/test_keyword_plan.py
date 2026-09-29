@@ -18,6 +18,7 @@ from tin_lite import keyword_plan as v1
 from tin_lite import keyword_plan_v2 as v2
 from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v5 as v5
+from tin_lite import keyword_plan_v6 as v6
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.dataforseo import DataForSEOError
 from tin_lite.domain import EffectReceipt, RunStatus
@@ -118,7 +119,8 @@ def providers():
             "items": items,
             "items_count": len(items),
             "total_count": len(items),
-            "reported_cost_usd": "0.01",
+            # Within every policy's reservation: a live SERP page lists at $0.002.
+            "reported_cost_usd": "0.002" if kind == "serp" else "0.01",
             "provider_task_id": "fixture-only",
         }
 
@@ -212,6 +214,13 @@ async def fixture(*, prepare=True, inputs=None, budget=10, modern=False):
             "keyword_instructions": v4.INSTRUCTIONS,
             "keyword_schemas": v4.SCHEMAS,
         }
+    elif modern == "v5":
+        definition = {
+            **definition,
+            "keyword_policy": v5.POLICY,
+            "keyword_instructions": v5.INSTRUCTIONS,
+            "keyword_schemas": v5.SCHEMAS,
+        }
     storage.read_canonical_artifact = AsyncMock(return_value=canonical_json(definition))
     provider, model = providers()
     activities = KeywordPlanActivities(
@@ -238,7 +247,7 @@ async def finish(activities, run_id):
 def test_catalog_pins_native_contract_and_supported_form():
     assert len({item.id for item in BUILTIN_WORKFLOWS}) == len(BUILTIN_WORKFLOWS)
     assert SPEC.executor == KEY and SPEC.review_policy is None
-    assert SPEC.definition["keyword_policy"] == v5.POLICY
+    assert SPEC.definition["keyword_policy"] == v6.POLICY
     assert SPEC.definition["system"] == "organic-traffic"
     assert registered_workflow_implementations()[KEY] is KeywordPlanWorkflow
     normalized = normalize_workflow_inputs(

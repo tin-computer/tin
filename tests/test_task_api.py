@@ -171,7 +171,7 @@ async def test_task_ambiguous_turn_is_not_restarted(billed, monkeypatch):
     payload = {"run_id": str(run.id), "turn_number": "1"}
     with pytest.raises(TimeoutError):
         await activities.run_project_task_turn(payload)
-    with pytest.raises(SideEffectConflictError):
+    with pytest.raises(SideEffectConflictError, match="execution timed out"):
         await activities.run_project_task_turn(payload)
     assert sandboxes.create.await_count == sandboxes.run_task_and_kill.await_count == 1
     assert (await billed.db.get_effect(attempt_key(run.id, 1))).result["outcome"] == "failed"

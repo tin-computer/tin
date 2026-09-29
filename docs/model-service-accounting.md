@@ -21,6 +21,12 @@ restriction on private workflows is introduced here.
 
 ## Implemented
 
+Unconfirmed calls retain a fixed failure label (timeout, connection, provider status or
+interruption) in their existing usage receipt. They remain unconfirmed for accounting and
+cannot be purchased again by an activity retry. Raw provider messages, prompts and response
+bodies are not copied into diagnostics. Interactive task retries also preserve the original
+API stop reason, such as a token limit, instead of replacing it with a generic unresolved error.
+
 - Explicit `openrouter` adapter, using the official OpenAI SDK's compatible Chat Completions
   client, with optional server-only `OPENROUTER_API_KEY`. Other credential names are unchanged.
   Its endpoint is fixed; prompts cannot choose a URL, supply credentials, or override routing.

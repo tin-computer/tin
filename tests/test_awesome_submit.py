@@ -749,9 +749,11 @@ async def _submit_run(db, *, approved: bool):
     await db.pool.execute(
         """INSERT INTO workflow_runs (id, project_id, workflow_id, executor, definition_commit_sha,
             temporal_workflow_id, thread_id, generation, fencing_token, status, lease_active,
-            review_required, review_decision, reviewed_at)
+            review_required, review_decision, reviewed_at, canonical_commit_sha,
+            artifact_path)
            VALUES ($1,$2,$3,$4,$5,$6,$7,1,1,'running',false,true,$8,
-                   CASE WHEN $8::text IS NULL THEN NULL ELSE now() END)""",
+                   CASE WHEN $8::text IS NULL THEN NULL ELSE now() END, $9,
+                   'reports/awesome-submissions/x/PLAN.md')""",
         run_id,
         project.id,
         workflow_id,
@@ -760,6 +762,8 @@ async def _submit_run(db, *, approved: bool):
         f"{aw.KEY}:{run_id}",
         str(run_id),
         "approved" if approved else None,
+        # The run published its plan for review; the result must replace that commit.
+        "a" * 40,
     )
     return project, run_id
 
@@ -797,9 +801,13 @@ async def test_postgres_accepts_the_provider_and_finishes_only_approved_runs(pub
     assert connection.provider_key == GITHUB_USER_PROVIDER
     await _project(db, run_id)
     row = await db.pool.fetchrow(
-        "SELECT status, result_summary FROM workflow_runs WHERE id=$1", run_id
+        "SELECT status, result_summary, canonical_commit_sha, artifact_path FROM workflow_runs "
+        "WHERE id=$1",
+        run_id,
     )
     assert row["status"] == "succeeded" and row["result_summary"].startswith("Sent 1 of 1")
+    assert row["canonical_commit_sha"] == "e" * 40
+    assert row["artifact_path"].endswith("RESULT.md")
 
     _, pending = await _submit_run(db, approved=False)
     with pytest.raises(SideEffectConflictError):

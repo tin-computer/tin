@@ -19,6 +19,7 @@ from e2b import (
     NotFoundException,
     SandboxNotFoundException,
     SandboxQuery,
+    TimeoutException,
 )
 
 from tin_lite.procedures import SandboxProfile
@@ -38,6 +39,12 @@ logger = logging.getLogger(__name__)
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
 SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""
+
+
+class CodeExecutionError(RuntimeError):
+    """A trusted failure description without sandbox output or provider payloads."""
+
+
 CONTEXT_ENV_MAX = 96 * 1024
 """Largest base64 context still passed as a variable, under the 128 KiB per-string cap."""
 
@@ -355,7 +362,14 @@ class E2BRuntime:
                 # The package let the service error escape, so the run fails for Tin's named
                 # reason. A package that handled it and failed later keeps the generic failure.
                 raise forwarded from None
-            raise RuntimeError("Code workflow failed or exceeded its execution limits.") from None
+            reason = (
+                "the sandbox timed out"
+                if isinstance(exc, (TimeoutError, TimeoutException))
+                else "the package exited without a valid result"
+                if isinstance(exc, CommandExitException)
+                else "the sandbox could not return its result"
+            )
+            raise CodeExecutionError(f"Code workflow failed: {reason}.") from None
         finally:
             if sandbox is not None:
                 await self._delete_sandbox(sandbox)

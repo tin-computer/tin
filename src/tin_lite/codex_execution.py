@@ -1,7 +1,7 @@
-"""Project-scoped execution, using Temporal's active workflow-ID uniqueness.
+"""Run-owned compute, bounded by the existing activity worker capacity.
 
-Only identifiers enter history. Contention waits in a workflow, not in a polled
-activity or a database connection. Saves and review do not hold this position.
+Historical executions keep their project-scoped child IDs for replay. Independent
+runs use separate sandboxes; only canonical publication needs a project lock.
 """
 
 from collections.abc import Callable
@@ -25,6 +25,12 @@ async def execute_project_codex(
         start_to_close_timeout=timedelta(minutes=1),
         retry_policy=RetryPolicy(maximum_attempts=5),
     )
+    # Patch per turn so an existing task's next turn can use independent compute.
+    child_id = (
+        f"tin.run-codex:{run_id}:{turn_number}"
+        if workflow.patched(f"parallel-project-compute-v1-{turn_number}")
+        else f"tin.project-codex:{project_id}"
+    )
     deadline = workflow.now() + timedelta(hours=4)
     delay_seconds = 1
     while True:
@@ -40,7 +46,7 @@ async def execute_project_codex(
             child = await workflow.start_child_workflow(
                 ProjectCodexExecution.run,
                 {"run_id": run_id, "kind": kind, "turn_number": str(turn_number)},
-                id=f"tin.project-codex:{project_id}",
+                id=child_id,
                 id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE,
                 parent_close_policy=workflow.ParentClosePolicy.REQUEST_CANCEL,
                 cancellation_type=workflow.ChildWorkflowCancellationType.WAIT_CANCELLATION_COMPLETED,

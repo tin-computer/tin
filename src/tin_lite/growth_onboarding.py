@@ -9,6 +9,7 @@ from typing import Any
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from tin_lite.billing_contracts import usd
 from tin_lite.domain import GROWTH_ONBOARDING_PLAN_PATH, GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME
 
 KEY = "growth.onboarding"
@@ -915,6 +916,7 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
         f"Reports arrive in Files ({links['files']}). Open Tin to check results; "
         "email and Slack result notifications are not available."
     )
+    relay += [str(line) for line in setup.get("spending_warnings") or []]
     for a in not_running:
         if a.get("status") == "declined":
             note = f" ({a['note']})" if a.get("note") else ""
@@ -930,6 +932,74 @@ def founder_words(setup: dict[str, Any], *, titles: dict[str, str]) -> dict[str,
         f"talk through how Tin can help {business} grow?"
     )
     return {"quote": quote, "relay": relay}
+
+
+RAISE_LIMITS = "set_project_spending_limits or on the Billing page"
+
+
+def runs_per_month(schedule: dict[str, Any]) -> int:
+    """The most runs one calendar month can hold: five of any weekday, or 31 days."""
+    if schedule.get("cadence") == "daily":
+        return 31
+    return 5 * len(schedule.get("weekdays") or [])
+
+
+def spending_warnings(schedules: list[dict[str, Any]], policy: dict[str, Any] | None) -> list[str]:
+    """Say when saved schedules may not fit the project's spending limits, one line each.
+
+    Admission counts a charged run at what it cost and a run still going at its full maximum.
+    A scheduled run starts only if its maximum fits the limit for scheduled runs and the
+    per-run limit, and if this month's charges plus that maximum fit the monthly limit. Each
+    schedule carries its title, its most runs in a month, and its per-run maximum and
+    estimate in nanodollars.
+    """
+    if not policy:
+        return []
+    monthly, per_run = policy["monthly_nanos"], policy["per_run_nanos"]
+    standing = policy.get("schedule_max_nanos") or 0
+    warnings, running = [], []
+    for item in schedules:
+        maximum = item["maximum_nanos"]
+        if maximum <= 0 or item["runs"] <= 0:
+            continue
+        if maximum > standing:
+            reason, fix = (
+                (
+                    f"this project's limit for scheduled runs is ${usd(standing)}",
+                    "raise the limit for scheduled runs",
+                )
+                if standing
+                else (
+                    "this project allows no paid scheduled runs",
+                    "set a limit for scheduled runs",
+                )
+            )
+        elif maximum > per_run:
+            reason = f"this project's per-run limit is ${usd(per_run)}"
+            fix = "raise the per-run limit"
+        elif maximum > monthly:
+            reason = f"this project's monthly limit is ${usd(monthly)}"
+            fix = "raise the monthly limit"
+        else:
+            running.append(item)
+            continue
+        warnings.append(
+            f"Spending limit: {item['title']} will not run on its schedule. Each run can cost "
+            f"up to ${usd(maximum)}, and {reason}. To run it, {fix} with {RAISE_LIMITS}."
+        )
+    total = sum(item["runs"] * item["estimate_nanos"] for item in running)
+    if total > monthly:
+        parts = [
+            f"{item['title']} can run up to {item['runs']} times a month at up to "
+            f"${usd(item['maximum_nanos'])} a run"
+            for item in running
+        ]
+        warnings.append(
+            f"Spending limit: {_join(parts)}, up to ${usd(total)} a month, above this "
+            f"project's ${usd(monthly)} monthly limit, so some runs may not start. To keep "
+            f"every run, raise the monthly limit with {RAISE_LIMITS}."
+        )
+    return warnings
 
 
 def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:
