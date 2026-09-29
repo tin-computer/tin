@@ -277,6 +277,7 @@ class E2BRuntime:
         from pathlib import Path
 
         from tin_lite.code_models import CodeModelError
+        from tin_lite.code_project_files import CodeProjectFileError
         from tin_lite.code_services import CodeServiceError
 
         sandbox = forwarded = None
@@ -321,6 +322,10 @@ class E2BRuntime:
                         # Settled refusals and uncertain results are the package's to handle;
                         # the gateway already blocks any step that must not be retried.
                         forwarded, response = exc, {"error": str(exc)}
+                    except CodeProjectFileError as exc:
+                        if exc.code == "file_access_revoked":
+                            raise
+                        response = {"error": exc.code}
                     await sandbox.files.write(
                         "/root/tin-code/response.tmp",
                         json.dumps(response, ensure_ascii=False),
@@ -342,7 +347,7 @@ class E2BRuntime:
             return bytes(raw)
         except asyncio.CancelledError:
             raise
-        except (CodeModelError, CodeServiceError):
+        except (CodeModelError, CodeServiceError, CodeProjectFileError):
             raise
         except Exception as exc:
             escaped = isinstance(exc, CommandExitException) and exc.exit_code == SERVICE_ERROR_EXIT

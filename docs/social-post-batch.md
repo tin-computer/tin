@@ -1,107 +1,62 @@
-# Repurpose an approved article for social
+# Repurpose an article for social
 
-`social.post_batch` turns one approved `content.generate` article into two X posts
-and two LinkedIn posts. It saves the four drafts in `reports/SOCIAL_POST_BATCH.md`,
-with a suggested order and an excerpt supporting each draft. The normal review
-gate lets the founder read and approve the document. Posting remains manual.
+`social.post_batch` reads an article from project Files and drafts two X posts and two
+LinkedIn posts. It saves the batch in `reports/SOCIAL_POST_BATCH.md`, with an excerpt
+supporting each draft. The normal review gate lets the founder read and approve the result.
+Posting remains manual.
 
-Choose the article by title from `get_workflow` with a bound project. Its
-`preparation.articles` list contains approved articles and their run IDs. Supply
-the selected ID as `source_run_id` through the ordinary estimate/start flow;
-the HTTP start endpoint accepts the same input. A GitHub connection, public
-article URL and social calendar are not required.
+Supply `article_path` to use a particular file. Tin reads its current contents at launch;
+there is no source-run ID or version to select. Without a path, the workflow looks for a
+single article in `content/drafts/`, `content/articles/`, or the older
+`reports/PUBLIC_ARTICLE.md` location. Generation notes are excluded. If several articles
+exist, name the intended file; the workflow cannot infer chronology from UUID filenames.
 
-Tin pins the article's approved revision before creating the run. It checks the
-project, approval, publication proof and article bytes, and copies the original
-writing guide from the revision used to draft that article when one exists.
-Later edits to project files cannot replace either source during execution or
-retry. A repeated start request ID returns the same run. A new request ID is a
-new, separately metered batch, even when it selects the same article.
+`article_text` is an optional fallback when the named file is missing, or when no single
+article can be chosen automatically. This is an ordinary string input, available through
+MCP and the dashboard. An existing named file takes precedence. An unreadable, oversized
+or malformed source does not silently become the fallback.
 
-Run batches sequentially: they share one report path. If two runs generate at
-once, the existing publication guard can retain the later result as an output
-conflict rather than overwrite the first. Both model calls can still incur cost.
+The workflow also reads the current `.agents/skills/writing-style/SKILL.md` when present.
+All file reads use the project revision Tin records at admission. Later edits cannot change
+this run or its retries; a new run reads the latest files again. Repeating a start request
+ID returns the same run. The source may be written by a person, imported, or produced by
+any workflow; the package does not claim it has been approved.
 
 ## Drafting and review
 
-The package uses `workflow.code` with one managed `gpt-6-sol` call. Python checks
-that the response has four distinct drafts in the requested platform order,
-that each evidence excerpt ends as a complete sentence and exists in the article
-(ignoring line wrapping), and that numeric literals and
-double-quoted phrases occur in the source. It rejects first-person copy and
-links, since article approval does not prove that a public URL is live.
+One managed `gpt-6-sol` call writes the four drafts. Python checks their platform order,
+distinctness, length and supporting excerpts. Numeric literals and double-quoted phrases
+must occur in the article. First-person claims and links are rejected. These checks do not
+prove that every paraphrase preserves its source's meaning, so the result still needs review.
 
-X drafts have a conservative 240-byte UTF-8 limit; LinkedIn drafts have a
-1,400-character limit. These are package limits, below the ordinary limits for
-[X](https://help.x.com/en/using-x/how-to-post) and
-[LinkedIn](https://www.linkedin.com/help/linkedin/answer/a522483/differences-between-posting-updates-and-publishing).
-The complete source and writing guide must fit the existing 32,000-byte model
-request bound. Oversized input fails before the model request; the package does
-not silently truncate it.
+The package bounds X drafts to 240 UTF-8 bytes and LinkedIn drafts to 1,400 characters.
+The full article and writing guide must fit the existing 32,000-byte model-request limit.
+Oversized input fails before that request; no source is silently truncated. File reads and
+validation happen before the model call, although a rejected input can still use sandbox time.
+An invalid model result is not automatically purchased again.
 
-These checks catch structural and some factual errors. They do not establish
-that a paraphrase preserves a claim's meaning, or that the copy suits the audience.
-Human review must check those points against the full article. An invalid model
-response fails the run; it is not automatically purchased again.
+Run batches sequentially: they share one output path. The existing publication guard can
+retain an output conflict rather than overwrite a concurrent edit. Weekly planning,
+used/held tracking, image generation and provider posting remain separate work.
 
-This first version accepts only approved `content.generate` articles. It does
-not accept arbitrary Markdown, `content.public_article`, transcripts or URLs.
-Weekly planning, used/held tracking, image generation and provider posting are
-separate work.
+## Existing saved workflows
 
-## Reuse in private code workflows
+Version 2 uses the file contract above. Saved configurations pinned to version 1 keep their
+original `source_run_id` input, approved article and original writing-guide snapshot. Their
+admission checks and receipt readers remain available; old runs are not reinterpreted.
+Create a new configuration from the current Registry definition to use current project files.
 
-A code package can request the same source check with this optional declaration:
+`content.deliver` has its own exact approved-copy contract because it creates an external
+GitHub PR. Changing how social drafts read an article does not change that delivery contract.
 
-```json
-"approved_article": {"input": "source_run_id"}
-```
+## Verification
 
-Put it inside `code`. The named input must be a required UUID field other than
-`project_id`, and `schedule_modes` must be `["on_demand"]`. The executor passes
-the saved source as `ctx["approved_article"]`, containing `article`, `title`,
-`source_run_id`, `source_path`, `source_revision`, `source_sha256`,
-`article_sha256`, and `style`. The first digest covers the published artifact;
-the second covers the extracted article body. Style includes its path, revision,
-digest and full `content` when present, or a null digest when absent.
+Offline fixtures cover file precedence, caller fallback, ambiguous article discovery,
+writing-guide reads, unusable input and invalid model replies. The shared
+[project file reader](code-project-files.md) has admission, retry, project-boundary and
+protected-channel tests. Legacy approved-source tests remain for saved version 1 definitions.
 
-The source resolver allows articles that also have GitHub delivery enabled.
-Repurposing an approved article does not start or change that delivery. The
-declaration does not grant access to other project files. Private activation,
-membership, billing and execution limits remain the ordinary code contracts.
-
-## Verification and release
-
-The package is selected in source for the next catalog sync. This is not a
-production deployment. Offline fixtures cover invalid model replies; disposable
-database tests cover approval, project boundaries, admission races, immutable
-source snapshots, repeat starts and one reviewed output under retry. The normal
-code executor retains managed-call receipts, usage accounting and publication
-conflict handling.
-
-The opt-in `tests/test_social_post_batch_live.py` check has also passed with real
-E2B, code.storage and a managed model call. It uses a synthetic approved article,
-local Postgres and Temporal, and a synthetic identity and approval. It checks the
-review gate, HTTP approval, durable output after sandbox deletion, duplicate
-execution without another model call, and Temporal history replay. This checks
-the execution path; it is not a deployed-service or customer-project acceptance.
-
-To repeat it with authorized provider accounts and a disposable local database:
-
-```bash
-TIN_LITE_TEST_DATABASE_DSN=postgresql://test_user@127.0.0.1:5432/tin_test \
-TIN_LITE_SOCIAL_LIVE_PROOF=1 \
-  uv run pytest tests/test_social_post_batch_live.py -q -s
-```
-
-It reads only the E2B, code.storage and model credentials from `.env`, creates a
-new test repository, and incurs provider costs. Temporal CLI must be installed.
-It saves the synthetic source, resulting drafts and usage proof in pytest's
-temporary output directory. The test repository is retained for inspection;
-the sandbox and local database schema are cleaned up.
-
-The [qualification cases](../workflow_evals/social.post_batch/qualification.json)
-use synthetic source IDs. An explicitly authorized evaluation must select real
-approved articles in its test project and review the resulting copy and usage.
-The listed qualification cases have not yet been evaluated in a live Tin project.
-One synthetic article smoke test does not establish quality across customer articles.
+The opt-in `tests/test_social_post_batch_live.py` uses synthetic project files, a disposable
+local database, real E2B and code.storage, and one paid managed model call. It requires explicit
+provider authorization. Ordinary contributor tests use mocked providers; one successful
+live batch does not establish editorial quality across customer articles.

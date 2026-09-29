@@ -302,9 +302,20 @@ async def start_workflow_run(
     from tin_lite import content_repository_delivery
 
     if workflow.executor == "workflow.code" and existing is None:
-        from tin_lite import code_article_sources, code_evidence
+        from tin_lite import code_article_sources, code_evidence, code_project_files
         from tin_lite.workflow_code import approved_article_input, evidence_specs
 
+        try:
+            create_arguments["code_project_files_source"] = await code_project_files.select(
+                database=runtime.database,
+                storage=runtime.storage,
+                project_id=project_id,
+            )
+        except (ValueError, LookupError, RuntimeError) as exc:
+            if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
+                project_id=project_id, start_idempotency_key=start_idempotency_key
+            ):
+                raise WorkflowInputError(str(exc)) from exc
         if approved_article_input(workflow.definition) is not None:
             try:
                 create_arguments["approved_article_source"] = await code_article_sources.select(

@@ -124,12 +124,7 @@ from tin_lite.workflow_inputs import (
     normalize_workflow_inputs,
 )
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
-from tin_lite.workflow_source_inputs import (
-    discover_slots,
-    selected_run_sources,
-    source_readiness,
-    source_readiness_for_workflows,
-)
+from tin_lite.workflow_source_inputs import selected_run_sources
 from tin_lite.writing_style import style_capture_preparation
 
 MCP_SCOPE = "openid"
@@ -1562,14 +1557,6 @@ def create_mcp_app(
             storage=getattr(services, "storage", None),
             project_id=parsed_project_id,
             workflows=workflows,
-        )
-        readiness = await source_readiness_for_workflows(
-            database=services.database,
-            storage=getattr(services, "storage", None),
-            settings=settings,
-            project_id=parsed_project_id,
-            workflows=workflows,
-            readiness=readiness,
         )
         return [
             {
@@ -3530,43 +3517,6 @@ def create_mcp_app(
             else {}
         )
         draft_preparation = {}
-        if parsed_project_id is not None and workflow.executor == "workflow.code":
-            try:
-                source_slots = await discover_slots(
-                    database=runtime().database,
-                    storage=runtime().storage,
-                    settings=settings,
-                    project_id=parsed_project_id,
-                    definition=workflow.definition,
-                    inputs=configured.inputs if project_workflow_id is not None else None,
-                )
-            except (LookupError, ValueError) as exc:
-                raise ToolError(str(exc)) from exc
-            if source_slots:
-                readiness[workflow.id] = source_readiness(readiness.get(workflow.id), source_slots)
-                article_slot = next(
-                    (slot for slot in source_slots if slot["kind"] == "approved_article"), None
-                )
-                draft_preparation = {
-                    "preparation": {
-                        "sources": source_slots,
-                        **(
-                            {
-                                "articles": article_slot["candidates"],
-                                "source_input": article_slot["input"],
-                            }
-                            if article_slot
-                            else {}
-                        ),
-                        "instruction": "Choose an approved source by title from "
-                        "preparation.sources "
-                        "(or preparation.articles for an article) and supply its run_id in "
-                        "the named input. Tin pins the reviewed revision. If no source is listed, "
-                        "review an existing draft in Decisions; do not approve or generate one "
-                        "merely to test this workflow. Reuse request_id for an ambiguous start. "
-                        "Selecting a source does not publish or post it.",
-                    }
-                }
         if (
             parsed_project_id is not None
             and workflow.key == "content.deliver"

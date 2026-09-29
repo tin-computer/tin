@@ -1,4 +1,4 @@
-"""Admission receipts for code workflows' selected approved outputs."""
+"""Legacy approved-output inputs; new code workflows read project files directly."""
 
 from __future__ import annotations
 

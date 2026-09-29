@@ -2322,6 +2322,7 @@ class Database:
         content_delivery_source: dict[str, Any] | None = None,
         approved_article_source: dict[str, Any] | None = None,
         approved_evidence_source: dict[str, Any] | None = None,
+        code_project_files_source: dict[str, Any] | None = None,
         review_transition: dict[str, Any] | None = None,
         payment_card=None,
     ) -> tuple[WorkflowRun, bool]:
@@ -2557,9 +2558,17 @@ class Database:
                 if pinned_definition is not None
                 else _json_object(workflow["definition"], field="workflow definition")
             )
-            from tin_lite import code_article_sources, code_evidence, content_repository_delivery
+            from tin_lite import (
+                code_article_sources,
+                code_evidence,
+                code_project_files,
+                content_repository_delivery,
+            )
 
             if executor == "workflow.code":
+                await code_project_files.guard(
+                    conn, project_id=project_id, source=code_project_files_source
+                )
                 await code_article_sources.guard(
                     conn,
                     project_id=project_id,
@@ -2580,6 +2589,8 @@ class Database:
                 raise ValueError("Approved article snapshots belong to declared code consumers.")
             elif approved_evidence_source is not None:
                 raise ValueError("Approved evidence snapshots belong to declared code consumers.")
+            elif code_project_files_source is not None:
+                raise ValueError("Project file revisions belong only to code workflows.")
 
             if workflow_id == content_repository_delivery.WORKFLOW_ID:
                 if content_delivery_source is None:
@@ -2704,6 +2715,14 @@ class Database:
                 key = code_evidence.source_key(run_id)
                 await self.start_effect(conn, execution_key=key, operation=code_evidence.OPERATION)
                 await self.complete_effect(conn, execution_key=key, result=approved_evidence_source)
+            if code_project_files_source is not None:
+                key = code_project_files.source_key(run_id)
+                await self.start_effect(
+                    conn, execution_key=key, operation=code_project_files.OPERATION
+                )
+                await self.complete_effect(
+                    conn, execution_key=key, result=code_project_files_source
+                )
             if payment_card is not None:
                 await payment_card.store(conn, run_id=run_id, project_id=project_id)
             if draft_selection is not None:

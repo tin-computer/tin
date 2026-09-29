@@ -197,7 +197,7 @@ def validate_code_definition(definition) -> CodeSpec:
 
 
 def approved_article_input(definition):
-    """One reviewed content.generate source; no arbitrary project-file reader."""
+    """Legacy reviewed content.generate input; preserve existing definition semantics."""
     value = definition.get("code", {}).get("approved_article")
     if value is None:
         return None
@@ -220,7 +220,7 @@ def approved_article_input(definition):
 
 
 def evidence_specs(definition) -> tuple[EvidenceSlot, ...]:
-    """Bounded, named approved-output inputs; optionality comes from the input schema."""
+    """Legacy approved-output slots; optionality comes from the pinned input schema."""
     value = definition.get("code", {}).get("evidence")
     if value is None:
         return ()

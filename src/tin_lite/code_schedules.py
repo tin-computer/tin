@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 from tin_lite.billing_contracts import BillingError
+from tin_lite.code_project_files import select as select_project_files
 from tin_lite.domain import RunStatus
 from tin_lite.private_workflows import require_private_execution
 from tin_lite.schedules import (
@@ -70,10 +71,29 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
         project_id=configured.project_id, start_idempotency_key=key
     )
     if existing is not None:
-        if existing.project_workflow_id != configured.id or existing.executor != "workflow.code":
+        if (
+            existing.project_workflow_id != configured.id
+            or existing.workflow_id != configured.workflow_id
+            or existing.executor != "workflow.code"
+        ):
             raise ValueError("Schedule occurrence belongs to another configuration.")
         # Activity-response loss must recover the accepted inputs, even after a future edit.
         return dispatched(existing)
+
+    async def accepted_after_race():
+        accepted = await db.get_run_by_start_key(
+            project_id=configured.project_id, start_idempotency_key=key
+        )
+        if accepted is not None:
+            if (
+                accepted.project_workflow_id != configured.id
+                or accepted.workflow_id != configured.workflow_id
+                or accepted.executor != "workflow.code"
+            ):
+                raise ValueError("Schedule occurrence belongs to another configuration.")
+            return dispatched(accepted)
+        return None
+
     if configured.status != "active" or configured.schedule is None:
         if configured.status == "paused" and configured.last_error:
             await pause_for_issue(common, configured, configured.last_error)
@@ -129,6 +149,9 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
         issues = readiness["issues"] + readiness["schedule_issues"]
         if issues:
             raise ValueError(issues[0])
+        file_source = await select_project_files(
+            database=db, storage=common._storage, project_id=configured.project_id
+        )
         run, _created = await db.create_run(
             project_id=configured.project_id,
             workflow_id=configured.workflow_id,
@@ -141,8 +164,11 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
             trigger_source="schedule",
             scheduled_for=scheduled_for,
             schedule_settings_revision=configured.settings_revision,
+            code_project_files_source=file_source,
         )
     except ScheduledWorkflowSkip:
+        if (accepted := await accepted_after_race()) is not None:
+            return accepted
         await db.advance_project_workflow_schedule(
             project_workflow_id=configured.id,
             next_run_at=next_run_after(schedule, scheduled_for),
@@ -150,9 +176,13 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
         )
         return {}
     except BillingError as exc:
+        if (accepted := await accepted_after_race()) is not None:
+            return accepted
         await pause_for_issue(common, configured, str(exc))
         return {}
-    except (LookupError, ValueError) as exc:
+    except (LookupError, ValueError, RuntimeError) as exc:
+        if (accepted := await accepted_after_race()) is not None:
+            return accepted
         await pause_for_issue(common, configured, str(exc))
         return {}
     return dispatched(run)

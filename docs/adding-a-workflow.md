@@ -66,15 +66,10 @@ self-hosted calls use the operator's configured credentials. Don't put provider 
 the package. Declared limits feed the existing estimate, and verified usage is charged.
 Code-only bounded execution uses no Tin credits.
 
-To reuse an approved article, declare `code.approved_article` with a required
-source-run UUID input. Tin supplies the pinned article and its original writing
-guide in `ctx["approved_article"]`. This works for public and private on-demand
-code packages; see [article sources and social drafts](social-post-batch.md).
-
-For other approved text results, declare named `code.evidence` inputs. Tin supplies the exact
-selected text and its provenance in `ctx["evidence"]`; the dashboard and MCP offer the same
-eligible sources. The input schema decides which selections are required. See
-[approved project evidence](approved-project-evidence.md) for the contract and limits.
+Read current project files with `ctx.files.read_text(path)`, `read_bytes(path)` or
+`glob(pattern)`. The run uses the latest project revision at launch and keeps it for retries;
+users never choose an input revision. Prefer opinionated paths and ordinary optional inputs
+for missing information. See [project files in code workflows](code-project-files.md).
 
 ### Codex procedures
 

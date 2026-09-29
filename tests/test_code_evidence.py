@@ -4,9 +4,7 @@ import asyncio
 import hashlib
 import json
 from copy import deepcopy
-from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
@@ -80,157 +78,6 @@ def test_public_and_private_code_validate_bounded_optional_evidence():
     combined["code"]["evidence"]["approved_article"] = combined["code"]["evidence"].pop("posts")
     with pytest.raises(ValueError, match="invalid code evidence slot"):
         validate_code_definition(combined)
-
-
-async def test_discovery_continues_past_invalid_newer_candidates(monkeypatch):
-    stamp = datetime(2026, 1, 1, tzinfo=UTC)
-    older = uuid4()
-    newer = [{"id": uuid4(), "created_at": stamp} for _ in range(100)]
-    rows = [*newer, {"id": older, "created_at": stamp}]
-
-    class Pool:
-        def __init__(self):
-            self.calls = 0
-
-        async def fetch(self, _query, *_args):
-            self.calls += 1
-            return rows[:100] if self.calls % 2 else rows[100:]
-
-    class Database:
-        def __init__(self):
-            self.pool = Pool()
-
-        async def get_run(self, _run_id):
-            return SimpleNamespace(created_at=stamp)
-
-    async def verified_output(**kwargs):
-        if str(kwargs["source_run_id"]) != str(older):
-            raise ValueError("invalid newer proof")
-        return {
-            "run_id": str(older),
-            "title": "Older approved output",
-            "workflow_key": "social.article_fixture",
-            "path": "reports/older.md",
-            "revision": "a" * 40,
-            "created_at": stamp.isoformat(),
-        }
-
-    async def verified_article(**kwargs):
-        if str(kwargs["source_run_id"]) != str(older):
-            raise ValueError("invalid newer proof")
-        return {
-            "source_run_id": str(older),
-            "title": "Older approved article",
-            "source_path": "reports/article.md",
-            "source_revision": "b" * 40,
-        }
-
-    monkeypatch.setattr(approved_evidence, "select_one", verified_output)
-    database = Database()
-    selected = await approved_evidence.discover(
-        database, object(), project_id=uuid4(), definition=consumer(), limit=1
-    )
-    assert [row["run_id"] for row in selected["posts"]] == [str(older)]
-    assert database.pool.calls == 2
-
-    from tin_lite import approved_article
-
-    monkeypatch.setattr(approved_article, "select", verified_article)
-    database = Database()
-    articles = await approved_evidence.discover_articles(
-        database, object(), project_id=uuid4(), limit=1
-    )
-    assert [row["run_id"] for row in articles] == [str(older)]
-    assert database.pool.calls == 2
-
-
-async def test_discovery_bounds_proof_reads_and_checks_saved_source_outside_window(monkeypatch):
-    stamp = datetime(2026, 1, 1, tzinfo=UTC)
-    saved = uuid4()
-    rows = [{"id": uuid4(), "created_at": stamp} for _ in range(200)]
-    verified = []
-
-    class Pool:
-        def __init__(self):
-            self.calls = 0
-
-        async def fetch(self, _query, *_args):
-            self.calls += 1
-            assert self.calls <= 2
-            return rows[(self.calls - 1) * 100 : self.calls * 100]
-
-    class Database:
-        def __init__(self):
-            self.pool = Pool()
-
-        async def get_run(self, _run_id):
-            return SimpleNamespace(created_at=stamp)
-
-    async def generic_source(**kwargs):
-        source_id = str(kwargs["source_run_id"])
-        verified.append(source_id)
-        if source_id != str(saved):
-            raise ValueError("invalid publication proof")
-        return {
-            "run_id": source_id,
-            "title": "Saved approved output",
-            "workflow_key": "social.article_fixture",
-            "path": "reports/saved.md",
-            "revision": "a" * 40,
-            "created_at": stamp.isoformat(),
-        }
-
-    monkeypatch.setattr(approved_evidence, "select_one", generic_source)
-    database = Database()
-    with pytest.raises(ValueError, match="200-run limit"):
-        await approved_evidence.discover(
-            database, object(), project_id=uuid4(), definition=consumer(), limit=1
-        )
-    assert database.pool.calls == 2
-    assert len(verified) == 200
-    database = Database()
-    verified.clear()
-    result = await approved_evidence.discover(
-        database,
-        object(),
-        project_id=uuid4(),
-        definition=consumer(),
-        inputs={"posts_run_id": str(saved)},
-        limit=1,
-    )
-    assert [row["run_id"] for row in result["posts"]] == [str(saved)]
-    assert database.pool.calls == 2
-    assert len(verified) == 201
-
-    from tin_lite import approved_article
-
-    async def article_source(**kwargs):
-        source_id = str(kwargs["source_run_id"])
-        verified.append(source_id)
-        if source_id != str(saved):
-            raise ValueError("invalid publication proof")
-        return {
-            "source_run_id": source_id,
-            "title": "Saved approved article",
-            "source_path": "reports/article.md",
-            "source_revision": "b" * 40,
-        }
-
-    monkeypatch.setattr(approved_article, "select", article_source)
-    database = Database()
-    verified.clear()
-    with pytest.raises(ValueError, match="200-run limit"):
-        await approved_evidence.discover_articles(database, object(), project_id=uuid4(), limit=1)
-    assert database.pool.calls == 2
-    assert len(verified) == 200
-    database = Database()
-    verified.clear()
-    articles = await approved_evidence.discover_articles(
-        database, object(), project_id=uuid4(), source_run_id=saved, limit=1
-    )
-    assert [row["run_id"] for row in articles] == [str(saved)]
-    assert database.pool.calls == 2
-    assert len(verified) == 201
 
 
 async def fixture(db, monkeypatch, *, required=True, dynamic=False, private=False):
@@ -335,14 +182,8 @@ async def start(f, *, key=None, inputs=None):
     )
 
 
-async def test_approved_output_discovery_admission_and_replay(publication_db, monkeypatch):
+async def test_approved_output_admission_and_replay(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch, dynamic=True)
-    candidates = await approved_evidence.discover(
-        f.db, f.storage, project_id=f.project.id, definition=f.evidence_definition
-    )
-    assert candidates["posts"][0]["run_id"] == str(f.posts.id)
-    assert candidates["posts"][0]["revision"] == f.posts.canonical_commit_sha
-    assert candidates["posts"][0]["artifact_path"].endswith("-release-one.md")
     request_id = str(uuid4())
     first, repeated = await asyncio.gather(start(f, key=request_id), start(f, key=request_id))
     assert first.id == repeated.id
@@ -443,7 +284,7 @@ async def test_guard_rejects_stale_approval_and_wrong_project(publication_db, mo
         )
 
 
-async def test_publication_tamper_is_not_listed_or_admitted(publication_db, monkeypatch):
+async def test_publication_tamper_is_not_admitted(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     snapshot = await code_evidence.select(
         database=f.db,
@@ -460,9 +301,6 @@ async def test_publication_tamper_is_not_listed_or_admitted(publication_db, monk
         receipt_key,
         json.dumps(publication),
     )
-    assert await approved_evidence.discover(
-        f.db, f.storage, project_id=f.project.id, definition=f.evidence_definition
-    ) == {"posts": []}
     with pytest.raises(WorkflowInputError, match="checkpoint"):
         await start(f)
     with pytest.raises(ValueError, match="publication proof"):

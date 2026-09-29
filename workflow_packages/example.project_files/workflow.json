@@ -1,0 +1,38 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "example.project_files",
+    "title": "Read project brand notes",
+    "description": "An example of reading BRAND.md, with caller-supplied notes only when that file is missing. No model or external delivery.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand", "daily", "weekly"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "brand_notes": {
+          "type": "string",
+          "maxLength": 10000,
+          "title": "Brand notes",
+          "description": "Used only when the project has no BRAND.md.",
+          "x-tin-ui": {"control": "textarea"}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 15,
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/BRAND_REFERENCE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
