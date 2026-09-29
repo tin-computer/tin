@@ -352,7 +352,8 @@
           "content.release_announce",
           "outreach.speaking_shortlist",
           "social.content_plan",
-          "social.post_batch"
+          "social.post_batch",
+          "outreach.newsletter_placements"
         ],
         "integrations": [],
         "founder_keeps": "posting and engaging; Tin makes the article, video and figures",
@@ -382,12 +383,14 @@
         "workflows": [
           "research.deep_dive",
           "project.task",
-          "outreach.marketplace_listings"
+          "outreach.marketplace_listings",
+          "outreach.awesome_lists",
+          "outreach.awesome_submit"
         ],
         "integrations": [],
-        "founder_keeps": "accounts and submissions; Tin finds the directories and prepares listing copy",
+        "founder_keeps": "marketplace accounts and submissions, and approval of each awesome-list submission; Tin finds the directories and lists and prepares listing copy",
         "impact": 0.4,
-        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms; accounts and submissions are the founder's."
+        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms, and finds the awesome lists that accept the product and sends the entries the founder approves from their GitHub account; marketplace accounts and submissions are the founder's."
       }
     },
     {
@@ -413,7 +416,8 @@
         "workflows": [
           "research.deep_dive",
           "outreach.speaking_shortlist",
-          "outreach.campus_events"
+          "outreach.campus_events",
+          "outreach.community_threads"
         ],
         "integrations": [],
         "founder_keeps": "showing up and pitching; Tin finds open calls and campus events and drafts the pitches",
@@ -604,7 +608,11 @@
     "growth.score_quiz": "Draft an embeddable score quiz",
     "product.analytics_brief": "Product analytics brief",
     "social.post_batch": "Draft social posts from a weekly plan or article",
-    "social.content_plan": "Plan a sustainable social week"
+    "social.content_plan": "Plan a sustainable social week",
+    "outreach.awesome_submit": "Submit to awesome lists",
+    "outreach.awesome_lists": "Get your product into the awesome lists that will actually accept it",
+    "outreach.community_threads": "Find threads where people ask for what you make",
+    "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read"
   },
   "workflow_scope": {
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
@@ -651,6 +659,10 @@
     "growth.score_quiz": "Drafts a self-contained scored quiz widget (a lead magnet) with a call to action to the founder's signup link; never deploys it, adds other links, or runs model-written code.",
     "product.analytics_brief": "A recurring PostHog brief (needs the PostHog connection, read-only OAuth to one project): ordered activation, event trends, traffic, error signals and one supported breakdown with reproducible queries; read-only reporting, no product changes.",
     "social.post_batch": "Draft X and LinkedIn posts in two manual modes. Weekly mode reads social/PLAN.md and current source notes, checks earlier batch files to avoid reusing material, and keeps earlier files unchanged. Repurpose mode reads one article file or article_text fallback. Both read current writing guidance and save a dated reviewable batch. No automatic posting, recurring schedule, rendered carousel or producer/version picker.",
-    "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule."
+    "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule.",
+    "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",
+    "outreach.awesome_lists": "For a public product or repository, reads the growth plan and Code map, finds curated GitHub awesome lists that are alive and whose written rules the product meets, ranks them and prepares one exact entry and pull request text per list; keeps history and never re-recommends a list; never submits (Submit to awesome lists sends what the founder approves).",
+    "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
+    "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone."
   }
 }

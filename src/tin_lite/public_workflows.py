@@ -39,6 +39,9 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("ce0680ed-511c-4469-9913-726e33038d3d"), "outreach.marketplace_listings"),
     PublicWorkflow(UUID("bc37b3aa-51d9-4b56-98a2-eaa01e0cd3df"), "outreach.campus_events"),
     PublicWorkflow(UUID("85299178-953d-4f5f-bae7-4bf3b0822eff"), "content.release_announce"),
+    PublicWorkflow(UUID("a233f94b-03d8-42f1-8843-ff12c1d6f006"), "outreach.awesome_lists"),
+    PublicWorkflow(UUID("d1fa829d-c40b-4e4b-b039-93ed9c3f1766"), "outreach.community_threads"),
+    PublicWorkflow(UUID("5411afb9-0a11-4970-b096-724cc7fb1ab7"), "outreach.newsletter_placements"),
 )
 
 

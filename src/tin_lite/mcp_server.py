@@ -3985,8 +3985,9 @@ def create_mcp_app(
         each with its Connect button and picker, for the founder to work through in one visit.
 
         providers are Tin integration keys (infra.github, analytics.gsc, workspace.google,
-        ads.google, payments.stripe, analytics.posthog). Stripe keys are pasted on that page,
-        never in chat.
+        ads.google, payments.stripe, analytics.posthog, infra.github_user). infra.github_user is
+        the founder's own GitHub account, used only for approved awesome-list submissions.
+        Stripe keys are pasted on that page, never in chat.
         Open the link for the founder (open_command) or paste it; confirm each with
         get_integration afterwards. Tell the founder the result's `relay` in your words.
         """
@@ -4000,6 +4001,7 @@ def create_mcp_app(
             "ads.google",
             "payments.stripe",
             "analytics.posthog",
+            "infra.github_user",
         }
         chosen = [key.strip() for key in providers if key.strip()]
         unknown = [key for key in chosen if key not in known]
@@ -4020,6 +4022,7 @@ def create_mcp_app(
             "ads.google": "Google Ads",
             "payments.stripe": "Stripe",
             "analytics.posthog": "PostHog",
+            "infra.github_user": "GitHub account",
         }
         listed = ", ".join(names[key] for key in chosen)
         return {

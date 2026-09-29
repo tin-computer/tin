@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Buyers, market, budget and hard no's come from the growth plan; the Feature map supplies product facts; focus and geography only override them.",
+    "Only newsletters and communities with a standing, written way in qualify; conferences, podcasts, meetups and campus events are handed off to their own workflows.",
+    "At most max_picks placements; fewer or none is valid when evidence is lacking, and the list is never padded."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session with the pinned model pricing and spending ceiling (isolated profile, 900 seconds).",
+    "Search and page reads scale with how niche the buyers are and how many candidates need their rules page verified.",
+    "One markdown report per run under reports/outreach/newsletters/, up to 120,000 bytes."
+  ],
+  "effects": [
+    "Writes one report per run at reports/outreach/newsletters/{run_id}.md in project state.",
+    "Read-only web search and page retrieval; nothing is submitted, paid, posted or sent, and no one is contacted."
+  ],
+  "cases": [
+    {
+      "id": "devtool_newsletters",
+      "description": "A developer tool whose buyers are platform engineers: free featured-tool slots and community showcase threads only.",
+      "inputs": {
+        "focus": "Platform and DevOps engineers running Kubernetes in production.",
+        "geography": "North America and Europe",
+        "budget_usd": 0,
+        "max_picks": 5
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Newsletter and community placements",
+          "Rules: https://",
+          "### Draft",
+          "tin-placement-state"
+        ],
+        "excludes": ["Call for papers", "Post regularly on social media"]
+      }
+    },
+    {
+      "id": "paid_sponsorship_budget",
+      "description": "A B2B SaaS for bookkeepers with a small sponsorship budget; paid slots above the budget are left out.",
+      "inputs": {
+        "focus": "Independent bookkeepers and small accounting firms.",
+        "geography": "United States",
+        "budget_usd": 500,
+        "max_picks": 3
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "# Newsletter and community placements",
+          "Price:",
+          "## Excluded candidates",
+          "tin-placement-state"
+        ],
+        "excludes": ["Post regularly on social media"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "placement_scope",
+      "question": "Is every pick a specific newsletter or community with a standing, written way in, with conferences, podcasts, meetups and campus events handed off rather than included?"
+    },
+    {
+      "id": "evidence",
+      "question": "Does every pick cite a rules or intake URL, audience evidence and recent activity from pages actually opened, with unknown numbers written as Unknown?"
+    },
+    {
+      "id": "finished_work",
+      "question": "Is there a ready-to-paste draft for every pick that follows that slot's written rules and uses only real product facts in the founder's voice?"
+    },
+    {
+      "id": "memory_and_budget",
+      "question": "Are placements drafted in earlier runs skipped, paid slots above budget_usd excluded, and the growth plan's hard no's respected?"
+    },
+    {
+      "id": "bounds",
+      "question": "Is the list at most max_picks without padding, with nothing submitted, paid or sent?"
+    }
+  ]
+}

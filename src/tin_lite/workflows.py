@@ -19,6 +19,7 @@ from tin_lite.codex_execution import (
 )
 from tin_lite.domain import (
     ANSWER_PAGE_WORKFLOW_NAME,
+    AWESOME_SUBMIT_WORKFLOW_NAME,
     CODEX_PROCEDURE_EXECUTOR,
     CREATIVE_CHARACTER_WORKFLOW_NAME,
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
@@ -981,6 +982,57 @@ class PaidAdsLaunchWorkflow:
                 raise
 
 
+@workflow.defn(name=AWESOME_SUBMIT_WORKFLOW_NAME)
+class AwesomeSubmitWorkflow:
+    """Pin the report's submissions, read each list and place the entry, then one founder
+    approval before anything is sent from the founder's GitHub account. Only the run
+    identifier enters history."""
+
+    def __init__(self) -> None:
+        self._approved = False
+        self._stopped = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
+    @workflow.signal(name="stop")
+    async def stop(self) -> None:
+        self._stopped = True
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def execute(name, *, minutes, heartbeat=None):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3, maximum_interval=timedelta(seconds=30)
+                ),
+            )
+
+        try:
+            await execute("awesome_submit_prepare", minutes=2)
+            if self._stopped:
+                return
+            await execute("awesome_submit_draft", minutes=10, heartbeat=3)
+            if self._stopped:
+                return
+            await execute("awesome_submit_request_review", minutes=2)
+            await workflow.wait_condition(lambda: self._approved or self._stopped)
+            if self._stopped:
+                return
+            await execute("awesome_submit_record_approval", minutes=2)
+            await execute("awesome_submit_apply", minutes=20, heartbeat=5)
+            await execute("awesome_submit_publish", minutes=5)
+        except BaseException:
+            if not self._stopped:
+                await execute("awesome_submit_failure", minutes=2)
+                raise
+
+
 @workflow.defn(name=PAID_ADS_MONITOR_WORKFLOW_NAME)
 class PaidAdsMonitorWorkflow:
     """Read, decide, apply the bounded automatic changes, save proposals, publish. The run
@@ -1368,6 +1420,7 @@ def registered_workflows() -> list[type]:
         PaidAdsAssessmentWorkflow,
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
+        AwesomeSubmitWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -1398,6 +1451,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         PAID_ADS_ASSESSMENT_WORKFLOW_NAME: PaidAdsAssessmentWorkflow,
         PAID_ADS_LAUNCH_WORKFLOW_NAME: PaidAdsLaunchWorkflow,
         PAID_ADS_MONITOR_WORKFLOW_NAME: PaidAdsMonitorWorkflow,
+        AWESOME_SUBMIT_WORKFLOW_NAME: AwesomeSubmitWorkflow,
         ANSWER_PAGE_WORKFLOW_NAME: AnswerPageWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
         WEEKLY_BRIEF_WORKFLOW_NAME: WeeklyBriefWorkflow,

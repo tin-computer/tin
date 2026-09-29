@@ -47,6 +47,7 @@ from tin_lite.rollouts import RolloutCapture, RolloutFile
 from tin_lite.system_wiki import SystemWikiRef
 from tin_lite.workflows import (
     AnswerPageWorkflow,
+    AwesomeSubmitWorkflow,
     CharacterDesignWorkflow,
     CodeWorkflow,
     CodexProcedureWorkflow,
@@ -511,6 +512,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         PaidAdsAssessmentWorkflow,
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
+        AwesomeSubmitWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -535,6 +537,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         "ads.assessment": PaidAdsAssessmentWorkflow,
         "ads.launch": PaidAdsLaunchWorkflow,
         "ads.monitor": PaidAdsMonitorWorkflow,
+        "outreach.awesome_submit": AwesomeSubmitWorkflow,
         "content.answer_page": AnswerPageWorkflow,
         "creative.character": CharacterDesignWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,

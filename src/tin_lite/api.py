@@ -49,6 +49,7 @@ from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboa
 from tin_lite.integrations import (
     ADS_PROVIDER,
     GITHUB_PROVIDER,
+    GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
     GSC_PROVIDER,
     POSTHOG_PROVIDER,
@@ -1271,6 +1272,9 @@ async def authentication_ui(request: Request) -> HTMLResponse:
 @router.get("/integrations/callback/google", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/github", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/posthog", response_class=HTMLResponse, include_in_schema=False)
+@router.get(
+    "/integrations/callback/github-account", response_class=HTMLResponse, include_in_schema=False
+)
 async def integration_callback_ui(request: Request) -> HTMLResponse:
     return _static_page("index.html", request)
 
@@ -1667,6 +1671,30 @@ async def complete_posthog_integration(
 
 
 @router.post(
+    "/api/integrations/github-account/complete",
+    response_model=IntegrationView,
+)
+async def complete_github_account_integration(
+    payload: GoogleIntegrationComplete,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Finish the GitHub OAuth App grant; a repeated callback returns the same connection."""
+    service = request.app.state.runtime.integrations
+    try:
+        project_id = await service.github_account.pending_project(
+            state=payload.state, clerk_user_id=user.clerk_user_id
+        )
+        await _require_project_access(project_id, request, user)
+        connection = await service.github_account.complete(
+            state=payload.state, code=payload.code, clerk_user_id=user.clerk_user_id
+        )
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+    return _integration_view(service._definition(GITHUB_USER_PROVIDER), connection, configured=True)
+
+
+@router.post(
     "/api/integrations/github/authorize",
     response_model=IntegrationConnectView,
 )
@@ -1789,6 +1817,10 @@ async def list_integration_options(
         elif provider_key == STRIPE_PROVIDER:
             raise IntegrationAuthorizationError(
                 "Stripe connects one account by restricted key and has no selectable property"
+            )
+        elif provider_key == GITHUB_USER_PROVIDER:
+            raise IntegrationAuthorizationError(
+                "A GitHub account connects as you and has no selectable property"
             )
         else:
             raise IntegrationAuthorizationError("unknown integration provider")

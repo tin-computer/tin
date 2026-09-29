@@ -27,7 +27,13 @@ report as a funnel.
 
 ### Stage 0. Read the product
 
-Sources: the product URL, the repository if given or linked from the site, and project files.
+Sources, in this order: the run inputs when given; `reports/GROWTH_ONBOARDING_PLAN.md` for the
+product URL, what the product is and the hard no's; the `### Code map` section of `wiki/INDEX.md`
+for the connected repository, license and stack; then the product site and the repository it
+links. Ask for nothing Tin already holds. If no product URL is found anywhere, say so under
+"Evidence limits" and stop.
+
+Respect the growth plan's hard no's: leave out any list they rule out.
 
 1. Record the facts a list can test: open source or not, license name, repository URL, stars,
    age of the repository, latest release date, main language or platform, and the category in
@@ -42,21 +48,22 @@ Sources: the product URL, the repository if given or linked from the site, and p
 
 Search GitHub for "awesome" plus the category, and use topic pages and lists that link to related
 tools. Include lists in adjacent categories where the product fits a section. For each list, open
-the README, the contributing guide and the pull request template if there is one. Open at most
-about 30 lists and keep a short list of the queries you used.
+the README, the contributing guide and the pull request template if there is one. Aim to open
+about 30 lists when time allows, and keep a short list of the queries you used.
 
 Reject and count: not a curated list, or a list of one company's own projects.
 
 ### Stage 2. Gate A: is the list alive
 
-Pass only if all hold:
-- the repository is not archived and the README is not marked deprecated;
-- the last commit is within 12 months;
-- at least two pull requests from people who are not maintainers were merged within 12 months
-  (check the closed pull requests page).
+Reject only when the repository is archived, the README is marked deprecated, or there is no
+commit within 12 months. Count the rejections.
 
-Also note a stalled queue: outside pull requests that have waited over 6 months with no recent
-merges. Reject stalled and dead lists, and count them.
+Everything else passes, and you record the evidence Stage 4 scores:
+- outside pull requests merged within 12 months (check the closed pull requests page), and any
+  outside pull requests waiting over 6 months with no recent merges;
+- how the list takes submissions. If pull requests are restricted to collaborators, mark the
+  list "submit by issue" when the contributing guide asks for issues, otherwise "maintainers
+  only". A "maintainers only" list stays in the report but gets no submission packet.
 
 ### Stage 3. Gate B: does the product meet the list's own rules
 
@@ -82,7 +89,8 @@ Score each eligible list out of 7 and show the arithmetic:
 - Fit, 0 to 2: 2 if the product belongs in an existing section, 1 if adjacent. If a new section
   would be needed, note it, since many lists require several entries before adding a category.
 - Acceptance, 0 to 2: from Gate A evidence. 2 for three or more outside pull requests merged in
-  12 months, 1 for one or two, 0 otherwise.
+  12 months, 1 for one or two, 0 for none or a stalled queue. An issue-based list scores the
+  same way from outside issues that led to an entry.
 - Effort, 0 to 1: 1 if an entry is a single line that follows a clear pattern, 0 if the list needs
   extra material such as screenshots, coverage links or several pull requests.
 
@@ -90,7 +98,8 @@ Rank by total and break ties by Acceptance.
 
 ### Stage 5. Submission packets for the top five
 
-For each list give:
+Skip "maintainers only" lists and lists already in an earlier report's submissions block unless
+their status changed. For each remaining list give:
 - the exact section heading and where in it the line goes (alphabetical, by date, at the end);
 - the entry line, matched to its neighbours: link style, separator, capitalization, trailing
   punctuation, and badges only if the list uses them;
@@ -99,7 +108,46 @@ For each list give:
 - each box of the pull request template with the honest answer and its evidence;
 - a note that the founder submits from their own account and says they maintain the product.
 
-Do not fork, open pull requests or issues, or comment. Nothing is sent.
+Do not fork, open pull requests or issues, or comment. Nothing is sent by this run.
+
+### Stage 5b. The submissions block
+
+End the report with exactly one fenced block tagged `json awesome-submissions`, holding the
+top five packets in rank order. Tin's Submit to awesome lists workflow reads it, places each
+entry in the list's current file with code, and sends nothing until the founder approves the
+exact changes. Write it as data, not prose:
+
+```json awesome-submissions
+{
+  "version": 1,
+  "product": {"name": "Acme", "url": "https://acme.dev", "repository_url": "https://github.com/acme/acme"},
+  "submissions": [
+    {
+      "list": "owner/awesome-thing",
+      "method": "pull_request",
+      "path": "README.md",
+      "section": "## Command line",
+      "order": "alphabetical",
+      "entry": "- [Acme](https://github.com/acme/acme) - Turn logs into alerts from the terminal.",
+      "title": "Add Acme",
+      "commit_message": "Add Acme",
+      "body": "The pull request description, with the template's checklist answered honestly."
+    }
+  ]
+}
+```
+
+- `list` is the list repository as `owner/name`. `method` is `pull_request`, or `issue` only
+  when the contributing guide asks for submissions as issues; an issue needs only `title`
+  and `body`.
+- `section` is the heading line copied exactly from the list's file, including its `#` marks.
+  `order` is `alphabetical` when the section is sorted, otherwise `end`.
+- `entry` is one line matched to its neighbours, starting with the same list marker, and it
+  must contain the product or repository URL named in `product`.
+- `body` answers every box of the pull request template. Do not add a disclosure line; Tin
+  adds one saying the founder maintains the product and prepared it with Tin.
+- Leave a list out of the block when it is not ready to submit. If no list is ready, write the
+  block with an empty `submissions` array.
 
 ### Stage 6. Verdict
 
@@ -118,4 +166,4 @@ list accepts this product yet". Lead the report with it.
 
 ## Output
 
-Write reports/AWESOME_LISTS.md using REPORT_TEMPLATE.md. Keep it under 25,000 characters.
+Write the declared report (`reports/awesome-lists/{run_id}.md`) using REPORT_TEMPLATE.md. Keep it under 25,000 characters.

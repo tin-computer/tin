@@ -40,6 +40,12 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
+# Workflows that act only through the founder's own connected account and buy no model or
+# provider work: no quote, no reservation, a $0 Tin charge. The value is the pinned rate card.
+CONNECTED_ACCOUNT_EXECUTORS = {
+    "outreach.email_campaign": "tin-connected-email-v1",
+    "outreach.awesome_submit": "tin-connected-github-v1",
+}
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
 
@@ -362,9 +368,9 @@ class BillingService:
                         "unmetered_profile", "This system needs API-billed Codex execution enabled."
                     )
             return native
-        if definition.get("executor") == "outreach.email_campaign":
+        if definition.get("executor") in CONNECTED_ACCOUNT_EXECUTORS:
             return {
-                "rate_card": "tin-connected-email-v1",
+                "rate_card": CONNECTED_ACCOUNT_EXECUTORS[definition["executor"]],
                 "kind": "included",
                 "mode": "test",
                 "currency": "USD",
@@ -526,9 +532,9 @@ class BillingService:
                     "billing_not_enrolled", "Billing is not enabled for this workspace."
                 )
             return
-        if definition.get("executor") == "outreach.email_campaign":
+        if definition.get("executor") in CONNECTED_ACCOUNT_EXECUTORS:
             if quote_id:
-                raise BillingError("stale_quote", "This email workflow does not need a paid quote.")
+                raise BillingError("stale_quote", "This workflow does not need a paid quote.")
             return
         if (
             not getattr(self.settings, "billing_test_enabled", False)
@@ -1348,7 +1354,7 @@ class BillingService:
                         "charged_usd": "0.00",
                         "maximum_usd": "0.00",
                     }
-                if row["executor"] == "outreach.email_campaign":
+                if row["executor"] in CONNECTED_ACCOUNT_EXECUTORS:
                     return {"run_id": str(run_id), "billing": "included", "charged_usd": "0.00"}
                 return {"run_id": str(run_id), "billing": "not_enrolled", "charged_usd": None}
             root = await conn.fetchrow(

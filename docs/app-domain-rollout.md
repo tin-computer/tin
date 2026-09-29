@@ -16,6 +16,7 @@ MCP consent, integration callback and webhook URLs with the relevant providers:
 | MCP consent / resource | /mcp/consent, /mcp |
 | Google integration callback | /integrations/callback/google |
 | GitHub callback | /integrations/callback/github |
+| GitHub account (OAuth App) callback | /integrations/callback/github-account |
 | GitHub webhook | /webhooks/github |
 | Stripe webhook | /webhooks/stripe/tin-lite |
 | Twilio inbound SMS | /webhooks/twilio/sms |

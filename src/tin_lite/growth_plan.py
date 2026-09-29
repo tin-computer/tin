@@ -66,6 +66,7 @@ PROVIDERS = {
     "ads.google": "Google Ads",
     "payments.stripe": "Stripe",
     "analytics.posthog": "PostHog",
+    "infra.github_user": "GitHub account",
 }
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 

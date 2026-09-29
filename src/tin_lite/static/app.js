@@ -118,7 +118,7 @@ const CUSTOM_API_TEMPLATE = Object.freeze({
   status: "available",
 });
 const CONNECT_REQUEST_KEY = "tin-lite:connect-providers";
-const CONNECT_PROVIDERS = new Set(["infra.github", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog"]);
+const CONNECT_PROVIDERS = new Set(["infra.github", "infra.github_user", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog"]);
 let pendingConnectRequest = null;
 
 function rememberConnectRequest(projectId, providers) {
@@ -5722,6 +5722,7 @@ function renderIntegrationCard(integration) {
   const logoPaths = {
     "analytics.gsc": "/assets/integrations/google-search-console.svg",
     "infra.github": "/assets/integrations/github.svg",
+    "infra.github_user": "/assets/integrations/github.svg",
     "workspace.google": "/assets/integrations/google-workspace.svg",
     "ads.google": "/assets/integrations/google-ads.svg",
     "payments.stripe": "/assets/integrations/stripe.svg",
@@ -5752,7 +5753,7 @@ function renderIntegrationCard(integration) {
   const unlocks = (integration.unlocks || []).join(" · ");
   return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge ${["infra.github", "payments.stripe", "analytics.posthog"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
+      <span class="integration-badge ${["infra.github", "infra.github_user", "payments.stripe", "analytics.posthog"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
       <span class="integration-identity">
         <strong class="integration-name">${escapeHtml(integration.name)}</strong>
         <code class="integration-key">${escapeHtml(integration.key)}</code>
@@ -5836,16 +5837,21 @@ function renderIntegrationExpanded(integration) {
   const optionLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
   const isWorkspace = integration.key === "workspace.google";
   const isAds = integration.key === "ads.google";
+  const isGitHubAccount = integration.key === "infra.github_user";
   const setupPrompt = RESOURCE_SCOPED_INTEGRATIONS.has(integration.key) && !selected
     ? `<p class="integration-setup-prompt" role="status"><strong>Finish setup.</strong> OAuth is connected, but workflows cannot use ${escapeHtml(integration.name)} until you choose a ${escapeHtml(integrationResourceNoun(integration.key))} for ${escapeHtml(state.project.name)}.</p>`
     : integration.status === "needs_attention" && isPostHog
       ? `<p class="integration-setup-prompt" role="status"><strong>PostHog needs reconnecting.</strong> It no longer accepts Tin's access. Reconnect to keep reading ${escapeHtml(integration.external_account_label || "the project")}.</p>`
+    : integration.status === "needs_attention" && isGitHubAccount
+      ? `<p class="integration-setup-prompt" role="status"><strong>GitHub needs reconnecting.</strong> The authorization was revoked or expired. Reconnect before approving list submissions.</p>`
       : "";
   const workspaceCanSend = (integration.configuration?.granted_capabilities || []).includes("gmail.messages.send");
   const accessValue = integration.key === "infra.github"
     ? "selected repositories · Contents + Pull requests write"
     : isPostHog
       ? `read only · ${(integration.configuration?.granted_capabilities || []).map((item) => item.replace(".read", "")).join(", ") || "nothing yet"} · ${String(integration.configuration?.region || "").toUpperCase()} Cloud`
+    : isGitHubAccount
+      ? "public repositories · fork + pull request + issue, only for submissions you approve"
     : isAds
       ? "one linked account · campaign read + write via Tin's manager account"
     : isWorkspace
@@ -5857,6 +5863,8 @@ function renderIntegrationExpanded(integration) {
     ? "By installing the Tin GitHub App, you opt in to Contents and Pull requests write access for only the repositories granted in GitHub. Tin uses short-lived installation tokens; it never stores a personal access token."
     : isPostHog
       ? "Tin stores encrypted PostHog OAuth tokens with read scopes only and reads the one project chosen here. Workflows receive small projected records and bounded query results, never the tokens. HogQL reads must be one SELECT with a LIMIT of at most 1000."
+    : isGitHubAccount
+      ? "GitHub grants this as access to your public repositories. Tin stores the token encrypted and uses it for one job: after you approve an exact awesome-list submission, it forks that list to your account and opens one pull request or issue as you. It never pushes to your own repositories. Disconnecting here also revokes the grant in GitHub."
     : isAds
       ? "Tin's manager account is linked to your Google Ads account by an invitation you accept inside Google Ads. Tin stores no Google credential of yours. Every campaign change waits for your approval; removing the manager in Google Ads ends Tin's access at once."
     : isWorkspace
@@ -5865,8 +5873,8 @@ function renderIntegrationExpanded(integration) {
         : "Tin stores an encrypted Google refresh token. Workflow sandboxes receive only short-lived, run-bound Tin tools and never receive Google credentials. Enable sending to run approved email campaigns."
       : "Tin requests Search Console read-only access. It cannot edit your site, indexing settings, or Google account.";
   let selectionControl;
-  if (isWorkspace) {
-    selectionControl = `<div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Google Workspace")}</span></div>`;
+  if (isWorkspace || isGitHubAccount) {
+    selectionControl = `<div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || integration.name)}</span></div>`;
   } else if (isAds) {
     const link = integration.configuration?.link_status || "pending";
     const linkCopy = link === "active"
@@ -5934,7 +5942,7 @@ async function toggleIntegration(providerKey) {
   state.expandedIntegration = providerKey;
   const integration = state.integrations.find((item) => item.key === providerKey);
   const context = currentProjectContext();
-  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
+  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe", "infra.github_user"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
     state.integrationLoading = providerKey;
     renderIntegrations();
     try {
@@ -6017,6 +6025,8 @@ function chooseIntegrationProject(providerKey, capabilities) {
     ? "After GitHub authorizes Tin, you’ll choose the repository this project can use."
     : providerKey === "analytics.posthog"
       ? "PostHog then asks which one of your PostHog projects Tin may read."
+    : providerKey === "infra.github_user"
+      ? "GitHub then asks you to allow access to your public repositories. Tin only uses it to send the list submissions you approve."
       : "After Google authorizes Tin, you’ll choose the Search Console property this project can use.";
   integrationProjectTitle.textContent = `Connect ${integration.name} to a project`;
   integrationProjectCopy.textContent = `Connections are project-owned. Choose the Tin project for this connection. ${nextStep}`;
@@ -6496,15 +6506,15 @@ async function bootstrap(invitedProjectId = null, integrationReturn = null) {
 
 async function completeIntegrationCallback() {
   const path = window.location.pathname.replace(/\/$/, "");
-  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog"].includes(path)) return null;
+  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account"].includes(path)) return null;
   const values = new URL(window.location.href).searchParams;
   const provider = path.split("/").pop();
   const stateToken = values.get("state");
   let connected;
-  if (provider === "google" || provider === "posthog") {
+  if (provider === "google" || provider === "posthog" || provider === "github-account") {
     if (!stateToken) throw new Error("The integration connection did not return a valid state.");
     const code = values.get("code");
-    const label = provider === "google" ? "Google" : "PostHog";
+    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account" }[provider];
     if (!code) throw new Error(values.get("error_description") || `${label} connection was cancelled.`);
     connected = await api(`/api/integrations/${provider}/complete`, {
       method: "POST",
