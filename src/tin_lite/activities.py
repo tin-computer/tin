@@ -2128,12 +2128,16 @@ class TinActivities:
             evidence_path=evidence_path,
         )
         artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
+        from tin_lite.content_delivery import review_line
+
         return await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
+            # The decision card says what the page answers; Activity keeps the review notice.
+            explanation=review_line(content) or "",
         )
 
     @activity.defn(name="record_answer_page_approval")
@@ -4013,12 +4017,12 @@ class TinActivities:
         if path.casefold().endswith((".md", ".markdown")):
             # A document's own heading names it better than its file name, and its first
             # paragraph says what the reviewer is about to read.
-            from tin_lite.content_delivery import display_title, summary_line
+            from tin_lite.content_delivery import display_title, review_line
 
             raw = await self._storage.read_canonical_artifact(
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
-            artifact_title, lede = display_title(raw), summary_line(raw)
+            artifact_title, lede = display_title(raw), review_line(raw)
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")

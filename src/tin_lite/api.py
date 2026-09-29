@@ -2570,10 +2570,20 @@ async def list_project_decisions(
     response: Response,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> list[DecisionView]:
-    await _require_project_access(project_id, request, user)
-    decisions = await request.app.state.runtime.database.list_pending_decisions(
-        project_id=project_id
-    )
+    project = await _require_project_access(project_id, request, user)
+    runtime = request.app.state.runtime
+    if getattr(runtime, "storage", None) is not None:
+        # Decisions saved before outputs carried their heading get it once, a few at a time;
+        # the listing itself still reads Postgres only.
+        from tin_lite.decision_backfill import backfill_decision_text
+
+        try:
+            await backfill_decision_text(
+                database=runtime.database, storage=runtime.storage, project=project
+            )
+        except Exception:
+            logger.warning("Older decisions were not named yet", extra={"project_id": project_id})
+    decisions = await runtime.database.list_pending_decisions(project_id=project_id)
     response.headers["X-Tin-Read-Source"] = "postgres"
     return [DecisionView.model_validate(item) for item in decisions]
 

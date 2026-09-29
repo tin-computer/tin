@@ -64,6 +64,13 @@ _DECISION_RUN_SQL = """
     ))
 """
 
+# Decisions saved before outputs carried their heading and first sentence: the review line
+# only restated the workflow ("X is ready for your review."), or the title was generic.
+_GENERIC_REVIEW_TEXT_SQL = """
+    (decision.title = 'Review workflow output'
+     OR decision.explanation ~ '^[^.]*\\mis ready for your review\\.')
+"""
+
 # A one-off task that revises a run's saved output file: still waiting for approval, or
 # applied after that output was saved. Approving the run would otherwise use the older copy.
 _OUTPUT_REVISION_SQL = """
@@ -3332,11 +3339,13 @@ class Database:
                    workflow.key AS workflow_key,
                    workflow.title AS workflow_title,
                    COALESCE(decision.kind, 'review') AS kind,
-                   -- Older reviews saved one generic title; name what they produced instead.
-                   CASE WHEN COALESCE(decision.title, 'Review workflow output')
-                           <>'Review workflow output'
+                   -- A review saved with a generic title, or one naming only the workflow, is
+                   -- named by what it produced, so repeat runs don't share a title.
+                   CASE WHEN decision.title IS NOT NULL
+                           AND decision.title NOT IN (
+                               'Review workflow output', 'Review: ' || workflow.title)
                        THEN decision.title
-                       ELSE 'Review: ' || COALESCE(output.title, workflow.title) END AS title,
+                       ELSE 'Review: ' || output.named END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -3375,11 +3384,13 @@ class Database:
                    NULL::jsonb AS output_resolution,
                    COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
                    ({_OUTPUT_REVISION_SQL}) AS revision,
-                   output.title AS output_title
+                   output.named AS output_title
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            JOIN projects AS project ON project.id = run.project_id
             -- What the run produced, in its own words: the document's heading, the planned
-            -- article's brief, or the task's title.
+            -- article's brief, or the task's title. Without one, the workflow and the day it
+            -- was saved ("Social post batch · Sep 29").
             LEFT JOIN LATERAL (
                 SELECT COALESCE(
                     NULLIF(run.artifact_title, ''),
@@ -3392,8 +3403,12 @@ class Database:
                           AND receipt.status='completed'
                     ) END,
                     CASE WHEN run.executor = 'project.task'
-                        THEN NULLIF(run.task_title, '') END
-                ) AS title
+                        THEN NULLIF(run.task_title, '') END,
+                    workflow.title || ' · ' || to_char(
+                        COALESCE(run.review_requested_at, run.created_at)
+                            AT TIME ZONE project.timezone,
+                        'Mon FMDD')
+                ) AS named
             ) AS output ON true
             LEFT JOIN LATERAL (
                 SELECT pending.*
@@ -3453,6 +3468,78 @@ class Database:
             run_id,
         )
         return _json_object(value, field="output revision") if value is not None else None
+
+    async def decisions_without_output_text(
+        self, *, project_id: UUID, limit: int
+    ) -> list[dict[str, Any]]:
+        """Pending reviews saved before outputs carried their heading and first sentence.
+
+        Only Markdown outputs at the revision the decision pins; the oldest first.
+        """
+        rows = await self.pool.fetch(
+            f"""
+            SELECT decision.id AS decision_id, run.id AS run_id,
+                   run.artifact_path AS path, run.canonical_commit_sha AS revision,
+                   decision.explanation, workflow.title AS workflow_title
+            FROM run_decisions AS decision
+            JOIN workflow_runs AS run ON run.id = decision.run_id
+            JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            WHERE decision.project_id = $1 AND decision.status = 'pending'
+              AND decision.kind = 'review'
+              AND run.status = 'needs_input' AND run.review_required
+              AND run.review_decision IS NULL
+              AND lower(run.artifact_path) ~ '\\.(md|markdown)$'
+              AND decision.items->0->>'file' = run.artifact_path
+              AND decision.items->0->>'revision' = run.canonical_commit_sha
+              AND {_GENERIC_REVIEW_TEXT_SQL}
+            ORDER BY decision.created_at, decision.id
+            LIMIT $2
+            """,  # noqa: S608 — static SQL predicate, no caller text
+            project_id,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def store_decision_output_text(
+        self,
+        *,
+        decision_id: UUID,
+        run_id: UUID,
+        revision: str,
+        previous_explanation: str,
+        workflow_title: str,
+        title: str | None,
+        explanation: str,
+    ) -> bool:
+        """Store an older review's heading and card line, once, if nothing changed meanwhile."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            stored = await conn.fetchval(
+                """
+                UPDATE run_decisions
+                SET explanation = $3,
+                    title = CASE WHEN title IN ('Review workflow output', 'Review: ' || $4)
+                        THEN left('Review: ' || COALESCE($5::text, $4), 160) ELSE title END
+                WHERE id = $1 AND run_id = $2 AND status = 'pending' AND explanation = $6
+                RETURNING true
+                """,
+                decision_id,
+                run_id,
+                explanation[:2000],
+                workflow_title,
+                title,
+                previous_explanation,
+            )
+            if stored and title:
+                await conn.execute(
+                    """
+                    UPDATE workflow_runs SET artifact_title = $2
+                    WHERE id = $1 AND artifact_title IS NULL AND canonical_commit_sha = $3
+                    """,
+                    run_id,
+                    title[:160],
+                    revision,
+                )
+        return bool(stored)
 
     async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(
