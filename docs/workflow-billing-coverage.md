@@ -42,6 +42,9 @@ hosted-default policy does so. Neither enables live Stripe charging.
   supplied messages through the user's connected mailbox. It needs no monetary
   quote, creates no reservation, and reports a $0 Tin charge. The integration's
   send limits and approval requirements are unchanged.
+- `outreach.awesome_submit` is included the same way: it buys no model or provider work and
+  opens the approved pull requests or issues through the founder's connected GitHub account,
+  so it has no quote or reservation and reports a $0 Tin charge (`tin-connected-github-v1`).
 
 The existing API-priced default/isolated procedures remain covered in API-enabled
 projects, including individual content generation, revisions and GitHub delivery.

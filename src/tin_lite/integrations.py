@@ -53,6 +53,8 @@ GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
 ADS_PROVIDER = "ads.google"
 STRIPE_PROVIDER = "payments.stripe"
 POSTHOG_PROVIDER = "analytics.posthog"
+# A founder's own GitHub account, through Tin's GitHub OAuth App (see github_account.py).
+GITHUB_USER_PROVIDER = "infra.github_user"
 PROVIDER_KEYS = frozenset(
     {
         GSC_PROVIDER,
@@ -61,6 +63,7 @@ PROVIDER_KEYS = frozenset(
         ADS_PROVIDER,
         STRIPE_PROVIDER,
         POSTHOG_PROVIDER,
+        GITHUB_USER_PROVIDER,
     }
 )
 # Read-only Stripe capabilities; each names the Stripe resources its operation reads.
@@ -74,6 +77,8 @@ STRIPE_CAPABILITIES = (
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
 ADS_CAPABILITIES = ("account.read", "campaigns.read", "campaigns.write")
+# Only what an approved list submission needs; nothing on the founder's own repositories.
+GITHUB_USER_CAPABILITIES = ("forks.write", "public_pull_requests.write", "public_issues.write")
 # Google's ManagerLinkStatus values, lower-cased for the connection's configuration.
 ADS_LINK_STATES = {
     "ACTIVE": "active",
@@ -390,6 +395,18 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             capabilities=POSTHOG_CAPABILITIES,
             unlocks=("Activation and funnel evidence", "Product analytics brief"),
         ),
+        IntegrationDefinition(
+            key=GITHUB_USER_PROVIDER,
+            name="GitHub account",
+            badge="GH",
+            description=(
+                "Send the awesome-list submissions you approve from your own GitHub account: "
+                "Tin forks the list and opens one pull request or issue per list."
+            ),
+            access_label="Public repositories · used only for approved submissions",
+            capabilities=GITHUB_USER_CAPABILITIES,
+            unlocks=("Awesome list submissions",),
+        ),
     )
 
 
@@ -568,6 +585,10 @@ class IntegrationService:
             from tin_lite.posthog_connection import oauth_ready
 
             return self._cipher is not None and oauth_ready(self._settings)
+        if provider_key == GITHUB_USER_PROVIDER:
+            from tin_lite.github_account import oauth_ready as github_oauth_ready
+
+            return self._cipher is not None and github_oauth_ready(self._settings)
         if provider_key == ADS_PROVIDER:
             from tin_lite.google_ads import manager_oauth_client
 
@@ -608,6 +629,12 @@ class IntegrationService:
         from tin_lite.posthog_connection import PostHogConnections
 
         return PostHogConnections(self)
+
+    @property
+    def github_account(self):
+        from tin_lite.github_account import GitHubAccounts
+
+        return GitHubAccounts(self)
 
     def definitions(self, connections):
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
@@ -688,6 +715,15 @@ class IntegrationService:
                         "PostHog did not grant "
                         + ", ".join(sorted(missing) or ["these reads"])
                         + "; reconnect PostHog and approve the read access"
+                    )
+                continue
+            if requirement.provider_key == GITHUB_USER_PROVIDER:
+                granted = connection.configuration.get("granted_capabilities", [])
+                if connection.credential_ciphertext is None or not set(
+                    requirement.capabilities
+                ).issubset(set(granted) if isinstance(granted, list) else set()):
+                    raise IntegrationAuthorizationError(
+                        "Reconnect your GitHub account before starting this workflow"
                     )
                 continue
             if requirement.provider_key == ADS_PROVIDER:
@@ -784,7 +820,7 @@ class IntegrationService:
                             ]
                         )
                     )
-        pkce = {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER, POSTHOG_PROVIDER}
+        pkce = {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER, POSTHOG_PROVIDER, GITHUB_USER_PROVIDER}
         state = secrets.token_urlsafe(32)
         state_hash = _sha256(state)
         verifier_ciphertext = None
@@ -815,6 +851,18 @@ class IntegrationService:
             return ConnectStart(
                 authorization_url=authorization_url(
                     self._settings, state=state, challenge=challenge
+                )
+            )
+        if provider_key == GITHUB_USER_PROVIDER:
+            from tin_lite.github_account import CALLBACK
+            from tin_lite.github_account import authorization_url as github_authorization_url
+
+            return ConnectStart(
+                authorization_url=github_authorization_url(
+                    self._settings,
+                    state=state,
+                    challenge=challenge,
+                    redirect=self._callback_url(CALLBACK),
                 )
             )
         if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
@@ -3428,6 +3476,12 @@ class IntegrationService:
             if connection is not None:
                 # Best effort, like Google: local disconnection is authoritative.
                 await self.posthog.revoke(connection)
+        if provider_key == GITHUB_USER_PROVIDER:
+            connection = await self._database.get_integration_connection(
+                project_id=project_id, provider_key=provider_key
+            )
+            if connection is not None:
+                await self.github_account.revoke(connection)
         if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
             connection = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key

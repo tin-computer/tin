@@ -1,0 +1,106 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.awesome_lists",
+    "title": "Get your product into the awesome lists that will actually accept it",
+    "description": "A founder with a public product or repository gets the curated GitHub lists whose own rules it meets, ranked, with the exact entry and pull request text for each, and the one fix that would unlock the most others. Submit to awesome lists sends the entries you approve from your GitHub account.",
+    "executor": "codex.procedure",
+    "version": "1.2.0",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "product_url": {
+          "type": "string",
+          "title": "Product URL (optional). Leave empty to use the one in the growth plan.",
+          "maxLength": 2000,
+          "x-tin-ui": {
+            "control": "text",
+            "order": 10
+          },
+          "default": ""
+        },
+        "repository_url": {
+          "type": "string",
+          "title": "Public repository URL (optional). Leave empty to use the connected repository or the one linked from the site.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 20
+          }
+        },
+        "category": {
+          "type": "string",
+          "title": "What the product is, in the words a list would use (optional)",
+          "maxLength": 600,
+          "default": "",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 30
+          }
+        },
+        "avoid": {
+          "type": "string",
+          "title": "Lists or topics to avoid (optional)",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 40
+          }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the product URL, what the product is and the hard no's, so the founder does not type them again."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map names the connected repository, its license and stack, which most lists test before accepting an entry."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/awesome-lists/SKILL.md",
+        "skills/awesome-lists/REPORT_TEMPLATE.md"
+      ],
+      "entry_skill": "awesome-lists",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 1800
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/awesome-lists/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 250000
+      }
+    }
+  }
+}

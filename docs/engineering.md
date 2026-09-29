@@ -526,7 +526,17 @@ through `TIN_LITE_GITHUB_APP_SLUG`,
 write and Pull requests write; GitHub shows those permissions and repository selection during
 installation. Tin exchanges the one-time OAuth code only to prove the signed-in GitHub user can
 access the returned installation; it does not store that user token. Tin stores the installation
-ID, mints short-lived installation tokens on demand, and never stores a user PAT. All provider
+ID, mints short-lived installation tokens on demand, and never stores a user PAT for the
+GitHub App connection.
+
+The separate founder GitHub account connection (`infra.github_user`) is a GitHub OAuth App,
+configured with `TIN_LITE_GITHUB_OAUTH_CLIENT_ID` and `TIN_LITE_GITHUB_OAUTH_CLIENT_SECRET`
+(both or neither; requires `TIN_LITE_INTEGRATION_CREDENTIAL_KEY`), with callback URL
+`https://app.tin.computer/integrations/callback/github-account`. It requests `public_repo`, the
+narrowest classic scope that can open a pull request on someone else's public repository, and
+stores that user token encrypted. Only `outreach.awesome_submit` uses it, after the founder
+approves the exact changes: fork the list, commit one file change to a branch in the fork, open
+one pull request, or open one issue. Disconnecting revokes the grant in GitHub. All provider
 credentials remain on the trusted switchboard and are explicitly rejected from E2B sandbox
 environments.
 

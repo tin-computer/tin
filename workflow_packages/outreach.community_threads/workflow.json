@@ -1,0 +1,112 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.community_threads",
+    "title": "Find threads where people ask for what you make",
+    "description": "Finds open public threads on Reddit, Hacker News, GitHub Discussions and forums where someone is asking for what your product does, and drafts one helpful, disclosed reply per thread in your voice for you to post. Skips threads from earlier runs; never posts or messages anyone.",
+    "executor": "codex.procedure",
+    "version": "2.0.0",
+    "schedule_modes": ["on_demand", "weekly"],
+    "system": "cold-outreach",
+    "human_review": {
+      "eligible": true,
+      "reason": "Every reply is posted by the founder from their own account after checking the thread.",
+      "review_label": "Review replies",
+      "defer_label": "Not now",
+      "summary": "Open threads with a drafted reply for each. Nothing is posted by Tin.",
+      "queue_clause": "Community replies waiting for review"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "focus": {
+          "type": "string",
+          "title": "Problem to look for (optional)",
+          "description": "Leave empty to use the problem and buyer from the growth plan and Feature map.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "competitors": {
+          "type": "string",
+          "title": "Tools people switch from (optional)",
+          "description": "Leave empty to use the competitors Tin already knows.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "platforms": {
+          "type": "array",
+          "title": "Where to look",
+          "items": {
+            "type": "string",
+            "enum": ["reddit", "hacker_news", "github_discussions", "technical_forums"]
+          },
+          "maxItems": 4,
+          "default": ["reddit", "hacker_news", "github_discussions", "technical_forums"],
+          "x-tin-ui": { "order": 30 }
+        },
+        "lookback_days": {
+          "type": "integer",
+          "title": "Recent activity within (days)",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 14,
+          "x-tin-ui": { "control": "counter", "order": 40 }
+        },
+        "max_opportunities": {
+          "type": "integer",
+          "title": "Maximum threads",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5,
+          "x-tin-ui": { "control": "counter", "order": 50 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the buyer, the problem and hard no's such as no founder posting."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "A reply may only claim what the Feature map shows the product does."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "Replies are drafted in the founder's captured voice."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/community-threads/SKILL.md",
+        "skills/community-threads/PLATFORM_RULES.md"
+      ],
+      "entry_skill": "community-threads",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/community-threads/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}

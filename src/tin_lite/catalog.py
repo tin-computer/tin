@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import (
+    awesome_submit,
     content_draft,
     content_plan,
     content_plan_editorial,
@@ -55,6 +56,7 @@ from tin_lite.domain import (
 from tin_lite.integrations import (
     ADS_PROVIDER,
     GITHUB_PROVIDER,
+    GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
     GSC_PROVIDER,
     IntegrationRequirement,
@@ -148,6 +150,7 @@ CREATIVE_PRODUCT_DEMO_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000022")
 PAID_ADS_ASSESSMENT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000040")
 PAID_ADS_LAUNCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000041")
 PAID_ADS_MONITOR_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000042")
+AWESOME_SUBMIT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000043")
 # Numbers below were used by built-ins that later left the catalog. Their rows still exist in
 # deployed databases, and the boot-time sync refuses to bind a number to a different key, so a
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
@@ -279,6 +282,16 @@ PAID_ADS_LAUNCH_REVIEW_POLICY = HumanReviewPolicy(
         "carry out. Nothing happens in Google Ads until you approve it."
     ),
     queue_clause="Google Ads step ready for your approval",
+)
+AWESOME_SUBMIT_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Opens pull requests or issues on other people's lists from the founder's account.",
+    review_label="Approve & send",
+    defer_label="Not now",
+    summary=(
+        "The exact awesome-list submissions are ready: each line, where it goes and the pull "
+        "request text. Nothing is sent from your GitHub account until you approve."
+    ),
+    queue_clause="Awesome list submissions ready to send",
 )
 EMAIL_CAMPAIGN_REVIEW_POLICY = HumanReviewPolicy(
     reason="Sends email to external recipients.",
@@ -2314,6 +2327,31 @@ BUILTIN_WORKFLOWS = (
         ),
         integration_requirements=(
             IntegrationRequirement(ADS_PROVIDER, ("campaigns.write",), required=True),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=AWESOME_SUBMIT_WORKFLOW_ID,
+        key=awesome_submit.KEY,
+        title="Submit to awesome lists",
+        description=(
+            "Take the lists an awesome lists run found, place your entry in each list's "
+            "current file and show you every exact change. After you approve, Tin forks each "
+            "list and opens one pull request or issue from your GitHub account. It never "
+            "submits to the same list twice."
+        ),
+        # Code only: packets come from the report, placement is computed, one approval gates
+        # every GitHub write, and each list has a project-wide receipt.
+        executor=awesome_submit.KEY,
+        version_label="1.0.0",
+        review_policy=AWESOME_SUBMIT_REVIEW_POLICY,
+        schedule_modes=("on_demand",),
+        input_schema=awesome_submit.INPUT_SCHEMA,
+        integration_requirements=(
+            IntegrationRequirement(
+                GITHUB_USER_PROVIDER,
+                ("forks.write", "public_pull_requests.write", "public_issues.write"),
+                required=True,
+            ),
         ),
     ),
 )

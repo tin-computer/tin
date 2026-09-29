@@ -71,6 +71,12 @@ provider as a special workflow:
    `POST /api/integrations/github/authorize` remembers the chosen installation on a new
    connect attempt (migration 031) before one more authorization completes it. A callback that
    arrives with an installation ID and no code takes that same authorize path.
+   A GitHub App can act only on repositories that installed it, so it cannot open a pull request
+   on someone else's list. The founder GitHub account (`infra.github_user`,
+   `github_account.py`) is a separate GitHub OAuth App grant with PKCE and the `public_repo`
+   scope. Its user token is stored encrypted and used only by `outreach.awesome_submit` after
+   an approval of the exact changes; each write is looked up before it is made, and each list
+   has a project-wide receipt so it is never submitted twice.
 3. An immutable workflow definition may declare `integration_requirements`: exact provider keys,
    named capabilities, and whether each dependency is required. Catalog sync rejects unknown
    providers, unknown capabilities, duplicate providers, and extra fields.

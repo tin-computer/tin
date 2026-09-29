@@ -47,7 +47,10 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.speaking_shortlist` | Feature map, onboarding plan, style guide, its earlier reports | founder submits | Earned media, community |
 | `outreach.syllabus_placement` | Feature map, onboarding plan, style guide, its earlier reports | founder sends | Partnerships and channel |
 | `outreach.campus_events` | onboarding plan, Feature map, style guide | founder pitches the organizer | Community and events |
+| `outreach.community_threads` | onboarding plan, Feature map, style guide, its earlier reports | founder posts the reply | Community and events |
+| `outreach.newsletter_placements` | onboarding plan, Feature map, style guide, its earlier reports | founder submits or books the placement | Earned media and launches |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
+| `outreach.awesome_lists` | onboarding plan, Code map, its earlier reports | `outreach.awesome_submit` sends the approved entries from the founder's GitHub account | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |

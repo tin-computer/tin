@@ -32,7 +32,7 @@ Entry lines (under 15 words each):
 | Stage | In | Out | Main reasons for rejection |
 |---|---|---|---|
 | Lists found | | | |
-| Alive (Gate A) | | | |
+| Alive (Gate A: not archived, deprecated or silent 12 months) | | | |
 | Eligible (Gate B) | | | |
 | Scored 4 or more of 7 | | | |
 | Submission packet written | | | |
@@ -41,15 +41,17 @@ Queries used: a short list.
 
 ## Ranked lists
 
-| Rank | List and URL | Stars | Last outside PR merged | Section | Reach | Fit | Acceptance | Effort | Total /7 | New since last run |
-|---|---|---|---|---|---|---|---|---|---|---|
+| Rank | List and URL | Stars | Outside PRs merged in 12 months | Takes submissions by | Section | Reach | Fit | Acceptance | Effort | Total /7 | New since last run |
+|---|---|---|---|---|---|---|---|---|---|---|---|
 
-Under the table, one line per list on anything the row cannot carry, such as "new section needed"
-or "criterion X unknown".
+"Takes submissions by" is pull request, issue, or maintainers only. A maintainers-only list gets
+no packet. Under the table, one line per list on anything the row cannot carry, such as "new
+section needed", "criterion X unknown" or "in an earlier report's submissions".
 
 ## Submission packets (top five)
 
-For each list: section and position, the entry line matched to its neighbours, the pull request
+Only lists that take pull requests or issues, and that no earlier report already put in its
+submissions block. For each list: section and position, the entry line matched to its neighbours, the pull request
 title and commit message, the template checklist with honest answers and evidence, and a line
 saying the founder submits from their own account and discloses that they maintain the product.
 Mark each "not sent".
@@ -71,3 +73,8 @@ settle each one.
 ## When to run this again
 
 The trigger (a release, a license change, or three months from now) and what should change first.
+
+## Submissions
+
+The `json awesome-submissions` block from Stage 5b, last in the report. Run Submit to awesome
+lists to review the exact changes and send them from your GitHub account.

@@ -6453,6 +6453,29 @@ class Database:
             workflow_key="organic.keyword_plan",
         )
 
+    async def complete_awesome_submit_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+    ) -> None:
+        """An approved submission run finishes with its result report, never before approval."""
+        await self._complete_readonly_report_projection(
+            conn,
+            execution_key=execution_key,
+            run_id=run_id,
+            canonical_commit_sha=canonical_commit_sha,
+            artifact_path=artifact_path,
+            artifact_ref=artifact_ref,
+            summary=summary,
+            workflow_key="outreach.awesome_submit",
+        )
+
     async def _complete_readonly_report_projection(
         self,
         conn: asyncpg.Connection,
@@ -6484,6 +6507,10 @@ class Database:
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
+            "outreach.awesome_submit": (
+                "awesome_submit_ready",
+                "Awesome list submissions were sent.",
+            ),
         }[workflow_key]
         if final_status == "failed":
             event = "organic_system_incomplete"

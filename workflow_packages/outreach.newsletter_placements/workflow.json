@@ -1,0 +1,90 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.newsletter_placements",
+    "title": "Get featured in the newsletters and communities your buyers read",
+    "description": "Finds newsletters and communities your buyers read that have a written way in, such as a featured-tool slot, reader submissions, a showcase thread or a sponsorship, verifies each one's rules, and drafts one submission per placement in your voice. Skips placements drafted in earlier runs; never submits, pays or contacts anyone.",
+    "executor": "codex.procedure",
+    "version": "2.0.0",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "focus": {
+          "type": "string",
+          "title": "Who to reach (optional)",
+          "description": "Leave empty to use the buyers named in the growth plan and Feature map.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "geography": {
+          "type": "string",
+          "title": "Geography (optional)",
+          "description": "Leave empty to use the market in the growth plan.",
+          "maxLength": 500,
+          "default": "",
+          "x-tin-ui": { "control": "text", "order": 20 }
+        },
+        "budget_usd": {
+          "type": "integer",
+          "title": "Sponsorship budget per placement (USD)",
+          "description": "0 keeps the list to free placements. Paid slots above this are left out.",
+          "minimum": 0,
+          "maximum": 20000,
+          "default": 0,
+          "x-tin-ui": { "control": "number", "order": 30 }
+        },
+        "max_picks": {
+          "type": "integer",
+          "title": "Maximum placements",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5,
+          "x-tin-ui": { "control": "counter", "order": 40 }
+        }
+      }
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the buyers, the market, the budget and the hard no's."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map supplies the real product detail each submission cites."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes the drafted submissions."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": ["skills/newsletter-placements/SKILL.md"],
+      "entry_skill": "newsletter-placements",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 900 },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/outreach/newsletters/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 120000
+      }
+    }
+  }
+}

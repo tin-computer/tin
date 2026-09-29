@@ -25,6 +25,7 @@ from tin_lite.activity_lanes import (
     workflow_runner,
 )
 from tin_lite.answer_page import AnswerPageDrafter
+from tin_lite.awesome_submit_activities import AwesomeSubmitActivities
 from tin_lite.catalog import sync_builtin_workflows
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.character_design import CharacterDesigner
@@ -292,6 +293,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         router=model_router,
         integrations=integrations,
     )
+    awesome_submit_activities = AwesomeSubmitActivities(
+        database=database, storage=storage, integrations=integrations
+    )
     from tin_lite.code_activities import CodeActivities
 
     code = CodeActivities(common=activity_instance, model_router=model_router)
@@ -336,6 +340,13 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         paid_ads_monitor_activities.propose,
         paid_ads_monitor_activities.publish,
         paid_ads_monitor_activities.failure,
+        awesome_submit_activities.prepare,
+        awesome_submit_activities.draft,
+        awesome_submit_activities.request_review,
+        awesome_submit_activities.record_approval,
+        awesome_submit_activities.apply,
+        awesome_submit_activities.publish,
+        awesome_submit_activities.failure,
         organic_system.organic_system_prepare,
         organic_system.organic_system_step,
         organic_system.organic_system_step_failure,
