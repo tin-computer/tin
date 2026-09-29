@@ -4,6 +4,7 @@ from datetime import date
 
 from tin_lite.content_plan import DURATIONS
 from tin_lite.organic_audit import MARKETS, public_site
+from tin_lite.schedules import WEEKDAYS
 
 KEY = "organic.traffic_system"
 TECHNICAL_KEY = "organic.technical_fix"
@@ -20,15 +21,27 @@ LEGACY_POLICY = {
     "schedule": "manual_only",
 }
 STEPS = {**LEGACY_STEPS, "draft": "content.generate", "delivery": "content.deliver"}
-POLICY = {**LEGACY_POLICY, "version": "organic-traffic-v2", "steps": STEPS}
+CONTENT_POLICY = {**LEGACY_POLICY, "version": "organic-traffic-v2", "steps": STEPS}
+# v3 keeps the same child runs and then saves one weekly content.generate configuration
+# for the program it planned. The saved schedule is not a child run and not parent spend.
+POLICY = {**CONTENT_POLICY, "version": "organic-traffic-v3", "schedule": "weekly_articles"}
+DRAFT_POLICIES = (CONTENT_POLICY, POLICY)
 
 
 def policy_steps(policy):
     if policy == LEGACY_POLICY:
         return LEGACY_STEPS
-    if policy == POLICY:
+    if policy in DRAFT_POLICIES:
         return STEPS
     raise ValueError("Unsupported organic system policy.")
+
+
+def drafts_articles(policy):
+    return policy in DRAFT_POLICIES
+
+
+def schedules_articles(policy):
+    return policy == POLICY
 
 
 INPUT_SCHEMA = {
@@ -93,6 +106,22 @@ INPUT_SCHEMA = {
             "default": False,
             "title": "This repository serves the audited website",
         },
+        "article_weekdays": {
+            "type": "array",
+            "title": "Draft the next article on",
+            "items": {"type": "string", "enum": list(WEEKDAYS)},
+            "uniqueItems": True,
+            "maxItems": 7,
+            "default": ["tuesday"],
+            "description": "After the first article, Tin drafts the next planned article on "
+            "these days, one review at a time. Leave empty to keep drafting on demand.",
+        },
+        "article_local_time": {
+            "type": "string",
+            "title": "Drafting time",
+            "pattern": r"^(?:[01]\d|2[0-3]):[0-5]\d$",
+            "default": "10:00",
+        },
     },
     "required": ["project_id", "site_url", "market", "buyer_context", "start_date"],
 }
@@ -107,6 +136,9 @@ def check_inputs(inputs):
         inputs.get("repository_serves_site") is not True or not inputs.get("expected_repository")
     ):
         raise ValueError("Confirm the exact GitHub repository before enabling technical fixes.")
+    weekdays = inputs.get("article_weekdays", [])
+    if len(set(weekdays)) != len(weekdays) or any(day not in WEEKDAYS for day in weekdays):
+        raise ValueError("Choose each drafting weekday once, by its lowercase English name.")
 
 
 async def system_facts(*, database, project_id, run_id):
@@ -117,7 +149,7 @@ async def system_facts(*, database, project_id, run_id):
     policy = (prepared.result or {}).get("policy") if prepared else None
     # Old receipts and old runs retain their four-step projection.
     selected_steps = policy_steps(
-        policy or (POLICY if "content_delivery" in run.input else LEGACY_POLICY)
+        policy or (CONTENT_POLICY if "content_delivery" in run.input else LEGACY_POLICY)
     )
     steps = []
     for step, key in selected_steps.items():
@@ -158,11 +190,14 @@ async def system_facts(*, database, project_id, run_id):
                 else None,
             }
         )
+    weekly = await database.get_effect(f"traffic:{run_id}:weekly")
     return {
         "run_id": str(run.id),
         "project_id": str(project_id),
         "status": run.status.value,
         "steps": steps,
+        # The saved weekly drafting configuration, when this recipe includes one.
+        "weekly_articles": weekly.result if weekly and weekly.status == "completed" else None,
         "artifact_path": run.artifact_path,
         "artifact_ref": run.artifact_ref,
     }

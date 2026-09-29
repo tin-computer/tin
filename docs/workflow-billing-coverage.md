@@ -28,7 +28,8 @@ hosted-default policy does so. Neither enables live Stripe charging.
   supplier responses, including usage recorded before content validation fails.
 - `organic.traffic_system`: one root spending ceiling;
   child operations reserve per call and are charged once at root settlement. There is
-  no extra orchestration fee.
+  no extra orchestration fee. The weekly `content.generate` schedule it saves is outside
+  that ceiling: each occurrence is an ordinary scheduled run with its own funding.
 - Both Start here entries, `growth.onboarding` and `growth.onboarding_plan`, are
   free for now. Their approved initial setup children inherit a trusted included
   receipt, not a customer credit budget. No paid quote, reservation or ledger

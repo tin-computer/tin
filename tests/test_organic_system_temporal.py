@@ -66,6 +66,56 @@ class LegacyOrganicSystem:
             raise
 
 
+@workflow.defn(name="organic.traffic_system")
+class ContinuationOrganicSystem:
+    """The v2 command sequence before weekly drafting, retained only for replay history."""
+
+    @workflow.run
+    async def run(self, run_id: str):
+        async def call(name, argument, minutes=2):
+            return await workflow.execute_activity(
+                name,
+                argument,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        async def step(name):
+            payload = {"run_id": run_id, "step": name}
+            try:
+                child = await call("organic_system_step", payload)
+                if "run_id" in child:
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+            except Exception:
+                await call("organic_system_step_failure", payload)
+            await call("organic_system_progress", run_id)
+
+        try:
+            await call("organic_system_prepare", run_id)
+            audit = asyncio.create_task(step("audit"))
+            keywords = asyncio.create_task(step("keywords"))
+            await audit
+            technical = asyncio.create_task(step("technical"))
+            await keywords
+            await step("content")
+            await technical
+            if workflow.patched("organic-content-continuation-v1"):
+                await step("draft")
+                await step("delivery")
+            if not await call("organic_system_finish", run_id, minutes=5):
+                raise ApplicationError("One or more organic system steps could not finish.")
+        except BaseException:
+            await call("organic_system_failure", run_id)
+            raise
+
+
 @workflow.defn(name="recipe-test-child")
 class RecipeChild:
     @workflow.run
@@ -79,9 +129,16 @@ class RecipeChild:
             raise ApplicationError("Fixture child failed", non_retryable=True)
 
 
+RECIPES = {
+    "legacy": LegacyOrganicSystem,
+    "continuation": ContinuationOrganicSystem,
+    "weekly": OrganicTrafficSystemWorkflow,
+}
+
+
 @pytest.mark.parametrize("keyword_fails", [False, True])
-@pytest.mark.parametrize("legacy", [False, True])
-async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, legacy):
+@pytest.mark.parametrize("recipe", list(RECIPES))
+async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, recipe):
     binary = shutil.which("temporal")
     if binary is None:
         pytest.skip("local Temporal CLI required")
@@ -90,9 +147,9 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, le
         step: str(uuid4())
         for step in ("audit", "keywords", "technical", "content", "draft", "delivery")
     }
-    if legacy:
+    if recipe == "legacy":
         ids = {key: value for key, value in ids.items() if key not in {"draft", "delivery"}}
-    implementation = LegacyOrganicSystem if legacy else OrganicTrafficSystemWorkflow
+    implementation = RECIPES[recipe]
     started, finished, calls, dispatches = set(), set(), [], {}
     research_started = asyncio.Event()
     injected_loss = False
@@ -138,11 +195,18 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, le
                     injected_loss = True
                     raise ApplicationError("Fixture lost activity response")
                 return dispatches[step]
+            if name == "organic_system_weekly_articles":
+                # Saved once the plan step is accounted for, beside the first draft.
+                assert argument == run_id and "content" in accounted
+                return {"status": "skipped" if keyword_fails else "succeeded"}
+            if name == "organic_system_progress":
+                accounted.update(finished | ({"content"} if keyword_fails else set()))
             if name == "organic_system_finish":
                 return not keyword_fails
 
         return perform
 
+    accounted = set()
     names = [
         "organic_system_prepare",
         "organic_system_step",
@@ -150,6 +214,8 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, le
         "organic_system_progress",
         "organic_system_finish",
         "organic_system_failure",
+        "organic_system_weekly_articles",
+        "organic_system_weekly_articles_failure",
     ]
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=binary, dev_server_log_level="error"
@@ -174,8 +240,11 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, le
             else:
                 await asyncio.wait_for(handle.result(), 45)
             history = await handle.fetch_history()
+        # Every older recipe history replays through the current code's patch boundaries.
         await Replayer(workflows=[OrganicTrafficSystemWorkflow]).replay_workflow(history)
     assert finished == ({"audit", "keywords", "technical"} if keyword_fails else set(ids))
+    weekly_calls = [name for name, _ in calls if name.startswith("organic_system_weekly")]
+    assert weekly_calls == (["organic_system_weekly_articles"] if recipe == "weekly" else [])
     child_events = [
         event.start_child_workflow_execution_initiated_event_attributes
         for event in history.events
@@ -188,6 +257,59 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, le
             for payload in event.activity_task_scheduled_event_attributes.input.payloads:
                 value = json.loads(payload.data)
                 assert value == run_id or value in [{"run_id": run_id, "step": key} for key in ids]
+
+
+async def test_weekly_schedule_failure_is_recorded_without_failing_the_recipe():
+    binary = shutil.which("temporal")
+    if binary is None:
+        pytest.skip("local Temporal CLI required")
+    run_id, calls = str(uuid4()), []
+
+    def stub(name):
+        @activity.defn(name=name)
+        async def perform(argument):
+            calls.append(name)
+            if name == "organic_system_step":
+                return {"status": "skipped", "reason": "not_requested"}
+            if name == "organic_system_weekly_articles":
+                raise ApplicationError("Fixture schedule service is down", non_retryable=True)
+            if name == "organic_system_finish":
+                return True
+
+        return perform
+
+    names = [
+        "organic_system_prepare",
+        "organic_system_step",
+        "organic_system_step_failure",
+        "organic_system_progress",
+        "organic_system_finish",
+        "organic_system_failure",
+        "organic_system_weekly_articles",
+        "organic_system_weekly_articles_failure",
+    ]
+    async with await WorkflowEnvironment.start_local(
+        dev_server_existing_path=binary, dev_server_log_level="error"
+    ) as env:
+        async with Worker(
+            env.client,
+            task_queue="weekly-test",
+            workflows=[OrganicTrafficSystemWorkflow],
+            activities=[stub(name) for name in names],
+        ):
+            await asyncio.wait_for(
+                env.client.execute_workflow(
+                    OrganicTrafficSystemWorkflow.run,
+                    run_id,
+                    id=f"weekly:{run_id}",
+                    task_queue="weekly-test",
+                ),
+                30,
+            )
+    assert calls.count("organic_system_weekly_articles") == 1
+    assert calls.count("organic_system_weekly_articles_failure") == 1
+    assert "organic_system_failure" not in calls
+    assert calls[-1] == "organic_system_finish"
 
 
 @pytest.mark.parametrize("no_change", [False, True])

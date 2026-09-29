@@ -28,7 +28,7 @@ async def effect(db, key, value):
         await db.complete_effect(conn, execution_key=key, result=value)
 
 
-async def system_fixture(db, monkeypatch, *, github=True):
+async def system_fixture(db, monkeypatch, *, github=True, inputs=None, temporal=None):
     f = await configured(await setup(db, monkeypatch, planned=True))
     monkeypatch.setattr(
         db,
@@ -84,6 +84,7 @@ async def system_fixture(db, monkeypatch, *, github=True):
             "market": "US",
             "buyer_context": "Useful software for independent consultants.",
             "start_date": "2026-09-14",
+            **(inputs or {}),
         },
     )
     f.parent, _ = await db.create_run(
@@ -114,6 +115,7 @@ async def system_fixture(db, monkeypatch, *, github=True):
         storage=f.storage,
         settings=f.settings,
         integrations=f.runtime.integrations,
+        temporal=temporal,
     )
     return f
 

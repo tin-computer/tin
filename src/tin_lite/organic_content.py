@@ -44,7 +44,7 @@ async def draft_intent(database, *, parent_id, project_id, actor, selected):
         or parent.started_by_clerk_user_id != actor
         or not prepared
         or prepared.status != "completed"
-        or prepared.result.get("policy") != organic_system.POLICY
+        or not organic_system.drafts_articles(prepared.result.get("policy"))
         or not content
         or content.status != "completed"
     ):

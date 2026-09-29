@@ -93,6 +93,8 @@ TRUSTED_ACTIVITIES = frozenset(
         "organic_system_progress",
         "organic_system_step",
         "organic_system_step_failure",
+        "organic_system_weekly_articles",
+        "organic_system_weekly_articles_failure",
         "paid_ads_assess",
         "paid_ads_failure",
         "paid_ads_gather",

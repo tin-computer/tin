@@ -1172,6 +1172,12 @@ class OrganicTrafficSystemWorkflow:
                 await call("organic_system_step_failure", payload)
             await call("organic_system_progress", run_id)
 
+        async def weekly_articles():
+            try:
+                await call("organic_system_weekly_articles", run_id)
+            except Exception:
+                await call("organic_system_weekly_articles_failure", run_id)
+
         try:
             await call("organic_system_prepare", run_id)
             audit = asyncio.create_task(step("audit"))
@@ -1182,8 +1188,15 @@ class OrganicTrafficSystemWorkflow:
             await step("content")
             await technical
             if workflow.patched("organic-content-continuation-v1"):
+                weekly = None
+                if workflow.patched("organic-weekly-articles-v1"):
+                    # Saved beside the first draft, which may wait days for review. A failure
+                    # is recorded on its own and never fails the recipe's child runs.
+                    weekly = asyncio.create_task(weekly_articles())
                 await step("draft")
                 await step("delivery")
+                if weekly is not None:
+                    await weekly
             succeeded = await call("organic_system_finish", run_id, minutes=5)
             if not succeeded:
                 raise ApplicationError("One or more organic system steps could not finish.")
