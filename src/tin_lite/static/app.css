@@ -4582,6 +4582,39 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 23px;
 }
 
+p.page-url-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  max-width: 680px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
+}
+
+p.page-url-line[hidden] {
+  display: none;
+}
+
+.page-url-line code,
+.page-url-line a {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.page-url-line span {
+  flex-basis: 100%;
+  color: var(--ink-muted);
+}
+
+.markdown-viewer-body > .page-url-line {
+  margin: 12px auto 0;
+  padding: 0 24px;
+}
+
 .decision-outputs {
   display: flex;
   flex-direction: column;

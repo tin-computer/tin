@@ -3078,6 +3078,11 @@ function renderDocument() {
             }
           : null,
     });
+    const readerBody = route.source !== "retained" && !route.taskPath ? main.querySelector?.(".markdown-viewer-body") : null;
+    if (readerBody) {
+      readerBody.insertAdjacentHTML("afterbegin", pageUrlLine(run));
+      bindPageUrls();
+    }
     if (route.source !== "retained" && supportsArticleFeedback(run)) {
       const cleanReader = state.documentCleanup;
       const cleanReview = mountArticleFeedback(main, run.id, true);
@@ -4272,6 +4277,20 @@ function decisionApprovalHtml(decision, run) {
     <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
 }
 
+function pageUrlLine(run) {
+  return run && window.TinPageUrl ? window.TinPageUrl.html(run.page_url, run.id, {pending: isContentDraftReview(run)}) : "";
+}
+
+function bindPageUrls() {
+  window.TinPageUrl?.bind(main, {
+    api,
+    onUpdate: (id, page) => {
+      const run = state.runs.find((item) => item.id === id);
+      if (run) run.page_url = page;
+    },
+  });
+}
+
 function decisionDetailHtml(decision) {
   if (!decision) return "";
   const outputs = decision.items || [];
@@ -4291,6 +4310,7 @@ function decisionDetailHtml(decision) {
     </header>
     <div class="decision-detail-body">
       <p>${escapeHtml(decision.explanation)}</p>
+      ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
       <div class="decision-outputs">
         ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : '<span class="decision-no-output">Open the run to review its proposed changes.</span>'}
       </div>
@@ -4349,6 +4369,7 @@ function renderDecisions() {
     navigate("integrations");
   });
   main.querySelector("[data-output-compare]")?.addEventListener("click", () => openOutputComparison(decision.run_id, "decisions"));
+  bindPageUrls();
   if (decision && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
