@@ -731,7 +731,8 @@ def test_pinned_answer_page_suite_carries_the_search_structure_rules():
     definition, _ = workflow.definition_and_resource_files()
     suite = pinned_suite(definition, "content.answer_page")
     assert "ANSWER_PLAN_V1" in suite and "ANSWER_SEO_V1" in suite
-    assert workflow.version_label == "1.3.0"
+    assert "ANSWER_REPAIR_V1" in suite
+    assert workflow.version_label == "1.4.0"
 
 
 def test_delivery_writes_one_header_with_the_search_listing():
@@ -771,3 +772,153 @@ def test_answer_page_names_come_from_the_date_and_question():
     assert (
         len(answer_page_path("word " * 60, "2026-09-28")) <= len("content/answers/") + 11 + 80 + 3
     )
+
+
+def sequenced_responses(*texts: str) -> FakeResponses:
+    """The research call answers with the first page, each later call with the next one."""
+    responses = FakeResponses()
+    original = responses.create
+
+    async def create(payload: dict) -> dict:
+        response = await original(payload)
+        index = len(responses.payloads) - 1
+        response["id"] = f"resp_{index}"
+        response["output"][1]["content"][0]["text"] = texts[index]
+        if "tools" not in payload:
+            response["output"] = response["output"][1:]  # No search without the tool.
+        return response
+
+    responses.create = create  # type: ignore[method-assign]
+    return responses
+
+
+REPAIR_SUITE = "# Rules\nANSWER_SEO_V1\nANSWER_REPAIR_V1"
+
+
+@pytest.mark.asyncio
+async def test_a_page_that_misses_its_checks_gets_one_repair_without_search() -> None:
+    missing_faq = structured_page(faq="")
+    responses = sequenced_responses(missing_faq, structured_page())
+    drafter = AnswerPageDrafter(responses=responses, skill_suite=REPAIR_SUITE)
+
+    draft = await drafter.draft(project_name="Tin", sources=[], today="2026-09-28")
+    assert draft["failed_checks"] == [
+        "answer page must include an FAQ section with at least two questions"
+    ]
+    assert len(responses.payloads) == 1
+    repaired = await drafter.repair(draft=draft, today="2026-09-28")
+
+    payload = responses.payloads[1]
+    assert "tools" not in payload and "tool_choice" not in payload
+    sent = json.loads(payload["input"])
+    assert sent["repair"]["failed_checks"] == draft["failed_checks"]
+    assert sent["repair"]["page"] == draft["markdown"]
+    assert sent["repair"]["research"]["sources"] == draft["sources"]
+    assert "failed_checks" not in repaired
+    assert repaired["repair"]["response_id"] == "resp_1"
+    assert repaired["response_id"] == "resp_0" and repaired["search_calls"] == 1
+    page, evidence = drafter.build_artifacts(
+        run_id="run-1",
+        source_refs=[],
+        draft=repaired,
+        artifact_path="content/answers/2026-09-28-reliable-ai-work.md",
+        evidence_path="reports/answer-page/run-1/evidence.json",
+    )
+    assert "## FAQ" in page.decode()
+    assert json.loads(evidence)["repair"]["failed_checks"] == draft["failed_checks"]
+    validate_answer_page_artifacts(
+        page,
+        evidence,
+        artifact_path="content/answers/2026-09-28-reliable-ai-work.md",
+        evidence_path="reports/answer-page/run-1/evidence.json",
+    )
+
+
+@pytest.mark.asyncio
+async def test_repair_reports_every_check_the_page_still_misses() -> None:
+    broken = structured_page(faq="").replace("## How do the options compare?", "## Options")
+    responses = sequenced_responses(broken, broken)
+    drafter = AnswerPageDrafter(responses=responses, skill_suite=REPAIR_SUITE)
+
+    draft = await drafter.draft(project_name="Tin", sources=[], today="2026-09-28")
+    assert len(draft["failed_checks"]) == 2
+    repaired = await drafter.repair(draft=draft, today="2026-09-28")
+    assert repaired["failed_checks"] == draft["failed_checks"]
+
+
+@pytest.mark.asyncio
+async def test_suites_pinned_before_the_repair_still_fail_on_the_first_draft() -> None:
+    drafter = AnswerPageDrafter(
+        responses=sequenced_responses(structured_page(faq="")),
+        skill_suite="# Rules\nANSWER_SEO_V1",
+    )
+    with pytest.raises(ValueError, match="FAQ section"):
+        await drafter.draft(project_name="Tin", sources=[], today="2026-09-28")
+
+
+class RepairingDrafter(FakeDrafter):
+    def __init__(self, *, fixed: bool) -> None:
+        super().__init__()
+        self.fixed = fixed
+        self.repairs: list[dict] = []
+
+    async def draft(self, **values) -> dict:
+        result = await super().draft(**values)
+        return {**result, "failed_checks": ["answer page must end with its Sources section"]}
+
+    async def repair(self, *, draft: dict, today: str | None = None) -> dict:
+        self.repairs.append(draft)
+        result = {k: v for k, v in draft.items() if k != "failed_checks"}
+        result["repair"] = {"response_id": "resp_repair", "failed_checks": draft["failed_checks"]}
+        if not self.fixed:
+            result["failed_checks"] = draft["failed_checks"]
+        return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fixed", [True, False])
+async def test_repair_runs_once_as_its_own_metered_step(
+    monkeypatch: pytest.MonkeyPatch, fixed: bool
+) -> None:
+    from contextlib import contextmanager
+
+    from temporalio.exceptions import ApplicationError
+
+    project, run, visibility_run = activity_fixture()
+    run = replace(run, created_at=datetime(2026, 9, 28, 17, 0, tzinfo=UTC))
+    database = FakeDatabase(project=project, run=run, visibility_run=visibility_run)
+    storage = FakeStorage()
+    drafter = RepairingDrafter(fixed=fixed)
+    steps: list[str] = []
+
+    @contextmanager
+    def usage_scope(database, conn, run_id, step, **values):
+        steps.append(step)
+        yield
+
+    monkeypatch.setattr("tin_lite.activities.external_usage_scope", usage_scope)
+    monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda details: None)
+    activities = TinActivities(
+        database=database,  # type: ignore[arg-type]
+        storage=storage,  # type: ignore[arg-type]
+        sandboxes=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        answer_page_drafter=drafter,  # type: ignore[arg-type]
+    )
+
+    for _ in range(2):  # A retried activity reuses both receipts.
+        if fixed:
+            await activities.draft_answer_page(str(run.id))
+        else:
+            with pytest.raises(ApplicationError, match="still misses its checks") as raised:
+                await activities.draft_answer_page(str(run.id))
+            assert raised.value.non_retryable
+
+    assert drafter.calls == 1 and len(drafter.repairs) == 1
+    assert steps == ["answer_page", "answer_page_repair"]
+    assert database.receipts[f"{run.id}:answer_page:model"].status == "completed"
+    repair = database.receipts[f"{run.id}:answer_page:repair"]
+    assert repair.status == "completed" and repair.operation == "answer_page_repair_model"
+    committed = database.receipts.get(f"{run.id}:answer_page_commit")
+    assert (committed is not None) == fixed
+    assert (storage.publishes == 1) == fixed

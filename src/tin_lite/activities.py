@@ -1974,20 +1974,39 @@ class TinActivities:
         project = await self._require_project(run.project_id)
         await self._db.mark_run_running(run_id)
         sources = await self._answer_page_sources(run_id=run_id, project=project)
+        day = (run.created_at or datetime.now(UTC)).date().isoformat()
         draft = await self._await_with_heartbeats(
             self._answer_page_effect(
                 run_id=run_id,
                 execute=lambda: reporter.draft(
                     project_name=project.name,
                     sources=sources,
-                    today=(run.created_at or datetime.now(UTC)).date().isoformat(),
+                    today=day,
                 ),
             ),
             details={"stage": "answer_page_draft"},
         )
+        if draft.get("failed_checks"):
+            # One repair of the exact failed checks, reusing the paid research. Both calls
+            # are receipted, so a retry never buys either of them again.
+            missed = draft
+            draft = await self._await_with_heartbeats(
+                self._answer_page_effect(
+                    run_id=run_id,
+                    execute=lambda: reporter.repair(draft=missed, today=day),
+                    repair=True,
+                ),
+                details={"stage": "answer_page_repair"},
+            )
+            if draft.get("failed_checks"):
+                raise ApplicationError(
+                    "The answer page still misses its checks after one repair: "
+                    f"{draft['failed_checks'][0]}",
+                    type="AnswerPageChecksFailed",
+                    non_retryable=True,
+                )
         evidence_path = answer_page_evidence_path(run_id)
         title = page_title(str(draft["markdown"]))
-        day = (run.created_at or datetime.now(UTC)).date().isoformat()
         execution_key = f"{run_id}:answer_page_commit"
         operation = "answer_page_commit"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
@@ -4784,9 +4803,13 @@ class TinActivities:
         *,
         run_id: UUID,
         execute: Callable[[], Awaitable[dict[str, object]]],
+        repair: bool = False,
     ) -> dict:
-        execution_key = f"{run_id}:answer_page:model"
-        operation = "answer_page_model"
+        # The repair call is its own metered step with its own receipt and usage record.
+        step = "answer_page_repair" if repair else "answer_page"
+        execution_key = f"{run_id}:answer_page:repair" if repair else f"{run_id}:answer_page:model"
+        operation = "answer_page_repair_model" if repair else "answer_page_model"
+        label = "answer page repair" if repair else "answer page"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
             if existing is not None and existing.status == "completed":
                 if existing.result is None:
@@ -4795,9 +4818,9 @@ class TinActivities:
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 await _refuse_repeated_model_request(
-                    self._db, conn, run_id=run_id, step="answer_page", label="answer page"
+                    self._db, conn, run_id=run_id, step=step, label=label
                 )
-                with external_usage_scope(self._db, conn, run_id, "answer_page"):
+                with external_usage_scope(self._db, conn, run_id, step):
                     result = await execute()
                 await self._db.complete_effect(
                     conn,
@@ -4808,7 +4831,7 @@ class TinActivities:
             except BaseException as exc:
                 await _record_effect_failure(self._db, conn, execution_key=execution_key, exc=exc)
                 if isinstance(exc, ObservationAlreadyRecorded):
-                    raise _interrupted_model_request("answer page") from exc
+                    raise _interrupted_model_request(label) from exc
                 raise
 
     async def _answer_page_sources(self, *, run_id: UUID, project) -> list[AnswerPageSource]:

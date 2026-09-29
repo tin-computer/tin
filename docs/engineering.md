@@ -219,7 +219,13 @@ the frontmatter and the date line itself, rebuilding a missing or oversized list
 title and the opening answer. It then checks the pieces a model can leave out: the answer's
 length, two question headings, an FAQ with two questions, three listed sources, two inline
 citations and paragraphs under 150 words. The evidence records `structure: answer-seo-v1`, so
-pages drafted under an earlier pin keep the original checks. Delivery merges the page's
+pages drafted under an earlier pin keep the original checks. Answer page 1.4.0 adds the
+`answer-page/20-repair-failed-checks` skill (`ANSWER_REPAIR_V1`): when the researched draft
+misses any of these checks, Tin keeps it and sends the page, the exact failed checks and the
+saved research back to the model once, without web search, then checks again. The repair is its
+own receipted, metered step (`{run_id}:answer_page:repair`, usage step `answer_page_repair`), so
+a retry never buys it twice; the run fails only if the repaired page still misses a check.
+Evidence records the repair's response and the checks it fixed. Delivery merges the page's
 frontmatter with the configured header instead of writing two.
 
 `project.weekly_brief` summarizes the previous seven days of durable project runs, artifacts,
