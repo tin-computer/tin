@@ -307,8 +307,9 @@ retry after a crash between them reads only what is missing. The checks:
   closes, since RFC 9309 has no inheritance. The report also states each AI crawler's
   stance, including the training crawlers GPTBot, ClaudeBot, Google-Extended and CCBot.
 - Sitemap: none readable, unreadable files, URLs that are noindexed, redirect, error,
-  name another canonical or are disallowed, ad landing URLs (`/offer/`, `/lp/`, `utm_`
-  and similar), pages with impressions missing from the sitemap, and a uniform `lastmod`.
+  name another canonical, are disallowed or use plain HTTP (judged only for URLs that were
+  checked), ad landing URLs (`/offer/`, `/lp/`, `utm_` and similar), pages with
+  impressions missing from the sitemap, and a uniform `lastmod`.
 - Indexation: sign-in and account pages open to indexing, ad landing pages open to
   indexing, indexable pages whose canonical points elsewhere, noindexed pages that still
   get search traffic, and more than one canonical tag.
