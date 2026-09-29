@@ -152,6 +152,7 @@ async def test_second_batch_reads_edits_and_keeps_prior_review_annotations():
     assert second.calls[0]["data"]["unused_source_sentences"] == [
         "A reviewer can inspect an imported row beside its source record."
     ]
+    assert second.calls[0]["data"]["prior_draft_bodies"] == history["bodies"]
     assert result2["path"] != result1["path"]
     assert values[result1["path"]] == reviewed
     assert "Kept for later" not in result2["content"]
@@ -225,6 +226,12 @@ def test_source_provenance_paragraph_is_not_evidence():
     assert module._unused_sentences(notes, set()) == [
         "The CSV import retains a source record for each accepted row."
     ]
+
+
+def test_prior_draft_sample_uses_full_bodies_with_total_bound():
+    module, _ = package()
+    bodies = ["A" * 1400, "B" * 1400, "C" * 1400, "D" * 1400]
+    assert module._prior_body_sample(bodies) == bodies[:3]
 
 
 async def test_wrapped_qualification_cannot_be_cited_as_first_line_alone():
