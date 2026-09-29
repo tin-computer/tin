@@ -20,7 +20,7 @@ from tin_lite import paid_ads
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.model_providers import ModelProviderError, ModelResult, ModelUsage, ProviderName
 from tin_lite.organic_audit import canonical_json
-from tin_lite.paid_ads_activities import PaidAdsActivities
+from tin_lite.paid_ads_activities import MODEL_TIMEOUT_SECONDS, PaidAdsActivities
 
 INPUTS = {
     "project_id": PROJECT_ID,
@@ -171,9 +171,11 @@ def providers(model):
             "cached": False,
         }
 
-    async def generate(route, request):
+    async def generate(route, request, *, timeout_seconds=None):
         step = step_of(request.output_schema_name)
         assert route == paid_ads.route_for(step).key
+        # The client waits as long as the step's budget, not its 90-second default.
+        assert timeout_seconds == MODEL_TIMEOUT_SECONDS
         try:
             parsed = await model(
                 step, request.system, request.messages[0].content, request.output_schema, 0, ""

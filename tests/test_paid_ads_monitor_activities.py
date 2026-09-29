@@ -21,7 +21,11 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.domain import EffectReceipt, RunStatus
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
 from tin_lite.organic_audit import canonical_json, digest
-from tin_lite.paid_ads_monitor_activities import READS, PaidAdsMonitorActivities
+from tin_lite.paid_ads_monitor_activities import (
+    MODEL_TIMEOUT_SECONDS,
+    READS,
+    PaidAdsMonitorActivities,
+)
 
 CUSTOMER = "1234567890"
 CAMPAIGN_ID = "24143450789"
@@ -304,7 +308,9 @@ class MonitorModel:
     def __init__(self):
         self.calls = []
 
-    async def generate(self, route, request):
+    async def generate(self, route, request, *, timeout_seconds=None):
+        # The client waits as long as the step's budget, not its 90-second default.
+        assert timeout_seconds == MODEL_TIMEOUT_SECONDS
         name = request.output_schema_name.removeprefix("paid_ads_monitor_")
         step = name.removesuffix("_retry")
         self.calls.append(name)

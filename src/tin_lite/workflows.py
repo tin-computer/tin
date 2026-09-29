@@ -1103,10 +1103,25 @@ class KeywordPlanWorkflow:
                     return
                 await execute(name, minutes=25 if name == "keyword_collect" else 5)
             count = await execute("keyword_sample_count")
-            for index in range(count):
-                if self._stopped:
-                    return
-                await execute("keyword_inspect", {"run_id": run_id, "index": index}, minutes=2)
+            if workflow.patched("keyword-inspect-batch-v1"):
+                # One activity inspects the samples a few at a time. Each sample keeps its own
+                # receipt; a stop is fenced by the run's status before every paid request.
+                if count and not self._stopped:
+                    await workflow.execute_activity(
+                        "keyword_inspect_batch",
+                        run_id,
+                        start_to_close_timeout=timedelta(minutes=20),
+                        heartbeat_timeout=timedelta(minutes=2),
+                        retry_policy=RetryPolicy(
+                            maximum_attempts=3, maximum_interval=timedelta(seconds=10)
+                        ),
+                    )
+            else:
+                # Histories started before the batch keep inspecting one sample per activity.
+                for index in range(count):
+                    if self._stopped:
+                        return
+                    await execute("keyword_inspect", {"run_id": run_id, "index": index}, minutes=2)
             for name in ("keyword_review", "keyword_publish", "keyword_project"):
                 if self._stopped:
                     return
@@ -1173,10 +1188,12 @@ class ContentPlanWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # Up to 60 page reads (four at a time, 20 s each) and a model wait of five and a
+            # half minutes must fit in one attempt; a cut-off model call cannot be bought again.
             await workflow.execute_activity(
                 "content_plan_execute",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3, maximum_interval=timedelta(seconds=10)
                 ),

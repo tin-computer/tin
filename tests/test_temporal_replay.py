@@ -15,6 +15,7 @@ from tin_lite.workflows import (
     CodeWorkflow,
     CodexProcedureWorkflow,
     DesignMdWorkflow,
+    KeywordPlanWorkflow,
     ProjectMemoryWorkflow,
     ProjectTaskWorkflow,
     ScanReportWorkflow,
@@ -113,6 +114,12 @@ ACCEPTED_HISTORIES = (
         CodexProcedureWorkflow,
         "codex.procedure:418719c1-4dbf-44fc-9833-b012b2a0f299",
         FIXTURES / "codex_procedure_review_history.json",
+    ),
+    # Recorded locally before keyword-inspect-batch-v1: one keyword_inspect per sample.
+    (
+        KeywordPlanWorkflow,
+        "organic.keyword_plan:5f0b2c8e-3d4a-4f6b-9a1e-7c2d8e9f0a1b",
+        FIXTURES / "keyword_plan_history.json",
     ),
 )
 
