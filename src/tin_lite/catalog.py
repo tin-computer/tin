@@ -496,7 +496,7 @@ BUILTIN_WORKFLOWS = (
         "existing format and components. Preserve its copy, leave a reviewable GitHub PR "
         "unmerged, and keep the Markdown original in Tin.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.1",
+        version_label="1.1.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={

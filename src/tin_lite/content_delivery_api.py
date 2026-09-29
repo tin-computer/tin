@@ -32,6 +32,16 @@ def delivery_service(runtime):
     )
 
 
+def page_url_service(runtime):
+    from tin_lite.page_urls import PageUrls
+
+    return PageUrls(
+        database=runtime.database,
+        storage=getattr(runtime, "storage", None),
+        integrations=getattr(runtime, "integrations", None),
+    )
+
+
 async def retry_delivery(*, runtime, settings, project_id, run_id):
     service = delivery_service(runtime)
     run = await runtime.database.get_run(run_id)

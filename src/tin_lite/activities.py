@@ -3658,6 +3658,11 @@ class TinActivities:
                             "repository": pull_request.repository,
                             "pull_request_number": pull_request.number,
                             "pull_request_branch": pull_request.branch,
+                            **(
+                                {"public_route": copy_proof["public_route"]}
+                                if copy_proof and copy_proof.get("public_route")
+                                else {}
+                            ),
                         }
                         await self._db.add_activity(
                             run_id=run_id,

@@ -21,6 +21,9 @@ description: Adapt one approved article to an existing site without rewriting it
 6. Check open PRs before editing; do not duplicate overlapping work. Run relevant checks
    that the environment supports, plus git diff --check. Do not edit build scripts or
    tests to make them pass. Do not pretend unavailable build checks were performed.
-7. Return the normal PR title/body result. The body must name the article source, the
-   public route, exact copy preservation, changed paths, checks run and checks skipped.
+7. Return the normal PR title/body result. The body must name the article source, exact
+   copy preservation, changed paths, checks run and checks skipped, and give the page's
+   address on its own line as `Public URL: https://<site host>/<route>`, or
+   `Public URL: unknown` when the repository does not show the route. Tin shows this
+   address to the reviewer and checks it after the merge, so never guess a host.
    The trusted gateway opens the PR; you do not use provider credentials or push it.

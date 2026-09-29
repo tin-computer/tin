@@ -27,7 +27,12 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.content_delivery import DeliverySettings
-from tin_lite.content_delivery_api import SaveDelivery, delivery_service, retry_delivery
+from tin_lite.content_delivery_api import (
+    SaveDelivery,
+    delivery_service,
+    page_url_service,
+    retry_delivery,
+)
 from tin_lite.content_plan import ContentPlan
 from tin_lite.content_program_api import (
     EditPlan,
@@ -2462,6 +2467,7 @@ def create_mcp_app(
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="get_run")
         review_summary = await _review_summary(runtime().database, run)
+        delivery = await delivery_service(runtime()).status(run)
         return {
             "id": str(run.id),
             "project_id": str(run.project_id),
@@ -2486,7 +2492,9 @@ def create_mcp_app(
             "allowed_actions": _run_allowed_actions(run),
             "error": run.error_message,
             "review_summary": review_summary,
-            "content_delivery": await delivery_service(runtime()).status(run),
+            "content_delivery": delivery,
+            # Where a proposed page will appear, and whether Tin has found it live.
+            "page_url": await page_url_service(runtime()).view(run, delivery, check=True),
             "progress": {
                 "step": getattr(run, "progress_step", None),
                 "current": getattr(run, "progress_current", None),
