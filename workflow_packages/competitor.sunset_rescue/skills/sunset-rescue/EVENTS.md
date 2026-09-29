@@ -22,13 +22,17 @@ if they suggest a future event.
 
 ## Search budget
 
-A run makes at most 8 web searches in total, not counting opening the vendor pages it needs
-as primary sources. Spend them in this order and stop when the budget is used:
+A run makes at most 8 discovery searches. Opening a vendor's pages, or a `site:` search to find
+the primary source for an event you already found, confirms rather than discovers and does not
+count. Spend the budget in this order and stop when it is used:
 
 1. Tools already on the watch list whose reconsider date has arrived, and tools with a
    material change in the newest competitor-watch report.
 2. The tool named in known_event.
-3. The open sweep below, for tools Tin does not track yet.
+3. The direct substitutes named in the onboarding plan, the Feature map or the keyword plan,
+   up to three, one combined search each (`"<tool>" shutting down OR discontinued OR "free plan"`).
+   Substitutes lose users to this product most directly, so they come before the open sweep.
+4. The open sweep below, for tools Tin does not track yet.
 
 Record every search in the evidence block, so the next run does not repeat a search that
 found nothing.

@@ -127,7 +127,7 @@ def test_every_skill_file_is_declared_and_referenced():
     method = (SKILL / "SKILL.md").read_text()
     for name in ("EVENTS.md", "SCORING.md", "REPORT.md"):
         assert name in method
-    assert "at most 8 web searches" in (SKILL / "EVENTS.md").read_text()
+    assert "at most 8 discovery searches" in (SKILL / "EVENTS.md").read_text()
 
 
 def test_report_template_and_cases_agree_on_headings():
