@@ -477,25 +477,30 @@ async def test_code_bridge_hands_service_errors_to_authored_code(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "failure",
+    "failure,reason",
     [
         # The package caught the refusal, then failed or ran out of time on its own.
-        dict(exit=1),
+        (dict(exit=1), "the package exited without a valid result"),
         # E2B could not return the result after the package had handled the refusal.
-        dict(result=RuntimeError("fixture sandbox read failed")),
+        (
+            dict(result=RuntimeError("private sandbox read failure")),
+            "the sandbox could not return its result",
+        ),
+        (dict(result=TimeoutError("private timeout details")), "the sandbox timed out"),
     ],
 )
 async def test_code_bridge_keeps_a_handled_service_error_out_of_later_failures(
-    monkeypatch, failure
+    monkeypatch, failure, reason
 ):
     runtime, run, replies, outcomes, package = code_bridge(monkeypatch)
     package.requests = 1
     for name, value in failure.items():
         setattr(package, name, value)
     outcomes[:] = [CodeServiceError("Stripe rate-limited this read (fixture).")]
-    with pytest.raises(RuntimeError, match="Code workflow failed") as failed:
+    with pytest.raises(RuntimeError, match=reason) as failed:
         await runtime.run_code_and_kill(**run)
     assert not isinstance(failed.value, CodeServiceError)
+    assert "private" not in str(failed.value)
     assert replies == [{"error": "Stripe rate-limited this read (fixture)."}]
 
 

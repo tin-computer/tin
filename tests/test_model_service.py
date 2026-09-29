@@ -252,7 +252,7 @@ async def test_uncertain_request_retains_intent_and_is_not_rebought(publication_
     def fail(_):
         if cancel:
             raise asyncio.CancelledError()
-        raise httpx.ReadTimeout("no response")
+        raise httpx.ReadTimeout("private provider body and credential must not be stored")
 
     run, router, calls = await fixture(db, fail)
     try:
@@ -263,6 +263,10 @@ async def test_uncertain_request_retains_intent_and_is_not_rebought(publication_
         [(status, record)] = await receipts(db)
         assert status == "started" and record["outcome"] == "unconfirmed"
         assert record["usage"] == asdict(ModelUsage()) and len(calls) == 1
+        assert record["failure_reason"] == (
+            "execution_interrupted" if cancel else "provider_timeout"
+        )
+        assert "private provider" not in json.dumps(record)
     finally:
         await router.close()
 

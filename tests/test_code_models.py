@@ -12,6 +12,7 @@ from copy import deepcopy
 from dataclasses import replace
 from datetime import timedelta
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import httpx
@@ -372,6 +373,11 @@ async def test_completed_call_replays_after_loss_and_charges_once(billed, monkey
     with pytest.raises(RuntimeError, match="worker loss"):
         await ActivityEnvironment().run(code.execute, run_id)
     assert len(calls) == 1
+    receipt = await f.db.get_effect(f"{run_id}:procedure_artifact_persist")
+    assert (
+        receipt.result["failure_reason"] == "Code workflow failed during execution (RuntimeError)."
+    )
+    assert "simulated worker loss" not in json.dumps(receipt.result)
     progress = await f.db.get_run(UUID(run_id))
     assert progress.progress_summary.startswith("Completed 1 managed step")
     assert progress.progress_percent is None
@@ -403,6 +409,32 @@ async def test_completed_call_replays_after_loss_and_charges_once(billed, monkey
         == 1
     )
     await fresh_router.close()
+
+
+async def test_checkpoint_write_failure_keeps_its_reason_and_reuses_paid_model(billed, monkeypatch):
+    f = billed
+    server, common, code, active, calls = await prepare(f, monkeypatch)
+    run_id = (await start(f, server, active))["id"]
+    stage = f.storage.stage_native_output
+    monkeypatch.setattr(
+        f.storage, "stage_native_output", AsyncMock(side_effect=ConnectionError("private payload"))
+    )
+    with pytest.raises(ConnectionError):
+        await ActivityEnvironment().run(code.execute, run_id)
+    receipt = await f.db.get_effect(f"{run_id}:procedure_artifact_persist")
+    assert receipt.result["failure_reason"] == (
+        "Code workflow failed during saving the result checkpoint (ConnectionError)."
+    )
+    assert "private payload" not in json.dumps(receipt.result)
+    project_failure = AsyncMock()
+    monkeypatch.setattr(common, "project_codex_procedure_failure", project_failure)
+    await code.failure(run_id)
+    assert project_failure.await_args.args[0]["reason"] == receipt.result["failure_reason"]
+    monkeypatch.setattr(f.storage, "stage_native_output", stage)
+    await ActivityEnvironment().run(code.execute, run_id)
+    assert len(calls) == 1
+    assert (await f.db.get_effect(f"{run_id}:procedure_artifact_persist")).status == "completed"
+    await code.models.router.close()
 
 
 async def test_step_fingerprint_call_limit_and_active_authority(billed, monkeypatch):
