@@ -12,6 +12,7 @@ from uuid import UUID
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
+from tin_lite.document_handoff import document_handoff
 from tin_lite.growth_onboarding import (
     CONTENT_DRAFT_KEYS,
     current_plan_text,
@@ -72,7 +73,10 @@ def delivery_destination(settings: Any, project_id: UUID) -> dict[str, Any]:
 
 
 def result_links(settings: Any, run: Any) -> list[dict[str, Any]]:
-    """Only advertise an individual result when an artifact actually exists."""
+    """Only advertise an individual result when an artifact actually exists.
+
+    Each link also tells the founder's agent how to revise the document: see document_handoff.
+    """
     if not getattr(run, "artifact_path", None) or not getattr(run, "canonical_commit_sha", None):
         return []
     review = run.status.value == "needs_input" and run.review_required
@@ -84,6 +88,7 @@ def result_links(settings: Any, run: Any) -> list[dict[str, Any]]:
             "url": f"{dashboard_url(settings)}/document/{run.id}?project={run.project_id}",
             "artifact_path": run.artifact_path,
             "revision": run.canonical_commit_sha,
+            **document_handoff(settings, run),
         }
     ]
 

@@ -36,6 +36,7 @@ from tin_lite.content_program_api import (
     stop_content_run,
 )
 from tin_lite.content_programs import ContentPrograms
+from tin_lite.document_handoff import document_handoff
 from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -2638,6 +2639,11 @@ def create_mcp_app(
             "content": content[:100_000],
             "byte_count": len(output.content),
             "truncated": len(content) > 100_000,
+            **(
+                document_handoff(settings, run)
+                if source == "canonical" and output.path == run.artifact_path
+                else {}
+            ),
         }
 
     @server.tool()
