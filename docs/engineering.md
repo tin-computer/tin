@@ -284,7 +284,7 @@ acquire `project.task` steering, pause/resume, or task-transcript semantics.
 `research.deep_dive` uses this executor to test a bounded project question top-down against current,
 source-backed evidence and publishes `reports/RESEARCH_DEEP_DIVE.md`. It remains a report workflow
 and therefore does not pause for review. `content.public_article` turns durable project evidence
-into `reports/PUBLIC_ARTICLE.md`, applies a separate fact-preserving final edit, and enters the
+into `content/articles/{run_id}.md`, applies a separate fact-preserving final edit, and enters the
 normal human-review queue because it is public-facing content. Neither procedure publishes,
 contacts anyone, or acquires the steering and arbitrary-diff semantics of `project.task`.
 
