@@ -249,6 +249,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         storage=storage,
         settings=settings,
         integrations=integrations,
+        temporal=temporal,
     )
     style_activities = StyleCaptureActivities(
         database=database, storage=storage, router=model_router
@@ -339,6 +340,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic_system.organic_system_progress,
         organic_system.organic_system_finish,
         organic_system.organic_system_failure,
+        organic_system.organic_system_weekly_articles,
+        organic_system.organic_system_weekly_articles_failure,
         onboarding.growth_onboarding_prepare,
         onboarding.growth_onboarding_step,
         onboarding.growth_onboarding_review,

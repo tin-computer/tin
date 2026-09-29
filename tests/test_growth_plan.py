@@ -11,6 +11,7 @@ import pytest
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import growth_plan as plan
+from tin_lite import growth_plan_activities as plan_activities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import CodeStorage
 from tin_lite.domain import GROWTH_ONBOARDING_PLAN_PATH, GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME
@@ -196,6 +197,7 @@ class FakeModel:
 
     def _system(self, step, user, schema):
         spec = json.loads(user.split("THE ONLY WORKFLOWS IT MAY USE:\n", 1)[1])
+        spec.sort(key=lambda item: item["key"] != "visibility.audit")  # a measured start first
         chosen = []
         for item in spec[:2]:
             weekly = "weekly" in item["schedule_modes"]
@@ -250,7 +252,7 @@ class FakeModel:
                 "open pull requests once GitHub is connected",
                 "send outreach once a mailbox is connected",
             ],
-            "systems_to_enable": ["AI visibility: Tin will draft one page every Monday."],
+            "systems_to_enable": ["Organic traffic system: Tin will draft one page every Monday."],
             "additional_roles": [],
             "own_workflows": [],
             "missing_pieces": [],
@@ -258,7 +260,7 @@ class FakeModel:
             "requests": [
                 {
                     "index": 0,
-                    "answer": "Delivered by Organic search content: one article each Monday.",
+                    "answer": "Delivered by Organic traffic system: one article each Monday.",
                 }
             ],
         }
@@ -282,11 +284,11 @@ async def test_fixture_run_produces_a_plan_setup_can_read():
     assert offered == [item["id"] for item in systems]
     assert 0 < len(plan_view(text)) <= 1100
     assert text.startswith("# Growth plan for Acme Forms\n\n2026-09-18")
-    assert len([line for line in text.splitlines() if re.match(r"^\| \d+ \|", line)]) == 15
-    assert "What you asked for" in text and "Delivered by Organic search content" in text
+    assert len([line for line in text.splitlines() if re.match(r"^\| \d+ \|", line)]) == 14
+    assert "What you asked for" in text and "Delivered by Organic traffic system" in text
     # Judgment steps use the stronger route; everything else the cheaper one.
     assert plan.route_for("scope") is plan.JUDGMENT_ROUTE
-    assert plan.route_for("system:ai-visibility") is plan.DRAFTING_ROUTE
+    assert plan.route_for("system:organic-traffic") is plan.DRAFTING_ROUTE
     assert {"facts", "profile", "scope", "table", "view"} <= set(model.calls)
 
 
@@ -523,6 +525,136 @@ async def test_no_live_site_excludes_site_bound_workflows():
     }
 
 
+def with_research_run(state, *recent):
+    state["workflows"].insert(
+        0,
+        workflow(
+            "organic.traffic_system",
+            "Run the organic traffic system",
+            required=("site_url", "market", "buyer_context", "start_date"),
+            modes=("on_demand",),
+        ),
+    )
+    state["recent_runs"] = list(recent)
+    return state
+
+
+def leaves_out_the_default(value, user):
+    """A scope step that ranks the default below other systems and leaves it out."""
+    rest = [x for x in value["suggested"] if x["id"] != plan.DEFAULT_SYSTEM]
+    others = ["technical-seo", "research-and-positioning", "owned-audience"]
+    candidates = [c for c in others if c in user] or [x["id"] for x in rest]
+    return {
+        **value,
+        "suggested": [{"id": c, "reason": "fits", "items_per_week": 2} for c in candidates[:3]],
+        "left_out": [{"id": plan.DEFAULT_SYSTEM, "reason": "the scope preferred other work"}],
+    }
+
+
+async def test_the_organic_traffic_system_leads_and_starts_its_research_once():
+    state = with_research_run(tin_state())
+    model = FakeModel(overrides={"scope": leaves_out_the_default})
+    result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
+    text = result["plan"]
+    plan.validate_plan(text, state)
+
+    systems = block_of(text)
+    # Code puts the default first and makes it Tin's suggestion, whatever the scope step said.
+    assert systems[0]["id"] == plan.DEFAULT_SYSTEM and systems[0]["suggested"]
+    assert result["report"]["suggested"][0] == plan.DEFAULT_SYSTEM
+    assert (
+        f"code made {plan.DEFAULT_SYSTEM} the first suggestion" in result["report"]["code_repairs"]
+    )
+    assert plan_picks(text)[1][0] == plan.DEFAULT_SYSTEM
+    # Its research run starts once, with the site, market and start date set by code.
+    run = systems[0]["workflows"][0]
+    assert run["key"] == plan.DEFAULT_RUN and run["mode"] == "once"
+    assert run["inputs"]["site_url"] == "https://acmeforms.example"
+    assert run["inputs"]["market"] == "US" and run["inputs"]["start_date"] == TODAY
+    assert len(run["inputs"]["buyer_context"]) >= 20
+    # The research run already audits and researches keywords; nothing buys them a second time.
+    once = {w["key"] for item in systems for w in item["workflows"] if w["mode"] == "once"}
+    assert not once & plan.DEFAULT_RUN_CHILDREN
+
+
+async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
+    def answer_pages_only(value, user):
+        return {
+            **value,
+            "workflows": [
+                {
+                    "key": "content.answer_page",
+                    "mode": "weekly",
+                    "weekdays": ["tuesday"],
+                    "local_time": "10:00",
+                    "inputs": [],
+                }
+            ],
+        }
+
+    state = with_research_run(tin_state())
+    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": answer_pages_only})
+    result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
+    plan.validate_plan(result["plan"], state)
+
+    lead = block_of(result["plan"])[0]
+    assert [w["key"] for w in lead["workflows"]] == [plan.DEFAULT_RUN, "content.answer_page"]
+    # Without a model-written buyer context, code takes it from the facts it can cite.
+    assert lead["workflows"][0]["inputs"]["buyer_context"] == (
+        "Acme Forms sells a form builder for clinics."
+    )
+    # Code changed the setup, so the role's text is rewritten to match it.
+    assert f"rewrite:{plan.DEFAULT_SYSTEM}" in model.calls
+
+
+async def test_the_default_needs_a_live_site_a_supported_market_and_no_earlier_run():
+    def elsewhere(value, user):
+        return {**value, "search_market": "other"}
+
+    state = with_research_run(tin_state())
+    result = await plan.build_plan(
+        inputs(tin_state=state), SITE, SITE_TEXT, TODAY, FakeModel(overrides={"facts": elsewhere})
+    )
+    keys = {w["key"] for item in block_of(result["plan"]) for w in item["workflows"]}
+    assert plan.DEFAULT_RUN not in keys
+
+    state = with_research_run(tin_state())
+    site = {"verdict": "unreachable", "pages": [], "sitemap": None}
+    result = await plan.build_plan(
+        inputs(tin_state=state), site, "Direct fetch verdict: unreachable.", TODAY, FakeModel()
+    )
+    keys = {w["key"] for item in block_of(result["plan"]) for w in item["workflows"]}
+    assert plan.DEFAULT_RUN not in keys
+
+    # A project whose research already ran keeps the lead but never buys the research again.
+    state = with_research_run(tin_state(), {"key": plan.DEFAULT_RUN, "status": "succeeded"})
+    model = FakeModel(overrides={"scope": leaves_out_the_default})
+    result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
+    systems = block_of(result["plan"])
+    assert systems[0]["id"] == plan.DEFAULT_SYSTEM
+    assert plan.DEFAULT_RUN not in {w["key"] for item in systems for w in item["workflows"]}
+
+
+async def test_a_founder_ruling_still_beats_the_default():
+    def no_seo(value, user):
+        value["ruled_out_systems"] = [
+            {"system": plan.DEFAULT_SYSTEM, "founder_words": "Do not write SEO articles."}
+        ]
+        return value
+
+    state = with_research_run(tin_state())
+    result = await plan.build_plan(
+        inputs(notes=NOTES + " Do not write SEO articles.", tin_state=state),
+        SITE,
+        SITE_TEXT,
+        TODAY,
+        FakeModel(overrides={"facts": no_seo}),
+    )
+    systems = block_of(result["plan"])
+    assert plan.DEFAULT_SYSTEM not in {item["id"] for item in systems}
+    assert plan.DEFAULT_RUN not in {w["key"] for item in systems for w in item["workflows"]}
+
+
 NO_SITE = {"verdict": "none", "pages": [], "seconds": 0}
 
 
@@ -626,7 +758,7 @@ async def test_a_view_that_skips_a_request_is_asked_again_under_its_own_step():
     result = await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, receipted)
     assert model.calls.count("view") == 1 and "view:requests" in model.calls
     assert result["report"]["unanswered_requests"] == []
-    assert "Delivered by Organic search content" in result["plan"]
+    assert "Delivered by Organic traffic system" in result["plan"]
 
 
 async def test_an_unusable_request_re_ask_keeps_the_original_view():
@@ -678,12 +810,12 @@ async def test_plausible_but_off_contract_results_never_reach_setup():
 def test_validate_plan_refuses_what_setup_cannot_use():
     good = (
         "# P\n\n## Tin's view\nA view.\n\n## What Tin would run\n"
-        "- [ ] ai-visibility **AI visibility** — x\n\n"
+        "- [ ] organic-traffic **Organic traffic system** — x\n\n"
     )
     block = {
         "systems": [
             {
-                "id": "ai-visibility",
+                "id": "organic-traffic",
                 "workflows": [
                     {"key": "visibility.audit", "mode": "weekly", "inputs": {"target": "a.example"}}
                 ],
@@ -739,7 +871,7 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
 
     programs = plan.PROGRAMS["programs"]
     providers = {"infra.github", "workspace.google", "analytics.gsc", "ads.google"}
-    assert len(programs) == 15 and len({row["id"] for row in programs}) == 15
+    assert len(programs) == 14 and len({row["id"] for row in programs}) == 14
     for row in programs:
         assert row["tin"]["coverage"] in {"full", "partial", "none"}
         assert 0 <= row["tin"]["impact"] <= 1 and row["tin"]["impact_note"]
@@ -798,7 +930,7 @@ def test_scorer_ranks_all_systems_and_penalises_fair_failures():
         "budget": "none",
     }
     _profile, first = plan.score(dict(base), {})
-    assert [row["rank"] for row in first["ranking"]] == list(range(1, 16))
+    assert [row["rank"] for row in first["ranking"]] == list(range(1, 15))
     top = first["ranking"][0]["id"]
     _profile, second = plan.score(dict(base), {top: 2})
     moved = next(row for row in second["ranking"] if row["id"] == top)
@@ -1024,9 +1156,11 @@ async def activity_fixture(db, monkeypatch, *, model=None):
     f.storage.stage_native_output = AsyncMock(side_effect=stage)
     f.model = model or FakeModel()
 
-    async def generate(route_key, request):
+    async def generate(route_key, request, *, timeout_seconds=None):
         step = step_of(request.output_schema_name)
         assert route_key == plan.route_for(step).key
+        # Every plan step waits longer than the model client's 90-second default.
+        assert timeout_seconds == plan_activities.MODEL_TIMEOUT_SECONDS > 90
         try:
             parsed = await f.model(
                 step, request.system, request.messages[0].content, request.output_schema, 0, ""

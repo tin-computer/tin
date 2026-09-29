@@ -30,6 +30,8 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.usage_capture import external_usage_scope
 
 MAX_MEMORY_BYTES = 12_000
+# A plan step may write 16,000 tokens; the client's 90-second default cut long ones short.
+MODEL_TIMEOUT_SECONDS = 225
 UNUSABLE = "The plan's model results were unusable. Nothing was saved; try again."
 WEB_READER = (
     "You read a business's public site for a colleague who could not fetch it. Use web search to "
@@ -199,10 +201,11 @@ class GrowthPlanActivities:
             await self.db.start_effect(conn, execution_key=key, operation=plan.KEY)
             try:
                 with model_usage_scope(run_id=run.id, step=f"growth_plan:{step}", conn=conn):
-                    async with asyncio.timeout(240):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 15):
                         result = await self.router.generate(
                             plan.route_for(step).key,
-                            ModelRequest(
+                            timeout_seconds=MODEL_TIMEOUT_SECONDS,
+                            request=ModelRequest(
                                 system=system,
                                 messages=(ModelMessage(role=MessageRole.USER, content=user),),
                                 output_schema=schema,

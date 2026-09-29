@@ -356,7 +356,7 @@ class BillingService:
                     definition["executor"] == "growth.onboarding"
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
-                    == "organic-traffic-v2"
+                    in {"organic-traffic-v2", "organic-traffic-v3"}
                 ):
                     raise BillingError(
                         "unmetered_profile", "This system needs API-billed Codex execution enabled."
@@ -820,13 +820,13 @@ class BillingService:
 
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
-                from tin_lite.organic_system import POLICY
+                from tin_lite.organic_system import drafts_articles
 
                 prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
                 if (
                     not prepared
                     or prepared.status != "completed"
-                    or prepared.result.get("policy") != POLICY
+                    or not drafts_articles(prepared.result.get("policy"))
                     or prepared.result["definitions"].get(step) != definition
                 ):
                     return False

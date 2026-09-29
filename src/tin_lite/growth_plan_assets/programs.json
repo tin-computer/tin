@@ -1,19 +1,21 @@
 {
-  "note": "Growth programs one level below the ten strategy families. `tin.coverage` says how much of the program Tin runs today: full (Tin does the work up to a founder review), partial (Tin does a named part), none (stays with the founder). `tin.workflows` are registry keys; the live runnable state per project comes from the plan run's `tin_state` input (system rows map to `system_*` run inputs via `input`), never from this file. `workflow_titles` maps every key to the title the founder sees in Tin; use titles in founder-facing text. `workflow_scope` is what each workflow actually does; never aim a workflow at work outside its scope. `rubric.json` and `score.py` rank these fifteen systems for a business; the plan never shows the profile or the scores. `tin.impact` is the share of a system's work Tin can carry today (0 to 1); the proposed scope and the levels order systems by fit × impact, the table by fit alone.",
+  "note": "Growth programs one level below the ten strategy families. `tin.coverage` says how much of the program Tin runs today: full (Tin does the work up to a founder review), partial (Tin does a named part), none (stays with the founder). `tin.workflows` are registry keys; the live runnable state per project comes from the plan run's `tin_state` input (system rows map to `system_*` run inputs via `input`), never from this file. `workflow_titles` maps every key to the title the founder sees in Tin; use titles in founder-facing text. `workflow_scope` is what each workflow actually does; never aim a workflow at work outside its scope. `rubric.json` and `score.py` rank these fourteen systems for a business; the plan never shows the profile or the scores. `tin.impact` is the share of a system's work Tin can carry today (0 to 1); the proposed scope and the levels order systems by fit × impact, the table by fit alone.",
   "programs": [
     {
-      "id": "organic-search-content",
-      "name": "Organic search content",
+      "id": "organic-traffic",
+      "name": "Organic traffic system",
       "family": "Search",
-      "what": "Editorial, comparison, alternative and answer pages that win the searches buyers already make.",
+      "what": "Editorial, comparison, alternative and answer pages that win the searches buyers already make, and get the product named when buyers ask AI assistants for tools.",
       "fits_when": [
         "buyers search for the problem or the category by name",
         "the site can take new pages",
-        "the founder can wait months for compounding traffic"
+        "the founder can wait months for compounding traffic",
+        "buyers ask assistants which tool to use"
       ],
       "weak_when": [
         "the category is too new to be searched",
-        "nobody can publish to the site"
+        "nobody can publish to the site",
+        "buying is local, offline or relationship-led"
       ],
       "needs": {
         "founder_hours": "some",
@@ -23,13 +25,16 @@
       "tin": {
         "coverage": "full",
         "workflows": [
+          "organic.traffic_system",
           "organic.audit",
           "organic.keyword_plan",
           "content.plan",
           "style.capture",
           "content.generate",
-          "content.answer_page",
           "content.public_article",
+          "content.answer_page",
+          "visibility.audit",
+          "organic.mention_backlinks",
           "organic.error_surface",
           "competitor.watch"
         ],
@@ -38,7 +43,7 @@
         ],
         "founder_keeps": "publishing to the site and the final voice",
         "impact": 0.7,
-        "impact_note": "Tin researches, plans and drafts every piece; the founder publishes and keeps the voice."
+        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants name the product; the founder publishes and keeps the voice."
       }
     },
     {
@@ -74,38 +79,6 @@
         "founder_keeps": "merging and deploying the pull requests",
         "impact": 0.8,
         "impact_note": "Tin audits and opens the fix as a pull request; the founder merges."
-      }
-    },
-    {
-      "id": "ai-visibility",
-      "name": "AI visibility",
-      "family": "Search",
-      "what": "Being found, cited and recommended when buyers ask AI assistants for tools and vendors.",
-      "fits_when": [
-        "buyers ask assistants which tool to use",
-        "named competitors already come up in AI answers",
-        "the product has a clear category"
-      ],
-      "weak_when": [
-        "buying is local, offline or relationship-led"
-      ],
-      "needs": {
-        "founder_hours": "some",
-        "budget": "none",
-        "time_to_signal": "months"
-      },
-      "tin": {
-        "coverage": "full",
-        "workflows": [
-          "visibility.audit",
-          "organic.audit",
-          "content.answer_page",
-          "organic.mention_backlinks"
-        ],
-        "integrations": [],
-        "founder_keeps": "publishing the pages and proof",
-        "impact": 0.6,
-        "impact_note": "Tin measures weekly and drafts answer pages; being cited still depends on what gets published."
       }
     },
     {
@@ -634,11 +607,11 @@
   "workflow_scope": {
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
-    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system. Optionally propose one technical fix as an unmerged GitHub PR. Does not write articles, send outreach, merge or publish.",
+    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
     "organic.technical_fix": "Recheck one missing-title or missing-description finding and propose a verified PR. Supports exact static HTML and bounded Python-wheel HTML templates. Lists unsupported pages separately. If no safe repair is available, explain why without a PR. Never merges or deploys; GitHub may run its configured PR checks.",
     "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap. Save to My system to prepare weekly batches. Does not write articles or publish.",
-    "content.generate": "Draft one selected brief from an initialized content program, using the project writing guide when available. Saves a separate reviewable Markdown draft with factual checks. Requires program_id; omit item_id to select the next eligible article, or select an explicit item through get_content_draft_sources. On demand only. Optional pinned repository delivery opens an unmerged PR only after article approval; otherwise use content.deliver for an approved source. Does not merge, publish, or change the roadmap.",
+    "content.generate": "Draft one selected brief from an initialized content program, using the project writing guide when available. Saves a separate reviewable Markdown draft with factual checks. Requires program_id; omit item_id to select the next eligible article, or select an explicit item through get_content_draft_sources. On demand, or weekly against one program: each weekly run drafts the next planned article and waits while an earlier draft of that program awaits review. Optional pinned repository delivery opens an unmerged PR only after article approval; otherwise use content.deliver for an approved source. Does not merge, publish, or change the roadmap.",
     "organic.keyword_plan": "Research buyer searches, competitor keywords, and a bounded sample of Google results. Get an evidence-backed keyword inventory for content planning. No audit or GitHub required; does not create a calendar, write articles, or publish.",
     "organic.audit": "Audit technical SEO and AI visibility (GEO). Check up to 100 public pages and see whether AI answers mention, cite, or recommend your business. Get a report, actionable findings, and supporting evidence. No GitHub required.",
     "content.design_md": "Analyze a project repository and publish its DESIGN.md.",

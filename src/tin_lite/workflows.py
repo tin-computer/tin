@@ -1058,7 +1058,8 @@ class KeywordPlanWorkflow:
             for name in ("keyword_review", "keyword_publish", "keyword_project"):
                 if self._stopped:
                     return
-                await execute(name)
+                # The review's model call may wait seven minutes; the activity must outlast it.
+                await execute(name, minutes=10 if name == "keyword_review" else 5)
         except BaseException:
             if not self._stopped:
                 await execute("keyword_failure")
@@ -1171,6 +1172,12 @@ class OrganicTrafficSystemWorkflow:
                 await call("organic_system_step_failure", payload)
             await call("organic_system_progress", run_id)
 
+        async def weekly_articles():
+            try:
+                await call("organic_system_weekly_articles", run_id)
+            except Exception:
+                await call("organic_system_weekly_articles_failure", run_id)
+
         try:
             await call("organic_system_prepare", run_id)
             audit = asyncio.create_task(step("audit"))
@@ -1181,8 +1188,15 @@ class OrganicTrafficSystemWorkflow:
             await step("content")
             await technical
             if workflow.patched("organic-content-continuation-v1"):
+                weekly = None
+                if workflow.patched("organic-weekly-articles-v1"):
+                    # Saved beside the first draft, which may wait days for review. A failure
+                    # is recorded on its own and never fails the recipe's child runs.
+                    weekly = asyncio.create_task(weekly_articles())
                 await step("draft")
                 await step("delivery")
+                if weekly is not None:
+                    await weekly
             succeeded = await call("organic_system_finish", run_id, minutes=5)
             if not succeeded:
                 raise ApplicationError("One or more organic system steps could not finish.")
@@ -1231,7 +1245,8 @@ class GrowthOnboardingPlanWorkflow:
             await workflow.execute_activity(
                 "growth_plan_write",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=20),
+                # About ten rounds of parallel steps, each allowed a 225-second model call.
+                start_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(minutes=6),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )

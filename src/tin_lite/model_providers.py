@@ -6,12 +6,19 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, Protocol
 
+import httpx
 import jsonschema
 from anthropic import AnthropicError, AsyncAnthropic
+from anthropic import APIConnectionError as AnthropicConnectionError
+from anthropic import APIStatusError as AnthropicStatusError
+from anthropic import APITimeoutError as AnthropicTimeoutError
 from google import genai
 from google.genai import errors as google_errors
 from google.genai import types as google_types
+from openai import APIConnectionError as OpenAIConnectionError
 from openai import APIError as OpenAIError
+from openai import APIStatusError as OpenAIStatusError
+from openai import APITimeoutError as OpenAITimeoutError
 from openai import AsyncOpenAI
 
 from tin_lite.settings import Settings
@@ -122,7 +129,9 @@ class ModelProvider(Protocol):
     name: ProviderName
     capabilities: frozenset[ModelCapability]
 
-    async def generate(self, *, model: str, request: ModelRequest) -> ModelResult: ...
+    async def generate(
+        self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
+    ) -> ModelResult: ...
 
     async def close(self) -> None: ...
 
@@ -163,7 +172,11 @@ class ModelRouter:
     def configured_providers(self) -> frozenset[ProviderName]:
         return frozenset(self._providers)
 
-    async def generate(self, route_key: str, request: ModelRequest) -> ModelResult:
+    async def generate(
+        self, route_key: str, request: ModelRequest, *, timeout_seconds: float | None = None
+    ) -> ModelResult:
+        """`timeout_seconds` overrides the provider's default wait for this call only. It is
+        not part of the request, so it never changes a request fingerprint."""
         route = self._routes.get(route_key)
         if route is None:
             raise LookupError(f"model route {route_key!r} is not registered")
@@ -176,8 +189,11 @@ class ModelRouter:
         _validate_request(request)
 
         async def call() -> ModelResult:
-            return await self._providers[route.provider].generate(
-                model=route.model, request=request
+            provider = self._providers[route.provider]
+            if timeout_seconds is None:
+                return await provider.generate(model=route.model, request=request)
+            return await provider.generate(
+                model=route.model, request=request, timeout_seconds=timeout_seconds
             )
 
         if self._recorder is not None:
@@ -217,7 +233,9 @@ class OpenAIModelProvider:
             max_retries=0,
         )
 
-    async def generate(self, *, model: str, request: ModelRequest) -> ModelResult:
+    async def generate(
+        self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
+    ) -> ModelResult:
         _validate_request(request)
         parameters: dict[str, Any] = {
             "model": model,
@@ -245,7 +263,12 @@ class OpenAIModelProvider:
                 }
             }
         try:
-            response = await self._client.responses.create(**parameters)
+            client = (
+                self._client
+                if timeout_seconds is None
+                else self._client.with_options(timeout=timeout_seconds)
+            )
+            response = await client.responses.create(**parameters)
         except OpenAIError as exc:
             raise ModelProviderError("OpenAI model request failed") from exc
         text = str(response.output_text or "").strip()
@@ -296,7 +319,9 @@ class AnthropicModelProvider:
             client_options["default_headers"] = {"anthropic-workspace-id": workspace_id}
         self._client = client or AsyncAnthropic(**client_options)
 
-    async def generate(self, *, model: str, request: ModelRequest) -> ModelResult:
+    async def generate(
+        self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
+    ) -> ModelResult:
         _validate_request(request)
         parameters: dict[str, Any] = {
             "model": model,
@@ -321,7 +346,12 @@ class AnthropicModelProvider:
         if output_config:
             parameters["output_config"] = output_config
         try:
-            response = await self._client.messages.create(**parameters)
+            client = (
+                self._client
+                if timeout_seconds is None
+                else self._client.with_options(timeout=timeout_seconds)
+            )
+            response = await client.messages.create(**parameters)
         except AnthropicError as exc:
             raise ModelProviderError("Anthropic model request failed") from exc
         text = "".join(
@@ -366,9 +396,13 @@ class GeminiModelProvider:
             ),
         )
 
-    async def generate(self, *, model: str, request: ModelRequest) -> ModelResult:
+    async def generate(
+        self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
+    ) -> ModelResult:
         _validate_request(request)
         config: dict[str, Any] = {"max_output_tokens": request.max_output_tokens}
+        if timeout_seconds is not None:
+            config["http_options"] = google_types.HttpOptions(timeout=int(timeout_seconds * 1000))
         if request.system is not None:
             config["system_instruction"] = request.system
         if request.temperature is not None:
@@ -436,7 +470,9 @@ class OpenRouterModelProvider:
             max_retries=0,
         )
 
-    async def generate(self, *, model: str, request: ModelRequest) -> ModelResult:
+    async def generate(
+        self, *, model: str, request: ModelRequest, timeout_seconds: float | None = None
+    ) -> ModelResult:
         _validate_request(request)
         messages = [{"role": m.role.value, "content": m.content} for m in request.messages]
         if request.system is not None:
@@ -463,7 +499,12 @@ class OpenRouterModelProvider:
                 },
             }
         try:
-            response = await self._client.chat.completions.create(**parameters)
+            client = (
+                self._client
+                if timeout_seconds is None
+                else self._client.with_options(timeout=timeout_seconds)
+            )
+            response = await client.chat.completions.create(**parameters)
         except OpenAIError as exc:
             raise ModelProviderError("OpenRouter model request failed") from exc
         choices = getattr(response, "choices", None) or []
@@ -523,6 +564,44 @@ def configured_model_router(
             timeout_seconds=settings.luna_timeout_seconds,
         )
     return ModelRouter(providers=providers, routes=routes, recorder=recorder)
+
+
+def model_failure_reason(exc: BaseException) -> str:
+    """A fixed label for why a model call produced no usable result.
+
+    Only exception classes and an integer status code are read, never a message, header or
+    body, so the label is safe to keep as evidence. Provider errors wrap the SDK error that
+    caused them, so the cause chain is read too.
+    """
+    seen: BaseException | None = exc
+    for _ in range(4):
+        if seen is None:
+            break
+        if isinstance(
+            seen, TimeoutError | OpenAITimeoutError | AnthropicTimeoutError | httpx.TimeoutException
+        ):
+            return "provider_timeout"
+        status = (
+            seen.status_code
+            if isinstance(seen, OpenAIStatusError | AnthropicStatusError)
+            else seen.code
+            if isinstance(seen, google_errors.APIError)
+            else None
+        )
+        if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
+            return f"provider_status_{status}"
+        if isinstance(
+            seen, OpenAIConnectionError | AnthropicConnectionError | httpx.TransportError
+        ):
+            return "provider_connection"
+        if isinstance(seen, LookupError | ModelCapabilityError):
+            return "route_unavailable"
+        if isinstance(seen, ModelProviderError) and seen.observation is not None:
+            return "invalid_result"
+        if isinstance(seen, ValueError):
+            return "invalid_result"
+        seen = seen.__cause__
+    return "provider_result_unavailable"
 
 
 def _validate_request(request: ModelRequest) -> None:

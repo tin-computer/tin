@@ -42,8 +42,8 @@ from tin_lite.keyword_plan import (
     serp_items,
     validate_review,
 )
-from tin_lite.keyword_plan_activities import KeywordPlanActivities
-from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
+from tin_lite.keyword_plan_activities import KeywordPlanActivities, model_failure_cause
+from tin_lite.model_providers import ModelProviderError, ModelResult, ModelUsage, ProviderName
 from tin_lite.organic_audit import canonical_json, digest
 from tin_lite.publication import PublicationPendingError
 from tin_lite.workflow_inputs import normalize_workflow_inputs
@@ -122,7 +122,7 @@ def providers():
             "provider_task_id": "fixture-only",
         }
 
-    async def generate(route, request):
+    async def generate(route, request, *, timeout_seconds=None):
         data = json.loads(request.messages[0].content)
         if (
             request.output_schema_name == "keyword_seeds"
@@ -682,6 +682,70 @@ async def test_model_failure_does_not_purchase_a_replacement_or_publish():
         with pytest.raises(ApplicationError, match="no replacement"):
             await activities.keyword_review(run_id)
     assert model.generate.await_count == 1 and storage.repo.writes == 0
+
+
+@pytest.mark.asyncio
+async def test_model_stages_wait_longer_than_the_client_default_for_large_verdicts():
+    activities, db, _, _, model = await fixture(modern="v4", inputs={"seed_phrases": []})
+    await finish(activities, str(db.run.id))
+    waits = {
+        call.args[1].output_schema_name: call.kwargs["timeout_seconds"]
+        for call in model.generate.await_args_list
+    }
+    assert waits == {"keyword_seeds": None, "keyword_triage": 240, "keyword_review": 420}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "reason", "message"),
+    [
+        (
+            TimeoutError("secret provider detail"),
+            "provider_timeout",
+            "the keyword review model call did not finish within 7 minutes",
+        ),
+        (
+            ModelProviderError("OpenAI model request failed"),
+            "provider_result_unavailable",
+            "a model result could not be confirmed",
+        ),
+    ],
+)
+async def test_model_failure_names_its_cause_without_provider_text(error, reason, message):
+    activities, db, _, _, model = await fixture()
+    run_id = str(db.run.id)
+    await activities.keyword_collect(run_id)
+    model.generate.side_effect = error
+    with pytest.raises(ApplicationError, match="no replacement"):
+        await activities.keyword_review(run_id)
+    failure = await activities._result(run_id, "failure")
+    assert failure == {"code": "model_unavailable", "stage": "review", "reason": reason}
+    receipt = await activities._result(run_id, "review")
+    assert receipt["reason"] == reason and "secret" not in json.dumps(receipt)
+    await activities.keyword_failure(run_id)
+    text = db.project_failure.await_args.kwargs["error_message"]
+    assert text == (
+        f"Keyword planning stopped because {message}. "
+        "Saved research was retained; no replacement call was purchased."
+    )
+
+
+@pytest.mark.parametrize(
+    ("failure", "cause"),
+    [
+        ({"stage": "seeds", "reason": "provider_timeout"}, "did not finish in time"),
+        ({"stage": "triage", "reason": "provider_timeout"}, "within 4 minutes"),
+        ({"stage": "review", "reason": "provider_status_429"}, "rate-limited"),
+        ({"stage": "review", "reason": "provider_status_400"}, "rejected the keyword review"),
+        ({"stage": "review", "reason": "provider_connection"}, "connection"),
+        ({"stage": "review", "reason": "invalid_result"}, "could not use"),
+        ({"stage": "review", "reason": "spending_limit"}, "spending limit"),
+        ({"stage": "review", "reason": "unconfirmed_previous_request"}, "earlier keyword review"),
+        ({"stage": "review"}, "a model result could not be confirmed"),
+    ],
+)
+def test_model_failure_cause_reads_only_fixed_labels(failure, cause):
+    assert cause in model_failure_cause({"code": "model_unavailable", **failure})
 
 
 def test_maximum_unicode_and_long_urls_remain_readable_with_explicit_omissions():

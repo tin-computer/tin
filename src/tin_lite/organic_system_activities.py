@@ -2,29 +2,90 @@
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import technical_fix
 from tin_lite.organic_audit import digest
-from tin_lite.organic_system import KEY, POLICY, STEPS, check_inputs, policy_steps, system_facts
+from tin_lite.organic_system import (
+    KEY,
+    STEPS,
+    check_inputs,
+    drafts_articles,
+    policy_steps,
+    schedules_articles,
+    system_facts,
+)
 from tin_lite.run_reports import publish_run_report
+from tin_lite.schedules import WorkflowSchedule
 from tin_lite.technical_fix_sources import TechnicalFixSources
-from tin_lite.workflow_inputs import normalize_workflow_inputs
+from tin_lite.workflow_definitions import ensure_schedule_allowed
+from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError
+
+# The first scheduled draft comes a week after the system's own first article at the earliest.
+WEEKLY_START_DELAY = timedelta(days=7)
+
+
+async def founder_timezone(database, project_id):
+    """The timezone Start here recorded for the founder, then the newest saved schedule's."""
+    candidates = [
+        await database.pool.fetchval(
+            "SELECT input->>'timezone' FROM workflow_runs WHERE project_id=$1 "
+            "AND executor='growth.onboarding' AND input ? 'timezone' "
+            "ORDER BY created_at DESC LIMIT 1",
+            project_id,
+        ),
+        await database.pool.fetchval(
+            "SELECT schedule->>'timezone' FROM project_workflows WHERE project_id=$1 "
+            "AND schedule IS NOT NULL AND status IN ('active','paused') "
+            "ORDER BY created_at DESC LIMIT 1",
+            project_id,
+        ),
+        getattr(await database.get_project(project_id), "timezone", None),
+    ]
+    for value in candidates:
+        try:
+            if value:
+                ZoneInfo(value)
+                return value
+        except (ZoneInfoNotFoundError, ValueError):
+            continue
+    return "UTC"
+
+
+def weekly_section(weekly):
+    lines = ["## Weekly articles", "", f"Status: {weekly['status']}", ""]
+    if weekly["status"] != "succeeded":
+        return lines + [f"Reason: {weekly['reason'].replace('_', ' ')}.", ""]
+    days = [day.capitalize() for day in weekly["weekdays"]]
+    named = days[0] if len(days) == 1 else ", ".join(days[:-1]) + " and " + days[-1]
+    first = (weekly.get("next_run_at") or "")[:10]
+    return lines + [
+        f"Tin drafts the next planned article every {named} at {weekly['local_time']} "
+        f"({weekly['timezone']})" + (f", starting {first}." if first else ".") + " "
+        "Each draft waits for your review in Decisions, and no new draft starts while one "
+        "is waiting. Pause it or change its days in My system.",
+        "",
+        f"Saved workflow: `{weekly['project_workflow_id']}`",
+        "",
+    ]
 
 
 class OrganicSystemActivities:
-    def __init__(self, *, database, storage, settings, integrations):
+    def __init__(self, *, database, storage, settings, integrations, temporal=None):
         self.db, self.storage, self.settings, self.integrations = (
             database,
             storage,
             settings,
             integrations,
         )
+        self.temporal = temporal
 
     async def active(self, run_id):
         run = await self.db.get_run(UUID(str(run_id)))
@@ -87,7 +148,7 @@ class OrganicSystemActivities:
                     )
                 definitions[step] = child
             content_delivery = None
-            if policy == POLICY:
+            if drafts_articles(policy):
                 from tin_lite.organic_content import pin_destination
 
                 content_delivery = await pin_destination(self.db, self.integrations, run)
@@ -332,6 +393,111 @@ class OrganicSystemActivities:
             )
 
     @activity.defn
+    async def organic_system_weekly_articles(self, run_id: str) -> dict:
+        """Save one weekly content.generate configuration for this system's content program.
+
+        Each occurrence drafts the next planned article and waits for review; the dispatcher
+        holds an occurrence while an earlier draft from the program still waits. Not a child
+        run: the parent's spending bound is unchanged and each occurrence is billed on its own.
+        """
+        key = f"traffic:{run_id}:weekly"
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result
+            run = await self.active(run_id)
+            prepared = await self.saved(run_id, "prepare")
+            if not prepared or prepared["input_sha256"] != digest(run.input):
+                raise ApplicationError("System preparation is unavailable.", non_retryable=True)
+            result = await self._weekly_articles(run, prepared)
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(conn, execution_key=key, result=result)
+            return result
+
+    async def _weekly_articles(self, run, prepared):
+        if not schedules_articles(prepared["policy"]):
+            return {"status": "skipped", "reason": "not_in_pinned_recipe"}
+        weekdays = list(run.input.get("article_weekdays") or [])
+        if not weekdays:
+            return {"status": "skipped", "reason": "weekly_articles_off"}
+        facts = await system_facts(database=self.db, project_id=run.project_id, run_id=run.id)
+        content = next(row for row in facts["steps"] if row["step"] == "content")
+        if content["status"] != "succeeded" or not content["project_workflow_id"]:
+            return {"status": "skipped", "reason": "content_plan_unavailable"}
+        definition = prepared["definitions"]["draft"]
+        schedule = WorkflowSchedule(
+            cadence="weekly",
+            weekdays=weekdays,
+            local_time=run.input.get("article_local_time") or "10:00",
+            timezone=await founder_timezone(self.db, run.project_id),
+            start_at=datetime.now(UTC) + WEEKLY_START_DELAY,
+        )
+        try:
+            ensure_schedule_allowed(definition, schedule)
+        except WorkflowInputError:
+            return {"status": "blocked", "reason": "weekly_schedule_unsupported"}
+        if self.temporal is None:
+            return {"status": "blocked", "reason": "scheduling_unavailable"}
+        template = await self.db.get_registry_workflow(STEPS["draft"])
+        if template is None or template.executor != definition["executor"]:
+            raise ApplicationError("System child executor changed.", non_retryable=True)
+        from tin_lite.project_workflow_operations import sync_project_workflow
+
+        configured = await self.db.create_project_workflow(
+            project_id=run.project_id,
+            workflow_id=template.id,
+            definition_commit_sha=prepared["definition_revision"],
+            name=f"Weekly article — {run.input['site_url']}",
+            inputs=normalize_workflow_inputs(
+                schema=definition["input_schema"],
+                project_id=run.project_id,
+                inputs={"program_id": content["project_workflow_id"]},
+            ),
+            input_schema=definition["input_schema"],
+            schedule=schedule.model_dump(mode="json"),
+            request_id=uuid5(run.id, "weekly-articles"),
+            created_by_clerk_user_id=run.started_by_clerk_user_id,
+            pinned_definition=definition,
+        )
+        configured = await sync_project_workflow(
+            runtime=SimpleNamespace(database=self.db, temporal=self.temporal),
+            settings=self.settings,
+            configured=configured,
+        )
+        saved = WorkflowSchedule.model_validate(configured.schedule)
+        return {
+            "status": "succeeded",
+            "project_workflow_id": str(configured.id),
+            "program_id": content["project_workflow_id"],
+            "weekdays": saved.weekdays,
+            "local_time": saved.local_time,
+            "timezone": saved.timezone,
+            "next_run_at": configured.next_run_at.isoformat() if configured.next_run_at else None,
+        }
+
+    @activity.defn
+    async def organic_system_weekly_articles_failure(self, run_id: str):
+        key = f"traffic:{run_id}:weekly"
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return
+            run = await self.db.get_run(UUID(run_id))
+            if run is not None:
+                # A configuration saved before its Temporal schedule failed would never run.
+                await self.db.pool.execute(
+                    "UPDATE project_workflows SET status='archived', next_run_at=NULL, "
+                    "updated_at=now() WHERE project_id=$1 AND request_id=$2 "
+                    "AND temporal_schedule_id IS NULL AND status<>'archived'",
+                    run.project_id,
+                    uuid5(run.id, "weekly-articles"),
+                )
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(
+                conn,
+                execution_key=key,
+                result={"status": "failed", "reason": "weekly_schedule_not_saved"},
+            )
+
+    @activity.defn
     async def organic_system_progress(self, run_id: str):
         run = await self.active(run_id)
         facts = await system_facts(database=self.db, project_id=run.project_id, run_id=run.id)
@@ -382,6 +548,10 @@ class OrganicSystemActivities:
                         "",
                     ]
                 )
+        weekly = facts.get("weekly_articles")
+        if weekly and weekly.get("reason") != "not_in_pinned_recipe":
+            lines.extend(weekly_section(weekly))
+        scheduled = bool(weekly and weekly.get("status") == "succeeded")
         lines.extend(
             [
                 "## Boundaries",
@@ -393,8 +563,13 @@ class OrganicSystemActivities:
                 "the Markdown stays readable in Tin for manual export or a later delivery. "
                 "The existing writing guide is used when available; no style samples are invented. "
                 "Backlinks and outreach are not part of this version. "
-                "Plan dates do not automatically generate the rest of the roadmap. "
-                "An open PR is not a published website.",
+                + (
+                    "Plan dates alone draft nothing; the weekly schedule drafts one planned "
+                    "article at a time and follows the program's delivery settings. "
+                    if scheduled
+                    else "Plan dates do not automatically generate the rest of the roadmap. "
+                )
+                + "An open PR is not a published website.",
                 "",
             ]
         )

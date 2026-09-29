@@ -34,6 +34,12 @@ HOUSEKEEPING = {
     "ads.assessment",
     "ads.launch",
 }
+# The organic traffic system is Tin's default. With a live site in a supported market, code makes
+# it the first suggestion and starts its research run once at setup, whatever the ranking says.
+DEFAULT_SYSTEM = "organic-traffic"
+DEFAULT_RUN = "organic.traffic_system"
+# The research run starts these itself; a separate one-off run would buy the same research twice.
+DEFAULT_RUN_CHILDREN = frozenset({"organic.audit", "organic.keyword_plan"})
 HARD_NO_SYSTEMS = {
     "no_paid_ads": ["paid-search", "paid-social"],
     "no_cold_email": ["cold-outbound"],
@@ -545,6 +551,56 @@ def fallback_system(candidates, avail, inputs):
     return None, []
 
 
+def default_lead(candidates, avail, tin_state):
+    """The system code makes Tin's first suggestion, and whether setup starts its research run.
+
+    Both need the research run to be includable here: a live site, a supported market and no hard
+    no. A project whose research run already succeeded keeps the lead without buying it again.
+    """
+    if DEFAULT_SYSTEM not in candidates:
+        return None, False
+    run = next((w for w in avail[DEFAULT_SYSTEM]["workflows"] if w["key"] == DEFAULT_RUN), None)
+    if run is None or not run["includable"]:
+        return None, False
+    ran = any(
+        r.get("key") == DEFAULT_RUN and r.get("status") == "succeeded"
+        for r in tin_state.get("recent_runs", [])
+    )
+    return DEFAULT_SYSTEM, not ran
+
+
+def default_run(inputs, understanding, avail, today, proposed=None):
+    """Code fills the research run's site, market and start date; the model may word the buyers."""
+    host = re.sub(r"^https?://", "", (inputs.get("product_url") or "").strip()).split("/")[0]
+    buyers = str((proposed or {}).get("inputs", {}).get("buyer_context") or "").strip()
+    if len(buyers) < 20:
+        buyers = " ".join(
+            f["statement"].strip()
+            for f in understanding["facts"]
+            if f["topic"] in ("what_is_sold", "who_buys", "differentiation")
+            and f["confidence"] != "unknown"
+        )
+    if len(buyers) < 20:
+        return [], [f"dropped {DEFAULT_RUN}: no evidence says what is sold and who buys it"]
+    values = {"site_url": f"https://{host}" if host else "", "buyer_context": buyers}
+    item = {
+        "id": DEFAULT_SYSTEM,
+        "workflows": [
+            {
+                "key": DEFAULT_RUN,
+                "mode": "once",
+                "weekdays": [],
+                "local_time": "",
+                "inputs": [
+                    *({"name": k, "value": v} for k, v in values.items()),
+                    {"name": "start_date", "value": today},
+                ],
+            }
+        ],
+    }
+    return validate_system(item, avail, inputs)
+
+
 # ---------------------------------------------------------------- prompts
 
 
@@ -591,7 +647,7 @@ def understand_prompts(inputs, site_text, today):
         "sets a condition (tell me first, get a price first, not without approval) is a limit, not a ruling-out; so is a sentence that "
         'only reports what does not exist today ("no blog, no email"). Drafts, research and audits never count as touching or '
         "changing a site. Most founders rule out nothing; list at most three. The multiple-choice "
-        "hard_nos are handled by code; never repeat them here. The fifteen "
+        "hard_nos are handled by code; never repeat them here. The fourteen "
         f"system ids are: {', '.join(SYSTEM_IDS)}. `search_market` is the country the founder names as their market or where the site "
         "clearly sells; `other` when they name a country outside US, GB, CA and AU (never substitute US for it); US only when nothing "
         "says otherwise, and `search_market_basis` quotes why. Unknowns stay unknown.\n" + how
@@ -605,10 +661,10 @@ def understand_prompts(inputs, site_text, today):
         'and its source (a URL or "your agent\'s notes"). Code deletes any parameter without a basis. A typical profile sets eight '
         "to twelve parameters. What is usual for the category is not evidence. `enjoys`, `automatable`, `face`, `scene`, `network` "
         "and `credibility` stay null unless the founder's own words state them. "
-        "`current_status` has one entry for each of the fifteen systems, under twelve words, from notes, memory and the site "
+        "`current_status` has one entry for each of the fourteen systems, under twelve words, from notes, memory and the site "
         '("nothing" when nothing).\n' + how
     )
-    extra = f"\n\nSCORER PARAMETERS (score.py --describe):\n{DESCRIBE}\n\nTHE FIFTEEN SYSTEMS:\n{json.dumps(programs, indent=1)}"
+    extra = f"\n\nSCORER PARAMETERS (score.py --describe):\n{DESCRIBE}\n\nTHE FOURTEEN SYSTEMS:\n{json.dumps(programs, indent=1)}"
     return (facts, evidence), (profile, evidence + extra)
 
 
@@ -646,14 +702,20 @@ def shared_context(inputs, understanding, ranking, fit, avail, banned, today):
         f"SYSTEMS THE FOUNDER'S WORDS RULE OUT (moved last by code): {json.dumps(understanding['ruled_out_systems'], ensure_ascii=False)}\n"
         f"HARD NOS: {[HARD_NO_WORDS[h] for h in inputs.get('hard_nos') or []]}\n"
         f"TIN ALREADY RUNNING: {json.dumps(inputs['tin_state'].get('running', []))}\n\n"
-        f"THE FIFTEEN SYSTEMS, RANKED BY score.py (hard nos already moved last). Workflow states were computed by code from "
+        f"THE FOURTEEN SYSTEMS, RANKED BY score.py (hard nos already moved last). Workflow states were computed by code from "
         f"tin_state and are the live truth:\n{json.dumps(rows, indent=1, ensure_ascii=False)}\n\n"
         f"WORKFLOW SCOPE (what each workflow actually does; never aim one outside its scope):\n{json.dumps(PROGRAMS['workflow_scope'], indent=1)}"
     )
 
 
-def scope_prompt(context, candidates, weight, budget, hours):
+def scope_prompt(context, candidates, weight, budget, hours, lead=None):
     order_ = [{"id": c, "fit_x_impact": round(weight[c], 1)} for c in candidates]
+    decided = (
+        f"\n\nDECIDED BY CODE: {lead} is Tin's default and its first suggestion; list it first in "
+        "`suggested`, never in `left_out`, and choose the other systems around it."
+        if lead
+        else ""
+    )
     system = (
         "You decide the scope of a founder's growth plan: where growth actually breaks for this business, and which few systems Tin "
         f"should take on first. Follow these rules from the governing procedure exactly.\n\n{SCOPE_RULES}\n\n"
@@ -678,7 +740,8 @@ def scope_prompt(context, candidates, weight, budget, hours):
     )
     return (
         system,
-        f"{context}\n\nCANDIDATES IN ORDER OF FIT x TIN IMPACT (code-computed):\n{json.dumps(order_)}",
+        f"{context}\n\nCANDIDATES IN ORDER OF FIT x TIN IMPACT (code-computed):\n{json.dumps(order_)}"
+        f"{decided}",
     )
 
 
@@ -686,7 +749,7 @@ def table_prompt(context, roles):
     system = (
         "You write the marketing systems table of a founder's growth plan. Follow these rules from the governing procedure exactly.\n\n"
         f"{WRITING}\n\n{TABLE_RULES}\n\n"
-        "`rows`: one per system, all fifteen, in the given rank order. Code fills the "
+        "`rows`: one per system, all fourteen, in the given rank order. Code fills the "
         "rank, name, current status and integrations cells; you write `availability` (under fifteen words) and `job` (one or two "
         "sentences, empty string when no workflow is runnable or connectable). For a hard-no system the availability cell starts "
         'with "hard no: <reason>; " and still says what Tin could run. A workflow whose state is "not yet" does not exist for '
@@ -696,7 +759,9 @@ def table_prompt(context, roles):
     return system, f"{context}\n\nDECIDED ROLES:\n{json.dumps(roles, indent=1, ensure_ascii=False)}"
 
 
-def system_prompt(context, sid, candidates, suggested, avail, inputs, scope, allowance):
+def system_prompt(
+    context, sid, candidates, suggested, avail, inputs, scope, allowance, research=None
+):
     owner = {}
     for c in [x for x in candidates if x in suggested] + [
         x for x in candidates if x not in suggested
@@ -738,6 +803,18 @@ def system_prompt(context, sid, candidates, suggested, avail, inputs, scope, all
         "every workflow input at the bottleneck above. Workflows that another, higher-ranked system also uses are configured "
         "there; include one here only if this system's role truly needs it, and code will reuse that configuration."
     )
+    if research == "start":
+        load += (
+            f"\nRESEARCH RUN (decided): code starts {DEFAULT_RUN} once at setup and fills its site, market and start date. "
+            "It audits the site, researches buyer searches, builds the content plan and drafts the first article; after that "
+            "Tin drafts the next planned article each week. Give it a `buyer_context` value: what is sold and who buys it, "
+            f"from the evidence. Never add {' or '.join(sorted(DEFAULT_RUN_CHILDREN))} as a one-off run beside it."
+        )
+    elif research == "done":
+        load += (
+            f"\nRESEARCH RUN (decided): {DEFAULT_RUN} already ran for this project; never add it again. Configure the "
+            "standing work that builds on its content plan."
+        )
     user = (
         f"{context}\n\n{load}\n\nALL CANDIDATE SYSTEMS (order is fit x Tin impact): {json.dumps(others)}\n\nFOUNDER TIMEZONE: {inputs.get('timezone')}\n\n"
         f"YOUR SYSTEM: {sid} ({avail[sid]['name']}); Tin's suggestion: {sid in suggested}\n"
@@ -794,7 +871,9 @@ def view_prompt(context, chosen, flags, scope):
         "a review that no listed workflow produces, `missing_pieces` lists only key absent "
         "infrastructure and may be empty. `first_deliverable` is two to four sentences on the first useful deliverable, by the rule "
         "above: what it contains, the question it answers, roughly when it arrives, the founder's next decision, and that it lands "
-        "in Tin's Files or waits in Decisions. It comes from a `once` workflow under DECIDED ROLES, or the earliest scheduled one."
+        "in Tin's Files or waits in Decisions. It comes from a `once` workflow under DECIDED ROLES, or the earliest scheduled one. "
+        f'When "{PROGRAMS["workflow_titles"][DEFAULT_RUN]}" is under DECIDED ROLES, the first deliverable is its result: the site audit, the '
+        "keyword research, the content plan and the first article draft waiting in Decisions."
     )
     user = (
         f"{context}\n\nSCOPE DECISION (the picture must lead to this; left_out reasons belong in the scope as one clause):\n"
@@ -1239,15 +1318,30 @@ async def build_plan(inputs, site, site_text, today, generate):
     fit, candidates, banned, weight = order(
         scored["ranking"], avail, inputs.get("hard_nos") or [], ruled_out
     )
+    lead, research = default_lead(candidates, avail, inputs["tin_state"])
+    if lead:
+        candidates = [lead, *(c for c in candidates if c != lead)]
     context = shared_context(inputs, understanding, scored["ranking"], fit, avail, banned, today)
     hours = founder_profile(inputs).get("hours", "some")
     budget = {"min": 3, "some": 5, "lots": 10}[hours]
     scope = await call(
         "scope",
-        *scope_prompt(context, candidates, weight, budget, hours),
+        *scope_prompt(context, candidates, weight, budget, hours, lead),
         scope_schema(candidates),
         12000,
     )
+    notes = []
+    if lead:  # the default leads whatever the scope step returned
+        scope["left_out"] = [x for x in scope["left_out"] if x["id"] != lead]
+        first = next((x for x in scope["suggested"] if x["id"] == lead), None)
+        if first is None:
+            first = {
+                "id": lead,
+                "reason": "Tin's default: it turns the searches buyers make into a plan and weekly articles",
+                "items_per_week": min(2, budget),
+            }
+            notes.append(f"code made {lead} the first suggestion")
+        scope["suggested"] = [first, *(x for x in scope["suggested"] if x["id"] != lead)]
     scope["founder_actions"] = [
         a
         for a in scope["founder_actions"]
@@ -1275,7 +1369,15 @@ async def build_plan(inputs, site, site_text, today, generate):
             call(
                 f"system:{sid}",
                 *system_prompt(
-                    context, sid, candidates, suggested, avail, inputs, scope, picks.get(sid, 1)
+                    context,
+                    sid,
+                    candidates,
+                    suggested,
+                    avail,
+                    inputs,
+                    scope,
+                    picks.get(sid, 1),
+                    research=(("start" if research else "done") if sid == lead else None),
                 ),
                 systems_schema(
                     candidates, [w["key"] for w in avail[sid]["workflows"] if w["includable"]]
@@ -1285,7 +1387,7 @@ async def build_plan(inputs, site, site_text, today, generate):
             for sid in candidates
         )
     )
-    systems, notes, claimed, touched = [], [], {}, set()
+    systems, claimed, touched = [], {}, set()
     by_id = dict(zip(candidates, decided, strict=True))
     claim_order = [c for c in candidates if c in suggested] + [
         c for c in candidates if c not in suggested
@@ -1295,6 +1397,26 @@ async def build_plan(inputs, site, site_text, today, generate):
         item = dict(by_id[sid], id=sid, suggested=sid in suggested)
         kept, n = validate_system(item, avail, inputs)
         notes += n
+        if sid == lead:  # the research run is code's: added once, or never bought again
+            proposed = next((w for w in kept if w["key"] == DEFAULT_RUN), None)
+            run, n = (
+                default_run(inputs, understanding, avail, today, proposed)
+                if research
+                else ([], [f"dropped {DEFAULT_RUN}: its research already ran"] if proposed else [])
+            )
+            notes += n
+            kept = [*run, *(w for w in kept if w["key"] != DEFAULT_RUN)]
+            if bool(run) != bool(proposed):
+                touched.add(sid)
+            research = bool(run)
+        if research:
+            covered = [
+                w["key"] for w in kept if w["key"] in DEFAULT_RUN_CHILDREN and w["mode"] == "once"
+            ]
+            if covered:
+                kept = [w for w in kept if not (w["key"] in covered and w["mode"] == "once")]
+                notes.append(f"{sid}: dropped one-off {covered}; {DEFAULT_RUN} runs them")
+                touched.add(sid)
         for w in kept:
             if w["mode"] == "weekly" and len(w["weekdays"]) > picks.get(sid, 1):
                 notes.append(f"{sid}/{w['key']}: weekdays trimmed to allowance {picks.get(sid, 1)}")

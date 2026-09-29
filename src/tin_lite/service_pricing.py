@@ -88,9 +88,13 @@ def service_terms(definition, *, inputs=None):
         maximum = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
         if maximum is not None:
             maximum += (7 + (5 if inputs.get("technical_fix") else 0)) * NANOS_PER_DOLLAR
-            if definition.get("organic_system_policy", {}).get("version") == "organic-traffic-v2":
+            if definition.get("organic_system_policy", {}).get("version") in {
+                "organic-traffic-v2",
+                "organic-traffic-v3",
+            }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
-                # This is a bound, not an upfront charge or six-month reservation.
+                # This is a bound, not an upfront charge or six-month reservation. Weekly
+                # drafts saved by v3 are ordinary scheduled runs with their own funding.
                 maximum += (
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR

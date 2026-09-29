@@ -334,6 +334,40 @@ class TinActivities:
             workflow=workflow_definition,
             normalized_inputs=configured.inputs,
         )
+        selection = {}
+        if (
+            workflow_definition.definition.get("key") == "content.generate"
+            and workflow_definition.project_id is None
+            and not await self._db.get_run_by_start_key(
+                project_id=configured.project_id,
+                start_idempotency_key=f"schedule:{payload['occurrence_id']}",
+            )
+        ):
+            from tin_lite.code_schedules import pause_for_issue
+            from tin_lite.content_draft_sources import (
+                ScheduledDraftHold,
+                scheduled_selection,
+            )
+
+            # A weekly draft selects the next plan article exactly as a manual start does.
+            try:
+                selection["draft_selection"] = await scheduled_selection(
+                    database=self._db,
+                    storage=self._storage,
+                    integrations=self._integrations,
+                    project_id=configured.project_id,
+                    inputs=configured.inputs,
+                )
+            except ScheduledDraftHold:
+                await self._db.advance_project_workflow_schedule(
+                    project_workflow_id=configured.id,
+                    next_run_at=next_run_after(schedule, scheduled_for),
+                    expected_settings_revision=configured.settings_revision,
+                )
+                return {}
+            except (ValueError, KeyError, IntegrationError) as exc:
+                await pause_for_issue(self, configured, str(exc))
+                return {}
         try:
             run, created = await self._db.create_run(
                 project_id=configured.project_id,
@@ -348,6 +382,7 @@ class TinActivities:
                 prerequisite_evidence=(
                     evaluation.evidence(inputs=configured.inputs) if evaluation.results else None
                 ),
+                **selection,
             )
         except BillingError as exc:
             from tin_lite.code_schedules import pause_for_issue

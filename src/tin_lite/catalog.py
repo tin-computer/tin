@@ -480,10 +480,11 @@ BUILTIN_WORKFLOWS = (
             "Audit your website and research buyer searches, then save an editable content "
             "plan and draft its next article for review. With GitHub connected, adapt the "
             "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
+            "Then draft the next planned article each week, one review at a time. "
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.2.0",
+        version_label="0.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -571,9 +572,11 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
+        # A weekly occurrence drafts the next article in plan order and holds while an
+        # earlier draft from the same program still waits for review.
+        schedule_modes=("on_demand", "weekly"),
         review_policy=PUBLIC_ARTICLE_REVIEW_POLICY,
         prerequisites=(
             WorkflowPrerequisite(

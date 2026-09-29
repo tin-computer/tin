@@ -20,11 +20,43 @@ delivery. There is no pretend CMS publication and no requirement to connect GitH
 An existing writing guide is used when available; this recipe does not manufacture
 style samples or implicitly run style extraction.
 
-This is **one next article per parent execution**, not six months of automatic
-weekly drafting. Existing content-plan scheduling prepares batches; it is not
-silently upgraded into a publishing schedule. Backlink planning and outreach are
-deferred. Re-running the research parent creates a new program; continue an existing
-program through its existing Draft next action, rather than repurchasing research.
+The parent itself drafts **one next article per execution**. Existing content-plan
+scheduling prepares batches; it is not silently upgraded into a publishing schedule.
+Backlink planning and outreach are deferred. Re-running the research parent creates a
+new program; continue an existing program through its existing Draft next action, rather
+than repurchasing research.
+
+## Weekly drafting (0.3.0)
+
+`organic.traffic_system` 0.3.0 (policy `organic-traffic-v3`) keeps the same child runs.
+Once the content plan exists, and beside the first draft, it also saves one weekly
+`content.generate` configuration for that program in My system:
+
+- `article_weekdays` (lowercase weekday names, default `["tuesday"]`) and
+  `article_local_time` (`HH:MM`, default `10:00`) set the schedule. An empty list saves
+  nothing and leaves drafting on demand.
+- The timezone is the one Start here recorded for the founder, then the newest saved
+  schedule's, then the project's (UTC by default).
+- The first occurrence comes at least seven days after the parent saves it, so it never
+  doubles the parent's own first article.
+- Each occurrence selects the next eligible plan article exactly as a manual start does and
+  waits for review. It holds, without a run, while any article from the program waits for
+  review or is drafting, or while a plan revision holds the next batch. When nothing is left
+  to draft, or the next article needs the founder (an editorial assessment, a saved result,
+  a changed brief), the schedule pauses with that reason in My system instead of failing a
+  run every week.
+- Occurrences follow the program's saved delivery settings, like any manual draft. They do
+  not reuse the parent's `content.deliver` adaptation, which belongs to the parent run.
+- The configuration is not a child run and adds nothing to the parent's spending bound.
+  Each occurrence is an ordinary scheduled run with its own funding: the content.generate
+  ceiling ($5), project limits and standing schedule authority apply.
+- Saving the schedule never fails the recipe. `RESULT.md` and the system facts record it
+  as succeeded, skipped (`weekly_articles_off`, `content_plan_unavailable`), blocked
+  (`weekly_schedule_unsupported`, `scheduling_unavailable`) or failed
+  (`weekly_schedule_not_saved`).
+
+In-flight v2 histories replay through the `organic-weekly-articles-v1` patch boundary; a
+v2 parent that reaches the new step records `not_in_pinned_recipe` and saves nothing.
 
 ## Shared dashboard and MCP behavior
 

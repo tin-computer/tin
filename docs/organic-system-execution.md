@@ -34,7 +34,9 @@ recipe. Old revisions retain their original children and resources.
 Manual-only. Inputs: HTTPS site origin, English-language buyer market, explicit buyer
 context, content start date, duration (default six months), and keyword spending ceiling
 (default $9). Optional technical repair requires both an exact `owner/repository` and
-the member's confirmation that it serves this site.
+the member's confirmation that it serves this site. From 0.3.0, `article_weekdays` and
+`article_local_time` choose the weekly drafting schedule it saves (see
+[weekly drafting](organic-content-continuation.md#weekly-drafting-030)).
 
 The parent checks required provider availability and spending ceilings before creating
 children. It pins all child definitions from the parent's atomic registry revision.

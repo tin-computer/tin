@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from types import SimpleNamespace
 
+import anthropic
+import httpx
+import openai
 import pytest
 from pydantic import SecretStr
 
@@ -12,14 +16,17 @@ from tin_lite.model_providers import (
     ModelCapability,
     ModelCapabilityError,
     ModelMessage,
+    ModelObservation,
     ModelProviderError,
     ModelRequest,
     ModelRoute,
     ModelRouter,
+    ModelUsage,
     OpenAIModelProvider,
     ProviderName,
     ReasoningEffort,
     configured_model_router,
+    model_failure_reason,
 )
 
 
@@ -258,3 +265,168 @@ async def test_direct_provider_rejected_output_keeps_usage(provider_name):
         await provider.generate(model="test-model", request=_request(structured=True))
     assert error.value.observation.usage.total_tokens == 13
     assert error.value.observation.provider.value == provider_name
+
+
+@pytest.mark.asyncio
+async def test_router_passes_a_per_call_timeout_without_changing_the_request() -> None:
+    class Provider:
+        name = ProviderName.OPENAI
+        capabilities = frozenset({ModelCapability.TEXT})
+        calls = []
+
+        async def generate(self, *, model, request, **options):
+            self.calls.append((request, options))
+            return SimpleNamespace(provider=self.name, model=model)
+
+        async def close(self):
+            pass
+
+    class Recorder:
+        requests = []
+
+        async def generate(self, route, request, call):
+            self.requests.append(asdict(request))
+            return await call()
+
+    provider, recorder = Provider(), Recorder()
+    router = ModelRouter(
+        providers={ProviderName.OPENAI: provider},
+        routes=(
+            ModelRoute(
+                key="review",
+                provider=ProviderName.OPENAI,
+                model="test-model",
+                capabilities=frozenset({ModelCapability.TEXT}),
+            ),
+        ),
+        recorder=recorder,
+    )
+    request = ModelRequest(messages=(ModelMessage(MessageRole.USER, "Review."),))
+
+    await router.generate("review", request)
+    await router.generate("review", request, timeout_seconds=420)
+
+    assert [options for _, options in provider.calls] == [{}, {"timeout_seconds": 420}]
+    # The wait is not part of the request, so request fingerprints stay what they were.
+    assert recorder.requests[0] == recorder.requests[1]
+    assert set(recorder.requests[0]) == {
+        "messages",
+        "system",
+        "max_output_tokens",
+        "temperature",
+        "reasoning_effort",
+        "output_schema",
+        "output_schema_name",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("wait", [None, 420])
+async def test_sdk_adapters_apply_a_per_call_timeout_only_when_given(wait) -> None:
+    class Endpoint:
+        def __init__(self, response):
+            self.response, self.parameters = response, None
+
+        async def create(self, **parameters):
+            self.parameters = parameters
+            return self.response
+
+    class Client(_Closable):
+        def __init__(self, **endpoints):
+            self.options = []
+            for name, endpoint in endpoints.items():
+                setattr(self, name, endpoint)
+
+        def with_options(self, **options):
+            self.options.append(options)
+            return self
+
+    usage = SimpleNamespace(input_tokens=1, output_tokens=1, total_tokens=2)
+    openai = Client(responses=Endpoint(SimpleNamespace(output_text="ok", usage=usage)))
+    anthropic = Client(
+        messages=Endpoint(SimpleNamespace(content=[SimpleNamespace(type="text", text="ok")]))
+    )
+    request = ModelRequest(messages=(ModelMessage(MessageRole.USER, "Answer."),))
+
+    await OpenAIModelProvider(api_key="test", client=openai).generate(  # noqa: S106
+        model="m", request=request, timeout_seconds=wait
+    )
+    await AnthropicModelProvider(api_key="test", client=anthropic).generate(  # noqa: S106
+        model="m", request=request, timeout_seconds=wait
+    )
+
+    expected = [] if wait is None else [{"timeout": wait}]
+    assert openai.options == expected and anthropic.options == expected
+
+
+@pytest.mark.asyncio
+async def test_gemini_adapter_sets_a_per_call_timeout_in_milliseconds() -> None:
+    class Models:
+        parameters = None
+
+        async def generate_content(self, **parameters):
+            self.parameters = parameters
+            return SimpleNamespace(text="ok", usage_metadata=None)
+
+    client = SimpleNamespace(aio=SimpleNamespace(models=Models()))
+    provider = GeminiModelProvider(api_key="test", client=client)  # noqa: S106
+
+    await provider.generate(
+        model="gemini-test",
+        request=ModelRequest(messages=(ModelMessage(MessageRole.USER, "Answer."),)),
+        timeout_seconds=420,
+    )
+
+    assert client.aio.models.parameters["config"].http_options.timeout == 420_000
+
+
+def _wrapped(error: BaseException) -> ModelProviderError:
+    try:
+        raise ModelProviderError("OpenAI model request failed") from error
+    except ModelProviderError as exc:
+        return exc
+
+
+_HTTP = httpx.Request("POST", "https://models.invalid/v1/responses")
+
+
+@pytest.mark.parametrize(
+    ("error", "reason"),
+    [
+        (TimeoutError("secret"), "provider_timeout"),
+        (_wrapped(openai.APITimeoutError(request=_HTTP)), "provider_timeout"),
+        (_wrapped(anthropic.APITimeoutError(request=_HTTP)), "provider_timeout"),
+        (_wrapped(httpx.ReadTimeout("secret", request=_HTTP)), "provider_timeout"),
+        (
+            _wrapped(
+                openai.RateLimitError(
+                    "secret body", response=httpx.Response(429, request=_HTTP), body=None
+                )
+            ),
+            "provider_status_429",
+        ),
+        (
+            _wrapped(
+                anthropic.BadRequestError(
+                    "secret body", response=httpx.Response(400, request=_HTTP), body=None
+                )
+            ),
+            "provider_status_400",
+        ),
+        (_wrapped(openai.APIConnectionError(request=_HTTP)), "provider_connection"),
+        (
+            ModelProviderError(
+                "invalid structured output",
+                observation=ModelObservation(ProviderName.OPENAI, "m", None, ModelUsage()),
+            ),
+            "invalid_result",
+        ),
+        (ValueError("Keyword model result must be a JSON object."), "invalid_result"),
+        (ModelCapabilityError("secret"), "route_unavailable"),
+        (LookupError("secret"), "route_unavailable"),
+        (_wrapped(RuntimeError("secret")), "provider_result_unavailable"),
+        (RuntimeError("secret"), "provider_result_unavailable"),
+    ],
+)
+def test_failure_reason_is_a_fixed_label_never_provider_text(error, reason) -> None:
+    assert model_failure_reason(error) == reason

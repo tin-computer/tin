@@ -413,3 +413,57 @@ class ContentDraftSources:
             await self.db.start_effect(conn, execution_key=key, operation=content_draft.KEY)
             await self.db.complete_effect(conn, execution_key=key, result=context)
             return context
+
+
+class ScheduledDraftHold(Exception):
+    """This occurrence waits; the schedule stays active and tries again next time."""
+
+
+class ScheduledDraftStop(ValueError):
+    """The schedule cannot draft again until someone acts; the message says what to do."""
+
+
+async def scheduled_selection(*, database, storage, integrations, project_id, inputs):
+    """Choose the next plan article for one weekly occurrence, as a manual start would.
+
+    One draft waits for review at a time: while any article from this program waits for
+    review or is still drafting, the occurrence holds. A plan with nothing left to draft, or a
+    next article that needs the founder, stops the schedule with that reason instead of
+    failing a run every week.
+    """
+    if inputs.get("item_id") or inputs.get("rewrite"):
+        raise ScheduledDraftStop(
+            "A weekly schedule drafts the next article in plan order. "
+            "Clear the chosen article in this schedule to keep it running."
+        )
+    sources = ContentDraftSources(database=database, storage=storage)
+    program_id = UUID(inputs["program_id"])
+    try:
+        program = await sources.programs.configured(project_id, program_id)
+    except LookupError as exc:
+        raise ScheduledDraftStop(
+            "The content program behind this schedule is no longer available."
+        ) from exc
+    if program.status != "active":
+        raise ScheduledDraftHold()
+    discovery = await sources.discover(project_id=project_id, program_id=program_id)
+    progress, upcoming = discovery["progress"], discovery["next"]
+    if progress["awaiting_review"] or progress["drafting"]:
+        raise ScheduledDraftHold()
+    if not upcoming["available"]:
+        if upcoming["item_id"] is None:
+            raise ScheduledDraftStop(
+                "Every planned article has a draft or is already covered. "
+                "Extend the content plan, then resume this schedule."
+            )
+        if next(item for item in discovery["items"] if item["id"] == upcoming["item_id"])["held"]:
+            raise ScheduledDraftHold()  # A pending plan revision finishes on its own.
+        raise ScheduledDraftStop(upcoming["reason"])
+    selected = await sources.choose(project_id=project_id, inputs=inputs)
+    if inputs.get("delivery") == "program":
+        from tin_lite.content_delivery import ContentDelivery
+
+        selected["delivery"] = await ContentDelivery(
+            database=database, storage=storage, integrations=integrations
+        ).pin(project_id=project_id, selected=selected)
+    return selected
