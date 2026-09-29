@@ -365,10 +365,11 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'new Set(["analytics.gsc", "infra.github", "analytics.posthog"])' in script
     assert 'id="integration-project-dialog"' in index
     assert 'role="radiogroup"' in index
-    assert "function chooseIntegrationProject(providerKey, capabilities)" in script
-    assert "Connections are project-owned. Choose the Tin project" in script
+    # Connect links the service to the project you are in; no project question.
+    assert "function chooseIntegrationProject(" not in script
+    assert "Connections are project-owned. Choose the Tin project" not in script
     assert "integrationProjectDialog.showModal()" in script
-    assert "targetProjectId || context.projectId" in script
+    assert "`/api/projects/${encodeURIComponent(context.projectId)}/integrations/" in script
     assert "function promptForIntegrationResource(providerKey)" in script
     assert "OAuth is connected, but workflows cannot use" in script
     assert 'needsResource ? "Finish setup" : "Configure"' in script
@@ -398,15 +399,16 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
         in script
     )
     assert "project_id: stateToken ? null : callbackProjectId()" in script
-    # Repository picker as a dialog right after the connect (Search Console keeps the scroll).
-    assert "async function chooseGitHubRepository()" in script
-    assert "Choose the repository for ${state.project?.name" in script
-    assert "/integrations/infra.github/options`" in script
-    assert 'if (providerKey === "infra.github") {\n    await chooseGitHubRepository();' in script
+    # One resource dialog right after the connect, and from Finish setup or Configure, for
+    # GitHub, Search Console and PostHog alike.
+    assert "async function chooseIntegrationResource(providerKey)" in script
+    assert "`Choose the ${copy.noun} for ${state.project?.name" in script
+    assert "/integrations/${encodeURIComponent(providerKey)}/options`" in script
+    assert "  await chooseIntegrationResource(providerKey);\n}" in script
     assert "Only repositories the Tin app is installed on appear here." in script
     assert 'href="${GITHUB_INSTALLATIONS_URL}"' in script
     assert 'GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations"' in script
-    assert "if (state.repositoryChoice) {\n    await confirmGitHubRepository();" in script
+    assert "if (state.resourceChoice) {\n    await confirmIntegrationResource();" in script
     assert "body: JSON.stringify({ option_id: choice.selected })" in script
     assert ".integration-project-empty" in stylesheet
     assert ".integration-setup-prompt" in stylesheet
@@ -414,8 +416,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "Enable sending" in script
     assert "incremental send permission" not in script
     assert ">Connect</button>" in script
-    assert 'selection?.addEventListener("change"' in script
-    assert "Choose a ${optionLabel.toLowerCase()}" in script
+    # The row's details show the chosen resource; picking it happens only in the dialog.
+    assert 'selection?.addEventListener("change"' not in script
+    assert "data-integration-form" not in script
     assert 'connected ? "Configure" : "Details"' not in script
     assert '"analytics.gsc": "/assets/integrations/google-search-console.svg"' in script
     assert '"infra.github": "/assets/integrations/github.svg"' in script

@@ -271,11 +271,8 @@ const state = {
   integrationFilter: "all",
   integrationSearch: "",
   expandedIntegration: null,
-  integrationOptions: new Map(),
-  integrationLoading: null,
-  integrationConnectIntent: null,
   githubInstallationChoice: null,
-  repositoryChoice: null,
+  resourceChoice: null,
   stripeKeyChoice: null,
   projectCreateWorkspaceId: null,
   projectCreateRequestId: null,
@@ -5620,6 +5617,9 @@ function bindIntegrationCardControls() {
   document.querySelectorAll("[data-integration-connect]").forEach((button) => {
     button.addEventListener("click", () => connectIntegration(button.dataset.integrationConnect));
   });
+  document.querySelectorAll("[data-integration-choose]").forEach((button) => {
+    button.addEventListener("click", () => configureIntegrationResource(button.dataset.integrationChoose));
+  });
   document.querySelectorAll("[data-integration-upgrade]").forEach((button) => {
     button.addEventListener("click", () => connectIntegration(
       button.dataset.integrationUpgrade,
@@ -5634,19 +5634,6 @@ function bindIntegrationCardControls() {
   });
   document.querySelectorAll("[data-stripe-refresh]").forEach((button) => {
     button.addEventListener("click", () => refreshStripe(button));
-  });
-  document.querySelectorAll("[data-integration-form]").forEach((form) => {
-    bindTinControls(form);
-    const selection = form.querySelector('input[name="option_id"]');
-    selection?.addEventListener("change", () => {
-      if (selection.value) {
-        saveIntegrationSelection(form.dataset.integrationForm, selection.value);
-      }
-    });
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      saveIntegrationSelection(form.dataset.integrationForm, new FormData(form).get("option_id"));
-    });
   });
 }
 
@@ -5761,7 +5748,9 @@ function renderIntegrationCard(integration) {
       <span class="integration-state-mark is-${escapeHtml(integration.status)}" aria-hidden="true"></span>
       ${connected ? `<span class="integration-primary">${escapeHtml(primary)}</span>
         <span class="integration-health">${escapeHtml(health)}</span>
-        <button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">${needsResource ? "Finish setup" : "Configure"}</button>`
+        ${RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
+          ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Finish setup" : "Configure"}</button>`
+          : `<button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">Configure</button>`}`
         : `<span class="integration-unlocks">would unlock ${escapeHtml(unlocks)}</span>
         <button class="integration-connect" type="button" data-integration-connect="${escapeHtml(integration.key)}">Connect</button>`}
     </div>
@@ -5831,10 +5820,9 @@ function renderStripeExpanded(integration) {
 
 function renderIntegrationExpanded(integration) {
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
-  const options = state.integrationOptions.get(integration.key);
   const selected = integrationSelection(integration) || "";
   const isPostHog = integration.key === "analytics.posthog";
-  const optionLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
+  const resourceLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
   const isWorkspace = integration.key === "workspace.google";
   const isAds = integration.key === "ads.google";
   const isGitHubAccount = integration.key === "infra.github_user";
@@ -5884,25 +5872,10 @@ function renderIntegrationExpanded(integration) {
         : `The invitation is ${escapeHtml(link)}. Send it again to link the account.`;
     selectionControl = `<div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Google Ads")}</span></div>
       <p class="integration-setup-prompt" role="status">${linkCopy} <button class="integration-row-action" type="button" data-integration-refresh="${escapeHtml(integration.key)}">Check again</button>${link !== "active" && link !== "pending" ? ` <button class="integration-row-action" type="button" data-integration-connect="${escapeHtml(integration.key)}">Send again</button>` : ""}</p>`;
-  } else if (state.integrationLoading === integration.key) {
-    selectionControl = `<span class="integration-detail-value is-muted">Checking the connected account…</span>`;
-  } else if (options) {
-    const availableOptions = options.map((option) => [
-      option.id,
-      option.detail ? `${option.label} · ${option.detail}` : option.label,
-    ]);
-    const controlOptions = options.length
-      ? [
-          ...(!selected ? [["", `Choose a ${optionLabel.toLowerCase()}`]] : []),
-          ...availableOptions,
-        ]
-      : [["", `No ${optionLabel.toLowerCase()} available`]];
-    selectionControl = `<form class="integration-config-form" data-integration-form="${escapeHtml(integration.key)}">
-      <label>${escapeHtml(optionLabel)}</label>
-      ${tinSelectControl("option_id", selected, controlOptions, optionLabel)}
-    </form>`;
   } else {
-    selectionControl = `<span class="integration-detail-value is-muted">Choices unavailable. Close and reopen to retry.</span>`;
+    selectionControl = selected
+      ? `<div class="integration-detail-row"><span class="integration-detail-label">${escapeHtml(resourceLabel)}</span><span class="integration-detail-value">${escapeHtml(isPostHog ? integration.external_account_label || selected : selected)}</span></div>`
+      : "";
   }
   const connectedLabel = integration.connected_at ? timeLabel(integration.connected_at) : "recently";
   const checkedLabel = integration.last_checked_at
@@ -5910,7 +5883,7 @@ function renderIntegrationExpanded(integration) {
     : "not checked yet";
   return `<div class="integration-expanded">
     ${setupPrompt}
-    <div class="integration-selection-row">${selectionControl}</div>
+    ${selectionControl ? `<div class="integration-selection-row">${selectionControl}</div>` : ""}
     <div class="integration-detail-row">
       <span class="integration-detail-label">Access</span>
       <span class="integration-detail-value" title="${escapeHtml(accessCopy)}">${escapeHtml(accessValue)}</span>
@@ -5940,24 +5913,17 @@ async function toggleIntegration(providerKey) {
     return;
   }
   state.expandedIntegration = providerKey;
-  const integration = state.integrations.find((item) => item.key === providerKey);
-  const context = currentProjectContext();
-  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe", "infra.github_user"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
-    state.integrationLoading = providerKey;
-    renderIntegrations();
-    try {
-      const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
-      if (!isCurrentProjectContext(context)) return;
-      state.integrationOptions.set(providerKey, options);
-    } catch (error) {
-      if (!isCurrentProjectContext(context)) return;
-      showToast(`Could not load ${integration.name}: ${error.message}`);
-    } finally {
-      if (isCurrentProjectContext(context)) state.integrationLoading = null;
-    }
-  }
-  if (!isCurrentProjectContext(context)) return;
   renderIntegrations();
+}
+
+// "Finish setup" and "Configure" open the same question the connection asked, with the row's
+// details (access, disconnect) left open underneath for when it closes.
+function configureIntegrationResource(providerKey) {
+  if (state.expandedIntegration !== providerKey) {
+    state.expandedIntegration = providerKey;
+    renderIntegrations();
+  }
+  chooseIntegrationResource(providerKey);
 }
 
 async function openCustomApi(connection = null) {
@@ -5979,64 +5945,10 @@ async function promptForIntegrationResource(providerKey) {
   const integration = state.integrations.find((item) => item.key === providerKey);
   const selected = integrationSelection(integration);
   if (!integration?.connection_id || selected) return;
-  if (providerKey === "infra.github") {
-    await chooseGitHubRepository();
-    return;
-  }
-  if (state.expandedIntegration !== providerKey) await toggleIntegration(providerKey);
-  const form = document.querySelector(`[data-integration-form="${providerKey}"]`);
-  if (!form) return;
-  form.scrollIntoView({ block: "center", behavior: "smooth" });
-  form.querySelector("[data-tin-select-trigger]")?.focus({ preventScroll: true });
-  showToast(`Choose a ${integrationResourceNoun(providerKey)} to finish connecting ${integration.name}.`);
+  await chooseIntegrationResource(providerKey);
 }
 
-function renderIntegrationProjectOptions({ focusProjectId = null } = {}) {
-  integrationProjectOptions.replaceChildren();
-  for (const project of state.projects) {
-    const selected = project.id === state.integrationConnectIntent?.projectId;
-    const option = document.createElement("button");
-    option.type = "button";
-    option.className = `integration-project-option${selected ? " is-selected" : ""}`;
-    option.dataset.integrationProjectId = project.id;
-    option.setAttribute("role", "radio");
-    option.setAttribute("aria-checked", String(selected));
-    option.innerHTML = `<span><strong>${escapeHtml(project.name)}</strong>${project.id === state.project?.id ? "<small>Current project</small>" : ""}</span><i aria-hidden="true"></i>`;
-    option.addEventListener("click", () => {
-      state.integrationConnectIntent.projectId = project.id;
-      renderIntegrationProjectOptions({ focusProjectId: project.id });
-    });
-    integrationProjectOptions.append(option);
-  }
-  if (focusProjectId) {
-    integrationProjectOptions.querySelector(`[data-integration-project-id="${focusProjectId}"]`)?.focus();
-  }
-}
-
-function chooseIntegrationProject(providerKey, capabilities) {
-  const integration = state.integrations.find((item) => item.key === providerKey);
-  if (!integration || !state.project) return;
-  state.integrationConnectIntent = {
-    providerKey,
-    capabilities,
-    projectId: state.project.id,
-  };
-  const nextStep = providerKey === "infra.github"
-    ? "After GitHub authorizes Tin, you’ll choose the repository this project can use."
-    : providerKey === "analytics.posthog"
-      ? "PostHog then asks which one of your PostHog projects Tin may read."
-    : providerKey === "infra.github_user"
-      ? "GitHub then asks you to allow access to your public repositories. Tin only uses it to send the list submissions you approve."
-      : "After Google authorizes Tin, you’ll choose the Search Console property this project can use.";
-  integrationProjectTitle.textContent = `Connect ${integration.name} to a project`;
-  integrationProjectCopy.textContent = `Connections are project-owned. Choose the Tin project for this connection. ${nextStep}`;
-  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = `Continue to ${integration.name}`;
-  renderIntegrationProjectOptions();
-  integrationProjectDialog.showModal();
-  integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
-}
-
-async function connectIntegration(providerKey, capabilities = null, targetProjectId = null) {
+async function connectIntegration(providerKey, capabilities = null) {
   if (providerKey === CUSTOM_API_TEMPLATE.key) {
     await openCustomApi();
     return;
@@ -6046,66 +5958,31 @@ async function connectIntegration(providerKey, capabilities = null, targetProjec
     showToast(`${integration?.name || "This integration"} is not configured on this Tin deployment.`);
     return;
   }
+  const context = currentProjectContext();
   if (providerKey === "ads.google") {
-    chooseGoogleAdsAccount(targetProjectId || currentProjectContext().projectId);
+    chooseGoogleAdsAccount(context.projectId);
     return;
   }
   if (providerKey === "payments.stripe") {
-    chooseStripeKey(targetProjectId || currentProjectContext().projectId);
+    chooseStripeKey(context.projectId);
     return;
   }
-  if (
-    !targetProjectId &&
-    !integration.connection_id &&
-    RESOURCE_SCOPED_INTEGRATIONS.has(providerKey)
-  ) {
-    chooseIntegrationProject(providerKey, capabilities);
-    return;
-  }
-  const context = currentProjectContext();
-  const projectId = targetProjectId || context.projectId;
+  // Connect links the service to the project you are in. Its sign-in returns here, and a
+  // resource-scoped service then asks which repository, property or project to link.
   try {
-    const result = await api(`/api/projects/${encodeURIComponent(projectId)}/integrations/${encodeURIComponent(providerKey)}/connect`, {
+    const result = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/connect`, {
       method: "POST",
       ...(capabilities ? { body: JSON.stringify({ capabilities }) } : {}),
     });
     if (!isCurrentProjectContext(context)) return;
-    if (
-      targetProjectId &&
-      (!state.integrationConnectIntent ||
-        state.integrationConnectIntent.providerKey !== providerKey ||
-        state.integrationConnectIntent.projectId !== targetProjectId)
-    ) {
-      return;
-    }
-    persistProjectSelection(projectId);
+    persistProjectSelection(context.projectId);
     if (state.projectAccess === "locked" || connectRequest().length) {
-      rememberConnectRequest(projectId, [...connectRequest(projectId), providerKey]);
+      rememberConnectRequest(context.projectId, [...connectRequest(context.projectId), providerKey]);
     }
-    if (integrationProjectDialog.open) integrationProjectDialog.close();
     window.location.assign(result.authorization_url);
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
     showToast(`Could not connect ${integration.name}: ${error.message}`);
-  }
-}
-
-async function saveIntegrationSelection(providerKey, optionId) {
-  if (!optionId) return;
-  const context = currentProjectContext();
-  try {
-    const updated = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}`, {
-      method: "PUT",
-      body: JSON.stringify({ option_id: optionId }),
-    });
-    if (!isCurrentProjectContext(context)) return;
-    const index = state.integrations.findIndex((item) => item.key === providerKey);
-    if (index >= 0) state.integrations[index] = updated;
-    showToast(`${updated.name} configuration saved.`);
-    renderIntegrations();
-  } catch (error) {
-    if (!isCurrentProjectContext(context)) return;
-    showToast(`Could not save integration: ${error.message}`);
   }
 }
 
@@ -6116,7 +5993,6 @@ async function disconnectIntegration(providerKey) {
   try {
     await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}`, { method: "DELETE" });
     if (!isCurrentProjectContext(context)) return;
-    state.integrationOptions.delete(providerKey);
     state.expandedIntegration = null;
     const integrations = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations`);
     if (!isCurrentProjectContext(context)) return;
@@ -6343,9 +6219,6 @@ function resetProjectState(project) {
   state.integrationFilter = "all";
   state.integrationSearch = "";
   state.expandedIntegration = null;
-  state.integrationOptions = new Map();
-  state.integrationLoading = null;
-  state.integrationConnectIntent = null;
   if (integrationProjectDialog.open) integrationProjectDialog.close();
   if (projectCreateDialog.open) projectCreateDialog.close();
   if (projectInviteDialog.open) projectInviteDialog.close();
@@ -6610,41 +6483,70 @@ function clearIntegrationCallbackUrl(projectId = null) {
 
 const GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations";
 
-async function chooseGitHubRepository() {
-  // Same shape as the account chooser: the connect just finished, so the pick happens here
-  // instead of hunting for a select on the Integrations page.
+// Right after a service connects, and from "Finish setup" or "Configure": which one repository,
+// Search Console property or PostHog project this project uses. "Later" keeps the connection.
+const RESOURCE_CHOICES = {
+  "infra.github": {
+    noun: "repository",
+    loading: "Loading repositories…",
+    copy: "Tin opens pull requests and delivers approved pages here.",
+    confirm: "Link repository",
+  },
+  "analytics.gsc": {
+    noun: "Search Console property",
+    loading: "Loading properties…",
+    copy: "Tin reads real searches, clicks and positions from this property.",
+    confirm: "Link property",
+    empty: "This Google account has no Search Console properties yet.",
+  },
+  "analytics.posthog": {
+    noun: "PostHog project",
+    loading: "Loading projects…",
+    copy: "Tin reads events and funnels from this one project, read only.",
+    confirm: "Link project",
+    empty: "This PostHog account has no projects Tin can read.",
+  },
+};
+
+async function chooseIntegrationResource(providerKey) {
+  const copy = RESOURCE_CHOICES[providerKey];
   const context = currentProjectContext();
-  if (!context.projectId) return;
-  state.repositoryChoice = { projectId: context.projectId, options: null, selected: null };
-  integrationProjectTitle.textContent = `Choose the repository for ${state.project?.name || "this project"}`;
-  integrationProjectCopy.textContent = "Tin writes approved drafts to one repository per project.";
-  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Save";
-  renderGitHubRepositoryOptions();
-  integrationProjectDialog.showModal();
+  if (!copy || !context.projectId) return;
+  const integration = state.integrations.find((item) => item.key === providerKey);
+  state.resourceChoice = { providerKey, projectId: context.projectId, options: null, selected: null };
+  integrationProjectTitle.textContent = `Choose the ${copy.noun} for ${state.project?.name || "this project"}`;
+  integrationProjectCopy.textContent = copy.copy;
+  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = copy.confirm;
+  integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Later";
+  integrationProjectOptions.setAttribute("aria-label", copy.noun);
+  renderIntegrationResourceOptions();
+  if (!integrationProjectDialog.open) integrationProjectDialog.showModal();
+  const current = () => state.resourceChoice?.providerKey === providerKey && state.resourceChoice.projectId === context.projectId;
   try {
-    const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/infra.github/options`);
-    if (!isCurrentProjectContext(context) || state.repositoryChoice?.projectId !== context.projectId) return;
-    state.integrationOptions.set("infra.github", options);
-    state.repositoryChoice.options = options;
-    state.repositoryChoice.selected = options[0]?.id || null;
+    const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
+    if (!isCurrentProjectContext(context) || !current()) return;
+    const chosen = integrationSelection(integration);
+    state.resourceChoice.options = options;
+    state.resourceChoice.selected = options.find((item) => item.id === chosen)?.id || options[0]?.id || null;
   } catch (error) {
-    if (!isCurrentProjectContext(context) || !state.repositoryChoice) return;
-    state.repositoryChoice.options = [];
-    showToast(`Could not load repositories: ${error.message}`);
+    if (!isCurrentProjectContext(context) || !current()) return;
+    state.resourceChoice.options = [];
+    showToast(`Could not load the choices: ${error.message}`);
   }
-  renderGitHubRepositoryOptions();
+  renderIntegrationResourceOptions();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
 }
 
-function renderGitHubRepositoryOptions() {
-  const choice = state.repositoryChoice;
+function renderIntegrationResourceOptions() {
+  const choice = state.resourceChoice;
   if (!choice) return;
+  const copy = RESOURCE_CHOICES[choice.providerKey];
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
   integrationProjectOptions.replaceChildren();
   if (choice.options === null) {
     const loading = document.createElement("p");
     loading.className = "integration-project-empty";
-    loading.textContent = "Loading repositories…";
+    loading.textContent = copy.loading;
     integrationProjectOptions.append(loading);
     confirm.disabled = true;
     return;
@@ -6659,41 +6561,50 @@ function renderGitHubRepositoryOptions() {
     option.innerHTML = `<span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}</span><i aria-hidden="true"></i>`;
     option.addEventListener("click", () => {
       choice.selected = item.id;
-      renderGitHubRepositoryOptions();
+      renderIntegrationResourceOptions();
       integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
     });
     integrationProjectOptions.append(option);
   }
-  const note = document.createElement("p");
-  note.className = "integration-project-empty";
-  note.innerHTML = `Only repositories the Tin app is installed on appear here. Add the repository under <a href="${GITHUB_INSTALLATIONS_URL}" target="_blank" rel="noreferrer">the Tin app’s access on GitHub</a>, then reopen the connect link.`;
-  integrationProjectOptions.append(note);
+  if (choice.providerKey === "infra.github") {
+    const note = document.createElement("p");
+    note.className = "integration-project-empty";
+    note.innerHTML = `Only repositories the Tin app is installed on appear here. Add the repository under <a href="${GITHUB_INSTALLATIONS_URL}" target="_blank" rel="noreferrer">the Tin app’s access on GitHub</a>, then reopen the connect link.`;
+    integrationProjectOptions.append(note);
+  } else if (!choice.options.length) {
+    const empty = document.createElement("p");
+    empty.className = "integration-project-empty";
+    empty.textContent = copy.empty;
+    integrationProjectOptions.append(empty);
+  }
   confirm.disabled = !choice.selected;
 }
 
-async function confirmGitHubRepository() {
-  const choice = state.repositoryChoice;
+async function confirmIntegrationResource() {
+  const choice = state.resourceChoice;
   if (!choice?.selected) return;
+  const copy = RESOURCE_CHOICES[choice.providerKey];
+  const option = choice.options.find((item) => item.id === choice.selected);
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
   confirm.disabled = true;
-  confirm.textContent = "Saving…";
+  confirm.textContent = "Linking…";
   try {
-    const updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/infra.github`, {
+    const updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/${encodeURIComponent(choice.providerKey)}`, {
       method: "PUT",
       body: JSON.stringify({ option_id: choice.selected }),
     });
     if (state.project?.id === choice.projectId) {
-      const index = state.integrations.findIndex((item) => item.key === "infra.github");
+      const index = state.integrations.findIndex((item) => item.key === choice.providerKey);
       if (index >= 0) state.integrations[index] = updated;
       else state.integrations.push(updated);
     }
     if (integrationProjectDialog.open) integrationProjectDialog.close();
-    showToast(`${updated.name} will write to ${updated.configuration?.selected_repository || "the chosen repository"}.`);
+    showToast(`${updated.name} now uses ${option?.label || "your choice"}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not save the repository: ${error.message}`);
+    showToast(`Could not link the ${copy.noun}: ${error.message}`);
     confirm.disabled = false;
-    confirm.textContent = "Save";
+    confirm.textContent = copy.confirm;
   }
 }
 
@@ -7255,8 +7166,8 @@ projectInviteDialog.addEventListener("close", () => {
 
 integrationProjectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (state.repositoryChoice) {
-    await confirmGitHubRepository();
+  if (state.resourceChoice) {
+    await confirmIntegrationResource();
     return;
   }
   if (state.githubInstallationChoice) {
@@ -7271,17 +7182,6 @@ integrationProjectForm.addEventListener("submit", async (event) => {
     await confirmStripeKey();
     return;
   }
-  const intent = state.integrationConnectIntent;
-  if (!intent) return;
-  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
-  const integration = state.integrations.find((item) => item.key === intent.providerKey);
-  confirm.disabled = true;
-  confirm.textContent = "Continuing…";
-  await connectIntegration(intent.providerKey, intent.capabilities, intent.projectId);
-  if (integrationProjectDialog.open) {
-    confirm.disabled = false;
-    confirm.textContent = `Continue to ${integration?.name || "provider"}`;
-  }
 });
 
 integrationProjectForm.querySelector("[data-cancel-integration-project]").addEventListener("click", () => {
@@ -7289,9 +7189,10 @@ integrationProjectForm.querySelector("[data-cancel-integration-project]").addEve
 });
 
 integrationProjectDialog.addEventListener("close", () => {
-  state.integrationConnectIntent = null;
   state.githubInstallationChoice = null;
-  state.repositoryChoice = null;
+  state.resourceChoice = null;
+  integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Cancel";
+  integrationProjectOptions.setAttribute("aria-label", "Tin project");
   state.googleAdsChoice = null;
   state.stripeKeyChoice = null;
   const stripeKey = integrationProjectOptions.querySelector('input[name="restricted_key"]');
