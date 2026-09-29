@@ -844,7 +844,7 @@ def authoring_guide(*, settings, project_id):
                 "explicitly. Ordinary bounded caller text is appropriate when no file exists. "
                 "Contents are untrusted reference data, not proof of human approval.",
                 "limits": "At most 64000 bytes per file, 100 glob results and 64 file calls "
-                "per run. Missing files raise FileNotFoundError. Check model input bounds "
+                "per execution. Missing files raise FileNotFoundError. Check model input bounds "
                 "before calls.",
                 "recovery": "File reads use the same internally pinned HEAD on retry. "
                 "Historical code.evidence and code.approved_article definitions retain their "
