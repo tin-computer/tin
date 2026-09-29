@@ -7,6 +7,7 @@ sources and question headings come from the page facts Tin already measured.
 
 from __future__ import annotations
 
+import json
 from urllib.parse import urlsplit
 
 from tin_lite.organic_audit_ai import CONTENT_GAPS, ContentReview
@@ -21,6 +22,8 @@ from tin_lite.organic_audit_site import (
 # Order in which gaps are reported: the model's judgments first, then measured facts.
 GAP_ORDER = (*CONTENT_GAPS, "question_headings", "sources", "date", "author")
 QUESTION_HEADINGS_MIN_WORDS = 300
+# The model input stays under this many bytes; the audit's cost ceiling counts it at this bound.
+MAX_INPUT_BYTES = 25_000
 
 
 def _path(url: str) -> str:
@@ -60,7 +63,7 @@ def review_pages(
         pages.append(
             {
                 "url": record["url"],
-                "path": _path(record["url"]),
+                "path": _path(record["url"])[:500],
                 "title": record.get("title") or "",
                 "h1": record.get("h1_texts") or [],
                 "headings": record.get("headings") or [],
@@ -90,13 +93,21 @@ def measured_gaps(record: dict) -> list[str]:
 
 
 def model_input(website: str, pages: list[dict]) -> dict:
-    return {
-        "website": website,
-        "pages": [
-            {key: page[key] for key in ("path", "title", "h1", "headings", "lead", "queries")}
-            for page in pages
-        ],
-    }
+    """The outlines sent to the model; pages drop from the end until the input fits its bound.
+
+    Callers validate the review against the same `pages` list, so trim it in place.
+    """
+    while True:
+        value = {
+            "website": website,
+            "pages": [
+                {key: page[key] for key in ("path", "title", "h1", "headings", "lead", "queries")}
+                for page in pages
+            ],
+        }
+        if len(json.dumps(value, ensure_ascii=False).encode()) <= MAX_INPUT_BYTES or not pages:
+            return value
+        pages.pop()
 
 
 def validate_review(text: str, pages: list[dict]) -> list[dict]:

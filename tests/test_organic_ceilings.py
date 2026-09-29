@@ -10,7 +10,13 @@ import pytest
 from tin_lite import content_plan_editorial as editorial
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import AUDIT_POLICY
-from tin_lite.organic_audit_ai import AnswerJudgment, BuyerPanel, PanelValidation, payload
+from tin_lite.organic_audit_ai import (
+    AnswerGrade,
+    BuyerPanel,
+    ContentReview,
+    PanelValidation,
+    payload,
+)
 from tin_lite.service_pricing import (
     AUDIT_MAXIMUM_USD,
     CARD,
@@ -30,25 +36,29 @@ def usd(nanos):
 
 def test_audit_ceiling_covers_every_call_at_every_bound():
     policy, total = AUDIT_POLICY, Decimal(AUDIT_POLICY["crawl_reservation_usd"])
+    questions = policy["max_questions"]
     calls = (
         ("research", policy["max_research_attempts"], None, True),
-        (
-            "answer",
-            policy["max_questions"] * policy["repetitions"] + policy["brand_checks"],
-            None,
-            True,
-        ),
+        ("answer", questions * policy["repetitions"] + policy["brand_checks"], None, True),
         ("panel", policy["max_panel_attempts"], BuyerPanel, False),
-        ("interpret", policy["max_panel_attempts"] * policy["max_questions"], None, False),
+        ("interpret", policy["max_panel_attempts"] * questions, None, False),
         ("validate", policy["max_panel_attempts"], PanelValidation, False),
-        ("judge", policy["max_questions"] * policy["repetitions"], AnswerJudgment, False),
+        ("judge_graded", questions * policy["repetitions"], AnswerGrade, False),
+        # One answer per question without web search, and its grade. Its input is the
+        # question (at most 400 characters); the grade reads an answer of at most 32 KB.
+        ("answer_memory", questions, None, False),
+        ("judge_graded", questions, AnswerGrade, False),
+        # One review of at most five page outlines with capped fields.
+        ("content_review", 1, ContentReview, False),
     )
+    bounds = {"answer_memory": 400, "content_review": 25_000}
     rate = LUNA["standard"]
-    for stage, count, schema, search in calls:
+    for index, (stage, count, schema, search) in enumerate(calls):
+        size = bounds.get(stage, 33_000 if index == 7 else 60_000)
         data = (
             {"website": "https://example.com/", "focus_hint": "x" * 59_000}
             if stage == "research"
-            else "x" * 60_000
+            else "x" * size
         )
         request = payload(stage=stage, data=data, schema=schema, market="US", search=search)
         searches = policy["max_tool_calls"] if search else 0
@@ -59,8 +69,9 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
             + policy["max_output_tokens"] * rate["output"]
             + searches * CARD["web_search_call_nanos"]
         )
-    # v10 asks at most 8 questions three times: 28 searched and 44 unsearched calls, $1.83.
-    assert Decimal("1.8") < total < AUDIT_MAXIMUM_USD
+    # v10 asks at most 8 questions three times with web search and once without, plus a
+    # review of the top pages: 28 searched and 61 unsearched calls, about $1.92.
+    assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
     terms = service_terms(SPECS["organic.audit"].definition)
     assert terms["maximum_nanos"] == AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR == 2 * NANOS_PER_DOLLAR
 
