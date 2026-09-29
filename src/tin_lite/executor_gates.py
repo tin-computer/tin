@@ -8,6 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from tin_lite.keyword_plan_v6 import POLICY as KEYWORD_POLICY
+from tin_lite.organic_system import INPUT_SCHEMA as ORGANIC_SYSTEM_INPUTS
+
+# The current keyword policy's floor: it reserves $1.65 at most, so $2 never refuses a call.
+KEYWORD_MINIMUM_USD = float(KEYWORD_POLICY["minimum_ceiling_usd"])
+KEYWORD_DEFAULT_USD = ORGANIC_SYSTEM_INPUTS["properties"]["keyword_max_cost_usd"]["default"]
+
 
 def organic_audit_gate(settings: Any) -> str | None:
     if (
@@ -26,11 +33,11 @@ def keyword_plan_gate(settings: Any) -> str | None:
         not getattr(settings, "dataforseo_login", None)
         or not getattr(settings, "dataforseo_password", None)
         or not getattr(settings, "luna_api_key", None)
-        or getattr(settings, "keyword_plan_max_cost_usd", 0) < 5
+        or getattr(settings, "keyword_plan_max_cost_usd", 0) < KEYWORD_MINIMUM_USD
     ):
         return (
             "Keyword planning requires DataForSEO, the native model, "
-            "and an enabled spending ceiling of at least $5."
+            f"and an enabled spending ceiling of at least ${KEYWORD_MINIMUM_USD:g}."
         )
     return None
 
@@ -51,7 +58,9 @@ def paid_ads_gate(settings: Any) -> str | None:
     return None
 
 
-def organic_system_gate(settings: Any, *, keyword_max_cost_usd: float = 9) -> str | None:
+def organic_system_gate(
+    settings: Any, *, keyword_max_cost_usd: float = KEYWORD_DEFAULT_USD
+) -> str | None:
     if (
         not getattr(settings, "dataforseo_login", None)
         or not getattr(settings, "dataforseo_password", None)

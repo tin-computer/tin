@@ -24,7 +24,12 @@ from tin_lite.codex_execution import (
     execute_codex_slice,
     execute_project_codex,
 )
-from tin_lite.workflows import CodexProcedureWorkflow, DesignMdWorkflow, ProjectTaskWorkflow
+from tin_lite.workflows import (
+    CodeWorkflow,
+    CodexProcedureWorkflow,
+    DesignMdWorkflow,
+    ProjectTaskWorkflow,
+)
 
 
 @workflow.defn
@@ -106,6 +111,7 @@ class Compute:
                 return run_id.split("/")[0]
             if name in {
                 "run_project_task_turn",
+                "execute_code_workflow",
                 "persist_codex_procedure_artifact",
                 "persist_design_artifact",
             }:
@@ -128,6 +134,12 @@ class Compute:
 
 NAMES = [
     "resolve_codex_project",
+    "execute_code_workflow",
+    "publish_code_workflow",
+    "review_code_workflow",
+    "approve_code_workflow",
+    "project_code_workflow",
+    "fail_code_workflow",
     "run_project_task_turn",
     "prepare_codex_procedure",
     "create_codex_procedure_sandbox",
@@ -148,6 +160,7 @@ NAMES = [
 ]
 WORKFLOWS = [
     ExecutionProbe,
+    CodeWorkflow,
     ProjectCodexExecution,
     CodexProcedureWorkflow,
     ProjectTaskWorkflow,
@@ -161,7 +174,7 @@ def workflow_worker(env, base):
     )
 
 
-def activity_worker(env, base, compute, *, trusted=False):
+def activity_worker(env, base, compute, *, trusted=False, capacity=2):
     from tin_lite.activity_lanes import TRUSTED_ACTIVITIES
 
     names = [n for n in NAMES if (n in TRUSTED_ACTIVITIES) == trusted]
@@ -169,7 +182,7 @@ def activity_worker(env, base, compute, *, trusted=False):
         env.client,
         task_queue=trusted_task_queue(base) if trusted else base,
         activities=[compute.activity(n) for n in names],
-        max_concurrent_activities=2,
+        max_concurrent_activities=capacity,
         max_heartbeat_throttle_interval=timedelta(milliseconds=100),
         default_heartbeat_throttle_interval=timedelta(milliseconds=100),
     )
@@ -180,11 +193,12 @@ async def start(env, base, run_id, cls=ExecutionProbe):
 
 
 @pytest.mark.asyncio
-async def test_same_project_mixed_executors_serialize_across_workers_but_projects_overlap(
+async def test_same_project_mixed_executors_overlap_across_workers(
     temporal_env,
 ):
     env, compute, base = temporal_env, Compute(), f"projects-{uuid4()}"
     compute.release["a/procedure"] = asyncio.Event()
+    compute.release["a/design"] = asyncio.Event()
     histories = []
     second_client = await Client.connect(
         env.client.service_client.config.target_host, runtime=Runtime(telemetry=TelemetryConfig())
@@ -200,25 +214,28 @@ async def test_same_project_mixed_executors_serialize_across_workers_but_project
         await compute.wait_started("a/procedure")
         queued = [await start(env, base, f"a/task-{i}", ProjectTaskWorkflow) for i in range(4)]
         queued.append(await start(env, base, "a/design", DesignMdWorkflow))
+        queued.append(await start(env, base, "a/code", CodeWorkflow))
         other = await start(env, base, "b/task", ProjectTaskWorkflow)
         try:
             await asyncio.wait_for(other.result(), 10)
-            assert compute.active["a"] == 1
-            assert sum(compute.calls.values()) == 2  # a's backlog occupies no compute slots.
-            assert compute.peak == {"a": 1, "b": 1}
+            await compute.wait_started("a/design")
+            assert compute.active["a"] == 2
+            assert compute.peak["a"] >= 2
+            assert compute.peak["b"] == 1
         finally:
             compute.release["a/procedure"].set()
+            compute.release["a/design"].set()
         await asyncio.wait_for(compute.reviewed.wait(), 10)
         # Review is still unapproved while subsequent executions in the SAME project finish.
         await asyncio.wait_for(asyncio.gather(*(h.result() for h in queued)), 80)
-        assert compute.peak["a"] == 1
+        assert compute.peak["a"] >= 2
         assert all(count == 1 for count in compute.calls.values())
         await first.signal("approve")
         await first.result()
         for handle in [first, other, *queued]:
             histories.append(await handle.fetch_history())
         histories.append(
-            await env.client.get_workflow_handle("tin.project-codex:a").fetch_history()
+            await env.client.get_workflow_handle("tin.run-codex:a/procedure:1").fetch_history()
         )
     for history in histories:
         await Replayer(
@@ -227,12 +244,12 @@ async def test_same_project_mixed_executors_serialize_across_workers_but_project
 
 
 @pytest.mark.asyncio
-async def test_failure_and_cancellation_release_only_after_cleanup_and_survive_worker_restart(
+async def test_worker_capacity_cancellation_and_failure_survive_worker_restart(
     temporal_env,
 ):
     env, compute, base = temporal_env, Compute(), f"cancel-{uuid4()}"
     async with (
-        activity_worker(env, base, compute),
+        activity_worker(env, base, compute, capacity=1),
         activity_worker(env, base, compute, trusted=True),
     ):
         async with workflow_worker(env, base):
@@ -248,7 +265,7 @@ async def test_failure_and_cancellation_release_only_after_cleanup_and_survive_w
             await removed.cancel()
             with pytest.raises(WorkflowFailureError):
                 await removed.result()
-        # Workflow worker restart must retain the project's active child and its waiting parent.
+        # Worker restart preserves the active child and queued activities.
         async with workflow_worker(env, base):
             await held.cancel()
             await asyncio.wait_for(compute.cancelled.wait(), 15)
@@ -262,7 +279,7 @@ async def test_failure_and_cancellation_release_only_after_cleanup_and_survive_w
 
 
 @pytest.mark.asyncio
-async def test_pre_upgrade_task_resumes_through_gate_and_queued_task_can_stop(temporal_env):
+async def test_pre_upgrade_task_resumes_alongside_other_work_and_new_task_can_stop(temporal_env):
     env, compute, base = temporal_env, Compute(), f"upgrade-{uuid4()}"
     async with (
         activity_worker(env, base, compute),
@@ -291,12 +308,13 @@ async def test_pre_upgrade_task_resumes_through_gate_and_queued_task_can_stop(te
             try:
                 await asyncio.wait_for(stopped.result(), 10)
                 assert "a/stopped" not in compute.calls
-                assert compute.calls["a/old"] == 1
+                await asyncio.wait_for(old.result(), 10)
+                assert compute.calls["a/old"] == 2
             finally:
                 compute.release["a/held"].set()
             await asyncio.wait_for(asyncio.gather(held.result(), old.result()), 20)
             assert compute.calls["a/old"] == 2
-            assert compute.peak["a"] == 1
+            assert compute.peak["a"] == 2
             history = await old.fetch_history()
         await Replayer(
             workflows=WORKFLOWS, interceptors=[ActivityLaneInterceptor()]

@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import (
+    article_review,
     awesome_submit,
     content_draft,
     content_plan,
@@ -68,13 +69,13 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
@@ -508,7 +509,7 @@ BUILTIN_WORKFLOWS = (
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.3.0",
+        version_label="0.4.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -517,11 +518,13 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
         title="Prepare article PR",
-        description="Adapt an approved Tin article to the connected website repository's "
-        "existing format and components. Preserve its copy, leave a reviewable GitHub PR "
-        "unmerged, and keep the Markdown original in Tin.",
+        description="Adapt an approved article, answer page or public article to the "
+        "connected website repository's own format, adding a Markdown route once when the "
+        "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
+        "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
+        "to main and the PR adds nothing but the page.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -532,7 +535,8 @@ BUILTIN_WORKFLOWS = (
                 "source_run_id": {
                     "type": "string",
                     "format": "uuid",
-                    "title": "Approved article run",
+                    "title": "Approved page run",
+                    "description": "An approved planned article, answer page or public article.",
                 },
                 "retry_run_id": {
                     "type": "string",
@@ -582,7 +586,8 @@ BUILTIN_WORKFLOWS = (
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
                 max_files=5,
-                max_bytes=180_000,
+                # A 300 KB public article, its frontmatter and a small route still fit.
+                max_bytes=400_000,
             ),
         ),
     ),
@@ -596,7 +601,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.6.0",
+        version_label="1.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -815,7 +820,7 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=ModelRoute(
@@ -898,9 +903,9 @@ BUILTIN_WORKFLOWS = (
                 },
                 "max_cost_usd": {
                     "type": "number",
-                    "minimum": 5,
+                    "minimum": 2,
                     "maximum": 25,
-                    "default": 10,
+                    "default": 2,
                     "title": "Maximum research spend (USD)",
                     "description": (
                         "Includes conservative provider and model reservations. "
@@ -917,12 +922,14 @@ BUILTIN_WORKFLOWS = (
         key=AUDIT_KEY,
         title="Audit organic visibility",
         description=(
-            "Audit technical SEO and AI visibility (GEO). Check up to 100 public pages "
-            "and see whether AI answers mention, cite, or recommend your business. "
-            "Get a report, actionable findings, and supporting evidence. No GitHub required."
+            "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
+            "Search Console queries, check up to 100 public pages by default, chosen by "
+            "search impressions and URL section, and see whether AI answers mention, cite, "
+            "or recommend your business. Get prioritized findings with evidence and fixes. "
+            "No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -958,6 +965,17 @@ BUILTIN_WORKFLOWS = (
                         "not inferred from timezone."
                     ),
                     "x-tin-ui": {"control": "select", "order": 20},
+                },
+                "refresh_questions": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "Draft new buyer questions",
+                    "description": (
+                        "Later audits of the same site and market reuse the last question set "
+                        "so AI results compare. Turn on to draft a new set; comparison starts "
+                        "again."
+                    ),
+                    "x-tin-ui": {"control": "segmented", "order": 30},
                 },
             },
             "required": ["project_id", "site_url", "market"],
@@ -1135,7 +1153,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.3.0",
+        version_label="1.4.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1304,7 +1322,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.4.1",
+        version_label="1.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -1374,7 +1392,7 @@ BUILTIN_WORKFLOWS = (
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / PUBLIC_ARTICLE_WORKFLOW_NAME,
             entry_skill="public-article",
-            output_path_template="content/articles/{run_id}.md",
+            output_path_template=article_review.PATH_TEMPLATE,
             output_validator="public-article.v2",
             output_max_bytes=300_000,
             project_skills=(

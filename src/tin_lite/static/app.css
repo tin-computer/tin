@@ -6201,6 +6201,11 @@ button.activity-ref {
   position: relative;
 }
 
+/* PostHog's hedgehog head is near-black; its dark-theme mark has a white head. */
+html[data-theme="dark"] .integration-badge img[src$="/posthog.svg"] {
+  content: url("/assets/integrations/posthog-dark.svg");
+}
+
 html[data-theme="dark"] .integration-badge.is-monochrome img {
   opacity: 0;
 }

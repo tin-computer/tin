@@ -207,7 +207,13 @@ class AwesomeSubmitActivities:
             await self._refuse(run_id, str(exc))
         if not chosen:
             await self._refuse(
-                run_id, "The awesome lists report recommends no list to submit to yet."
+                run_id,
+                "The awesome lists report has no submission Tin can send"
+                + (
+                    ": " + "; ".join(f"{r['list']}: {r['reason']}" for r in packets["rejected"])
+                    if packets["rejected"]
+                    else "."
+                ),
             )
         await self._save(
             run_id,
@@ -217,6 +223,7 @@ class AwesomeSubmitActivities:
                 "source": source,
                 "product": packets["product"],
                 "submissions": chosen,
+                "rejected": packets["rejected"],
                 "account": {
                     "connection_id": str(connection.id),
                     "external_account_id": connection.external_account_id,
@@ -243,7 +250,7 @@ class AwesomeSubmitActivities:
         except IntegrationError as exc:
             await self._refuse(run_id, str(exc))
         product = scope["product"]
-        changes, skipped = [], []
+        changes, skipped = [], list(scope.get("rejected") or [])
 
         async def earlier(name: str) -> str | None:
             receipt = await self.db.get_effect(self.submission_key(run.project_id, name))
@@ -291,6 +298,7 @@ class AwesomeSubmitActivities:
                     **submission,
                     "list": current["full_name"],
                     "body": body,
+                    "entry": placed["entry"],
                     "default_branch": current["default_branch"],
                     "base_commit": current["base_commit"],
                     "base_blob": current["blob_sha"],
@@ -339,6 +347,8 @@ class AwesomeSubmitActivities:
         publication = draft["publication"]
         path = publication["paths"]["PLAN.md"]
         count = len(draft["changes"])
+        # Progress only moves while the run is running, so say it before asking.
+        await self._progress(run_id, "review", 2, "Waiting for your approval")
         required = await self.db.request_human_review(
             run_id=run.id,
             canonical_commit_sha=publication["canonical_commit_sha"],
@@ -358,7 +368,6 @@ class AwesomeSubmitActivities:
             raise ApplicationError(
                 "List submissions must require explicit approval.", non_retryable=True
             )
-        await self._progress(run_id, "review", 2, "Waiting for your approval")
 
     @activity.defn(name="awesome_submit_record_approval")
     async def record_approval(self, run_id: str) -> None:

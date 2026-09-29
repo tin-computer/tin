@@ -16,12 +16,15 @@ question preparation must not reinterpret an older run's pinned evidence.
   Dashboard, HTTP, and MCP share a start service. No Luna conversation, GitHub,
   sandbox, new database table, or separate engine is required.
 - Exact public HTTPS origin, selected US/GB/CA/AU market, English. Credentials, paths,
-  queries, private addresses, and ambiguous hostnames fail preflight. Tin checks DNS
-  but does not fetch arbitrary URLs itself. DataForSEO owns its crawler's DNS and
-  redirect isolation; off-host results are excluded, not silently attributed to the target.
-- One DataForSEO OnPage crawl, at most 100 pages, rendering flags off, ordinary robots
-  restrictions preserved. Short activity polls plus Temporal timers; one-hour elapsed
-  collection deadline and 120-poll ceiling.
+  queries, private addresses, and ambiguous hostnames fail preflight. Before v10, Tin
+  checked DNS but did not fetch the site itself; v10 reads robots.txt, sitemaps and the
+  static HTML of chosen pages on the verified hosts (see 0.4 below). DataForSEO owns its
+  crawler's DNS and redirect isolation; off-host results are excluded, not silently
+  attributed to the target.
+- One DataForSEO OnPage crawl, at most 100 pages before v10 and a pinned, configurable
+  cap from v10, rendering flags off, ordinary robots restrictions preserved. Short
+  activity polls plus Temporal timers; one-hour elapsed collection deadline and 120-poll
+  ceiling.
 - Deterministic HTTP, redirect, canonical-target, title/description, duplicate-metadata,
   broken-link, and possible-orphan observations. Missing flags are unknown, not passes.
   Deliberate redirects and provider warnings require review, not automatic fixes.
@@ -75,10 +78,11 @@ needs no new storage read.
 
 ## MCP-first journey
 
-1. `list_workflows(project_id)` discovers the workflow and input schema.
-2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`,
-   and an optional stable UUID `request_id`. Reuse it after an uncertain client response.
-   HTTP retains the existing `Idempotency-Key` header. Neither path requires Luna.
+1. `list_workflows(project_id)` finds the workflow; `get_workflow` returns its input schema.
+2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`
+   (plus `refresh_questions` from v10), and an optional stable UUID `request_id`. Reuse
+   it after an uncertain client response. HTTP retains the existing `Idempotency-Key`
+   header. Neither path requires Luna.
 3. `get_run` reads Postgres state and the artifact revision. `read_run_output` reads the
    report; `read_project_file` with that revision reads findings/evidence.
 4. `stop_organic_audit(run_id)` stops future work before publication. HTTP uses
@@ -234,3 +238,170 @@ unfinished attempts remain excluded; diagnostics retain their status. Below-ceil
 unfinished calls, unknown statuses, and incomplete responses still fail closed. This is
 an interpretation of the documented ignored-over-budget behavior, not a claim that the
 unfinished attempt succeeded. V3 parsing remains unchanged.
+
+## 0.4 — site checks, Search Console queries and honest coverage (organic-audit-v10)
+
+An audit of tin.computer's own site reported almost nothing. The crawl stopped at 100
+pages in sitemap order and skipped 37 of 137 sitemap pages, including the pages with the
+most search impressions, yet the report said "completed". Search Console was read at page
+level only and printed as a top-20 table. robots.txt, sitemap quality, noindex, H1,
+language, structured data and speed were never checked, and duplicate pages competing for
+the same searches went unnoticed. Each run also drafted new AI buyer questions, so AI
+visibility could not be compared between runs. The pinned `organic-audit-v10` policy
+fixes these.
+
+### Which pages are inspected
+
+- Tin reads robots.txt and every sitemap it names (or `/sitemap.xml`), following sitemap
+  indexes and gzip files on the verified hosts only, up to 20 files and 5,000 URLs.
+- It then chooses up to the page cap: the homepage, the pages with the most Search Console
+  impressions (up to half the cap), one page from every URL section (first path segment),
+  then the remaining pages taken in turn from each section. The first 20 chosen pages go to
+  DataForSEO as `priority_urls`; the crawl follows the sitemap after them.
+- The page cap comes from `TIN_LITE_ORGANIC_AUDIT_MAX_PAGES` (default 100, 10 to 300) and
+  is pinned in the run's scope receipt, so a later configuration change does not alter a
+  run. At DataForSEO's basic rate 300 pages cost $0.045, inside the existing $0.05 crawl
+  reservation.
+- A page counts as inspected when Tin read it. When sitemap pages were skipped the report
+  says `partial: N of M sitemap pages inspected (page cap C)` instead of "completed" and
+  lists every page not inspected, most impressions first. Search pages that were not read
+  are listed separately.
+
+### What Tin reads itself
+
+Tin reads the static HTML of the chosen pages (and pages the crawl adds, within the cap):
+HTTPS on the verified audit hosts only, every host resolved and refused unless all its
+addresses are public, the connection pinned to the vetted address, redirects recorded but
+never followed, at most 2 MB per page, four pages at a time, and robots.txt honored for
+the `Tin-Organic-Audit` user agent. It keeps only extracted facts: status, `X-Robots-Tag`,
+`<meta name="robots">`, canonical, hreflang alternates, `<html lang>`, H1 count, title and
+the presence and types of JSON-LD or microdata. JavaScript is never run. Answers that look
+like bot protection (HTTP 401, 403 or 429, or a 503 challenge page) are recorded as refused:
+the page's checks are unknown, not errors, and a refused robots.txt or sitemap is unknown,
+not missing.
+
+The request deadline includes DNS resolution. Tin requests uncompressed HTTP bodies and
+leaves facts unknown if a server ignores that request, so automatic HTTP decompression
+cannot bypass the byte cap. Gzipped sitemap files keep their separate bounded decoder.
+The optional PageSpeed key is sent in Google's `X-Goog-Api-Key` header, never in the URL.
+
+### Search Console
+
+With a matching connected property, the audit reads page rows (up to 1,000) and
+query-and-page rows (up to 5,000) for the 28 days ending three days before the run. Each
+read is its own zero-cost receipt (`search_console`, `search_console_queries`), and a
+retry after a crash between them reads only what is missing. The checks:
+
+- Competing pages: two or more pages with impressions for the same query. URL patterns
+  that cover the same topics, such as `/compare/{x}-alternatives` and `/alternatives/{x}`,
+  are grouped, with their page count, share of all impressions and clicks. Translated
+  pages under a language prefix are left out of pattern grouping.
+- Near page one: queries at average position 4 to 15 with at least 20 impressions.
+- Low click-through: pages at average position 10 or better with at least 50 impressions
+  that got under 35% of the clicks a conservative position curve expects, and at least
+  three expected clicks. The curve is a planning aid, not Google data.
+- Brand searches: a query naming the brand (host name, and the AI panel's name and aliases
+  when measured) whose top page is not the homepage and either does not name the brand in
+  its title or is a sign-in or account page.
+
+### Site checks
+
+- robots.txt: unreadable file, important pages (homepage, sitemap pages, search pages)
+  disallowed for Googlebot, no sitemap reference, AI search crawlers (OAI-SearchBot,
+  ChatGPT-User, PerplexityBot) blocked, and named groups that reopen paths the `*` group
+  closes, since RFC 9309 has no inheritance. The report also states each AI crawler's
+  stance, including the training crawlers GPTBot, ClaudeBot, Google-Extended and CCBot.
+- Sitemap: none readable, unreadable files, URLs that are noindexed, redirect, error,
+  name another canonical, are disallowed or use plain HTTP (judged only for URLs that were
+  checked), ad landing URLs (`/offer/`, `/lp/`, `utm_` and similar), pages with
+  impressions missing from the sitemap, and a uniform `lastmod`.
+- Indexation: sign-in and account pages open to indexing, ad landing pages open to
+  indexing, indexable pages whose canonical points elsewhere, noindexed pages that still
+  get search traffic, and more than one canonical tag.
+- On-page: missing or multiple H1, missing `lang`, a `lang` that differs from the URL's
+  language prefix (for example `lang="en"` under `/nl/`), language sections without
+  hreflang, and HTML over 2 MB.
+- Structured data is reported only when found in static HTML; otherwise it is unknown.
+  The audit never reports "no schema" from unrendered HTML.
+- Speed uses PageSpeed Insights (mobile) for the homepage and the next two chosen pages
+  when `TIN_LITE_PAGESPEED_API_KEY` is set, one page per poll, graded against LCP < 2.5 s,
+  INP < 200 ms and CLS < 0.1, field data first. Without a key speed is unknown. The key is
+  sent only to Google and never stored.
+
+### One finding format and report order
+
+Every finding carries Issue, Impact (high, medium, low), Evidence, Fix and Priority
+(critical, high impact, quick win, long term) plus an area. Findings are ordered by area:
+crawlability and indexation, technical foundations, on-page, content, authority. The
+report opens with the coverage result, finding counts, the top five issues and quick
+wins, and ends the findings with an action plan in the four priority tiers. Authority is
+stated as not measured. Earlier finding fields (`id`, `check_id`, `status`, `severity`,
+`urls`, `next_action` and so on) are unchanged, so downstream readers keep working.
+
+`findings.json` is schema 3. `evidence_status` keeps its technical-crawl meaning, which
+`organic.technical_fix` recomputes; `coverage_status`, `coverage`, `site_check_coverage`
+and `summary` are new. Technical fix accepts v10 audits and lists site and search findings
+as excluded with an explanation, as it already did for content findings.
+
+### Durable execution and compatibility
+
+The Temporal workflow is unchanged. New work runs inside existing activities:
+`organic_start_crawl` reads Search Console, site files and the page plan, submits the
+steered crawl and reads the chosen pages; `organic_poll_crawl` finishes page reads and
+PageSpeed Insights while the crawl runs; `organic_publish` builds the report from saved
+receipts (`site_files`, `crawl_plan`, `page_facts`, `pagespeed`). Page reads save progress
+after each bounded batch and resume without rereading. A reader that reads nothing records
+the pages as unknown instead of stalling the poll loop. Page reads still unfinished at the
+crawl deadline are published as partial evidence.
+
+v1 to v9 pins keep their crawl request, report and inventory byte for byte; the crawl
+request only gains `max_crawl_pages` changes and `priority_urls` under v10. An explicit
+answer completion ignores the new site-evidence policy keys and reports that site files
+were not collected. When evidence would exceed its 3 MB bound, query rows, unread page
+records and then sitemap URLs are trimmed after findings are computed, and the counts are
+recorded under `trimmed_for_size`.
+
+### One buyer-question set per site and market
+
+Before v10 each audit drafted new buyer questions, so AI-visibility results could not be
+compared between runs. From v10:
+
+- The first v10 audit of a site and market drafts the question set as before (public
+  research, grounded draft, blind interpretation, review) and keeps the first two proposed
+  buyer jobs, eight questions at most. The selection uses only the proposal's order,
+  before any answer is measured.
+- Each question gets three answers instead of two. Eight questions times three answers
+  keeps the earlier maximum of 24 answers, so the answer spend and its reservations do
+  not grow.
+- Later audits of the same site and market in the project reuse the newest published v10
+  question set unchanged, with no research or drafting calls. The earlier run's
+  per-question results are saved as the `panel_baseline` receipt.
+- `refresh_questions` (default false) drafts a new set; comparison starts again from it.
+- The report names the question set and, when it was reused, shows a table of each
+  question's mentions, website citations, shortlists and first choices, before → now, as
+  positives out of scored answers. Unknown answers are neither negatives nor positives.
+  The comparison is saved in `evidence.json` under `ai_visibility.comparison`.
+- A panel records its own answer count. Panels drafted before v10 keep two answers per
+  question and their earlier wording, so an explicit answer completion of an older run
+  still works under v10 and older question sets are never reused.
+
+### Limits and acceptance
+
+- Language is checked against the URL's language prefix, not detected from the content.
+- Search Console omits rare and anonymized queries; query totals are below page totals.
+- These are observations and hypotheses, not ranking guarantees.
+- The growth plan's frozen program copy (`growth_plan_assets/programs.json`) keeps the
+  earlier one-line audit description; it is part of that plan's pinned contract.
+
+Question-set reuse, three answers per question and the comparison table are covered
+by `tests/test_organic_audit_questions.py`.
+
+Offline tests model tin.computer's site, Search Console rows and crawl
+(`tests/organic_tin_fixture.py`) and require the report to show each defect the earlier
+run missed: the overlapping `/compare/semrush-alternatives` and `/alternatives/semrush`
+pages for "semrush alternative" with 33 pattern pages holding 53% of impressions and no
+clicks; `/alternatives/moz` at position 8.5 and `/compare/ai-tools-for-startups` at 5.8
+with no clicks; an indexable `/sign-in` ranking 1.5 for the brand with an old title, no H1
+and a canonical to `/`; `/nl/` pages declaring `lang="en"` without hreflang; indexable
+`/offer/` pages in the sitemap; and `/about` missing from the sitemap. No live provider or
+production run has been made with v10.

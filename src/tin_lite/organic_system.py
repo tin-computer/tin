@@ -24,8 +24,15 @@ STEPS = {**LEGACY_STEPS, "draft": "content.generate", "delivery": "content.deliv
 CONTENT_POLICY = {**LEGACY_POLICY, "version": "organic-traffic-v2", "steps": STEPS}
 # v3 keeps the same child runs and then saves one weekly content.generate configuration
 # for the program it planned. The saved schedule is not a child run and not parent spend.
-POLICY = {**CONTENT_POLICY, "version": "organic-traffic-v3", "schedule": "weekly_articles"}
-DRAFT_POLICIES = (CONTENT_POLICY, POLICY)
+WEEKLY_POLICY = {
+    **CONTENT_POLICY,
+    "version": "organic-traffic-v3",
+    "schedule": "weekly_articles",
+}
+# v4: when this run's content plan does not finish, the draft and the weekly articles use
+# the project's most recent content program whose plan did finish, and the report says so.
+POLICY = {**WEEKLY_POLICY, "version": "organic-traffic-v4", "content_fallback": "latest_saved_plan"}
+DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, POLICY)
 
 
 def policy_steps(policy):
@@ -41,6 +48,10 @@ def drafts_articles(policy):
 
 
 def schedules_articles(policy):
+    return policy in (WEEKLY_POLICY, POLICY)
+
+
+def falls_back_to_saved_plan(policy):
     return policy == POLICY
 
 
@@ -77,9 +88,9 @@ INPUT_SCHEMA = {
         "keyword_max_cost_usd": {
             "type": "number",
             "title": "Keyword research limit (USD)",
-            "minimum": 5,
+            "minimum": 2,
             "maximum": 25,
-            "default": 9,
+            "default": 2,
         },
         "technical_fix": {
             "type": "boolean",

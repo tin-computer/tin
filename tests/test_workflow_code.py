@@ -806,7 +806,11 @@ async def test_named_output_is_recorded_before_its_write_and_recovered(publicati
     with pytest.raises(RuntimeError, match="worker loss"):
         await ActivityEnvironment().run(code.execute, run_id)
     saved = await f.db.get_effect(f"{run_id}:procedure_artifact_persist")
-    assert saved.status == "started" and saved.result == {"artifact_path": path}
+    assert saved.status == "started"
+    assert saved.result == {
+        "artifact_path": path,
+        "failure_reason": "Code workflow failed during recording the saved result (RuntimeError).",
+    }
     monkeypatch.setattr(f.db, "complete_procedure_persist", complete)
     await ActivityEnvironment().run(code.execute, run_id)
     assert compute.calls == 1

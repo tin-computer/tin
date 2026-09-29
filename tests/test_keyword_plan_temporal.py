@@ -33,7 +33,7 @@ async def test_native_keyword_retry_stop_and_identifier_only_history(stop):
             calls.append((name, control))
             if name == "keyword_sample_count":
                 return 2
-            if name == "keyword_inspect" and stop:
+            if name == "keyword_inspect_batch" and stop:
                 inspecting.set()
                 await release.wait()
             if name == "keyword_publish":
@@ -50,6 +50,7 @@ async def test_native_keyword_retry_stop_and_identifier_only_history(stop):
         "keyword_collect",
         "keyword_sample_count",
         "keyword_inspect",
+        "keyword_inspect_batch",
         "keyword_review",
         "keyword_publish",
         "keyword_project",
@@ -80,11 +81,10 @@ async def test_native_keyword_retry_stop_and_identifier_only_history(stop):
     for event in history.events:
         if event.HasField("activity_task_scheduled_event_attributes"):
             for payload in event.activity_task_scheduled_event_attributes.input.payloads:
-                assert json.loads(payload.data) in [
-                    run_id,
-                    {"run_id": run_id, "index": 0},
-                    {"run_id": run_id, "index": 1},
-                ]
+                assert json.loads(payload.data) == run_id
+    # New runs inspect every sample in one batch activity instead of one activity per sample.
+    assert [name for name, _ in calls].count("keyword_inspect_batch") == 1
+    assert "keyword_inspect" not in [name for name, _ in calls]
     if stop:
         assert not any(
             name in {"keyword_review", "keyword_publish", "keyword_project"} for name, _ in calls

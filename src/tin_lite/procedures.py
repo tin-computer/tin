@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from tin_lite import analytics_brief, content_draft
+from tin_lite import analytics_brief, article_review, content_draft
 from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
@@ -883,7 +883,11 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             if not isinstance(raw_output_template, str):
                 raise ValueError("procedure artifact output path template is invalid")
             placeholders = re.findall(r"\{[^{}]*\}", raw_output_template)
-            if placeholders == ["{run_folder}"] and not documents:
+            if (
+                placeholders == ["{run_folder}"]
+                and not documents
+                and output_validator != PUBLIC_ARTICLE_VALIDATOR
+            ):
                 raise ValueError("readable run folders are reserved for reviewed documents")
             if placeholders in (["{run_id}"], ["{run_folder}"]):
                 plain_report = (
@@ -955,7 +959,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             raise ValueError("Analytics briefs are run-owned reports/analytics Markdown reports.")
         if output_validator == PUBLIC_ARTICLE_VALIDATOR and (
             definition.get("key") != "content.public_article"
-            or output_path_template != "content/articles/{run_id}.md"
+            or output_path_template not in article_review.PATH_TEMPLATES
             or output_media_type != "text/markdown"
             or workspace_kind != PROJECT_STATE_WORKSPACE
         ):

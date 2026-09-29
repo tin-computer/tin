@@ -68,7 +68,7 @@ async def test_audit_runtime_uses_real_exposure_not_released_call_estimates(bill
         {
             "host": "example.com",
             "url": "https://example.com/",
-            "max_cost_usd": "5",
+            "max_cost_usd": "2",
             "policy_version": AUDIT_POLICY["version"],
         },
     )
@@ -79,7 +79,8 @@ async def test_audit_runtime_uses_real_exposure_not_released_call_estimates(bill
     async with f.db.pool.acquire() as conn:
         assert await f.billing.run_operation_exposure(conn, run.id) == 260_000_000
         assert await f.billing.run_operation_exposure(conn, uuid4()) is None
-    await operation(f, run, "unconfirmed", 4_600_000_000)
+    # $0.26 observed plus $1.60 unconfirmed leaves less than one $0.20 answer under $2.
+    await operation(f, run, "unconfirmed", 1_600_000_000)
     assert not await activities._reserve(str(run.id), "another-answer", "0.20")
 
 
@@ -176,13 +177,13 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
     assert view["available_usd"] == "9.75" and view["reserved_usd"] == "0.00"
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
     charge = await f.billing.run_charge(run.id, ACTOR)
-    assert charge["estimated_usd"] == "5.00" and charge["charged_usd"] == "0.25"
-    assert charge["released_usd"] is None  # Never imply a $5 upfront hold existed.
+    assert charge["estimated_usd"] == "2.00" and charge["charged_usd"] == "0.25"
+    assert charge["released_usd"] is None  # Never imply a $2 upfront hold existed.
 
 
 async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
     f = billed
-    with pytest.raises(BillingError, match=r"estimated at up to \$5.00") as error:
+    with pytest.raises(BillingError, match=r"estimated at up to \$2.00") as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
@@ -224,13 +225,13 @@ async def test_project_limit_admission_says_which_limit_and_keeps_its_code(bille
         f.project.id,
         ACTOR,
         ProjectSpendingPolicy(
-            per_run_nanos=4_000_000_000,
+            per_run_nanos=1_500_000_000,
             monthly_nanos=100_000_000_000,
             concurrency=5,
             expected_revision=1,
         ),
     )
-    with pytest.raises(BillingError, match=r"per-run limit is \$4\.00") as error:
+    with pytest.raises(BillingError, match=r"per-run limit is \$1\.50") as error:
         await direct(f)
     assert error.value.code == "project_limit" and error.value.status == 402
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
@@ -276,7 +277,7 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed):
         ),
     )
     runs = [
-        await direct(f, "organic.keyword_plan", KEYWORDS, project_id=p)
+        await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 10}, project_id=p)
         for p in (f.project.id, sibling.id)
     ]
     results = await asyncio.gather(

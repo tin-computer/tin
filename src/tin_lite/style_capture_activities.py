@@ -19,6 +19,9 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
+# The provider's own wait for the style model, just inside the step's 180-second budget. Without
+# it the client stops at its 90-second default, before a 6,000-token guide can finish.
+MODEL_TIMEOUT_SECONDS = 165
 
 
 class StyleCaptureActivities:
@@ -41,15 +44,25 @@ class StyleCaptureActivities:
                 if saved and saved.status == "completed":
                     return
                 project = await self.db.get_project(run.project_id, conn=conn)
-                packet, revision = await style.read_sources(
-                    self.storage, project, run.input["source_path"]
-                )
-                existing = await self.storage.read_output_destination(
-                    repo_id=project.state_repo_id, revision=revision, path=STYLE_PATH
-                )
-                guide = existing[1].decode("utf-8") if existing else ""
-                if len(guide.encode()) > style.MAX_GUIDE_BYTES:
-                    raise ValueError("The existing writing guide is too large; shorten it first.")
+                try:
+                    packet, revision = await style.read_sources(
+                        self.storage, project, run.input["source_path"]
+                    )
+                    existing = await self.storage.read_output_destination(
+                        repo_id=project.state_repo_id, revision=revision, path=STYLE_PATH
+                    )
+                    guide = existing[1].decode("utf-8") if existing else ""
+                    if len(guide.encode()) > style.MAX_GUIDE_BYTES:
+                        raise style.StyleSourceError(
+                            f"The current writing guide {STYLE_PATH} is "
+                            f"{len(guide.encode()):,} bytes; Tin reads at most "
+                            f"{style.MAX_GUIDE_BYTES:,}. Shorten it in Files first."
+                        )
+                except style.StyleSourceError as exc:
+                    # The failed receipt keeps the reason for the run's failure projection.
+                    await self.db.start_effect(conn, execution_key=key, operation=style.KEY)
+                    await self.db.fail_effect(conn, execution_key=key, error_message=str(exc))
+                    raise
                 definition = json.loads(
                     await self.storage.read_canonical_artifact(
                         repo_id="registry/workflows",
@@ -85,6 +98,8 @@ class StyleCaptureActivities:
                         },
                     )
             await self.progress(run.id, "read", 1, "Selected writing samples are ready")
+        except style.StyleSourceError as exc:
+            raise ApplicationError(str(exc), type="StyleSourceError", non_retryable=True) from None
         except ValueError:
             raise ApplicationError(
                 "Style sources are invalid or unavailable. Check the selected sample packet.",
@@ -135,6 +150,7 @@ class StyleCaptureActivities:
                                 output_schema_name="writing_style",
                                 max_output_tokens=style.POLICY["max_output_tokens"],
                             ),
+                            timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
                 # Receipt precedes semantic validation; a retry cannot buy a repair call.
                 await self.db.complete_effect(
@@ -384,10 +400,14 @@ class StyleCaptureActivities:
     async def failure(self, run_id: str):
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == style.KEY:
+            # A rejected source file names itself and its problem; keep those words.
+            source = await self.db.get_effect(f"{run.id}:style_context")
             await self.db.project_failure(
                 run_id=run.id,
                 error_message=(
-                    "Style capture could not confirm completion. "
+                    source.error_message
+                    if source is not None and source.status == "failed" and source.error_message
+                    else "Style capture could not confirm completion. "
                     "Check the current guide and any saved result before trying again."
                 ),
             )

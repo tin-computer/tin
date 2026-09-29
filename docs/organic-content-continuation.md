@@ -49,7 +49,9 @@ Once the content plan exists, and beside the first draft, it also saves one week
   not reuse the parent's `content.deliver` adaptation, which belongs to the parent run.
 - The configuration is not a child run and adds nothing to the parent's spending bound.
   Each occurrence is an ordinary scheduled run with its own funding: the content.generate
-  ceiling ($5), project limits and standing schedule authority apply.
+  ceiling ($5), project limits and standing schedule authority apply. Under the hosted
+  default $10 monthly limit, later occurrences in a month may not start; the Start here
+  handoff says so (see [workflow billing coverage](workflow-billing-coverage.md#weekly-articles-and-the-default-limits--september-29-2026)).
 - Saving the schedule never fails the recipe. `RESULT.md` and the system facts record it
   as succeeded, skipped (`weekly_articles_off`, `content_plan_unavailable`), blocked
   (`weekly_schedule_unsupported`, `scheduling_unavailable`) or failed
@@ -105,3 +107,18 @@ guards, Markdown retention and light/dark browser controls. Model output, storag
 GitHub calls use fixtures. No paid ClawMessenger generation, article approval, customer
 PR or website publication is claimed by these tests; that acceptance exercise is
 intentionally not a release blocker for this composition change.
+
+## When the new plan does not finish (0.4.0)
+
+`organic.traffic_system` 0.4.0 pins policy `organic-traffic-v4`. If its own content plan
+fails or is blocked, for example because the plan's model call timed out or research was
+unavailable, the draft and the weekly articles use the project's most recent content program
+whose plan did finish. Tin picks that program once per run and saves the choice, so a retried
+step reads the same program. `RESULT.md` gains a "Content plan used" section naming it. The
+run itself still reports that a step could not finish. Without any finished plan, the draft
+and weekly steps stay blocked or skipped with `content_plan_unavailable`, as before. v3 and
+older recipes keep their behaviour.
+
+Reusing a program also preserves its existing article schedule and any pause or timing edits.
+Tin creates a schedule only when that program has none; concurrent system runs share this
+short save. A paused schedule stays paused and the result says `existing_schedule_paused`.

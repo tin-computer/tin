@@ -35,6 +35,12 @@ from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.technical_fix import fetch_page
 from tin_lite.workflow_evidence import integration_inventory
 
+# How long the worker waits for the plan. Kept outside the pinned policy: waiting longer never
+# changes the request. Every contract allows 16,000 output tokens, which at about 55 tokens a
+# second (the keyword review's measured pace) takes close to five minutes. The provider's
+# 90-second default stopped production plans before they finished.
+MODEL_TIMEOUT_SECONDS = 300
+
 
 class ContentPlanActivities:
     def __init__(self, *, database, storage, settings, router):
@@ -145,7 +151,7 @@ class ContentPlanActivities:
             )
             try:
                 with model_usage_scope(run_id=run.id, step="content:plan", conn=conn):
-                    async with asyncio.timeout(180):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 30):
                         result = await self.router.generate(
                             contract.ROUTE_KEY,
                             ModelRequest(
@@ -155,6 +161,7 @@ class ContentPlanActivities:
                                 output_schema_name="content_program",
                                 max_output_tokens=policy["max_output_tokens"],
                             ),
+                            timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
             except Exception as exc:
                 raise ValueError(

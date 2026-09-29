@@ -10,13 +10,18 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from tin_lite.domain import MEMORY_INDEX_PATH
+from tin_lite.domain import (
+    ANSWER_PAGE_WORKFLOW_NAME,
+    CODEX_PROCEDURE_EXECUTOR,
+    MEMORY_INDEX_PATH,
+    PREREQUISITE_WAIT_MINUTES,
+)
 from tin_lite.procedures import memory_section_present
 from tin_lite.project_files import safe_project_file_path
 
@@ -37,6 +42,20 @@ _RUN_KEYS = frozenset({"kind", "workflow", "level", "reason", "match", "via_inpu
 _ARTIFACT_KEYS = frozenset({"kind", "path", "level", "reason", "section", "producer"})
 _IDENTITY_KEYS = frozenset({"kind", "reuse", "host_input", "level", "reason", "producer"})
 _ACTIVE_IDENTITY = ("active", "password")
+# Executors whose Temporal workflow holds a newly admitted run, with no compute, until the
+# prerequisite runs it was admitted behind finish, and which read project state only after.
+WAITING_EXECUTORS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, CODEX_PROCEDURE_EXECUTOR})
+# These pin their sources at admission, so a result that lands later could not reach them.
+PINNED_SOURCE_WORKFLOWS = frozenset({"content.generate", "brand.capture"})
+
+
+def can_wait_for_prerequisites(workflow: Workflow) -> bool:
+    """Whether a run of this workflow can wait for a prerequisite run that is still going.
+
+    workflow.code pins its project files at admission and the other native executors have
+    no wait step, so for them a running prerequisite is reported, not waited for.
+    """
+    return workflow.executor in WAITING_EXECUTORS and workflow.key not in PINNED_SOURCE_WORKFLOWS
 
 
 @dataclass(frozen=True)
@@ -143,6 +162,8 @@ class PrerequisiteResult:
     evidence: dict[str, Any] | None = None
     how_to_satisfy: str = ""
     upstream: Workflow | None = None
+    # A pending or running upstream run that could still satisfy this prerequisite.
+    running_run_id: str | None = None
 
     @property
     def unmet(self) -> bool:
@@ -154,19 +175,38 @@ class PrerequisiteEvaluation:
     results: tuple[PrerequisiteResult, ...]
     head_commit_sha: str | None = None
     evaluated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    # Whether the admitted run waits for running upstream runs instead of going without them.
+    can_wait: bool = False
+
+    def _waits(self, result: PrerequisiteResult) -> bool:
+        return self.can_wait and result.unmet and result.running_run_id is not None
+
+    @property
+    def waiting(self) -> tuple[PrerequisiteResult, ...]:
+        """Unmet prerequisites whose upstream run is still going; the new run waits for them."""
+        return tuple(r for r in self.results if self._waits(r))
 
     @property
     def blocking(self) -> tuple[PrerequisiteResult, ...]:
-        return tuple(r for r in self.results if r.unmet and r.prerequisite.required)
+        return tuple(
+            r for r in self.results if r.unmet and r.prerequisite.required and not self._waits(r)
+        )
 
     @property
     def advisories(self) -> tuple[PrerequisiteResult, ...]:
-        return tuple(r for r in self.results if r.unmet and not r.prerequisite.required)
+        return tuple(
+            r
+            for r in self.results
+            if r.unmet and not r.prerequisite.required and not self._waits(r)
+        )
 
     def views(
         self, *, inputs: Mapping[str, Any], results: Sequence[PrerequisiteResult] | None = None
     ) -> list[dict[str, Any]]:
-        return [_view(result, inputs=inputs) for result in (results or self.results)]
+        return [
+            _view(result, inputs=inputs, can_wait=self.can_wait)
+            for result in (self.results if results is None else results)
+        ]
 
     def evidence(self, *, inputs: Mapping[str, Any]) -> dict[str, Any]:
         """The bounded record pinned on the admitted run: what the gate resolved, and when."""
@@ -181,14 +221,25 @@ class PrerequisiteEvaluation:
                 item["skipped"] = True
             if result.evidence:
                 item["evidence"] = result.evidence
+            if result.running_run_id is not None and not result.satisfied:
+                item["running_run_id"] = result.running_run_id
             items.append(item)
-        return {
+        advisories = self.views(inputs=inputs, results=self.advisories)
+        waiting = self.views(inputs=inputs, results=self.waiting)
+        evidence: dict[str, Any] = {
             "version": EVIDENCE_VERSION,
             "evaluated_at": self.evaluated_at.isoformat(),
             "head_commit_sha": self.head_commit_sha,
             "items": items,
-            "advisories": self.views(inputs=inputs, results=self.advisories),
+            "advisories": advisories,
         }
+        if waiting:
+            evidence["waiting"] = waiting
+            evidence["wait_limit_minutes"] = PREREQUISITE_WAIT_MINUTES
+        notes = [view["note"] for view in waiting + advisories if view.get("note")]
+        if notes:
+            evidence["notes"] = notes
+        return evidence
 
 
 def parse_workflow_prerequisites(
@@ -290,17 +341,20 @@ async def evaluate_prerequisites(
     normalized_inputs: Mapping[str, Any],
     workflows_by_key: Mapping[str, Workflow] | None = None,
     now: datetime | None = None,
+    can_wait: bool = False,
 ) -> PrerequisiteEvaluation:
     """Decide, from durable project facts, whether this exact start may be admitted.
 
     Bounded work: one catalog listing (unless supplied), one succeeded-run query covering every
-    run prerequisite, one identity lookup per identity prerequisite, one HEAD file listing and
-    at most one read per sectioned path.
+    run prerequisite, one identity lookup per identity prerequisite, one HEAD file listing, at
+    most one read per sectioned path and, only when something is unmet, one query for upstream
+    runs still in progress. With can_wait, an unmet prerequisite whose upstream run is still
+    going does not block: the admitted run waits for that run before it does any work.
     """
 
     prerequisites = workflow_prerequisites(workflow)
     if not prerequisites:
-        return PrerequisiteEvaluation(results=())
+        return PrerequisiteEvaluation(results=(), can_wait=can_wait)
     now = now or datetime.now(UTC)
     catalog = workflows_by_key
     if catalog is None:
@@ -375,7 +429,113 @@ async def evaluate_prerequisites(
                     upstream=upstream,
                 )
             )
-    return PrerequisiteEvaluation(results=tuple(results), head_commit_sha=head, evaluated_at=now)
+    results = await _with_running_upstream(
+        results, database=database, project_id=project_id, inputs=normalized_inputs
+    )
+    if can_wait:
+        results = [
+            replace(result, how_to_satisfy=_wait_hint(result))
+            if result.unmet and result.running_run_id is not None
+            else result
+            for result in results
+        ]
+    return PrerequisiteEvaluation(
+        results=tuple(results), head_commit_sha=head, evaluated_at=now, can_wait=can_wait
+    )
+
+
+async def _with_running_upstream(
+    results: list[PrerequisiteResult],
+    *,
+    database: Any,
+    project_id: UUID,
+    inputs: Mapping[str, Any],
+) -> list[PrerequisiteResult]:
+    """Attach the newest pending or running upstream run that could satisfy each unmet item."""
+    keys = sorted({r.prerequisite.upstream for r in results if r.unmet and r.prerequisite.upstream})
+    if not keys:
+        return results
+    active: dict[str, list[WorkflowRun]] = {}
+    for key, run in await database.list_active_prerequisite_runs(
+        project_id=project_id, workflow_keys=keys
+    ):
+        active.setdefault(key, []).append(run)
+    attached = []
+    for result in results:
+        upstream = result.prerequisite.upstream
+        running = None
+        if result.unmet and upstream in active:
+            running = _running_match(result.prerequisite, active[upstream], inputs=inputs)
+        if running is None:
+            attached.append(result)
+            continue
+        attached.append(
+            replace(
+                result,
+                running_run_id=str(running.id),
+                how_to_satisfy=(
+                    f"{upstream} run {running.id} is still running; call get_run with run_id "
+                    f"{running.id} until it succeeds, then start this again."
+                ),
+            )
+        )
+    return attached
+
+
+def _running_match(
+    prerequisite: WorkflowPrerequisite,
+    runs: Sequence[WorkflowRun],
+    *,
+    inputs: Mapping[str, Any],
+) -> WorkflowRun | None:
+    """The in-progress run that would satisfy this prerequisite if it succeeds, newest first."""
+    if prerequisite.kind == "run" and prerequisite.via_input is not None:
+        wanted = str(inputs.get(prerequisite.via_input) or "")
+        return next((run for run in runs if str(run.id) == wanted), None)
+    if prerequisite.kind == "run" and prerequisite.match:
+        scope = scope_signature(inputs, prerequisite.match)
+        if scope is None:
+            return None
+        return next(
+            (run for run in runs if scope_signature(run.input or {}, prerequisite.match) == scope),
+            None,
+        )
+    if prerequisite.kind == "identity":
+        host = _host_of(inputs.get(prerequisite.host_input or ""))
+        if host is None:
+            return None
+        return next(
+            (
+                run
+                for run in runs
+                if _host_of((run.input or {}).get(prerequisite.host_input or "")) == host
+            ),
+            None,
+        )
+    return runs[0] if runs else None
+
+
+def prerequisite_wait_run_ids(evidence: Any) -> list[str]:
+    """The upstream run ids an admitted run still waits for; empty once the wait is settled."""
+    if not isinstance(evidence, Mapping) or evidence.get("waited") is not None:
+        return []
+    waiting = evidence.get("waiting")
+    if not isinstance(waiting, list):
+        return []
+    ids = [
+        str(view["running_run_id"])
+        for view in waiting
+        if isinstance(view, Mapping) and view.get("running_run_id")
+    ]
+    return list(dict.fromkeys(ids))  # A run and its identity can wait on the same run.
+
+
+def _wait_hint(result: PrerequisiteResult) -> str:
+    return (
+        f"Tin waits up to {PREREQUISITE_WAIT_MINUTES} minutes for "
+        f"{result.prerequisite.upstream} run {result.running_run_id} to finish, "
+        "then reads its result."
+    )
 
 
 async def project_readiness(
@@ -856,7 +1016,10 @@ def _subject(prerequisite: WorkflowPrerequisite) -> dict[str, Any]:
     return subject
 
 
-def _view(result: PrerequisiteResult, *, inputs: Mapping[str, Any]) -> dict[str, Any]:
+def _view(
+    result: PrerequisiteResult, *, inputs: Mapping[str, Any], can_wait: bool | None = None
+) -> dict[str, Any]:
+    """One prerequisite as HTTP/MCP show it; admission views (can_wait set) add a plain note."""
     prerequisite = result.prerequisite
     view: dict[str, Any] = {
         **_subject(prerequisite),
@@ -873,9 +1036,128 @@ def _view(result: PrerequisiteResult, *, inputs: Mapping[str, Any]) -> dict[str,
         view["scope"] = "checked_at_start"
     if not result.satisfied:
         view["how_to_satisfy"] = result.how_to_satisfy
-        if result.upstream is not None:
+        if result.running_run_id is not None:
+            view["running_run_id"] = result.running_run_id
+            view["suggested_call"] = {"tool": "get_run", "run_id": result.running_run_id}
+        elif result.upstream is not None:
             view["suggested_call"] = _suggested_call(result.upstream, inputs=inputs)
+        note = _note(result, can_wait=can_wait) if can_wait is not None else None
+        if note:
+            view["note"] = note
     return view
+
+
+def _missing_subject(prerequisite: WorkflowPrerequisite) -> str:
+    if prerequisite.kind == "run":
+        return f"a successful {prerequisite.workflow} run"
+    if prerequisite.kind == "artifact":
+        if prerequisite.section is not None:
+            return f"the {prerequisite.section} section of {prerequisite.path}"
+        return prerequisite.path or "a project file"
+    return "an active test account"
+
+
+def _note(result: PrerequisiteResult, *, can_wait: bool) -> str | None:
+    """What happens to the admitted run because of this unmet prerequisite, in plain words."""
+    if not result.unmet:
+        return None
+    prerequisite, running = result.prerequisite, result.running_run_id
+    if running is not None and can_wait:
+        return (
+            f"This run waits up to {PREREQUISITE_WAIT_MINUTES} minutes for "
+            f"{prerequisite.upstream} run {running} to finish, then reads its result."
+        )
+    if prerequisite.required:
+        return None  # The start is refused; the error says what to run first.
+    subject = _missing_subject(prerequisite)
+    if running is not None:
+        return (
+            f"Tin starts this run without {subject}: {prerequisite.upstream} run {running} "
+            "is still running, and this workflow cannot wait for it."
+        )
+    return (
+        f"Tin starts this run without {subject}. {result.how_to_satisfy} "
+        "Then start this workflow again to use it."
+    )
+
+
+_OUTCOMES = {
+    "succeeded": "finished",
+    "failed": "failed",
+    "stopped": "was stopped",
+    "superseded": "was replaced by a newer run",
+    "needs_input": "is waiting for review",
+    "paused": "is paused",
+}
+
+
+def _outcome(status: str | None) -> str:
+    if status in _OUTCOMES:
+        return _OUTCOMES[status]
+    if status in ("pending", "running"):
+        return f"did not finish within {PREREQUISITE_WAIT_MINUTES} minutes"
+    return "is no longer available"
+
+
+def _subject_key(value: Mapping[str, Any]) -> tuple[Any, ...]:
+    return tuple(value.get(name) for name in ("kind", "workflow", "path", "section", "host_input"))
+
+
+def waited_evidence(
+    evaluation: PrerequisiteEvaluation,
+    *,
+    workflow: Workflow,
+    inputs: Mapping[str, Any],
+    waited: Sequence[Mapping[str, Any]],
+    statuses: Mapping[str, str | None],
+    settled_at: datetime,
+) -> dict[str, Any]:
+    """The evidence a run pins after waiting: the fresh check, what happened, and plain notes.
+
+    ``waited`` is the admission's ``waiting`` list; ``statuses`` maps each awaited run id to its
+    status now. ``waited.refused`` is set when a required prerequisite is still unmet; the run
+    then stops before it does any work.
+    """
+    record = evaluation.evidence(inputs=inputs)
+    results = {_subject_key(_subject(r.prerequisite)): r for r in evaluation.results}
+    notes, refusals = [], []
+    for view in waited:
+        run_id = str(view.get("running_run_id"))
+        what = f"{view.get('workflow_key')} run {run_id} {_outcome(statuses.get(run_id))}"
+        result = results.get(_subject_key(view))
+        if result is None or not result.unmet:
+            done = statuses.get(run_id) == "succeeded"
+            notes.append(
+                f"{what}; this run reads its result."
+                if done
+                else f"{what}, but another run meets the prerequisite; this run reads that one."
+            )
+        elif result.prerequisite.required:
+            refusals.append(what)
+        else:
+            notes.append(f"Tin runs this without {_missing_subject(result.prerequisite)}: {what}.")
+    subjects = {_subject_key(view) for view in waited}
+    notes += [
+        view["note"]
+        for view in record["advisories"]
+        if view.get("note") and _subject_key(view) not in subjects
+    ]
+    refused = None
+    if evaluation.blocking:
+        missing = PrerequisiteError.from_evaluation(evaluation, workflow=workflow, inputs=inputs)
+        refused = (
+            "This run stopped before doing any work"
+            + (f": {'; '.join(dict.fromkeys(refusals))}. " if refusals else ". ")
+            + str(missing)
+        )
+    record["notes"] = list(dict.fromkeys(notes))
+    record["waited"] = {
+        "run_ids": list(statuses),
+        "statuses": dict(statuses),
+        "settled_at": settled_at.isoformat(),
+        "refused": refused,
+    }
+    return record
 
 
 def _suggested_call(upstream: Workflow, *, inputs: Mapping[str, Any]) -> dict[str, Any]:
