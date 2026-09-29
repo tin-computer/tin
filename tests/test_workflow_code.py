@@ -741,3 +741,84 @@ async def test_tin_owned_code_uses_same_executor_without_private_ownership(
     await code.project(run_id)
     assert (await f.db.get_run(UUID(run_id))).status == RunStatus.SUCCEEDED
     assert f.runtime.sandboxes.calls == 1
+
+
+def test_output_names_accept_only_the_run_date_and_a_slug():
+    from datetime import UTC, datetime
+
+    from tin_lite.workflow_code import output_path_allowed
+
+    value = definition()
+    value["code"]["output"]["path"] = "reports/custom/{date}-{slug}.md"
+    spec = validate_code_definition(value)
+    created_at = datetime(2026, 9, 28, 17, tzinfo=UTC)
+    assert output_path_allowed(spec, "reports/custom/2026-09-28-order-report.md", created_at)
+    for path in [
+        "reports/custom/2026-09-27-order-report.md",
+        "reports/custom/2026-09-28-Order-Report.md",
+        "reports/custom/2026-09-28-order--report.md",
+        "reports/custom/2026-09-28-" + "a" * 81 + ".md",
+        "reports/other/2026-09-28-order-report.md",
+        "reports/custom/2026-09-28-../x.md",
+    ]:
+        assert not output_path_allowed(spec, path, created_at), path
+    assert not output_path_allowed(spec, "reports/custom/2026-09-28-x.md", None)
+    fixed = validate_code_definition(definition())
+    assert output_path_allowed(fixed, OUTPUT) and not output_path_allowed(fixed, OUTPUT + "x")
+    for template in [
+        "reports/{date}/x.md",
+        "reports/custom/{date}-{date}.md",
+        "reports/custom/{run_id}.md",
+        "reports/custom/{slug.md",
+    ]:
+        value["code"]["output"]["path"] = template
+        with pytest.raises(ValueError):
+            validate_code_definition(value)
+
+
+async def test_named_output_is_recorded_before_its_write_and_recovered(publication_db, monkeypatch):
+    f = await fixture(publication_db)
+    storage = CheckpointStorage()
+    compute = SyntheticCompute()
+    server, _common, code = await setup(f, monkeypatch, compute=compute, storage=storage)
+    manifest = json.loads(example_files()[PATH])
+    manifest["definition"]["code"]["output"]["path"] = "reports/custom/{date}-{slug}.md"
+    f.revision = storage.repo.edit({PATH: json.dumps(manifest).encode()})
+    active = await activate_code(f, server)
+    run_id = (await start(f, server, active))["id"]
+    run = await f.db.get_run(UUID(run_id))
+    path = f"reports/custom/{run.created_at.date().isoformat()}-order-report.md"
+    compute.result = {"path": path, "content": "# Orders\nTotal: 3900 cents\n"}
+    complete = f.db.complete_procedure_persist
+
+    async def lost_completion(*args, **kwargs):
+        raise RuntimeError("synthetic worker loss after storage checkpoint")
+
+    monkeypatch.setattr(f.db, "complete_procedure_persist", lost_completion)
+    with pytest.raises(RuntimeError, match="worker loss"):
+        await ActivityEnvironment().run(code.execute, run_id)
+    saved = await f.db.get_effect(f"{run_id}:procedure_artifact_persist")
+    assert saved.status == "started" and saved.result == {"artifact_path": path}
+    monkeypatch.setattr(f.db, "complete_procedure_persist", complete)
+    await ActivityEnvironment().run(code.execute, run_id)
+    assert compute.calls == 1
+    await code.publish(run_id)
+    await code.project(run_id)
+    run = await f.db.get_run(UUID(run_id))
+    assert run.status == RunStatus.SUCCEEDED and run.artifact_path == path
+    assert run.artifact_ref.endswith(f"/{path}")
+
+
+async def test_named_output_with_another_date_never_publishes(publication_db, monkeypatch):
+    f = await fixture(publication_db)
+    storage = CheckpointStorage()
+    compute = SyntheticCompute({"path": "reports/custom/2001-01-01-x.md", "content": "# X\n"})
+    server, _common, code = await setup(f, monkeypatch, compute=compute, storage=storage)
+    manifest = json.loads(example_files()[PATH])
+    manifest["definition"]["code"]["output"]["path"] = "reports/custom/{date}-{slug}.md"
+    f.revision = storage.repo.edit({PATH: json.dumps(manifest).encode()})
+    active = await activate_code(f, server)
+    run_id = (await start(f, server, active))["id"]
+    with pytest.raises(Exception, match="validation"):
+        await ActivityEnvironment().run(code.execute, run_id)
+    assert storage.repo.writes == 0

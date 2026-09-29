@@ -3975,7 +3975,10 @@ class TinActivities:
 
         delivery = await ContentDelivery(database=self._db, storage=self._storage).status(run)
         artifact_title = None
-        if workflow_definition.key in {"content.generate", "content.public_article"}:
+        declared = ((workflow_definition.definition or {}).get("code") or {}).get("output") or {}
+        if workflow_definition.key in {"content.generate", "content.public_article"} or (
+            "{" in str(declared.get("path", "")) and path.endswith(".md")
+        ):
             # These drafts live at a run-owned path, so their heading is the readable label.
             from tin_lite.content_delivery import display_title
 

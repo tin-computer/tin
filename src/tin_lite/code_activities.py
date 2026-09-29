@@ -13,7 +13,13 @@ from tin_lite.code_models import CodeModelError, CodeModels
 from tin_lite.code_services import CodeServiceError, CodeServices
 from tin_lite.procedures import SandboxProfile
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
-from tin_lite.workflow_code import EXECUTOR, load_code_package, validate_code_result
+from tin_lite.workflow_code import (
+    EXECUTOR,
+    code_result_path,
+    load_code_package,
+    output_path_allowed,
+    validate_code_result,
+)
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
 
@@ -151,33 +157,42 @@ class CodeActivities:
                         details={"stage": "code_execution"},
                         procedure_run=run,
                     )
-                    content = validate_code_result(raw, spec)
+                    content = validate_code_result(raw, spec, created_at=run.created_at)
+                    path = code_result_path(raw)
+                    if path != spec.output_path:
+                        # A named output is chosen by the code; record it before the write so
+                        # recovery reads the same file instead of guessing.
+                        await self.db.save_effect_progress(
+                            conn, execution_key=key, result={"artifact_path": path}
+                        )
                     await self.common._validate_procedure_publication_lease(run)
                     revision = await self.storage.stage_native_output(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
                         run_id=run_id,
                         generation=run.generation,
-                        path=spec.output_path,
+                        path=path,
                         content=content,
                         executor=EXECUTOR,
                     )
                 else:
+                    path = ((saved.result or {}) if saved else {}).get(
+                        "artifact_path", spec.output_path
+                    )
                     content = await self.storage.read_procedure_checkpoint(
-                        repo_id=project.state_repo_id, revision=revision, path=spec.output_path
+                        repo_id=project.state_repo_id, revision=revision, path=path
                     )
                     validate_code_result(
-                        json.dumps(
-                            {"path": spec.output_path, "content": content.decode("utf-8")}
-                        ).encode(),
+                        json.dumps({"path": path, "content": content.decode("utf-8")}).encode(),
                         spec,
+                        created_at=run.created_at,
                     )
                     if run.sandbox_id:
                         await self.sandboxes.kill(run.sandbox_id)
                 checkpoint = OutputCheckpoint.create(
                     run=run,
                     revision=revision,
-                    path=spec.output_path,
+                    path=path,
                     media_type=spec.media_type,
                     content=content,
                 )
@@ -227,20 +242,22 @@ class CodeActivities:
             if not persisted or persisted.status != "completed":
                 raise ValueError("code result is not saved")
             checkpoint = OutputCheckpoint.load(persisted.result["checkpoint"], run=run)
-            content = await self.storage.read_procedure_checkpoint(
-                repo_id=project.state_repo_id,
-                revision=checkpoint.ephemeral_commit_sha,
-                path=spec.output_path,
-            )
-            checkpoint.validate_content(content)
+            path = checkpoint.artifact_path
             if (
-                checkpoint.artifact_path != spec.output_path
+                not output_path_allowed(spec, path, run.created_at)
                 or checkpoint.media_type != spec.media_type
             ):
                 raise ValueError("saved output differs from its contract")
+            content = await self.storage.read_procedure_checkpoint(
+                repo_id=project.state_repo_id,
+                revision=checkpoint.ephemeral_commit_sha,
+                path=path,
+            )
+            checkpoint.validate_content(content)
             validate_code_result(
-                json.dumps({"path": spec.output_path, "content": content.decode("utf-8")}).encode(),
+                json.dumps({"path": path, "content": content.decode("utf-8")}).encode(),
                 spec,
+                created_at=run.created_at,
             )
             intent = (saved.result or {}).get("publication") if saved else None
             if intent is None:
@@ -275,12 +292,12 @@ class CodeActivities:
                         execution_key=key,
                         result={
                             "canonical_commit_sha": sha,
-                            "artifact_path": spec.output_path,
+                            "artifact_path": path,
                             "checkpoint": checkpoint.to_dict(),
                             "changed": changed,
                             "summary": persisted.result["summary"],
                         },
-                        artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{spec.output_path}",
+                        artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{path}",
                     )
             except (OutputConflictError, PublicationPendingError) as exc:
                 conflict = isinstance(exc, OutputConflictError)
