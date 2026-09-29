@@ -841,9 +841,7 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
         )
     tools = server(f, monkeypatch)
     full = structured(
-        await tools.call_tool(
-            "list_workflows", {"project_id": str(f.project.id), "detail": "full"}
-        )
+        await tools.call_tool("list_workflows", {"project_id": str(f.project.id), "detail": "full"})
     )
     # The listing is short unless the caller asks for the full one.
     short = structured(await tools.call_tool("list_workflows", {"project_id": str(f.project.id)}))
@@ -852,8 +850,7 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
     assert [row["id"] for row in short_rows] == [row["id"] for row in full_rows]
     base = {"id", "key", "title", "description", "schedule_modes", "readiness"}
     assert all(
-        set(row) - {"blocked_because"} == base | {"required_inputs", "needs"}
-        for row in short_rows
+        set(row) - {"blocked_because"} == base | {"required_inputs", "needs"} for row in short_rows
     )
     by_key = {row["key"]: row for row in short_rows}
     deep_dive = by_key["product.deep_dive"]
