@@ -42,6 +42,18 @@ class WorkflowExecutorUnavailableError(RuntimeError):
     pass
 
 
+class ContentProgramNotSavedError(WorkflowInputError):
+    """content.plan runs only as a saved program; carries the inputs the caller sent."""
+
+    def __init__(self, inputs: dict[str, Any]) -> None:
+        super().__init__(
+            "Save the content program to My system before starting it: call "
+            "create_project_workflow with workflow_id 'content.plan' and these inputs, then "
+            "start_project_workflow with the project_workflow_id it returns."
+        )
+        self.inputs = inputs
+
+
 class TemporalStartError(RuntimeError):
     def __init__(self, run_id: UUID, *, uncertain: bool = False) -> None:
         super().__init__(
@@ -285,7 +297,7 @@ async def start_workflow_run(
                 "Choose valid research runs, a start date and duration."
             ) from exc
         if project_workflow_id is None:
-            raise WorkflowInputError("Save the content program to My system before starting it.")
+            raise ContentProgramNotSavedError(normalized_inputs)
     if workflow.executor == AUDIT_KEY:
         try:
             public_site(normalized_inputs["site_url"])

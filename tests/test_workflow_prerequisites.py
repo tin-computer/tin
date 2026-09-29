@@ -231,7 +231,7 @@ async def test_sync_fails_on_a_cycle_before_any_registry_write(monkeypatch):
 # ---------------------------------------------------------------- project fixture
 
 
-async def project_fixture(db, *, files=None):
+async def project_fixture(db, *, files=None, extra=()):
     project = await db.create_project(name="Prereq proof", state_repo_id="projects/prereq")
     await db.record_tin_user(ACTOR)
     await db.grant_project_membership(project_id=project.id, clerk_user_id=ACTOR)
@@ -244,6 +244,7 @@ async def project_fixture(db, *, files=None):
         "creative.character",
         "creative.product_demo",
         "research.deep_dive",
+        *extra,
     ):
         builtin = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
         await db.upsert_registry_workflow(

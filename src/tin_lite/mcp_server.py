@@ -5,7 +5,7 @@ import logging
 import re
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -110,6 +110,7 @@ from tin_lite.projects import (
 from tin_lite.publication import read_run_output as read_project_run_output
 from tin_lite.publication import related_output_documents, retained_output_view
 from tin_lite.run_service import (
+    ContentProgramNotSavedError,
     TemporalStartError,
     WorkflowExecutorUnavailableError,
     start_workflow_run,
@@ -130,6 +131,79 @@ from tin_lite.writing_style import style_capture_preparation
 
 MCP_SCOPE = "openid"
 logger = logging.getLogger(__name__)
+
+
+PROJECT_WORKFLOW_NOT_FOUND = (
+    "project workflow not found in this project; call list_project_workflows to get its id"
+)
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+async def _content_program_next_call(
+    database: Any, project_id: UUID, exc: ContentProgramNotSavedError
+) -> dict[str, Any]:
+    """The exact MCP calls that save a content program and start it, ids filled in when known."""
+    inputs = exc.inputs
+    saved = next(
+        (
+            item
+            for item in await database.list_project_workflows(project_id=project_id)
+            if item.workflow_key == "content.plan"
+            and item.status != "archived"
+            and item.inputs == inputs
+        ),
+        None,
+    )
+    if saved is not None:
+        return {
+            "code": "content_program_not_saved",
+            "message": (
+                f"This content program is already saved as {saved.name!r}. Start it with "
+                f"start_project_workflow and project_workflow_id {saved.id}."
+            ),
+            "next_tool": {
+                "name": "start_project_workflow",
+                "arguments": {
+                    "project_id": str(project_id),
+                    "project_workflow_id": str(saved.id),
+                    "request_id": str(uuid4()),
+                },
+            },
+        }
+    project = await database.get_project(project_id)
+    try:
+        weekday = _WEEKDAYS[date.fromisoformat(str(inputs.get("start_date"))).weekday()]
+    except ValueError:
+        weekday = "monday"
+    return {
+        "code": "content_program_not_saved",
+        "message": str(exc),
+        "next_tool": {
+            "name": "create_project_workflow",
+            "arguments": {
+                "project_id": str(project_id),
+                "workflow_id": "content.plan",
+                "name": "Content program",
+                "inputs": inputs,
+                # Weekly ticks prepare each batch; the first run builds the whole roadmap.
+                "schedule": {
+                    "cadence": "weekly",
+                    "weekdays": [weekday],
+                    "local_time": "09:00",
+                    "timezone": getattr(project, "timezone", None) or "UTC",
+                },
+                "request_id": str(uuid4()),
+            },
+        },
+        "then": {
+            "name": "start_project_workflow",
+            "arguments": {
+                "project_id": str(project_id),
+                "project_workflow_id": "<id returned by create_project_workflow>",
+                "request_id": str(uuid4()),
+            },
+        },
+    }
 
 
 def _require_style_sources(workflow, project_id, inputs):
@@ -156,6 +230,8 @@ def _mcp_uuid(value: str, *, field: str) -> UUID:
         hint = {
             "project_id": "; call list_projects to get it",
             "workspace_id": "; call list_workspaces to get it",
+            "project_workflow_id": "; call list_project_workflows to get it",
+            "run_id": "; call list_project_runs to get it",
         }.get(field, "")
         raise ToolError(f"{field} must be a UUID{hint}") from exc
 
@@ -2173,7 +2249,7 @@ def create_mcp_app(
         services = runtime()
         existing = await services.database.get_project_workflow(parsed_workflow_id)
         if existing is None or existing.project_id != parsed_project_id:
-            raise ToolError("project workflow not found")
+            raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
         workflow = await services.database.get_workflow(existing.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
@@ -2270,7 +2346,7 @@ def create_mcp_app(
         services = runtime()
         configured = await services.database.get_project_workflow(parsed_workflow_id)
         if configured is None or configured.project_id != parsed_project_id:
-            raise ToolError("project workflow not found")
+            raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
         workflow = await services.database.get_workflow(configured.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
@@ -2866,6 +2942,12 @@ def create_mcp_app(
         except PrerequisiteError as exc:
             # The JSON diagnostic names the upstream workflow and a replayable suggested call.
             raise ToolError(json.dumps(exc.diagnostic())) from exc
+        except ContentProgramNotSavedError as exc:
+            raise ToolError(
+                json.dumps(
+                    await _content_program_next_call(runtime().database, parsed_project_id, exc)
+                )
+            ) from exc
         except WorkflowInputError as exc:
             if workflow.key == "brand.capture" and workflow.project_id is None:
                 raise ToolError(
@@ -3536,7 +3618,7 @@ def create_mcp_app(
                 or configured.project_id != parsed_project_id
                 or configured.workflow_id != workflow.id
             ):
-                raise ToolError("project workflow not found")
+                raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
             from tin_lite.workflow_definitions import resolve_execution_contract
 
             try:
