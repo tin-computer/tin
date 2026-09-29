@@ -944,7 +944,7 @@ function systemTemplateCard(workflow, query) {
       ${saved
         ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
         : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
-      <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Setup</button>
+      <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
     </span>
   </article>`;
 }
@@ -984,8 +984,8 @@ function systemTemplateSetupCard(workflow) {
     </div>
     <footer class="system-config-footer">
       <span class="system-config-note">Goes to My system when you finish.</span>
-      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Finish setup</button>
-      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Finish setup and run now</button>
+      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
+      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>
     </footer>
   </form>`;
 }
@@ -1564,12 +1564,12 @@ function renderChatTurn(turn) {
   if (run) {
     const workflow = workflowForRun(run);
     let action = run.workflow_name === "project.task"
-      ? `<button type="button" data-open-task="${escapeHtml(run.id)}">Open task →</button>`
-      : `<button type="button" data-open-run="${escapeHtml(run.id)}">Watch →</button>`;
+      ? `<button class="open-button" type="button" data-open-task="${escapeHtml(run.id)}">Open</button>`
+      : `<button class="open-button" type="button" data-open-run="${escapeHtml(run.id)}">Open</button>`;
     if (run.retained_output && !run.canonical_commit_sha) {
       action = `<button type="button" data-artifact-run="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
     } else if (availableRunOutput(run)) {
-      action = `<button type="button" data-artifact-run="${escapeHtml(run.id)}">${run.status === "needs_input" && isMarkdownArtifact(run) ? "Review" : "Open"} →</button>`;
+      action = `<button class="open-button" type="button" data-artifact-run="${escapeHtml(run.id)}">Open</button>`;
     }
     receipt = `<div class="run-receipt">
       <span class="status-dot is-${escapeHtml(run.status)}"></span>
@@ -2150,7 +2150,7 @@ function emailCampaignRunDetail(run, detail) {
     return '<p class="system-run-loading">Loading campaign…</p>';
   }
   if (detail.error) {
-    return `<p class="system-run-loading">Campaign details could not load. <button type="button" data-retry-run-detail="${escapeHtml(run.id)}">Try again</button></p>`;
+    return `<p class="system-run-loading">Campaign details could not load. <button type="button" data-retry-run-detail="${escapeHtml(run.id)}">Retry</button></p>`;
   }
   const campaign = detail.campaign;
   const deliveries = detail.deliveries || [];
@@ -2260,7 +2260,7 @@ function systemRunCard(run, configured = null) {
     </div>
     <div class="system-running-detail">
       <span>${escapeHtml(systemRunningSentence(run, title))}</span>
-      <button type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Observe →"}</button>
+      <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button>
     </div>
     ${expanded ? systemRunDetailHtml(run, false) : ""}
     ${systemProgressBar(run)}
@@ -2275,7 +2275,7 @@ function systemConfiguredCard(configured) {
   const failed = configured.last_run_status === "failed";
   const scheduled = Boolean(configured.schedule);
   const actions = failed
-    ? `<button class="system-action is-retry" type="button" data-retry-project-workflow="${escapeHtml(configured.id)}">Retry →</button>
+    ? `<button class="system-action is-retry" type="button" data-retry-project-workflow="${escapeHtml(configured.id)}">Retry</button>
        <button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`
     : scheduled && configured.status === "paused"
       ? `<button class="system-action is-strong" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="resume">Resume</button>
@@ -2479,7 +2479,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   const runningDetail = isRunning
     ? `<div class="system-running-detail">
         <span>${escapeHtml(systemRunningSentence(run, configured.name))}</span>
-        <button type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Observe →"}</button>
+        <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button>
        </div>`
     : "";
   const runDetail = isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null
@@ -2530,7 +2530,7 @@ function systemContentProgramEditor(workflow, configured, run) {
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
     </div>
-    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Observe →"}</button></div>` : ""}
+    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button></div>` : ""}
     ${isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? systemRunDetailHtml(run, false) : ""}
     <div class="system-config-body">
       <section class="content-program-work" aria-label="Upcoming content">
@@ -3074,7 +3074,7 @@ function renderDocument() {
       },
       secondaryAction: route.source !== "retained" && isCampaignRevisionReview(run)
         ? {
-            label: "Discard revision",
+            label: "Discard",
             onActivate: (button) => discardCampaignRevision(run.id, button),
           }
         : route.source !== "retained" && run?.status === "needs_input" && repositoryDeliveryAvailable(run) && !supportsArticleFeedback(run) && !publishPreview(run)
@@ -3163,7 +3163,7 @@ function liveWorkflowRunCard(run) {
     </div>
     <span class="workflow-version">started ${escapeHtml(waitingLabel(started))}</span>
     <span class="workflow-state workflow-description-slot">${escapeHtml(stateLabel)} · ${escapeHtml(runTriggerLabel(run))}</span>
-    <button class="button-secondary" type="button" data-observe-run="${escapeHtml(run.id)}">Observe →</button>
+    <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">Open</button>
   </article>`;
 }
 
@@ -4214,7 +4214,7 @@ async function discardCampaignRevision(runId, button) {
     schedulePolling();
   } catch (error) {
     button.disabled = false;
-    button.textContent = "Discard revision";
+    button.textContent = "Discard";
     showToast(`Could not discard revision: ${error.message}`);
   }
 }
@@ -4439,7 +4439,7 @@ function decisionDetailHtml(decision) {
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
       <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
-      <button class="button-secondary" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
+      <button class="open-button" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
     </header>
     <div class="decision-detail-body">
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
@@ -4696,7 +4696,7 @@ function activityStatus(event) {
 
 function activityAction(event) {
   if (["procedure_output_applied", "procedure_output_kept"].includes(event.event_type) && event.details?.path) {
-    return `<button type="button" data-current-output="${escapeHtml(event.details.path)}">Open file →</button>`;
+    return `<button class="open-button" type="button" data-current-output="${escapeHtml(event.details.path)}" title="${escapeHtml(event.details.path)}">Open</button>`;
   }
   const externalUrl = safeHttpsUrl(event.details?.external_url);
   if (externalUrl) {
@@ -4706,17 +4706,15 @@ function activityAction(event) {
   const run = state.runs.find((item) => item.id === event.run_id);
   if (!run) return "";
   if (run.workflow_name === "project.task" && run.task_diff?.files?.length) {
-    return `<button type="button" data-activity-task="${escapeHtml(run.id)}">Open task →</button>`;
+    return `<button class="open-button" type="button" data-activity-task="${escapeHtml(run.id)}">Open</button>`;
   }
   if (run.retained_output && !run.canonical_commit_sha) {
     return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
   }
   if (!availableRunOutput(run)) {
-    return `<button type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Observe →</button>`;
+    return `<button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Open</button>`;
   }
-  const filename = String(run.artifact_path).split("/").at(-1) || "receipt";
-  const label = run.status === "needs_input" && isMarkdownArtifact(run) ? "Review draft" : filename;
-  return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${escapeHtml(label)} →</button>`;
+  return `<button class="open-button" type="button" data-activity-artifact="${escapeHtml(run.id)}" title="${escapeHtml(run.artifact_path)}">Open</button>`;
 }
 
 function safeHttpsUrl(value) {
@@ -5821,7 +5819,7 @@ function renderIntegrationCard(integration) {
       ${connected ? `<span class="integration-primary">${escapeHtml(primary)}</span>
         <span class="integration-health">${escapeHtml(health)}</span>
         ${RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
-          ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Finish setup" : "Configure"}</button>`
+          ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Set up" : "Configure"}</button>`
           : `<button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">Configure</button>`}`
         : `<span class="integration-unlocks">would unlock ${escapeHtml(unlocks)}</span>
         <button class="integration-connect" type="button" data-integration-connect="${escapeHtml(integration.key)}">Connect</button>`}
@@ -5988,7 +5986,7 @@ async function toggleIntegration(providerKey) {
   renderIntegrations();
 }
 
-// "Finish setup" and "Configure" open the same question the connection asked, with the row's
+// "Set up" and "Configure" open the same question the connection asked, with the row's
 // details (access, disconnect) left open underneath for when it closes.
 function configureIntegrationResource(providerKey) {
   if (state.expandedIntegration !== providerKey) {
@@ -6555,27 +6553,27 @@ function clearIntegrationCallbackUrl(projectId = null) {
 
 const GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations";
 
-// Right after a service connects, and from "Finish setup" or "Configure": which one repository,
+// Right after a service connects, and from "Set up" or "Configure": which one repository,
 // Search Console property or PostHog project this project uses. "Later" keeps the connection.
 const RESOURCE_CHOICES = {
   "infra.github": {
     noun: "repository",
     loading: "Loading repositories…",
     copy: "Tin opens pull requests and delivers approved pages here.",
-    confirm: "Link repository",
+    confirm: "Link",
   },
   "analytics.gsc": {
     noun: "Search Console property",
     loading: "Loading properties…",
     copy: "Tin reads real searches, clicks and positions from this property.",
-    confirm: "Link property",
+    confirm: "Link",
     empty: "This Google account has no Search Console properties yet.",
   },
   "analytics.posthog": {
     noun: "PostHog project",
     loading: "Loading projects…",
     copy: "Tin reads events and funnels from this one project, read only.",
-    confirm: "Link project",
+    confirm: "Link",
     empty: "This PostHog account has no projects Tin can read.",
   },
 };

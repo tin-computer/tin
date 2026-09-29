@@ -17,21 +17,21 @@ const SERVICES = {
     complete: "/api/integrations/github/complete", selection: "selected_repository",
     title: "Choose the repository for Example project",
     copy: "Tin opens pull requests and delivers approved pages here.",
-    confirm: "Link repository", options: [{id: "example/site", label: "example/site"}, {id: "example/docs", label: "example/docs"}],
+    confirm: "Link", options: [{id: "example/site", label: "example/site"}, {id: "example/docs", label: "example/docs"}],
   },
   "analytics.gsc": {
     name: "Google Search Console", callback: "/integrations/callback/google?code=synthetic&state=synthetic",
     complete: "/api/integrations/google/complete", selection: "selected_site_url",
     title: "Choose the Search Console property for Example project",
     copy: "Tin reads real searches, clicks and positions from this property.",
-    confirm: "Link property", options: [{id: "sc-domain:example.com", label: "sc-domain:example.com"}, {id: "https://www.example.com/", label: "https://www.example.com/"}],
+    confirm: "Link", options: [{id: "sc-domain:example.com", label: "sc-domain:example.com"}, {id: "https://www.example.com/", label: "https://www.example.com/"}],
   },
   "analytics.posthog": {
     name: "PostHog", callback: "/integrations/callback/posthog?code=synthetic&state=synthetic",
     complete: "/api/integrations/posthog/complete", selection: "selected_project_id",
     title: "Choose the PostHog project for Example project",
     copy: "Tin reads events and funnels from this one project, read only.",
-    confirm: "Link project", options: [{id: "101", label: "Example app", detail: "US Cloud"}, {id: "202", label: "Example docs", detail: "US Cloud"}],
+    confirm: "Link", options: [{id: "101", label: "Example app", detail: "US Cloud"}, {id: "202", label: "Example docs", detail: "US Cloud"}],
   },
 };
 
@@ -143,14 +143,14 @@ for (const [key, service] of Object.entries(SERVICES)) {
   });
 }
 
-test("Finish setup opens the same dialog; Later keeps the connection unfinished", async () => {
+test("Set up opens the same dialog; Later keeps the connection unfinished", async () => {
   const {server, writes, base} = await serve({connected: true});
   const browser = await chromium.launch({headless: true});
   try {
     const {page, context, errors} = await open(browser, base, "/integrations?project=project-1");
     for (const [key, service] of Object.entries(SERVICES)) {
       const row = page.locator(`[data-integration-choose="${key}"]`);
-      assert.equal(await row.textContent(), "Finish setup");
+      assert.equal(await row.textContent(), "Set up");
       await row.click();
       const shown = await dialogText(page);
       assert.equal(shown.title, service.title);
@@ -159,7 +159,7 @@ test("Finish setup opens the same dialog; Later keeps the connection unfinished"
       assert.equal(await page.locator(".integration-card .integration-config-form, .integration-card .tin-select").count(), 0);
       await page.getByRole("button", {name: "Later", exact: true}).click();
       assert.equal(await page.locator("#integration-project-dialog").isVisible(), false);
-      assert.equal(await page.locator(`[data-integration-choose="${key}"]`).textContent(), "Finish setup");
+      assert.equal(await page.locator(`[data-integration-choose="${key}"]`).textContent(), "Set up");
       assert.equal(writes.filter(item => item.method === "PUT" && item.path.endsWith(`/${key}`)).length, 0);
 
       await page.locator(`[data-integration-choose="${key}"]`).click();

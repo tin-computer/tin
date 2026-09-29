@@ -74,7 +74,7 @@ window.TinOutputComparisonPage = (() => {
     function noticeHtml() {
       if (uncertain) return `<div class="compare-notice" role="status"><p>Tin hasn't confirmed the outcome yet. ${retry ? "Check outcome re-sends the same request; it cannot apply the result twice." : "The original caller must check the outcome. If that caller is unavailable, contact support."}</p><div>${button(retry ? "Check outcome" : "Check status", "check")}${button("Open Files →", "files")}${button("View in Activity →", "activity")}</div></div>`;
       if (stale) return `<div class="compare-notice" role="alert"><p>The project changed while you were reading. This comparison may be out of date.</p>${button("Refresh comparison", "refresh")}</div>`;
-      if (error) return `<div class="compare-notice" role="alert"><p>${escape(error)}</p>${button("Try again", "refresh")}</div>`;
+      if (error) return `<div class="compare-notice" role="alert"><p>${escape(error)}</p>${button("Retry", "refresh")}</div>`;
       if (loading) return '<div class="compare-notice" role="status">Loading the comparison…</div>';
       if (!comparison) return "";
       if (comparison.identical) return '<div class="compare-notice" role="status">The current file and the saved result are the same. There is nothing to replace.</div>';

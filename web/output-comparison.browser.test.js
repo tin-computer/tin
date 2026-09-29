@@ -148,7 +148,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     if (process.env.TIN_RECOVERY_SCREENSHOT) await page.screenshot({path: process.env.TIN_RECOVERY_SCREENSHOT, clip: {x: 0, y: 0, width: 1440, height: 420}});
     assert.deepEqual(writes, []);
     interrupted = false;
-    // A decision card is prose with one Open link: it opens the draft for an
+    // A decision card is prose with one Open button: it opens the draft for an
     // ordinary review, the run when nothing is attached, and Activity for a conflict.
     for (const workflow of ["content.diagram", "content.generate"]) {
       ordinaryReview = {...decisions()[0], kind: "review", workflow_key: workflow,
@@ -158,17 +158,19 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
       await page.goto(`${base}/#decisions`);
       await page.locator(".decision-detail-card").waitFor();
       assert.equal(await page.locator("[data-decision-read]").count(), 1);
-      assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).count(), 1);
+      assert.equal(await page.getByRole("button", {name: "Open", exact: true}).count(), 1);
       assert.equal(await page.locator(".decision-detail-card .decision-summary").count(), 0);
       assert.equal(await page.getByRole("button", {name: "Approve", exact: true}).count(), 1);
-      await page.getByRole("button", {name: "Not now", exact: true}).click();
+      // Discard, not "Not now"; leaving a decision waiting is just not choosing.
+      assert.equal(await page.getByRole("button", {name: "Discard", exact: true}).count(), 1);
+      assert.equal(await page.getByRole("button", {name: "Not now", exact: true}).count(), 0);
       assert.equal(reviewApprovals.length, 0);
       for (const width of [1440, 390]) {
         await page.setViewportSize({width, height: 1000});
-        assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).isVisible(), true);
+        assert.equal(await page.getByRole("button", {name: "Open", exact: true}).isVisible(), true);
         if (process.env.TIN_COMPARISON_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_COMPARISON_SCREENSHOTS}/decision-${workflow}-${theme}-${width}.png`, fullPage: true});
       }
-      await page.getByRole("button", {name: "Open draft →", exact: true}).click();
+      await page.getByRole("button", {name: "Open", exact: true}).click();
       await page.getByRole("heading", {name: "Why small teams ship faster", exact: true}).waitFor();
       assert.equal(new URL(page.url()).pathname, `/document/${runId}`);
       assert.equal(reviewApprovals.length, 0);
@@ -177,7 +179,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     ordinaryReview.items = [{file: "reports/SECOND.md", revision: "c".repeat(40)}];
     await page.goto(`${base}/#decisions`);
     await page.locator(".decision-detail-card").waitFor();
-    await page.getByRole("button", {name: "Open draft →", exact: true}).click();
+    await page.getByRole("button", {name: "Open", exact: true}).click();
     await page.waitForURL(/\/file\?/);
     const selectedFile = new URL(page.url()).searchParams;
     assert.equal(selectedFile.get("path"), "reports/SECOND.md");
@@ -192,8 +194,9 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     ordinaryReview.items = [];
     await page.reload();
     await page.locator(".decision-detail-card").waitFor();
-    assert.equal(await page.getByRole("button", {name: "Open run →", exact: true}).count(), 1);
-    assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).count(), 0);
+    // With nothing attached, the same one "Open" opens the run.
+    assert.equal(await page.getByRole("button", {name: "Open", exact: true}).count(), 1);
+    assert.equal(await page.getByRole("button", {name: "Open run →", exact: true}).count(), 0);
     ordinaryReview = null;
     await page.setViewportSize({width: 1440, height: 1000});
     // A plain dashboard visit starts in My system; explicit routes still win.
@@ -245,7 +248,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     await page.getByRole("heading", { name: "System", exact: true }).waitFor();
     await page.goto(`${base}/#decisions`);
     await page.locator(".decision-detail-card").waitFor();
-    await page.getByRole("button", {name: "Open run →", exact: true}).click();
+    await page.locator(".decision-detail-card").getByRole("button", {name: "Open", exact: true}).click();
     await page.getByRole("heading", {name: "Activity", exact: true}).waitFor();
     assert.equal(new URL(page.url()).pathname, "/activity");
     await page.goto(`${base}/#decisions`);
