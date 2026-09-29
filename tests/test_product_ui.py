@@ -857,9 +857,10 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert "function repositoryDeliveryAvailable(run)" in script
     assert 'data-delivery="github_commit"${blocked}>Publish now</button>' in script
     assert 'data-delivery="github_pr"${blocked}>Open a pull request</button>' in script
+    # A blocked approval hides the checkbox rather than offering a choice it cannot use.
     assert (
-        '<label class="decision-remember"><input type="checkbox" '
-        "data-decision-remember${blocked}> Do this for future drafts</label>" in script
+        '${blocked ? "" : \'<label class="decision-remember"><input type="checkbox" '
+        "data-decision-remember> Do this for future drafts</label>'}" in script
     )
     assert "data-decision-not-now>Not now</button>" in script
     assert "Approved drafts stay in Tin until GitHub is connected." in script

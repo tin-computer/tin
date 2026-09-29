@@ -88,6 +88,7 @@
   --hot-hover: #d94100;
   --hot-pressed: #bd3900;
   --bermellon-text: #be3a00;
+  --ember-text: #ec4b1a;
   --setup-text: #b73500;
   --danger: #be2132;
   --on-accent: #fffdf6;
@@ -187,6 +188,7 @@ html[data-theme="dark"] {
   --hot-hover: #e8552a;
   --hot-pressed: #c53a10;
   --bermellon-text: #ec4b1a;
+  --ember-text: #ec4b1a;
   --setup-text: #ec4b1a;
   --danger: #d9515e;
   --on-accent: #14170a;
@@ -4732,6 +4734,65 @@ p.page-url-line[hidden],
   border-radius: 4px;
   font-size: 12.5px;
   line-height: 16px;
+}
+
+/* The footer's line never wraps; when the card is too narrow for its actions, they move to a
+   second row on the right instead. "Not now" and "Discard" read as text, as in the design. */
+.decision-detail-card > footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 10px;
+}
+
+.decision-detail-card > footer > span:has(> .decision-version) {
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+
+.decision-detail-card > footer .button-quiet {
+  padding-inline: 2px;
+}
+
+/* A quiet way to turn down a proposal, before "Not now". */
+.decision-detail-card > footer .decision-discard {
+  align-self: center;
+  padding: 7px 0;
+  background: transparent;
+  color: var(--ember-text);
+  font-size: 12.5px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.decision-detail-card > footer .decision-discard:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+/* While a newer revision waits, every approval looks blocked, not only the primary one. */
+.decision-detail-card > footer .button-secondary[data-blocked],
+.decision-detail-card > footer .button-secondary[data-blocked]:hover {
+  background: transparent;
+  border-color: rgb(var(--ink-rgb) / 12%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+}
+
+.decision-detail-card > footer .decision-approval[data-blocked] {
+  background: rgb(var(--ink-rgb) / 8%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.decision-detail-body p.decision-note {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.decision-detail-body p.decision-note a {
+  color: var(--accent-deep);
 }
 
 .side-stack {

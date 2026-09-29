@@ -1062,8 +1062,10 @@ function isCampaignRevisionReview(run) {
 }
 
 function pendingReviewQueue() {
+  // Runs with something to approve, as Decisions lists them: a task asking a question waits
+  // on an answer, and a reviewed task that changed nothing has nothing to approve.
   const waiting = state.runs.filter((run) => {
-    const isTaskGate = run.workflow_name === "project.task";
+    const isTaskGate = run.workflow_name === "project.task" && run.task_phase === "review" && run.task_has_changes !== false;
     return run.status === "needs_input" && (run.review_required || isTaskGate);
   });
 
@@ -1123,13 +1125,13 @@ function updateRail() {
   if (!state.project) return;
   projectName.textContent = state.project.name;
   projectSwitcher.setAttribute("aria-label", `Current project: ${state.project.name}`);
-  const reviewQueue = pendingReviewQueue();
   const active = state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
-  const needsYou = reviewQueue.length;
+  // One count everywhere: this line, the Decisions badge and the Decisions list.
+  const needsYou = state.decisions.length;
   projectSummary.textContent = [
     state.project.workspace_name,
     `${active} running`,
-    needsYou ? `${needsYou} needs you` : null,
+    needsYou ? `${needsYou} ${needsYou === 1 ? "needs" : "need"} you` : null,
   ].filter(Boolean).join(" · ");
   const runningCount = state.systemSummary?.running_count ?? state.runs.filter(
     (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
@@ -4279,24 +4281,35 @@ function repositoryDeliveryAvailable(run) {
   return !run?.content_delivery?.system_run_id && isContentDraftReview(run) && Boolean(connectedRepository());
 }
 
+// A proposed writing style or brand guide: approve it, leave it for later, or discard it.
+function isProposal(decision) {
+  return decision.kind === "review" && ["style.capture", "brand.capture"].includes(decision.workflow_key);
+}
+
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
   const revision = decision.revision;
-  // A waiting revision must be resolved first. Once applied, the older copy may stay in Tin
-  // but never be published; the server refuses both too.
-  const blocked = revision?.state === "waiting" ? " disabled" : "";
+  // A waiting revision must be resolved first: every approval shows it is blocked. Once
+  // applied, the older copy may stay in Tin but never be published; the server refuses both.
+  const blocked = revision?.state === "waiting" ? ' disabled data-blocked="true"' : "";
+  const notNow = '<button class="button-quiet" type="button" data-decision-not-now>Not now</button>';
   if (revision?.state === "applied" && isContentDraftReview(run)) {
-    return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+    return `${notNow}
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
   }
   if (repositoryDeliveryAvailable(run)) {
-    return `<label class="decision-remember"><input type="checkbox" data-decision-remember${blocked}> Do this for future drafts</label>
-      <button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+    return `${blocked ? "" : '<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>'}
+      ${notNow}
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
   }
+  if (isProposal(decision)) {
+    return `<button class="decision-discard" type="button" data-decision-discard>Discard</button>
+      ${notNow}
+      <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>Approve guide</button>`;
+  }
   const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
-  return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+  return `${notNow}
     <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>${escapeHtml(label)}</button>`;
 }
 
@@ -4304,29 +4317,27 @@ function versionTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "earlier";
   const timeZone = state.systemSummary?.timezone || state.project?.timezone;
-  const options = { hour: "2-digit", minute: "2-digit", hour12: false };
+  const format = (zone) => {
+    const day = date.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: zone });
+    const time = date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZone: zone });
+    return `${day}, ${time}`;
+  };
   try {
-    const day = (item) => item.toLocaleDateString(undefined, { timeZone });
-    const time = date.toLocaleTimeString([], { ...options, timeZone });
-    if (day(date) === day(new Date())) return time;
-    return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone })}, ${time}`;
+    return format(timeZone);
   } catch {
-    return ledgerTime(date);
+    return format(undefined);
   }
 }
 
-// Names the exact copy an approval uses, and any newer revision of it, so an older copy
-// cannot go out unnoticed.
+// Names the exact copy an approval uses ("Draft from Sep 28, 22:50"), or that a newer revision
+// of it exists, so an older copy cannot go out unnoticed.
 function decisionVersionLabel(decision, run) {
   if (decision.kind === "output_conflict") return "";
-  const when = versionTime(decision.version_saved_at || decision.created_at);
   const revision = decision.revision?.state;
-  const version = revision === "applied" && isContentDraftReview(run)
-    ? `Keeps the draft from ${when} in Tin`
-    : run?.workflow_name === "project.task" ? `Applies the changes from ${when}` : `Approves the draft from ${when}`;
-  if (revision === "waiting") return `${version} · a newer revision is waiting in Decisions`;
-  if (revision === "applied") return `${version} · a newer revision was applied`;
-  return version;
+  if (revision === "waiting") return "A newer revision is waiting";
+  if (revision === "applied") return "A newer revision was applied";
+  const noun = isProposal(decision) ? "Proposal" : run?.workflow_name === "project.task" ? "Changes" : "Draft";
+  return `${noun} from ${versionTime(decision.version_saved_at || decision.created_at)}`;
 }
 
 function pageUrlLine(run, mode = "card") {
@@ -4349,10 +4360,12 @@ function bindPageUrls() {
 function decisionHeading(decision, run) {
   const output = decision.output_title || (run?.workflow_name === "project.task" ? run.task_title : "") || "";
   const waited = waitingLabel(decision.created_at);
+  // "Social post batch · Sep 29" already names its workflow.
+  const namesWorkflow = sameText(output, decision.workflow_title) || String(output).startsWith(`${decision.workflow_title} · `);
   return {
     title: output || decision.workflow_title || "Decision",
     subtitle: [
-      output && !sameText(output, decision.workflow_title) ? decision.workflow_title : null,
+      output && !namesWorkflow ? decision.workflow_title : null,
       waited === "now" ? "Just arrived" : `Waiting ${waited}`,
       decision.kind === "output_conflict" ? "result saved" : null,
     ].filter(Boolean).join(" · "),
@@ -4381,7 +4394,7 @@ const GENERIC_REVIEW_LINE = /^(?:[^.]*\bis ready for your review|Review the comp
 function decisionBodyLine(decision, run, heading) {
   const isTask = run?.workflow_name === "project.task";
   const text = isTask
-    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run)
+    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run) || "Finished without changing any files."
     : String(decision.explanation || "").replace(GENERIC_REVIEW_LINE, "").trim();
   const line = (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text]).slice(0, isTask ? 3 : 1).join(" ").trim();
   return [heading.title, heading.subtitle].some((text) => sameText(text, line)) ? "" : line;
@@ -4400,10 +4413,12 @@ function decisionDetailHtml(decision) {
   const heading = decisionHeading(decision, run);
   const bodyLine = decisionBodyLine(decision, run, heading);
   const version = decisionVersionLabel(decision, run);
-  const footerNote = [
-    version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
-    [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" "),
-  ].filter(Boolean).join(" · ");
+  const conflict = decision.kind === "output_conflict";
+  // One short footer line. A review's consequence or delivery note reads in the body instead.
+  const footerNote = conflict
+    ? escapeHtml(consequence)
+    : version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "";
+  const bodyNote = conflict ? "" : [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
@@ -4413,6 +4428,7 @@ function decisionDetailHtml(decision) {
     <div class="decision-detail-body">
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
+      ${bodyNote ? `<p class="decision-note">${bodyNote}</p>` : ""}
     </div>
     <footer${footerNote ? "" : ' class="is-actions-only"'}>
       ${footerNote ? `<span>${footerNote}</span>` : ""}
@@ -4463,6 +4479,7 @@ function renderDecisions() {
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
   });
+  main.querySelector("[data-decision-discard]")?.addEventListener("click", (event) => discardProposal(decision, event.currentTarget));
   main.querySelector("[data-decision-connect-github]")?.addEventListener("click", (event) => {
     event.preventDefault();
     navigate("integrations");
@@ -4501,7 +4518,7 @@ async function applyDecision(decision, button) {
   const originalLabel = button.textContent;
   const delivery = button.dataset.delivery || null;
   const remember = Boolean(delivery && main.querySelector("[data-decision-remember]")?.checked);
-  const siblings = [...main.querySelectorAll("[data-apply-decision]")].filter((item) => item !== button);
+  const siblings = [...main.querySelectorAll("[data-apply-decision], [data-decision-discard]")].filter((item) => item !== button);
   siblings.forEach((item) => { item.disabled = true; });
   button.disabled = true;
   button.textContent = "Applying";
@@ -4527,6 +4544,31 @@ async function applyDecision(decision, button) {
     button.disabled = false;
     button.textContent = originalLabel;
     showToast(`Could not apply decision: ${error.message}`);
+  }
+}
+
+// The proposal is dropped and its run ends as declined; the current guide stays as it is.
+async function discardProposal(decision, button) {
+  const context = currentProjectContext();
+  const actions = [...main.querySelectorAll("[data-apply-decision], [data-decision-discard]")];
+  const disabled = actions.map((item) => item.disabled);
+  actions.forEach((item) => { item.disabled = true; });
+  try {
+    const run = await api(`/api/decisions/${encodeURIComponent(decision.id)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ action: "decline" }),
+    });
+    if (!isCurrentProjectContext(context)) return;
+    upsertRun(run);
+    state.decisions = state.decisions.filter((item) => item.id !== decision.id);
+    state.decisionId = state.decisions[0]?.id || null;
+    render();
+    showToast("Proposal discarded. The current guide is unchanged.");
+    schedulePolling({ immediate: true });
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    actions.forEach((item, index) => { item.disabled = disabled[index]; });
+    showToast(`Could not discard the proposal: ${error.message}`);
   }
 }
 

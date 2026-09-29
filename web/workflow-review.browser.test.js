@@ -88,7 +88,8 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 1000});
       const spacing = await page.locator(".decision-detail-card").evaluate(card => ({
-        gap: card.querySelector("footer").getBoundingClientRect().top - card.querySelector(".decision-summary").getBoundingClientRect().bottom,
+        // The body ends with its last visible line (the sentence, or a note under it).
+        gap: card.querySelector("footer").getBoundingClientRect().top - [...card.querySelectorAll(".decision-detail-body > *")].filter(item => getComputedStyle(item).display !== "none").at(-1).getBoundingClientRect().bottom,
         padding: parseFloat(getComputedStyle(card.querySelector(".decision-detail-body")).paddingBottom),
         emptyReviewDisplay: getComputedStyle(card.querySelector(".workflow-review")).display,
       }));
