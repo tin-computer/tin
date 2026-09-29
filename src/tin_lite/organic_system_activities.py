@@ -103,6 +103,20 @@ def weekly_section(weekly):
     ]
 
 
+def weekly_result(configured):
+    saved = WorkflowSchedule.model_validate(configured.schedule)
+    return {
+        "status": "skipped" if configured.status == "paused" else "succeeded",
+        **({"reason": "existing_schedule_paused"} if configured.status == "paused" else {}),
+        "project_workflow_id": str(configured.id),
+        "program_id": configured.inputs["program_id"],
+        "weekdays": saved.weekdays,
+        "local_time": saved.local_time,
+        "timezone": saved.timezone,
+        "next_run_at": configured.next_run_at.isoformat() if configured.next_run_at else None,
+    }
+
+
 class OrganicSystemActivities:
     def __init__(self, *, database, storage, settings, integrations, temporal=None):
         self.db, self.storage, self.settings, self.integrations = (
@@ -488,12 +502,12 @@ class OrganicSystemActivities:
             prepared = await self.saved(run_id, "prepare")
             if not prepared or prepared["input_sha256"] != digest(run.input):
                 raise ApplicationError("System preparation is unavailable.", non_retryable=True)
-            result = await self._weekly_articles(run, prepared)
+            result = await self._weekly_articles(run, prepared, conn=conn)
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
 
-    async def _weekly_articles(self, run, prepared):
+    async def _weekly_articles(self, run, prepared, *, conn=None):
         if not schedules_articles(prepared["policy"]):
             return {"status": "skipped", "reason": "not_in_pinned_recipe"}
         weekdays = list(run.input.get("article_weekdays") or [])
@@ -504,6 +518,36 @@ class OrganicSystemActivities:
         program_id = await self.content_program(run, content)
         if program_id is None:
             return {"status": "skipped", "reason": "content_plan_unavailable"}
+        # Different system runs can fall back to the same program. Reuse its schedule,
+        # including a founder's pause or edited cadence, and serialize only this short save.
+        async with self.db.effect_lock(f"traffic:weekly-program:{program_id}", KEY, conn=conn) as (
+            locked,
+            _,
+        ):
+            existing = await locked.fetchval(
+                "SELECT pw.id FROM project_workflows pw "
+                "JOIN workflows w ON w.id=pw.workflow_id "
+                "WHERE pw.project_id=$1 AND w.key='content.generate' "
+                "AND pw.inputs->>'program_id'=$2 AND coalesce(pw.inputs->>'item_id','')='' "
+                "AND pw.schedule IS NOT NULL AND pw.status IN ('active','paused') "
+                "ORDER BY pw.created_at, pw.id LIMIT 1",
+                run.project_id,
+                program_id,
+            )
+            if existing:
+                configured = await self.db.get_project_workflow(existing)
+                if configured.status != "paused" and configured.temporal_schedule_id is None:
+                    from tin_lite.project_workflow_operations import sync_project_workflow
+
+                    configured = await sync_project_workflow(
+                        runtime=SimpleNamespace(database=self.db, temporal=self.temporal),
+                        settings=self.settings,
+                        configured=configured,
+                    )
+                return weekly_result(configured)
+            return await self._create_weekly_articles(run, prepared, program_id, weekdays)
+
+    async def _create_weekly_articles(self, run, prepared, program_id, weekdays):
         definition = prepared["definitions"]["draft"]
         schedule = WorkflowSchedule(
             cadence="weekly",
@@ -544,16 +588,7 @@ class OrganicSystemActivities:
             settings=self.settings,
             configured=configured,
         )
-        saved = WorkflowSchedule.model_validate(configured.schedule)
-        return {
-            "status": "succeeded",
-            "project_workflow_id": str(configured.id),
-            "program_id": program_id,
-            "weekdays": saved.weekdays,
-            "local_time": saved.local_time,
-            "timezone": saved.timezone,
-            "next_run_at": configured.next_run_at.isoformat() if configured.next_run_at else None,
-        }
+        return weekly_result(configured)
 
     @activity.defn
     async def organic_system_weekly_articles_failure(self, run_id: str):

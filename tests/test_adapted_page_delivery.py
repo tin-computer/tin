@@ -582,6 +582,7 @@ def clean(**extra):
         "mergeable_state": "clean",
         "head_sha": "a" * 40,
         "head_ref": "tin/test",
+        "base_ref": "main",
         "same_repository": True,
         **extra,
     }
@@ -638,6 +639,19 @@ async def test_commit_setting_merges_a_clean_page_only_pull_request(publication_
     assert page["source"] == "delivery_route" and page["state"] == "merged"
     assert page["url"] == "https://example.com/answers/reliable"
     assert page["note"] == "Merged into owner/site. Waiting for your site to deploy it."
+
+
+async def test_retargeted_page_stays_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    _, child = await adapted_pull_request(f)
+    f.runtime.integrations.github_pull_request_merge_state.return_value = clean(
+        base_ref="release/elsewhere"
+    )
+    f.runtime.integrations.github_merge_pull_request.return_value = {"merged": False}
+    await f.activities.deliver_content_draft(str(child.id))
+    f.runtime.integrations.github_merge_pull_request.assert_not_called()
+    result = (await f.db.get_effect(delivery.merge_key(child.id))).result
+    assert result["status"] == "left_open" and "destination branch" in result["reason"]
 
 
 @pytest.mark.parametrize(

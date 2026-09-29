@@ -1,16 +1,71 @@
 """A v4 traffic system keeps going from the last finished plan when today's plan fails."""
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID
 
-from test_organic_content import system_fixture
+import pytest
+from test_organic_content import effect, system_fixture
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft, organic_system
 from tin_lite.organic_system_activities import fallback_section
 
 FAILED_PLAN = {"status": "blocked", "reason": "research_unavailable"}
+
+
+async def another_parent(f):
+    workflow = await f.db.get_workflow(f.parent.workflow_id)
+    run, _ = await f.db.create_run(
+        project_id=f.project.id,
+        workflow_id=workflow.id,
+        started_by_clerk_user_id=f.parent.started_by_clerk_user_id,
+        input_payload=f.parent.input,
+        pinned_definition=workflow.definition,
+        definition_commit_sha=f.parent.definition_commit_sha,
+    )
+    prepared = await f.system.saved(f.parent.id, "prepare")
+    await effect(f.db, f"traffic:{run.id}:prepare", prepared)
+    return run
+
+
+@pytest.mark.parametrize("paused", [False, True])
+async def test_fallback_preserves_the_existing_schedule(publication_db, monkeypatch, paused):
+    client = SimpleNamespace(create_schedule=AsyncMock())
+    f = await system_fixture(publication_db, monkeypatch, temporal=client, content=FAILED_PLAN)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='succeeded', finished_at=now() WHERE id=$1", f.initial.id
+    )
+    first = await f.system.organic_system_weekly_articles(str(f.parent.id))
+    if paused:
+        await f.db.set_project_workflow_paused(
+            project_workflow_id=UUID(first["project_workflow_id"]),
+            project_id=f.project.id,
+            paused=True,
+        )
+    second = await another_parent(f)
+    reused = await f.system.organic_system_weekly_articles(str(second.id))
+    assert reused["project_workflow_id"] == first["project_workflow_id"]
+    assert reused["status"] == ("skipped" if paused else "succeeded")
+    if paused:
+        assert reused["reason"] == "existing_schedule_paused"
+    client.create_schedule.assert_awaited_once()
+
+
+async def test_concurrent_fallbacks_save_only_one_schedule(publication_db, monkeypatch):
+    client = SimpleNamespace(create_schedule=AsyncMock())
+    f = await system_fixture(publication_db, monkeypatch, temporal=client, content=FAILED_PLAN)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='succeeded', finished_at=now() WHERE id=$1", f.initial.id
+    )
+    second = await another_parent(f)
+    first_result, second_result = await asyncio.gather(
+        f.system.organic_system_weekly_articles(str(f.parent.id)),
+        f.system.organic_system_weekly_articles(str(second.id)),
+    )
+    assert first_result["project_workflow_id"] == second_result["project_workflow_id"]
+    client.create_schedule.assert_awaited_once()
 
 
 async def test_draft_and_weekly_articles_use_the_last_finished_plan(publication_db, monkeypatch):
