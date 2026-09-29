@@ -9,7 +9,7 @@ from uuid import UUID, uuid5
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import analytics
+from tin_lite import analytics, organic_system
 from tin_lite.content_delivery import ContentDelivery, DeliverySettings
 from tin_lite.growth_onboarding import (
     CONTENT_DRAFT_KEYS,
@@ -28,6 +28,8 @@ from tin_lite.growth_onboarding import (
     plan_picks,
     plan_view,
     render_report,
+    runs_per_month,
+    spending_warnings,
     system_facts,
     systems_details,
     ui_links,
@@ -37,7 +39,7 @@ from tin_lite.organic_audit import digest
 from tin_lite.product_urls import dashboard_url
 from tin_lite.run_reports import publish_report_file
 from tin_lite.schedules import TemporalScheduleService, WorkflowSchedule, next_run_after
-from tin_lite.workflow_definitions import ensure_schedule_allowed
+from tin_lite.workflow_definitions import ensure_schedule_allowed, resolve_execution_contract
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
     coerce_schema_inputs,
@@ -716,6 +718,97 @@ class GrowthOnboardingActivities:
             "configured_programs": configured_programs,
         }
 
+    async def _schedule_costs(self, run, setup):
+        """Each saved schedule's most runs in a month and per-run maximum, as admission
+        prices them, plus the weekly articles an organic traffic system started here will save.
+
+        A schedule whose price cannot be read is left out; this only informs the handoff.
+        """
+        billing = getattr(self.db, "billing", None)
+        costs = []
+
+        async def add(title, schedule, definition, inputs):
+            terms = billing.terms(definition, run.project_id, inputs)
+            if terms.get("kind") == "included":
+                return
+            maximum = terms["maximum_nanos"]
+            costs.append(
+                {
+                    "title": title,
+                    "runs": runs_per_month(schedule),
+                    "maximum_nanos": maximum,
+                    "estimate_nanos": terms.get("estimate", {}).get("amount_nanos", maximum),
+                }
+            )
+
+        for item in await self.db.list_project_workflows(project_id=run.project_id):
+            if not item.schedule or item.status not in {"active", "provisioning"}:
+                continue
+            try:
+                workflow = await resolve_execution_contract(
+                    storage=self.storage,
+                    workflow=await self.db.get_workflow(item.workflow_id),
+                    project_id=run.project_id,
+                    revision=item.definition_commit_sha,
+                    input_schema=item.input_schema,
+                )
+                inputs = normalize_workflow_inputs(
+                    schema=workflow.definition["input_schema"],
+                    project_id=run.project_id,
+                    inputs=item.inputs,
+                )
+                await add(item.name, item.schedule, workflow.definition, inputs)
+            except Exception:  # noqa: S112 - one unreadable price must not hide the others
+                continue
+        for action in setup["actions"]:
+            if action.get("key") != organic_system.KEY or not action.get("run_id"):
+                continue
+            try:
+                child = await self.db.get_run(UUID(action["run_id"]))
+                system = await self.db.get_registry_workflow(organic_system.KEY)
+                weekdays = list((child.input or {}).get("article_weekdays") or [])
+                if not weekdays or not organic_system.schedules_articles(
+                    system.definition.get("organic_system_policy")
+                ):
+                    continue
+                if await self.db.get_effect(f"traffic:{child.id}:weekly"):
+                    continue  # Already saved, so it was counted with the schedules above.
+                draft = await self.db.get_registry_workflow(organic_system.STEPS["draft"])
+                await add(
+                    f"Weekly article — {child.input['site_url']}",
+                    {"cadence": "weekly", "weekdays": weekdays},
+                    draft.definition,
+                    {},
+                )
+            except Exception:  # noqa: S112 - one unreadable price must not hide the others
+                continue
+        return costs
+
+    async def _spending_warnings(self, run, setup):
+        """Warnings for the handoff, saved once so a retried report reads the same words."""
+        key = f"onboarding:{run.id}:spending"
+        saved = await self.db.get_effect(key)
+        if saved and saved.status == "completed":
+            return saved.result["warnings"]
+        warnings = []
+        if getattr(self.db, "billing", None) is not None:
+            policy = await self.db.pool.fetchrow(
+                """SELECT p.per_run_nanos, p.monthly_nanos, p.schedule_max_nanos
+                   FROM billing_project_policies p
+                   JOIN projects project ON project.id = p.project_id
+                   JOIN billing_accounts a ON a.workspace_id = project.workspace_id
+                   WHERE p.project_id = $1 AND a.run_billing_enabled""",
+                run.project_id,
+            )
+            if policy is not None:
+                warnings = spending_warnings(await self._schedule_costs(run, setup), dict(policy))
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result["warnings"]
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(conn, execution_key=key, result={"warnings": warnings})
+        return warnings
+
     async def _titles(self, setup):
         titles = {}
         for action in setup["actions"]:
@@ -730,6 +823,7 @@ class GrowthOnboardingActivities:
         setup = await self.saved(run_id, "setup")
         if not setup:
             raise ApplicationError("Setup did not record its result.", non_retryable=True)
+        setup = {**setup, "spending_warnings": await self._spending_warnings(run, setup)}
         content = render_report(setup, titles=await self._titles(setup))
         path = f"reports/onboarding/{run.id}/RESULT.md"
         revision = await publish_report_file(

@@ -195,3 +195,34 @@ tokens or requests. One maximal GPT-6 Sol response (a 1,050,000-token context an
 tokens) costs $2.34 at list price with the whole context cached and $6.12 without, so no
 code-level bound sits below $5, and one measured run is not enough to show that a lower ceiling
 would never stop a normal draft.
+
+## Weekly articles and the default limits — September 29, 2026
+
+Hosted projects start with $10 per run, $10 a month and $10 per scheduled run (migration 047).
+These defaults are unchanged. Admission counts a charged run at what it cost and a run still
+going at its full maximum. A scheduled run starts only if its maximum fits the per-run and
+scheduled-run limits and this month's charges plus its maximum fit the monthly limit.
+
+A weekly `content.generate` occurrence carries a $5 maximum, and its configured estimate is the
+same $5. At the measured $0.97 a draft, five Tuesday drafts fit: the fifth needs $3.88 + $5.00.
+Every other charge in the month counts against the same $10. When each approved draft also opens
+a PR adaptation costing about as much, charges pass $5 during the third week and later drafts
+that month do not start. A Start here traffic run is included and not counted; one started
+directly is estimated at $15 and needs a higher per-run limit ($10 when drafts stay in Tin).
+
+The Start here handoff now says this. When the report is written, Tin reads the project's
+limits, every active saved schedule's maximum as admission prices it, and the weekly articles
+an organic traffic system started by this setup will save. If a schedule's maximum exceeds the
+per-run or scheduled-run limit, or the schedules' runs in a month at their estimates exceed the
+monthly limit, the onboarding result's `relay` gains one line that names the schedule, the
+limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
+
+> Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
+> $5.00 a run, up to $25.00 a month in all, and this project's monthly limit is $10.00. Tin
+> starts a run only if this month's charges plus that run's maximum fit the limit (a run still
+> going counts at its maximum), so later runs in a month may not start. To keep every run, raise
+> the monthly limit with set_project_spending_limits or on the Billing page.
+
+The words are saved with the setup, so a retried report reads the same. Projects without
+billing, or with nothing billed on a schedule, get no line.
+
