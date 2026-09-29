@@ -2,21 +2,25 @@
   "package_format": "tin-workflow-package-v1",
   "definition": {
     "key": "social.post_batch",
-    "title": "Repurpose an article for social",
-    "description": "Draft two X posts and two LinkedIn posts from a project article or supplied text, with exact source excerpts for review. Nothing is posted or scheduled.",
-    "version": "2.0.0",
+    "title": "Draft social posts from a weekly plan or article",
+    "description": "Draft reviewable X and LinkedIn posts from an editable weekly plan and current source notes, or repurpose an article. Nothing is posted or scheduled.",
+    "version": "3.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,
-      "summary": "Check each social draft against its article before posting it yourself."
+      "summary": "Check each social draft against its source material before posting it yourself."
     },
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "project_id": {"type": "string", "format": "uuid"},
+        "mode": {"type": "string", "enum": ["weekly", "repurpose"], "default": "repurpose", "title": "Drafting mode"},
+        "plan_path": {"type": "string", "maxLength": 512, "default": "social/PLAN.md", "title": "Weekly plan file"},
+        "sources_path": {"type": "string", "maxLength": 512, "default": "context/social-updates.md", "title": "Current source notes file"},
+        "raw_material": {"type": "string", "maxLength": 12000, "title": "Optional current source notes", "x-tin-ui": {"control": "textarea"}},
         "article_path": {
           "type": "string",
           "maxLength": 512,
@@ -49,7 +53,7 @@
       },
       "output": {
         "kind": "project.artifact",
-        "path": "reports/SOCIAL_POST_BATCH.md",
+        "path": "social/posts/{date}-{slug}.md",
         "media_type": "text/markdown",
         "max_bytes": 24000
       }

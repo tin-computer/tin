@@ -1,62 +1,92 @@
-# Repurpose an article for social
+# Social planning and post drafts
 
-`social.post_batch` reads an article from project Files and drafts two X posts and two
-LinkedIn posts. It saves the batch in `reports/SOCIAL_POST_BATCH.md`, with an excerpt
-supporting each draft. The normal review gate lets the founder read and approve the result.
-Posting remains manual.
+`social.content_plan` makes an editable social plan. `social.post_batch` turns that
+plan and current source notes into X and LinkedIn drafts, or repurposes one article.
+Both are manual, reviewable code workflows. Neither posts to a social account nor
+creates a recurring schedule.
 
-Supply `article_path` to use a particular file. Tin reads its current contents at launch;
-there is no source-run ID or version to select. Without a path, the workflow looks for a
-single article in `content/drafts/`, `content/articles/`, or the older
-`reports/PUBLIC_ARTICLE.md` location. Generation notes are excluded. If several articles
-exist, name the intended file; the workflow cannot infer chronology from UUID filenames.
+## Make a plan
 
-`article_text` is an optional fallback when the named file is missing, or when no single
-article can be chosen automatically. This is an ordinary string input, available through
-MCP and the dashboard. An existing named file takes precedence. An unreadable, oversized
-or malformed source does not silently become the fallback.
+Run `social.content_plan` with optional `goal`, `hours_per_week` (default 3) and
+`platforms` (`auto`, `x`, `linkedin` or `both`). It reads the first available product
+context: `context/product-marketing.md`, `reports/GROWTH_ONBOARDING_PLAN.md`,
+`brand/BRAND.md`, legacy `BRAND.md`, then `wiki/INDEX.md`. `context_text` is a fallback
+when no usable file exists. It also reads the optional writing guide at
+`.agents/skills/writing-style/SKILL.md`. A dedicated product brief takes precedence,
+so an old wiki cannot override current context.
 
-The workflow also reads the current `.agents/skills/writing-style/SKILL.md` when present.
-All file reads use the project revision Tin records at admission. Later edits cannot change
-this run or its retries; a new run reads the latest files again. Repeating a start request
-ID returns the same run. The source may be written by a person, imported, or produced by
-any workflow; the package does not claim it has been approved.
+The result, `social/PLAN.md`, contains the audience, objective, platform reasoning,
+three to five pillars totaling 100%, a weekly calendar and a time budget. The first
+version supports one to six standalone posts per week. Its cadence is a starting
+point, not measured evidence about the best frequency or time to post.
 
-## Drafting and review
+Edit the plan in project Files. Weekly drafting reads its `## Weekly calendar`
+table with `Day`, `Platform`, `Pillar` and `Post idea` columns. Days are Monday through
+Sunday and platforms are `X` or `LinkedIn`. The plan guides topics; it is not
+factual evidence for product claims.
 
-One managed `gpt-6-sol` call writes the four drafts. Python checks their platform order,
-distinctness, length and supporting excerpts. Numeric literals and double-quoted phrases
-must occur in the article. First-person claims and links are rejected. These checks do not
-prove that every paraphrase preserves its source's meaning, so the result still needs review.
+## Draft a weekly batch
 
-The package bounds X drafts to 240 UTF-8 bytes and LinkedIn drafts to 1,400 characters.
-The full article and writing guide must fit the existing 32,000-byte model-request limit.
-Oversized input fails before that request; no source is silently truncated. File reads and
-validation happen before the model call, although a rejected input can still use sandbox time.
-An invalid model result is not automatically purchased again.
+Start `social.post_batch` with `mode: weekly`. It reads `social/PLAN.md` and
+`context/social-updates.md` by default. `plan_path` and `sources_path` can name other
+files. `raw_material` adds this week's notes, including when no source file exists.
+If the notes file is absent, `article_path` can supply the source. The workflow does
+not search unrelated reports for product facts.
 
-Run batches sequentially: they share one output path. The existing publication guard can
-retain an output conflict rather than overwrite a concurrent edit. Weekly planning,
-used/held tracking, image generation and provider posting remain separate work.
+Each draft follows a calendar slot and includes an exact supporting source
+statement. Earlier batch files help exclude already used statements and identical
+drafts. The result reports history coverage, cited statements, other source
+statements and any unfilled slots. Uncited statements may still support an idea
+already used in the batch. This is a record of drafting, not proof that a post was
+approved or published. Semantic repetition and paraphrases still need human review.
 
-## Existing saved workflows
+Each run saves its own `social/posts/{date}-{slug}.md`. The date is the run's UTC
+creation date and the slug comes from its run ID. Earlier batches and notes people
+add to them remain unchanged. A new run reads current files; a retry keeps its
+original inputs internally. No source-run or revision picker is used.
 
-Version 2 uses the file contract above. Saved configurations pinned to version 1 keep their
-original `source_run_id` input, approved article and original writing-guide snapshot. Their
-admission checks and receipt readers remain available; old runs are not reinterpreted.
-Create a new configuration from the current Registry definition to use current project files.
+## Repurpose an article
 
-`content.deliver` has its own exact approved-copy contract because it creates an external
-GitHub PR. Changing how social drafts read an article does not change that delivery contract.
+`mode: repurpose` remains the default for existing direct callers. Supply
+`article_path` to use a particular file. Without a path, Tin uses a sole article in
+`content/drafts/`, `content/articles/`, or `reports/PUBLIC_ARTICLE.md`. Generation
+notes are excluded. Multiple matches require a path or `article_text`. Supplied
+text is also a fallback when the named file is missing; an existing named file
+wins. Malformed or oversized files remain errors.
+
+This mode drafts two X posts and two LinkedIn posts from the article and current
+writing guide. It retains source excerpts and factual and platform checks, with
+the new dated output path.
+
+## Bounds and review
+
+Each workflow uses one managed `gpt-6-sol` call, capped at 32,000 serialized input
+bytes and 4,096 output tokens. Inputs are checked before the call and are not
+silently truncated. Missing or exhausted material does not justify invented posts.
+Model failures remain subject to normal usage accounting and retry rules.
+
+Python validates calendar shape and pillar totals for plans. For batches it checks
+excerpts, numbers, quotations, duplicate text and platform lengths. X drafts are
+bounded to 240 UTF-8 bytes and LinkedIn drafts to 1,400 characters. First-person
+claims and links are excluded in this first version. These checks do not prove
+that every paraphrase follows from the evidence; review remains necessary.
+
+This slice has no threads, rendered carousels, provider posting, automatic
+performance analysis or publishing-status tracker. Ordinary Files and the existing
+code-workflow runtime provide storage and execution.
+
+## Earlier definitions
+
+Saved configurations and runs keep their pinned definitions. Version 1 retains its
+approved-article contract, and version 2 retains its article inputs and fixed
+`reports/SOCIAL_POST_BATCH.md` output. New version 3 configurations use the two modes
+and dated files. `content.deliver` keeps its separate exact-approved-copy contract
+for creating an external GitHub PR.
 
 ## Verification
 
-Offline fixtures cover file precedence, caller fallback, ambiguous article discovery,
-writing-guide reads, unusable input and invalid model replies. The shared
-[project file reader](code-project-files.md) has admission, retry, project-boundary and
-protected-channel tests. Legacy approved-source tests remain for saved version 1 definitions.
-
-The opt-in `tests/test_social_post_batch_live.py` uses synthetic project files, a disposable
-local database, real E2B and code.storage, and one paid managed model call. It requires explicit
-provider authorization. Ordinary contributor tests use mocked providers; one successful
-live batch does not establish editorial quality across customer articles.
+Offline fixtures cover planning constraints, source selection and fallback,
+unusable model results, editable calendars, weekly evidence, earlier batches,
+source changes and output bounds. They use synthetic content and no paid providers.
+The existing opt-in social live test uses real E2B, code.storage and a model call
+with disposable local product state. Production acceptance is a separate operation.

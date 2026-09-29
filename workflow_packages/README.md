@@ -49,7 +49,8 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.campus_events` | onboarding plan, Feature map, style guide | founder pitches the organizer | Community and events |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
-| `social.post_batch` | approved `content.generate` article and its pinned writing guide | founder reviews and posts | Earned media and launches |
+| `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
+| `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`

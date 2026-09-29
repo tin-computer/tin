@@ -1,0 +1,53 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "social.content_plan",
+    "title": "Plan a sustainable social week",
+    "description": "Use current project context to make an editable social content plan with pillars, a weekly calendar, and a routine sized to available time.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the social plan before using its calendar to draft posts."
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "goal": {"type": "string", "maxLength": 300, "title": "Goal (optional)"},
+        "hours_per_week": {"type": "integer", "minimum": 1, "maximum": 12, "default": 3, "title": "Hours available each week"},
+        "platforms": {"type": "string", "enum": ["auto", "x", "linkedin", "both"], "default": "auto", "title": "Platforms"},
+        "context_text": {
+          "type": "string", "maxLength": 12000,
+          "title": "Product context if project files are unavailable",
+          "x-tin-ui": {"control": "textarea"}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "plan": {
+          "provider": "openai",
+          "model": "gpt-6-sol",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "social/PLAN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 12000
+      }
+    }
+  }
+}

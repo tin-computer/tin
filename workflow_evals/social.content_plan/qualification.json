@@ -1,0 +1,43 @@
+{
+  "version": 2,
+  "assumptions": [
+    "Synthetic fixtures exercise first usable project-file selection: context/product-marketing.md, reports/GROWTH_ONBOARDING_PLAN.md, brand/BRAND.md, legacy BRAND.md, then wiki/INDEX.md. The workflow does not blend product identities.",
+    "A project without one of those usable files may supply context_text. The current writing-style guide is optional. The calendar remains an editable suggestion, not a posting schedule or evidence of a product claim.",
+    "Offline checks verify budget, shape and bounded text. They do not measure live model quality, actual supplier cost or social performance."
+  ],
+  "cost_drivers": [
+    "One gpt-6-sol model call with up to 32000 serialized input bytes and 4096 output tokens; project context and current writing style drive input size."
+  ],
+  "effects": [
+    "Writes one reviewable social/PLAN.md project file. No social platform connection, post, scheduled publication or external delivery occurs."
+  ],
+  "cases": [
+    {
+      "id": "current_product_context",
+      "description": "A current context file produces three to five weighted pillars and a calendar whose slots fit the weekly hours.",
+      "inputs": {"project_id": "a0000000-0000-0000-0000-000000000051", "hours_per_week": 3},
+      "expected_status": "needs_input",
+      "expect": {
+        "contains": ["# Social content plan", "## Content pillars", "## Weekly calendar", "| Day | Platform | Pillar | Post idea |", "## Weekly routine"],
+        "excludes": ["Published on X", "Published on LinkedIn", "https://unknown.example"]
+      }
+    },
+    {
+      "id": "plain_text_fallback",
+      "description": "Supplied context supports planning when the known project context files are absent.",
+      "inputs": {
+        "project_id": "a0000000-0000-0000-0000-000000000052",
+        "hours_per_week": 1,
+        "platforms": "x",
+        "context_text": "A small software team offers a traceable CSV import for product analytics. Each imported row retains a link to its source record, and validation keeps invalid rows out of charts. The product is for teams that need to check a number before using a chart to make a decision."
+      },
+      "expected_status": "needs_input",
+      "expect": {"contains": ["Supplied product context", "| Day | Platform | Pillar | Post idea |", "60 minutes"]}
+    }
+  ],
+  "rubric": [
+    {"id": "grounding", "question": "Are the audience, pillars and ideas faithful to the selected current product context, with uncertain facts called out rather than invented?"},
+    {"id": "cadence", "question": "Can the founder realistically draft, engage and review signals within the stated weekly hours?"},
+    {"id": "channel", "question": "Does each platform choice fit the audience, and are the calendar ideas distinct enough to draft as separate posts?"}
+  ]
+}
