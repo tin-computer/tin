@@ -127,8 +127,17 @@ def adaptation_refusal(exc):
     return None
 
 
-def publish_sentence(mode):
-    """What Publish does for an adapted page, in the founder's words."""
+def publish_sentence(mode, *, route_missing=False):
+    """What Publish does for an adapted page, in the founder's words.
+
+    Tin merges only a pull request that adds nothing but the page, so when the site has no
+    route for these pages yet the first one stays a pull request whatever the setting says.
+    """
+    if route_missing:
+        return (
+            "Tin adapts it to your site and opens a pull request, "
+            "since your site first needs a route for these pages"
+        )
     if mode == "github_commit":
         return "Tin adapts it to your site and commits it to main"
     return "Tin adapts it to your site and opens a pull request"

@@ -3168,7 +3168,7 @@ def create_mcp_app(
         about = about_usd(cost["estimated_usd"]) if cost else None
         words = [
             "Approved. Tin is adapting the page to the site's own format in a separate run"
-            + (f", about {about}, charged on actual usage." if about else ".")
+            + (f", up to {about}, charged on actual usage." if about else ".")
         ]
         if chosen_mode(chosen) == "github_commit":
             words.append(

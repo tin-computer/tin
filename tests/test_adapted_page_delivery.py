@@ -480,7 +480,7 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     assert preview["adapt"] is True and preview["mode"] == "github_pr"
     assert preview["cost"]["estimated_usd"] == "5.00"
-    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · about $5"
+    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · up to $5"
     await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
@@ -787,3 +787,18 @@ async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypat
     assert {"run_id": str(article.id), "title": "A useful public article"} in found["articles"]
     assert found["repository"] == "owner/site"
     assert json.dumps(found)  # Plain data for MCP preparation.
+
+
+def test_publish_says_pull_request_when_the_site_has_no_route_for_the_page():
+    from tin_lite.content_delivery import publish_sentence
+
+    # Tin merges only a page-only pull request, so the first page on a site without a route
+    # stays a pull request even when the saved setting is commit to main.
+    assert publish_sentence("github_commit") == "Tin adapts it to your site and commits it to main"
+    assert publish_sentence("github_commit", route_missing=True) == (
+        "Tin adapts it to your site and opens a pull request, "
+        "since your site first needs a route for these pages"
+    )
+    assert publish_sentence("github_pr", route_missing=True) == publish_sentence(
+        "github_commit", route_missing=True
+    )

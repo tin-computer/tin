@@ -100,7 +100,9 @@ async def publish_preview(*, runtime, settings, run, actor):
     cost = await delivery_cost(
         runtime=runtime, settings=settings, run=run, actor=actor, repository=repository
     )
-    sentence = publish_sentence(mode)
+    page = await page_url_service(runtime, settings).view(run, None)
+    sentence = publish_sentence(mode, route_missing=bool(page and page.get("route_missing")))
+    # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
     about = about_usd(cost["estimated_usd"]) if cost else None
     return {
         "adapt": True,
@@ -109,7 +111,7 @@ async def publish_preview(*, runtime, settings, run, actor):
         "repository": repository,
         "sentence": sentence,
         "cost": cost,
-        "footer": f"{sentence} · about {about}" if about else sentence,
+        "footer": f"{sentence} · up to {about}" if about else sentence,
     }
 
 

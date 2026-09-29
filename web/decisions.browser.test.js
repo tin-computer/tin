@@ -262,8 +262,8 @@ test("a release announcement card says what the draft is in one sentence, withou
 
 test("a page Tin adapts to the site has one Publish button and says what it does", async () => {
   const cases = [
-    ["github_commit", "Tin adapts it to your site and commits it to main · about $5"],
-    ["github_pr", "Tin adapts it to your site and opens a pull request · about $5"],
+    ["github_commit", "Tin adapts it to your site and commits it to main · up to $5"],
+    ["github_pr", "Tin adapts it to your site and opens a pull request · up to $5"],
   ];
   for (const [mode, footer] of cases) {
     const sentence = footer.split(" · ")[0];
