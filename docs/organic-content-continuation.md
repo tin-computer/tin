@@ -119,3 +119,6 @@ run itself still reports that a step could not finish. Without any finished plan
 and weekly steps stay blocked or skipped with `content_plan_unavailable`, as before. v3 and
 older recipes keep their behaviour.
 
+Reusing a program also preserves its existing article schedule and any pause or timing edits.
+Tin creates a schedule only when that program has none; concurrent system runs share this
+short save. A paused schedule stays paused and the result says `existing_schedule_paused`.

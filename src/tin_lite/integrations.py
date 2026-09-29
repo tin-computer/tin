@@ -1761,6 +1761,7 @@ class IntegrationService:
         )
         payload = _provider_json(response, provider="GitHub")
         head = payload.get("head") if isinstance(payload.get("head"), dict) else {}
+        base = payload.get("base") if isinstance(payload.get("base"), dict) else {}
         head_repository = head.get("repo") if isinstance(head.get("repo"), dict) else {}
         merged_at = payload.get("merged_at")
         merged = payload.get("merged") is True or isinstance(merged_at, str)
@@ -1768,6 +1769,7 @@ class IntegrationService:
         merge_sha = merge_sha if isinstance(merge_sha, str) and _SHA.fullmatch(merge_sha) else None
         head_sha = head.get("sha") if isinstance(head.get("sha"), str) else ""
         head_ref = head.get("ref") if isinstance(head.get("ref"), str) else ""
+        base_ref = base.get("ref") if isinstance(base.get("ref"), str) else ""
         verdict = payload.get("mergeable_state")
         return {
             "state": payload.get("state") if payload.get("state") in {"open", "closed"} else None,
@@ -1785,6 +1787,7 @@ class IntegrationService:
             else "unknown",
             "head_sha": head_sha if _SHA.fullmatch(head_sha) else None,
             "head_ref": head_ref if _safe_github_ref(head_ref) else None,
+            "base_ref": base_ref if _safe_github_ref(base_ref) else None,
             "same_repository": str(head_repository.get("full_name") or "").casefold()
             == repository.casefold(),
         }
@@ -1908,6 +1911,13 @@ class IntegrationService:
             await self._github_validate_pull_request_files(
                 headers=headers, root=root, number=number, head_sha=expected_head_sha, files=files
             )
+            state = await self.github_pull_request_merge_state(
+                project_id=project_id, repository=repository, number=number
+            )
+            if state["base_ref"] != expected_binding.default_branch:
+                raise IntegrationAuthorizationError(
+                    "The pull request's destination branch changed after Tin opened it"
+                )
             settings = _provider_json(
                 await self._client.get(root, headers=headers), provider="GitHub"
             )

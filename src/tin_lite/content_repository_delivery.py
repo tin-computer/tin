@@ -625,6 +625,11 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
             }
         if state["state"] != "open":
             return {"status": "left_open", "reason": "It was closed on GitHub."}
+        if state.get("base_ref") != binding.default_branch:
+            return {
+                "status": "left_open",
+                "reason": "Its destination branch changed after Tin opened it.",
+            }
         if not state.get("same_repository") or (branch and state.get("head_ref") != branch):
             return {"status": "left_open", "reason": "Its branch changed after Tin opened it."}
         stop = MERGE_STOPS.get(state.get("mergeable_state"))
