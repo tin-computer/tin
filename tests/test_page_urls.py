@@ -416,3 +416,73 @@ def test_the_adaptation_records_its_public_route_with_the_copy_proof():
         {},
     )
     assert delivered["public_route"] == "https://example.com/blog/title"
+
+
+def test_the_view_flags_a_missing_route_and_an_overdue_deploy():
+    approval = {"repository": "owner/site", "path": "content/answers/which-tools.md"}
+    folder = {"folder": "content/answers", "pattern": None, "checked_at": NOW.isoformat()}
+    missing = pages.present({"base": base(), "approval": approval, "folder": folder}, None)
+    assert missing["route_missing"] and not missing["deploy_overdue"]
+    unchecked = pages.present({"base": base(), "approval": approval}, None)
+    assert not unchecked["route_missing"]
+
+    delivery = {"status": "completed", "repository": "owner/site", "pull_request": PR}
+    check = {"merged": True, "merged_at": (NOW - timedelta(minutes=5)).isoformat()}
+    waiting = pages.present({"base": base(), "check": check}, delivery, now=NOW)
+    assert not waiting["deploy_overdue"]
+    late = {**check, "merged_at": (NOW - timedelta(hours=1)).isoformat(), "checked_at": "x"}
+    assert pages.present({"base": base(), "check": late}, delivery, now=NOW)["deploy_overdue"]
+
+
+class Broken:
+    """A database or integration whose every lookup fails."""
+
+    def __init__(self, error):
+        self.error = error
+        self.pool = self
+
+    def __getattr__(self, name):
+        async def fail(*args, **kwargs):
+            raise self.error
+
+        return fail
+
+
+async def test_a_missing_integration_capability_never_breaks_the_response(caplog):
+    answer = run(status=RunStatus.SUCCEEDED, review_decision="approved")
+    db = FakeDB({pages.key(answer.id): (pages.OPERATION, {"base": base()})})
+    # An integration without the folder and pull-request reads, as older clients and fakes have.
+    service = pages.PageUrls(database=db, integrations=SimpleNamespace(), fetch=site(set()))
+    delivery = {
+        "status": "completed",
+        "repository": "owner/site",
+        "path": "content/answers/which-tools.md",
+        "pull_request": PR,
+    }
+    with caplog.at_level("DEBUG", logger="tin_lite.page_urls"):
+        view = await service.view(answer, delivery, check=True, now=NOW)
+    assert view["url"] == base()["url"] and view["state"] == "proposed"
+    saved = db.saved(answer.id)
+    # Nothing was learned, so nothing is claimed: no folder verdict, no merge, no provider text.
+    assert "folder" not in saved or not saved["folder"]
+    assert saved["check"] == {"checked_at": NOW.isoformat()}
+    assert "AttributeError" in caplog.text and "github_markdown_names" not in caplog.text
+
+
+async def test_any_lookup_error_means_no_url_known():
+    answer = run()
+    for error in (RuntimeError("database gone"), KeyError("base"), AttributeError("x")):
+        service = pages.PageUrls(database=Broken(error), integrations=Broken(error))
+        assert await service.view(answer, None, check=True, now=NOW) is None
+        assert await service.views([answer], {}, now=NOW) == {}
+
+    # One broken run in a list never hides the others.
+    good, bad = run(), run()
+    db = FakeDB(
+        {
+            pages.key(good.id): (pages.OPERATION, {"base": base()}),
+            pages.key(bad.id): (pages.OPERATION, {"base": {"url": "https://example.com/x"}}),
+        }
+    )
+    views = await pages.PageUrls(database=db).views([good, bad], {}, now=NOW)
+    assert list(views) == [good.id]

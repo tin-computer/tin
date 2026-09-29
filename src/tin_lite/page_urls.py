@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import html
 import json
+import logging
 import re
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
@@ -29,6 +30,8 @@ from tin_lite.content_delivery import (
     slug_for,
 )
 from tin_lite.organic_audit import public_site
+
+logger = logging.getLogger(__name__)
 
 PAGE_WORKFLOW_IDS = frozenset(
     {DRAFT_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID}
@@ -119,7 +122,7 @@ def route_url(route, host):
 
 def public_route(body):
     """The public address an adaptation PR names on its own "Public URL:" line, if any."""
-    match = ROUTE_LINE.search(body or "")
+    match = ROUTE_LINE.search(body) if isinstance(body, str) else None
     if not match:
         return None
     value = match.group(1)
@@ -210,10 +213,21 @@ def present(record, delivery=None, *, now=None):
     live = bool(check.get("live")) and check.get("url") == url
     site = base["host"]
     branch = (commit or {}).get("branch") or "its default branch"
+    no_route = bool(
+        file_path
+        and source not in {"delivery_route", "folder_route"}
+        and folder.get("folder") == _folder(file_path)
+        and folder.get("checked_at")
+        and not folder.get("pattern")
+    )
     view = {
         "url": url,
         "source": source,
         "final": final,
+        # Tin looked and found no page on the site that shows this file's folder.
+        "route_missing": no_route,
+        # Merged or committed longer ago than a deploy takes, and still not found.
+        "deploy_overdue": False,
         "pull_request": pull_request,
         "repository": repository,
         "file_path": file_path,
@@ -228,13 +242,6 @@ def present(record, delivery=None, *, now=None):
             "note": "Tin found the page on your site.",
             "checkable": False,
         }
-    no_route = (
-        file_path
-        and source not in {"delivery_route", "folder_route"}
-        and folder.get("folder") == _folder(file_path)
-        and folder.get("checked_at")
-        and not folder.get("pattern")
-    )
     if published:
         since = _minutes_since(check.get("merged_at"), now)
         waited = since is not None and since > DEPLOY_WINDOW.total_seconds() / 60
@@ -251,6 +258,7 @@ def present(record, delivery=None, *, now=None):
             note = f"{where}. Waiting for your site to deploy it."
         return {
             **view,
+            "deploy_overdue": bool(waited and check.get("checked_at")),
             "state": "merged",
             "label": "Will be published at" if final else "Proposed URL",
             "note": note,
@@ -443,9 +451,17 @@ class PageUrls:
         return {"repository": repository, "path": path}
 
     async def view(self, run, delivery, *, check=False, now=None):
-        """One run's page view; computes the projection if missing, then checks if asked."""
-        if run.workflow_id not in PAGE_WORKFLOW_IDS:
+        """One run's page view, or None. A lookup error here never breaks the response that
+        carries it (MCP get_run, the run API): the page simply has no known URL."""
+        if getattr(run, "workflow_id", None) not in PAGE_WORKFLOW_IDS:
             return None
+        try:
+            return await self._view(run, delivery, check=check, now=now)
+        except Exception as exc:
+            logger.debug("page URL unavailable for run %s: %s", run.id, type(exc).__name__)
+            return None
+
+    async def _view(self, run, delivery, *, check=False, now=None):
         now = now or datetime.now(UTC)
         record = (await self._load([run.id])).get(key(run.id)) or {}
         changed = False
@@ -475,15 +491,23 @@ class PageUrls:
         candidates = [run for run in runs if run.workflow_id in PAGE_WORKFLOW_IDS]
         if not candidates:
             return {}
-        saved = await self._load([run.id for run in candidates])
+        try:
+            saved = await self._load([run.id for run in candidates])
+        except Exception as exc:
+            logger.debug("page URLs unavailable: %s", type(exc).__name__)
+            return {}
         output = {}
         for run in candidates:
-            record = saved.get(key(run.id)) or {}
-            if not record.get("base") and run.workflow_id == DRAFT_WORKFLOW_ID:
-                base = base_for(run, selection=await self._selection(run.id))
-                if base:
-                    record = {**record, "base": base}
-            view = present(record, deliveries.get(run.id), now=now)
+            try:
+                record = saved.get(key(run.id)) or {}
+                if not record.get("base") and run.workflow_id == DRAFT_WORKFLOW_ID:
+                    base = base_for(run, selection=await self._selection(run.id))
+                    if base:
+                        record = {**record, "base": base}
+                view = present(record, deliveries.get(run.id), now=now)
+            except Exception as exc:
+                logger.debug("page URL unavailable for run %s: %s", run.id, type(exc).__name__)
+                continue
             if view:
                 output[run.id] = view
         return output
@@ -542,13 +566,10 @@ class PageUrls:
                     except (httpx.HTTPError, OSError, TimeoutError, ValueError, LookupError):
                         found = False
                     check.update(live=found, url=url)
-        except (TimeoutError, ValueError, LookupError, httpx.HTTPError, OSError):
-            pass
-        except Exception as exc:  # integration errors: keep the saved state, say nothing new
-            from tin_lite.integrations import IntegrationError
-
-            if not isinstance(exc, IntegrationError):
-                raise
+        except Exception as exc:
+            # A missing capability, a provider error or a timeout keeps what Tin already knew.
+            # Only the exception's type is logged; no provider text is stored.
+            logger.debug("page URL check failed for run %s: %s", run.id, type(exc).__name__)
         check["checked_at"] = stamp
         return {**record, "check": check, "folder": folder}
 
