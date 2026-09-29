@@ -6508,17 +6508,44 @@ class Database:
         artifact_ref: str,
         summary: str,
     ) -> None:
-        """An approved submission run finishes with its result report, never before approval."""
-        await self._complete_readonly_report_projection(
-            conn,
-            execution_key=execution_key,
-            run_id=run_id,
-            canonical_commit_sha=canonical_commit_sha,
-            artifact_path=artifact_path,
-            artifact_ref=artifact_ref,
-            summary=summary,
-            workflow_key="outreach.awesome_submit",
-        )
+        """An approved submission run finishes with its result report, never before approval.
+
+        The run already carries the plan it published for review, so the result replaces that
+        commit instead of having to match it."""
+        async with conn.transaction():
+            projected = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'succeeded', canonical_commit_sha = $2, artifact_ref = $3,
+                    artifact_path = $4, result_summary = $5, error_message = NULL,
+                    finished_at = COALESCE(finished_at, now()), progress_percent = 100,
+                    progress_updated_at = now(), heartbeat_at = now()
+                WHERE id = $1 AND executor = 'outreach.awesome_submit'
+                  AND review_required AND review_decision = 'approved'
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                RETURNING id
+                """,
+                run_id,
+                canonical_commit_sha,
+                artifact_ref,
+                artifact_path,
+                summary[:1000],
+            )
+            if projected is None:
+                raise SideEffectConflictError("submission run cannot complete in its current state")
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="awesome_submit_ready",
+                details={"kind": "runs", "status": "succeeded", "artifact_ref": artifact_ref},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:awesome_submit_ready",
+            )
+            await self.complete_effect(
+                conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
+            )
+        await self._track_run(run_id, "run_succeeded", artifact_path=artifact_path)
 
     async def _complete_readonly_report_projection(
         self,
@@ -6551,10 +6578,6 @@ class Database:
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
-            "outreach.awesome_submit": (
-                "awesome_submit_ready",
-                "Awesome list submissions were sent.",
-            ),
         }[workflow_key]
         if final_status == "failed":
             event = "organic_system_incomplete"
