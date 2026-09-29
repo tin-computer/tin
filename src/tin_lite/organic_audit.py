@@ -1207,6 +1207,7 @@ def site_check_documents(
             key: cover[key]
             for key in (
                 "status",
+                "site_collected",
                 "sitemap_read",
                 "sitemap_pages",
                 "inspected_sitemap_pages",

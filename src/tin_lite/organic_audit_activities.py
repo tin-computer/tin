@@ -56,6 +56,7 @@ from tin_lite.organic_audit_fetch import (
     read_pagespeed,
     read_site_files,
 )
+from tin_lite.organic_audit_format import count
 from tin_lite.organic_audit_panel import prepare_panel
 from tin_lite.organic_audit_publication import publish_audit
 from tin_lite.organic_audit_scope import audit_hosts, resolve_site_identity
@@ -518,7 +519,7 @@ class OrganicAuditActivities:
             search = await self._result(run_id, "search_console") or {}
             rows = (
                 search.get("value", {}).get("pages", [])
-                if search.get("status") == ("completed")
+                if search.get("status") == "completed"
                 else []
             )
             sitemap = [
@@ -1127,13 +1128,18 @@ class OrganicAuditActivities:
                 coverage = inventory.get("coverage")
                 if coverage:
                     partial = partial or coverage["status"] == "partial"
-                    inspected = (
-                        f" Inspected {coverage['inspected_sitemap_pages']} of "
-                        f"{coverage['sitemap_pages']} sitemap pages; "
-                        if coverage["sitemap_read"]
-                        else f" Inspected {coverage['inspected_pages']} pages; no readable "
-                        "sitemap; "
-                    )
+                    if coverage["sitemap_read"]:
+                        inspected = (
+                            f" Inspected {coverage['inspected_sitemap_pages']} of "
+                            f"{coverage['sitemap_pages']} sitemap pages; "
+                        )
+                    elif coverage.get("site_collected", True):
+                        inspected = (
+                            f" Inspected {count(coverage['inspected_pages'], 'page')}; "
+                            "no readable sitemap; "
+                        )
+                    else:
+                        inspected = f" Crawled {count(coverage['inspected_pages'], 'page')}; "
                 else:
                     inspected = f" Inspected {len(crawl.get('pages', []))} pages; "
                 summary = (
@@ -1184,8 +1190,10 @@ class OrganicAuditActivities:
         facts = await self.db.get_effect(self.key(run_id, "page_facts"))
         progress = (facts.result or {}) if facts else {}
         pagespeed = await self._result(run_id, "pagespeed")
+        scope = await self._result(run_id, "scope")
+        if pagespeed is None and scope.get("pagespeed") != "configured":
+            pagespeed = {"status": "not_configured", "results": []}
         if pagespeed is None:
-            scope = await self._result(run_id, "scope")
             pagespeed = {"status": "not_collected", "results": []}
             for index in range(audit_policy(scope["policy_version"])["pagespeed_max_urls"]):
                 saved = await self._result(run_id, f"pagespeed:{index}")

@@ -144,6 +144,8 @@ async def test_page_reads_unfinished_at_the_crawl_deadline_are_published_as_part
     evidence = json.loads(artifacts[audit_paths(run_id)["evidence.json"]])
     assert evidence["site"]["pages_status"] == "partial"
     assert evidence["crawl"]["status"] == "partial"
+    # Speed was never configured, so it is not reported as an empty measurement.
+    assert evidence["site"]["pagespeed"] == {"status": "not_configured", "results": []}
     report = artifacts[audit_paths(run_id)["AUDIT.md"]]
     assert "Result: partial evidence; complete: all 1 sitemap pages inspected" in report
     summary = (await activities._result(run_id, "publish"))["summary"]
@@ -198,6 +200,8 @@ async def test_answer_completion_runs_do_not_read_the_site_again(monkeypatch):
     report = (await activities._result(run_id, "artifacts"))[audit_paths(run_id)["AUDIT.md"]]
     assert "Result: partial: site files were not collected;" in report
     assert "explicitly retried the one missing answer" in report
+    summary = (await activities._result(run_id, "publish"))["summary"]
+    assert "Crawled 1 page; scored 8/8 AI observations." in summary
 
 
 @pytest.mark.asyncio
