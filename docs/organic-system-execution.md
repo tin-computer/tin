@@ -19,6 +19,13 @@ This is a fixed Temporal recipe, not a graph engine or a second database in File
 The files remain the working material. Existing Postgres run rows and effect receipts
 identify which exact outputs belong to this execution.
 
+An explicit retry of a failed keyword plan reuses its completed research collection and
+saved search-result reads when the project, workflow, definition and inputs still match.
+It runs the remaining review and publication normally. Original observation dates and source
+run provenance stay in the evidence; the retry does not charge for cached reads. Unconfirmed
+reads remain unknown, and reads that were never attempted can run. Starting a fresh run,
+changing the job, or retrying before collection finished still performs new research.
+
 ## Verification
 
 Use disposable Postgres, local Temporal replay, mocked GitHub delivery/recovery,
