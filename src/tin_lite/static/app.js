@@ -5753,7 +5753,7 @@ function renderIntegrationCard(integration) {
   const unlocks = (integration.unlocks || []).join(" · ");
   return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
-      <span class="integration-badge ${["infra.github", "infra.github_user", "payments.stripe", "analytics.posthog"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
+      <span class="integration-badge ${["infra.github", "infra.github_user"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
       <span class="integration-identity">
         <strong class="integration-name">${escapeHtml(integration.name)}</strong>
         <code class="integration-key">${escapeHtml(integration.key)}</code>
