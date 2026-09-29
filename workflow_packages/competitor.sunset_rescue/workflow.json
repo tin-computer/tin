@@ -1,0 +1,85 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "competitor.sunset_rescue",
+    "title": "Catch the users of a tool that is shutting down",
+    "description": "Weekly or on demand: find a nearby tool that is shutting down, dropping its free plan, repricing or relicensing, check that your product can honestly take its users, and get a dated migration kit with their export mapped to your product, the import gap, and ready inputs for the migration page and the importer. Quiet weeks end with a short watch list.",
+    "version": "2.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand", "weekly"],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The onboarding plan names the product, its buyers, its competitors and the hard no's a migration page must respect."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map's features are the core tasks a moving user needs covered; Fit is scored against them."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map shows which import paths and file formats the product already accepts, which sets Portability."
+      },
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.keyword_plan",
+        "reason": "When the keyword plan lists alternative-to or export-from searches for the moving tool, their observed demand is cited; otherwise demand is reported as unmeasured."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "known_event": {
+          "type": "string",
+          "title": "A shutdown or price change you already know about (optional)",
+          "description": "Paste the announcement link or describe it. It is checked like any other event, not taken on trust.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "lookback_days": {
+          "type": "integer",
+          "title": "How far back to look for announcements (days)",
+          "minimum": 7,
+          "maximum": 365,
+          "default": 120,
+          "x-tin-ui": { "control": "number", "order": 20 }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/sunset-rescue/SKILL.md",
+        "skills/sunset-rescue/EVENTS.md",
+        "skills/sunset-rescue/SCORING.md",
+        "skills/sunset-rescue/REPORT.md"
+      ],
+      "entry_skill": "sunset-rescue",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 1200 },
+      "output": {
+        "kind": "project.artifact",
+        "media_type": "text/markdown",
+        "max_bytes": 120000,
+        "path_template": "reports/sunset-rescue/{run_id}.md"
+      }
+    }
+  }
+}

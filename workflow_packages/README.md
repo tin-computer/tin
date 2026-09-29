@@ -40,6 +40,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Organic search content |
 | `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | AI visibility |
 | `competitor.watch` | its last report, keyword plan and ads competitors, Feature map | `content.public_article`, `content.plan`, `research.deep_dive` | Pricing and packaging |
+| `competitor.sunset_rescue` | its earlier reports, competitor-watch reports, onboarding plan, Feature map, Code map, keyword plan | `content.public_article`, `project.task`, `outreach.community_threads` | Pricing and packaging |
 | `qa.buyer_trust` | signup walkthrough, Feature map, onboarding plan | `site.health_improve` (code), founder (policy, host) | Conversion and trust |
 | `growth.score_quiz` | Feature map, style guide (filled in by the agent) | founder embeds the widget | Conversion and trust |
 | `product.analytics_brief` | PostHog connection (`analytics.posthog`) | its next scheduled brief | Product-led growth |
