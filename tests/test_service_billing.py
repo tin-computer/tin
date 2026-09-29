@@ -371,7 +371,7 @@ async def test_parallel_children_share_one_reservation_and_settlement(billed):
     async def charge(run):
         async with f.db.pool.acquire() as conn:
             await f.billing.begin_operation(
-                conn, run_id=run.id, operation_id=str(run.id), kind="tool", maximum=4_000_000_000
+                conn, run_id=run.id, operation_id=str(run.id), kind="tool", maximum=1_500_000_000
             )
             await f.billing.observe_operation(
                 conn, operation_id=str(run.id), nanos=600_000_000, observation={"basis": "fixture"}
@@ -821,7 +821,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
 
     def small_parent(definition, project_id, inputs=None):
         terms = original(definition, project_id, inputs)
-        return {**terms, "maximum_nanos": 5_000_000_000} if terms["kind"] == "parent" else terms
+        return {**terms, "maximum_nanos": 2_000_000_000} if terms["kind"] == "parent" else terms
 
     monkeypatch.setattr(f.billing, "terms", small_parent)
     parent = await admit(f, "organic.traffic_system", PARENT)
@@ -833,7 +833,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
     async def dispatch(run):
         async with f.db.pool.acquire() as conn:
             return await f.billing.begin_operation(
-                conn, run_id=run.id, operation_id=str(run.id), kind="tool", maximum=4_000_000_000
+                conn, run_id=run.id, operation_id=str(run.id), kind="tool", maximum=1_500_000_000
             )
 
     results = await asyncio.gather(dispatch(audit), dispatch(keywords), return_exceptions=True)
@@ -842,7 +842,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
         await f.db.pool.fetchval(
             "SELECT committed_nanos FROM billing_run_budgets WHERE run_id=$1", parent.id
         )
-        == 4_000_000_000
+        == 1_500_000_000
     )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 1
 

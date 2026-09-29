@@ -13,6 +13,7 @@ from tin_lite.code_models import CodeModelError, CodeModels
 from tin_lite.code_project_files import CodeProjectFiles
 from tin_lite.code_project_files import saved_source as saved_project_files
 from tin_lite.code_services import CodeServiceError, CodeServices
+from tin_lite.e2b_runtime import CodeExecutionError
 from tin_lite.procedures import SandboxProfile
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.workflow_code import (
@@ -78,6 +79,7 @@ class CodeActivities:
                     await self.sandboxes.kill(run.sandbox_id)
                 return
             sandbox_id = None
+            stage = "preparation"
             try:
                 run, workflow, project, spec, files = await self.selected(run_id)
                 if run.status.value not in {"pending", "running"}:
@@ -122,6 +124,7 @@ class CodeActivities:
                         # A worker can die while its previous controller is still running.
                         # Pure retry starts only after that physical sandbox is gone.
                         await self.sandboxes.kill(run.sandbox_id)
+                    stage = "sandbox creation"
                     sandbox_id = await self.sandboxes.create(
                         execution_key=f"{run_id}:code_sandbox",
                         run_id=run_id,
@@ -176,6 +179,7 @@ class CodeActivities:
                             )
 
                         options["model_call"] = generate
+                    stage = "execution"
                     raw = await self.common._await_with_heartbeats(
                         self.sandboxes.run_code_and_kill(
                             sandbox_id=sandbox_id, packet=packet, **options
@@ -192,6 +196,7 @@ class CodeActivities:
                             conn, execution_key=key, result={"artifact_path": path}
                         )
                     await self.common._validate_procedure_publication_lease(run)
+                    stage = "saving the result checkpoint"
                     revision = await self.storage.stage_native_output(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
@@ -202,6 +207,7 @@ class CodeActivities:
                         executor=EXECUTOR,
                     )
                 else:
+                    stage = "recovering the saved result"
                     path = ((saved.result or {}) if saved else {}).get(
                         "artifact_path", spec.output_path
                     )
@@ -222,6 +228,7 @@ class CodeActivities:
                     media_type=spec.media_type,
                     content=content,
                 )
+                stage = "recording the saved result"
                 await self.db.complete_procedure_persist(
                     conn,
                     execution_key=key,
@@ -252,6 +259,22 @@ class CodeActivities:
                 raise ApplicationError(
                     "The code package, inputs or result failed validation.", non_retryable=True
                 ) from None
+            except BaseException as exc:
+                # Retain the failed stage without exposing arbitrary sandbox/provider text.
+                # Temporal still retries; completed model/service receipts are reused.
+                reason = (
+                    str(exc)
+                    if isinstance(exc, CodeExecutionError)
+                    else f"Code workflow failed during {stage} ({type(exc).__name__})."
+                )
+                current = await self.db.get_effect(key, conn=conn)
+                if current and current.status == "started":
+                    await self.db.save_effect_progress(
+                        conn,
+                        execution_key=key,
+                        result={**(current.result or {}), "failure_reason": reason},
+                    )
+                raise
             finally:
                 if sandbox_id:
                     await self.sandboxes.kill(sandbox_id)
@@ -355,6 +378,11 @@ class CodeActivities:
 
     @activity.defn(name="fail_code_workflow")
     async def failure(self, run_id: str):
+        receipt = await self.db.get_effect(f"{run_id}:procedure_artifact_persist")
+        reason = (receipt.result or {}).get("failure_reason") if receipt else None
         await self.common.project_codex_procedure_failure(
-            {"run_id": run_id, "reason": "The code workflow could not confirm completion."}
+            {
+                "run_id": run_id,
+                "reason": reason or "The code workflow could not confirm completion.",
+            }
         )

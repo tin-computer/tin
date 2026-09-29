@@ -36,6 +36,9 @@ SITE_HEALTH_MODEL_ROUTE = ModelRoute(
     ),
 )
 MAX_SITE_RESPONSE_BYTES = 500_000
+# The provider's wait for the proposal: 16,000 output tokens at high effort take minutes, not
+# the client's 90-second default. The drafting activity heartbeats and allows 15 minutes.
+MODEL_TIMEOUT_SECONDS = 300
 MAX_SITE_CHANGE_BYTES = 512_000
 
 _PROPOSAL_SCHEMA: dict[str, Any] = {
@@ -231,6 +234,7 @@ class SiteHealthImprover:
                 output_schema=_PROPOSAL_SCHEMA,
                 output_schema_name="site_health_fix",
             ),
+            timeout_seconds=MODEL_TIMEOUT_SECONDS,
         )
         if not isinstance(result.parsed, dict):
             raise SiteHealthProtocolError("site-health model returned no structured proposal")

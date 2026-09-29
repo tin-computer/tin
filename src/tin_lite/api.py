@@ -4438,6 +4438,12 @@ async def _read_project_task_review_file(
             commit_sha=run.canonical_commit_sha,
             path=path,
         )
+    elif run.task_diff.get("source_revision") is not None:
+        content = await request.app.state.runtime.storage.read_procedure_checkpoint(
+            repo_id=project.state_repo_id,
+            revision=run.task_diff["source_revision"],
+            path=path,
+        )
     else:
         content = await request.app.state.runtime.storage.read_ephemeral_artifact(
             repo_id=project.state_repo_id,

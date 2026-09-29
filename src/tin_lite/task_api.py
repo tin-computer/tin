@@ -1,7 +1,6 @@
 """Per-turn Codex API authentication and checkpoint recovery for interactive tasks."""
 
 from tin_lite import codex_api, design_api
-from tin_lite.domain import SideEffectConflictError
 from tin_lite.e2b_runtime import SandboxTaskResult
 
 
@@ -48,6 +47,4 @@ async def recovered_turn(db, conn, run, turn_number):
         value = dict(record["task_result"])
         value["delivered_entry_ids"] = tuple(value.get("delivered_entry_ids", ()))
         return SandboxTaskResult(**value)
-    raise SideEffectConflictError(
-        "This task turn's API attempt is unresolved. It will not be purchased again."
-    )
+    raise codex_api.attempt_failure(record)
