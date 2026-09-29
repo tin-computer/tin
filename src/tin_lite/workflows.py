@@ -1173,10 +1173,12 @@ class ContentPlanWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # Up to 60 page reads (four at a time, 20 s each) and a model wait of five and a
+            # half minutes must fit in one attempt; a cut-off model call cannot be bought again.
             await workflow.execute_activity(
                 "content_plan_execute",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=15),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3, maximum_interval=timedelta(seconds=10)
                 ),

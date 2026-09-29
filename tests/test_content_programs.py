@@ -98,7 +98,7 @@ async def setup(database, monkeypatch, *, editorial=False):
     class Model:
         calls = 0
 
-        async def generate(self, key, request):
+        async def generate(self, key, request, *, timeout_seconds=None):
             import json
 
             from test_content_plan import item
@@ -106,6 +106,7 @@ async def setup(database, monkeypatch, *, editorial=False):
             from tin_lite.model_providers import ModelUsage
 
             self.calls += 1
+            self.timeouts.append(timeout_seconds)
             data = json.loads(request.messages[0].content)
             if editorial:
                 import jsonschema
@@ -136,7 +137,7 @@ async def setup(database, monkeypatch, *, editorial=False):
             return SimpleNamespace(parsed=plan, usage=ModelUsage(), request_id="model-test")
 
     model = Model()
-    model.fetches = []
+    model.fetches, model.timeouts = [], []
 
     async def fetch(url, *, host):
         assert host == "example.com"
@@ -527,7 +528,7 @@ async def test_ambiguous_model_retry_does_not_buy_another_call(
     )
     calls = 0
 
-    async def unknown(*args):
+    async def unknown(*args, **kwargs):
         nonlocal calls
         calls += 1
         raise ConnectionError("Synthetic lost response")
@@ -539,6 +540,24 @@ async def test_ambiguous_model_retry_does_not_buy_another_call(
             await activities.execute(str(run.id))
     assert calls == 1 and storage.repo.writes == 0
     assert len(model.fetches) == (1 if editorial else 0)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("editorial", [False, True])
+async def test_plan_waits_for_its_full_output_instead_of_the_client_default(
+    publication_db, monkeypatch, editorial
+):
+    from tin_lite.content_plan_activities import MODEL_TIMEOUT_SECONDS
+
+    db, storage, project, configured, activities, model, create = await setup(
+        publication_db, monkeypatch, editorial=editorial
+    )
+    run = await create()
+    await activities.execute(str(run.id))
+    # 16,000 output tokens at about 55 tokens a second needs close to five minutes; the
+    # provider's 90-second default cut production plans off after about 100 seconds.
+    assert model.timeouts == [MODEL_TIMEOUT_SECONDS]
+    assert MODEL_TIMEOUT_SECONDS >= legacy.POLICY["max_output_tokens"] / 55 > 90
 
 
 async def test_editorial_page_failure_is_evidence_not_a_guessed_update(publication_db, monkeypatch):
