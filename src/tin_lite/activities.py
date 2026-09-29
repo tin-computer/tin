@@ -9,7 +9,7 @@ from contextlib import suppress
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -141,7 +141,13 @@ from tin_lite.weekly_brief import (
     WeeklyBriefSource,
     validate_weekly_brief_artifacts,
 )
-from tin_lite.workflow_prerequisites import PrerequisiteError, evaluate_prerequisites
+from tin_lite.workflow_prerequisites import (
+    PrerequisiteError,
+    can_wait_for_prerequisites,
+    evaluate_prerequisites,
+    prerequisite_wait_run_ids,
+    waited_evidence,
+)
 
 SANDBOX_HEARTBEAT_SECONDS = 5
 T = TypeVar("T")
@@ -334,6 +340,7 @@ class TinActivities:
             project_id=configured.project_id,
             workflow=workflow_definition,
             normalized_inputs=configured.inputs,
+            can_wait=can_wait_for_prerequisites(workflow_definition),
         )
         selection = {}
         if (
@@ -451,11 +458,91 @@ class TinActivities:
                     ),
                 )
                 return {}
+        awaited = prerequisite_wait_run_ids(run.prerequisite_evidence)
         return {
             "run_id": str(run.id),
             "executor": run.executor,
             "temporal_workflow_id": run.temporal_workflow_id,
+            # Identifiers only: the child holds until these prerequisite runs finish.
+            **({"prerequisite_wait": awaited} if awaited else {}),
         }
+
+    @activity.defn(name="prerequisite_wait")
+    async def prerequisite_wait(self, payload: dict[str, Any]) -> bool:
+        """Whether a run admitted behind a running prerequisite should keep waiting.
+
+        Once the awaited runs finish, or the workflow says the wait reached its limit, re-check
+        the prerequisites from durable facts, pin the result with plain notes, and refuse the
+        run before any work when a required prerequisite is still missing.
+        """
+        from tin_lite.workflow_definitions import resolve_execution_contract
+        from tin_lite.workflow_inputs import WorkflowInputError
+
+        run_id = UUID(str(payload["run_id"]))
+        run = await self._require_run(run_id)
+        evidence = run.prerequisite_evidence if isinstance(run.prerequisite_evidence, dict) else {}
+        settled = evidence.get("waited")
+        if isinstance(settled, dict):
+            if settled.get("refused"):
+                raise ApplicationError(
+                    settled["refused"], type="PrerequisiteMissing", non_retryable=True
+                )
+            return False
+        awaited = prerequisite_wait_run_ids(evidence)
+        if not awaited or run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
+            return False
+        statuses: dict[str, str | None] = {}
+        for text in awaited:
+            upstream = await self._db.get_run(UUID(text))
+            statuses[text] = upstream.status.value if upstream is not None else None
+        if not payload.get("final") and any(
+            status in {"pending", "running"} for status in statuses.values()
+        ):
+            waiting = evidence.get("waiting") or []
+            await self._db.project_run_narration(
+                run_id=run_id,
+                summary=" ".join(str(view.get("note") or "") for view in waiting)[:240],
+            )
+            return True
+        definition = await self._db.get_workflow(run.workflow_id)
+        if definition is None:
+            raise ApplicationError("This workflow is no longer available.", non_retryable=True)
+        try:
+            definition = await resolve_execution_contract(
+                storage=self._storage,
+                workflow=definition,
+                project_id=run.project_id,
+                revision=run.definition_commit_sha,
+            )
+        except (LookupError, WorkflowInputError) as exc:
+            raise ApplicationError(
+                f"Tin could not re-check this run's prerequisites: {exc}", non_retryable=True
+            ) from None
+        inputs = run.input or {}
+        evaluation = await evaluate_prerequisites(
+            database=self._db,
+            storage=self._storage,
+            project_id=run.project_id,
+            workflow=definition,
+            normalized_inputs=inputs,
+        )
+        record = waited_evidence(
+            evaluation,
+            workflow=definition,
+            inputs=inputs,
+            waited=evidence.get("waiting") or [],
+            statuses=statuses,
+            settled_at=datetime.now(UTC),
+        )
+        refused = record["waited"]["refused"]
+        await self._db.record_prerequisite_wait(
+            run_id=run_id,
+            evidence=record,
+            summary=refused or " ".join(record["notes"]) or None,
+        )
+        if refused:
+            raise ApplicationError(refused, type="PrerequisiteMissing", non_retryable=True)
+        return False
 
     @activity.defn(name="create_design_sandbox")
     async def create_design_sandbox(self, run_id_text: str) -> None:

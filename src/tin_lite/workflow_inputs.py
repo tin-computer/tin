@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 import re
 from copy import deepcopy
@@ -111,6 +112,43 @@ def normalize_workflow_inputs(
 _TRUE = {"true", "yes", "y", "on", "1"}
 _FALSE = {"false", "no", "n", "off", "0"}
 _LIST_SEPARATOR = re.compile(r"[,\n]")
+_MAX_LIST_TEXT = 20_000
+
+
+def _json_list(text: str) -> list[Any] | None:
+    """A list written as JSON: '["a", "b"]', or a JSON string that holds one."""
+    value: Any = text
+    for _ in range(2):  # A model sometimes encodes the list, then encodes that text again.
+        if not isinstance(value, str):
+            break
+        body = value.strip()
+        if not body.startswith(("[", '"')) or len(body) > _MAX_LIST_TEXT:
+            return None
+        try:
+            value = json.loads(body)
+        except ValueError:
+            return None
+    return value if isinstance(value, list) else None
+
+
+def _text_list(text: str) -> list[Any]:
+    """Read a list the plan wrote as text: JSON first, then comma or newline separated."""
+    parsed = _json_list(text)
+    if parsed is not None:
+        return [
+            item.strip() if isinstance(item, str) else item
+            for item in parsed
+            if not isinstance(item, str) or item.strip()
+        ]
+    body = text.strip()
+    quoted = body.startswith("[") and body.endswith("]")
+    if quoted:
+        # Not valid JSON (single quotes, a stray comma): drop the brackets and item quotes.
+        body = body[1:-1]
+    parts = (part.strip() for part in _LIST_SEPARATOR.split(body))
+    if quoted:
+        parts = (part.strip("\"'").strip() for part in parts)
+    return [part for part in parts if part]
 
 
 def _number(value: Any, integer: bool) -> int | float | None:
@@ -140,8 +178,9 @@ def coerce_schema_inputs(
 ) -> tuple[dict[str, Any], list[str]]:
     """Type textual values (e.g. model-written plan inputs) by their top-level schema.
 
-    Converts integer, number and boolean strings, splits a string on commas/newlines for an
-    array of strings, and clamps to minimum/maximum and maxItems. An unparseable value is
+    Converts integer, number and boolean strings, reads a string for an array of strings as a
+    JSON list first (also a JSON string holding one) and otherwise splits it on commas and
+    newlines, and clamps to minimum/maximum and maxItems. An unparseable value is
     dropped with a note so the schema default applies. Strings, enums and unknown fields are
     left to the caller and the schema validator. Pure: no I/O; the input is not mutated.
     """
@@ -177,7 +216,7 @@ def coerce_schema_inputs(
         elif kind == "array":
             items = prop.get("items") if isinstance(prop.get("items"), dict) else {}
             if isinstance(value, str) and items.get("type") == "string":
-                value = [part.strip() for part in _LIST_SEPARATOR.split(value) if part.strip()]
+                value = _text_list(value)
             if not isinstance(value, list):
                 del fixed[name]
                 notes.append(f"{name} dropped; {value!r} is not a list")

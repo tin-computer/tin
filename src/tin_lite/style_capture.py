@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
-from tin_lite.project_files import safe_project_file_path
+from tin_lite.project_files import credential_findings, safe_project_file_path
 from tin_lite.writing_style import STYLE_PATH
 
 KEY = "style.capture"
@@ -60,29 +60,95 @@ def packet_markdown(packet: SourcePacket) -> str:
     return content
 
 
-def parse_packet(content: bytes) -> SourcePacket:
-    if not 0 < len(content) <= MAX_SOURCE_BYTES:
-        raise ValueError("Select shorter passages; style samples must fit within 100 KB.")
-    text = content.decode("utf-8")
+class StyleSourceError(ValueError):
+    """Tin's own words for why a style source file cannot be used; safe to show the caller."""
+
+
+_TEMPLATE_HINT = "Copy source_template from get_writing_style_guide and fill it in."
+
+
+def _packet_problem(exc: ValidationError) -> str:
+    """The first field problem in a source packet, without echoing any sample text."""
+    errors = exc.errors(include_url=False, include_input=False, include_context=False)
+    if not errors:
+        return "its samples block is invalid"
+    first = errors[0]
+    where = ".".join(str(part) for part in first["loc"])
+    message = str(first["msg"]).removeprefix("Value error, ")
+    more = f" ({len(errors) - 1} more problems)" if len(errors) > 1 else ""
+    return f"{where}: {message}{more}" if where else f"{message}{more}"
+
+
+def parse_packet(content: bytes, *, path: str = "The source packet") -> SourcePacket:
+    """Read a committed sample packet; every refusal names the file and what is wrong."""
+    if not content.strip():
+        raise StyleSourceError(f"{path} is empty. {_TEMPLATE_HINT}")
+    if len(content) > MAX_SOURCE_BYTES:
+        raise StyleSourceError(
+            f"{path} is {len(content):,} bytes; a sample packet holds at most "
+            f"{MAX_SOURCE_BYTES:,} bytes. Select shorter passages and commit it again."
+        )
+    if b"\x00" in content:
+        raise StyleSourceError(f"{path} looks like a binary file. Save the samples as Markdown.")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise StyleSourceError(
+            f"{path} is not UTF-8 text (byte {exc.start} cannot be read). "
+            "Save it as UTF-8 Markdown and commit it again."
+        ) from None
     match = re.fullmatch(r"# Style samples\s+```json\s*\n(.*)\n```\s*", text, re.S)
     if not match:
-        raise ValueError("Use the style source-packet template returned by Tin's guide.")
-    return SourcePacket.model_validate_json(match[1])
+        raise StyleSourceError(
+            f"{path} does not follow the source template: it must hold only a "
+            f"'# Style samples' heading and one ```json block. {_TEMPLATE_HINT}"
+        )
+    found = credential_findings(text)
+    if found:
+        raise StyleSourceError(
+            f"{path} appears to contain {found[0]}. Remove the credential from the "
+            "samples and commit the file again."
+        )
+    try:
+        return SourcePacket.model_validate_json(match[1])
+    except ValidationError as exc:
+        raise StyleSourceError(
+            f"{path} has a samples block Tin cannot use: {_packet_problem(exc)}."
+        ) from None
 
 
 async def read_sources(storage, project, path: str, *, revision: str | None = None):
-    if not safe_project_file_path(path) or not path.endswith(".md") or path == STYLE_PATH:
-        raise ValueError("Choose a Markdown style source packet in this project's Files.")
+    if not safe_project_file_path(path):
+        raise StyleSourceError(
+            f"{path!r} is not a project file path Tin can read: use a relative path inside "
+            "Files, with no '..' part and no protected name such as .env or a key file."
+        )
+    if path == STYLE_PATH:
+        raise StyleSourceError(
+            f"{path} is the writing guide itself. Save the samples in their own file, "
+            "such as style/sources/my-writing.md."
+        )
+    if not path.endswith(".md"):
+        raise StyleSourceError(
+            f"{path} is not a Markdown file. Save the sample packet as a .md file, "
+            "such as style/sources/my-writing.md."
+        )
     repo = await storage.get_repo(project.state_repo_id)
     revision = revision or await storage.head_sha(repo, project.canonical_branch)
     if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
-        raise ValueError("Project files have no available revision.")
+        raise StyleSourceError(
+            "This project's Files have no saved revision yet. Commit the sample packet "
+            "with commit_project_changes first."
+        )
     entry = await storage.read_output_destination(
         repo_id=project.state_repo_id, revision=revision, path=path
     )
     if entry is None:
-        raise ValueError("The selected source packet does not exist in this project.")
-    return parse_packet(entry[1]), revision
+        raise StyleSourceError(
+            f"{path} does not exist in this project's Files at revision {revision[:12]}. "
+            "Commit it with commit_project_changes, or check the path with list_project_files."
+        )
+    return parse_packet(entry[1], path=path), revision
 
 
 class StyleRule(BaseModel):

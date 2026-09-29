@@ -7,7 +7,7 @@ from uuid import UUID
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tin_lite import content_draft, content_plan, organic_system, technical_fix
-from tin_lite.domain import RunStatus, Workflow, WorkflowRun
+from tin_lite.domain import PREREQUISITE_WAIT_MEMO, RunStatus, Workflow, WorkflowRun
 from tin_lite.executor_gates import (
     google_ads_gate,
     keyword_plan_gate,
@@ -32,7 +32,12 @@ from tin_lite.runtime import RuntimeServices
 from tin_lite.settings import Settings
 from tin_lite.workflow_definitions import resolve_execution_contract
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
-from tin_lite.workflow_prerequisites import PrerequisiteError, evaluate_prerequisites
+from tin_lite.workflow_prerequisites import (
+    PrerequisiteError,
+    can_wait_for_prerequisites,
+    evaluate_prerequisites,
+    prerequisite_wait_run_ids,
+)
 from tin_lite.workflows import registered_workflow_implementations
 
 logger = logging.getLogger(__name__)
@@ -40,6 +45,18 @@ logger = logging.getLogger(__name__)
 
 class WorkflowExecutorUnavailableError(RuntimeError):
     pass
+
+
+class ContentProgramNotSavedError(WorkflowInputError):
+    """content.plan runs only as a saved program; carries the inputs the caller sent."""
+
+    def __init__(self, inputs: dict[str, Any]) -> None:
+        super().__init__(
+            "Save the content program to My system before starting it: call "
+            "create_project_workflow with workflow_id 'content.plan' and these inputs, then "
+            "start_project_workflow with the project_workflow_id it returns."
+        )
+        self.inputs = inputs
 
 
 class TemporalStartError(RuntimeError):
@@ -164,6 +181,8 @@ async def start_workflow_run(
             project_id=project_id,
             workflow=workflow,
             normalized_inputs=normalized_inputs,
+            # A parent-dispatched child starts without the wait memo, so it cannot wait.
+            can_wait=can_wait_for_prerequisites(workflow) and not _prepare_only,
         )
         if evaluation.blocking:
             raise PrerequisiteError.from_evaluation(
@@ -172,7 +191,7 @@ async def start_workflow_run(
         if evaluation.results:
             prerequisite_evidence = evaluation.evidence(inputs=normalized_inputs)
     if workflow.executor == "style.capture" and existing is None:
-        from tin_lite.style_capture import read_sources
+        from tin_lite.style_capture import StyleSourceError, read_sources
 
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError(
@@ -185,6 +204,9 @@ async def start_workflow_run(
             raise LookupError("project not found")
         try:
             await read_sources(runtime.storage, project, normalized_inputs["source_path"])
+        except StyleSourceError as exc:
+            # Tin's own words: which file, and what is wrong with it.
+            raise WorkflowInputError(str(exc)) from None
         except ValueError:
             raise WorkflowInputError(
                 "Choose a valid style source packet in this project's Files before starting."
@@ -282,7 +304,7 @@ async def start_workflow_run(
                 "Choose valid research runs, a start date and duration."
             ) from exc
         if project_workflow_id is None:
-            raise WorkflowInputError("Save the content program to My system before starting it.")
+            raise ContentProgramNotSavedError(normalized_inputs)
     if workflow.executor == AUDIT_KEY:
         try:
             public_site(normalized_inputs["site_url"])
@@ -483,6 +505,10 @@ async def start_workflow_run(
         from temporalio.common import WorkflowIDReusePolicy
 
         temporal_options["id_reuse_policy"] = WorkflowIDReusePolicy.REJECT_DUPLICATE
+    awaited = prerequisite_wait_run_ids(run.prerequisite_evidence)
+    if awaited:
+        # The workflow reads this memo to hold the run until these prerequisite runs finish.
+        temporal_options["memo"] = {PREREQUISITE_WAIT_MEMO: awaited}
     try:
         await runtime.temporal.start_workflow(
             implementation.run,

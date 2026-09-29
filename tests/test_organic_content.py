@@ -28,7 +28,9 @@ async def effect(db, key, value):
         await db.complete_effect(conn, execution_key=key, result=value)
 
 
-async def system_fixture(db, monkeypatch, *, github=True, inputs=None, temporal=None):
+async def system_fixture(
+    db, monkeypatch, *, github=True, inputs=None, temporal=None, content=None, policy=None
+):
     f = await configured(await setup(db, monkeypatch, planned=True))
     monkeypatch.setattr(
         db,
@@ -103,13 +105,15 @@ async def system_fixture(db, monkeypatch, *, github=True, inputs=None, temporal=
         f"traffic:{f.parent.id}:prepare",
         {
             "definition_revision": "e" * 40,
-            "policy": organic_system.POLICY,
+            "policy": policy or organic_system.POLICY,
             "definitions": {step: definitions[key] for step, key in organic_system.STEPS.items()},
             "input_sha256": digest(inputs),
             "content_delivery": intent,
         },
     )
-    await effect(db, f"traffic:{f.parent.id}:step:content", {"run_id": str(f.initial.id)})
+    await effect(
+        db, f"traffic:{f.parent.id}:step:content", content or {"run_id": str(f.initial.id)}
+    )
     f.system = OrganicSystemActivities(
         database=db,
         storage=f.storage,

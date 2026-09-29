@@ -356,7 +356,9 @@ async def test_discovery_and_incomplete_start_offer_preparation(publication_db, 
     f = await setup(publication_db)
     server = mcp(f, monkeypatch)
     catalog = structured(
-        await server.call_tool("list_workflows", {"project_id": str(f.project.id)})
+        await server.call_tool(
+            "list_workflows", {"project_id": str(f.project.id), "detail": "full"}
+        )
     )
     rows = catalog["result"] if isinstance(catalog, dict) else catalog
     prep = next(row for row in rows if row["key"] == brand.KEY)["preparation"]
