@@ -196,14 +196,30 @@ table, E2B sandbox, DataForSEO dependency, or parallel execution engine.
 
 `content.answer_page` turns durable project context into one researched, reviewable Markdown page.
 It prefers the latest visibility audit and otherwise works from project memory, so its only input
-is `project_id`; GitHub access is not required. One forced-search Luna call publishes
-`reports/ANSWER_PAGE.md` and bounded evidence atomically through Temporal. Because this is
+is `project_id`; GitHub access is not required. One forced-search Luna call publishes the page
+at `content/answers/{date}-{question-slug}.md`, named from its date and title, with bounded
+evidence under `reports/answer-page/{run_id}/`, atomically through Temporal. The title becomes the
+run's artifact title, which Decisions, the run card and chat show. Pages drafted before per-page
+names keep `reports/ANSWER_PAGE.md`; a later page with the same date and title replaces the file
+at that path, and each run still reads its own pinned revision. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
 approval from the draft reader resumes and completes it. Workflows presents every live gate through
 one needs-you queue banner and one matching filter count; completed reviews remain historical
 Activity events rather than permanent stages on finished rows. Report and memory workflows do not
 pause for review. The workflow does not edit or publish the customer's website, create an E2B
 sandbox, or add a provider credential path.
+
+Answer page 1.3.0 pins the `answer-page/10-search-and-answer-engines` skill (`ANSWER_SEO_V1`).
+The model opens the official pages of every product it names, cites inline and aims for five or
+more sources, with up to twelve search calls instead of four. The page carries `meta_title` and
+`meta_description` frontmatter, a `Last updated` date, a 40-60 word opening answer, question
+headings, a comparison table where options are compared, an FAQ and Sources last. Code writes
+the frontmatter and the date line itself, rebuilding a missing or oversized listing from the
+title and the opening answer. It then checks the pieces a model can leave out: the answer's
+length, two question headings, an FAQ with two questions, three listed sources, two inline
+citations and paragraphs under 150 words. The evidence records `structure: answer-seo-v1`, so
+pages drafted under an earlier pin keep the original checks. Delivery merges the page's
+frontmatter with the configured header instead of writing two.
 
 `project.weekly_brief` summarizes the previous seven days of durable project runs, artifacts,
 memory, and product Activity into a dated Markdown report under `reports/weekly/`. It is intended

@@ -5,10 +5,10 @@
     "Fixture pytest covers ID, link, number and clipped-text validation offline; these cases judge live model quality."
   ],
   "cost_drivers": [
-    "Two gpt-6-luna calls at most, each with at most 32000 input bytes; changelog length and the number of announced changes drive tokens."
+    "Three gpt-6-luna calls at most (extract, newsletter, social posts), each with at most 32000 input bytes; changelog length and the number of announced changes drive tokens."
   ],
   "effects": [
-    "Writes reports/RELEASE_ANNOUNCE.md in this project. Nothing is posted, published or emailed."
+    "Writes content/releases/<date>-<release>.md in this project. Nothing is posted, published or emailed."
   ],
   "cases": [
     {
@@ -25,9 +25,12 @@
       "expected_status": "succeeded",
       "expect": {
         "contains": [
-          "# Release announcements for Loopwire",
-          "## X post",
-          "## LinkedIn post",
+          "# Loopwire release: ",
+          "## X",
+          "## LinkedIn",
+          "## Reddit",
+          "## Hacker News",
+          "Show HN: ",
           "## Newsletter email",
           "CSV",
           "Safari",
@@ -60,6 +63,7 @@
   "rubric": [
     {"id": "grounding", "question": "Does every announced change, benefit and number appear in the changelog, with nothing invented?"},
     {"id": "audience", "question": "Is the copy written for existing users and subscribers, and does the email read as a newsletter update rather than a cold pitch?"},
-    {"id": "voice", "question": "Does the copy follow the tone and voice notes?"}
+    {"id": "voice", "question": "Does the copy follow the tone and voice notes?"},
+    {"id": "channels", "question": "Does each post read like that channel: a hook before LinkedIn's fold, an X post and thread, a Reddit post from a maker rather than a press release, and a plain Show HN title and first comment?"}
   ]
 }

@@ -161,6 +161,10 @@ class HistoryStorage(CodeStorage):
     async def head_sha(self, repo, branch):
         return repo.head
 
+    async def _file_equals(self, repo, *, ref, path, expected):
+        # code.storage answers 404 for a path the revision lacks; the real method maps it to False.
+        return path in repo.trees[ref] and repo.trees[ref][path][1] == expected
+
     async def _publication_json(self, repo, endpoint, **params):
         ref = params["ref"]
         if endpoint == "commits":

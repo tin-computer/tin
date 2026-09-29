@@ -1207,16 +1207,45 @@ class OrganicTrafficSystemWorkflow:
 
 @workflow.defn(name="style.capture")
 class StyleCaptureWorkflow:
+    def __init__(self) -> None:
+        self._approved = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
-            for step in ("style_prepare", "style_extract", "style_publish"):
+            for step in ("style_prepare", "style_extract"):
                 await workflow.execute_activity(
                     step,
                     run_id,
                     start_to_close_timeout=timedelta(minutes=5),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
+            if workflow.patched("style-capture-review-v1"):
+                # The guide is proposed for review; the active guide changes only on approval.
+                review_required = await workflow.execute_activity(
+                    "style_propose",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=5),
+                    retry_policy=RetryPolicy(maximum_attempts=5),
+                )
+                if review_required:
+                    await workflow.wait_condition(lambda: self._approved)
+                    await workflow.execute_activity(
+                        "style_record_approval",
+                        run_id,
+                        start_to_close_timeout=timedelta(minutes=1),
+                        retry_policy=RetryPolicy(maximum_attempts=5),
+                    )
+            await workflow.execute_activity(
+                "style_publish",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
         except BaseException:
             await workflow.execute_activity(
                 "style_failure",

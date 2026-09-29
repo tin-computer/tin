@@ -152,7 +152,9 @@ TRUSTED_ACTIVITIES = frozenset(
         "style_extract",
         "style_failure",
         "style_prepare",
+        "style_propose",
         "style_publish",
+        "style_record_approval",
     }
 )
 

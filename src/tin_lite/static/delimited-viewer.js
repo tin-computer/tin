@@ -287,7 +287,7 @@
     back.type = "button";
     back.addEventListener("click", options.onReturn);
     const separator = makeElement("span", "project-file-context-separator");
-    const path = makeElement("code", "project-file-path", options.contextLabel);
+    const path = options.pathElement || makeElement("code", "project-file-path", options.contextLabel);
     const facts = makeElement("code", "project-file-facts", options.factsText);
     const spacer = makeElement("span", "project-file-context-spacer");
     const toggle = makeElement(

@@ -1,11 +1,33 @@
 """The bounded two-document result contract; no workflow-specific brand policy."""
 
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from uuid import UUID
 
 from tin_lite.brand_contract import VALIDATOR as BRAND_VALIDATOR
 from tin_lite.project_files import credential_findings, safe_project_file_path
 
 MAX_DOCUMENT_BYTES = 64_000
+# A run-owned path names its run by identifier, or by a folder people can read in Files.
+RUN_PATH_PLACEHOLDERS = ("{run_id}", "{run_folder}")
+
+
+def run_folder(run_id, started_at):
+    """The run's UTC creation date and the start of its identifier, such as 2026-09-28-1a2b3c4d."""
+    if not isinstance(started_at, datetime) or started_at.tzinfo is None:
+        raise ValueError("a run folder requires the run's timezone-aware creation time")
+    return f"{started_at.astimezone(UTC):%Y-%m-%d}-{UUID(str(run_id)).hex[:8]}"
+
+
+def resolve_run_path(template, run_id, started_at=None):
+    path = template.replace("{run_id}", str(run_id))
+    if "{run_folder}" in path:
+        path = path.replace("{run_folder}", run_folder(run_id, started_at))
+    return path
+
+
+def run_path_sample(template):
+    return template.replace("{run_id}", "run").replace("{run_folder}", "2026-01-01-00000000")
 
 
 @dataclass(frozen=True)
@@ -15,8 +37,10 @@ class DocumentPair:
     companion_label: str
     destinations: tuple[str, str]
 
-    def resolve(self, run_id):
-        return replace(self, companion_path=self.companion_path.replace("{run_id}", str(run_id)))
+    def resolve(self, run_id, started_at=None):
+        return replace(
+            self, companion_path=resolve_run_path(self.companion_path, run_id, started_at)
+        )
 
 
 def document_path(path):
@@ -56,17 +80,17 @@ def parse_document_pair(output, definition):
     paths = [output.get("path_template"), companion["path_template"]]
     if "path" in output or any(
         not isinstance(p, str)
-        or p.count("{run_id}") != 1
-        or "{" in p.replace("{run_id}", "run")
-        or "}" in p.replace("{run_id}", "run")
-        or not document_path(p.replace("{run_id}", "run"))
+        or sum(p.count(token) for token in RUN_PATH_PLACEHOLDERS) != 1
+        or "{" in run_path_sample(p)
+        or "}" in run_path_sample(p)
+        or not document_path(run_path_sample(p))
         for p in paths
     ):
         raise ValueError("reviewed documents require safe run-owned Markdown paths")
     target_paths = (destinations["primary"], destinations["companion"])
     if any(not document_path(p) or "{" in p or "}" in p for p in target_paths):
         raise ValueError("reviewed document destinations must be ordinary fixed Markdown paths")
-    all_paths = [p.replace("{run_id}", "run") for p in paths] + list(target_paths)
+    all_paths = [run_path_sample(p) for p in paths] + list(target_paths)
     validate_document_paths(all_paths)
     if any(
         type(n) is not int or not 1 <= n <= MAX_DOCUMENT_BYTES

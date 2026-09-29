@@ -90,3 +90,46 @@ Browser coverage uses the existing controls in both themes, title-based article 
 hidden run IDs, responsive widths, scoped saves and preservation of unsaved plan/settings.
 Existing Temporal replay/queue tests remain part of the suite; no workflow command
 sequence or registered execution engine was changed.
+
+## Page URLs: where a draft will appear, and whether it is live
+
+Article, public-article and answer-page runs carry `page_url` in the run API
+(`GET /api/projects/{id}/runs`, `GET /api/workflows/runs/{id}`) and in MCP `get_run`.
+Before approval, the decision card shows one line, `Proposed URL <address>` or
+`Will be published at <address>`, and nothing when Tin found no page on the site that
+shows the file's folder. After approval, the document page shows one status line above the
+title: the open pull request, the deploy, `Live at <address>` (the only link), or
+"Committed, but not a page on <site> yet". The `note` field stays in the API for agents.
+Resolving or checking a page URL never fails the response that carries it: any lookup or
+provider error means no URL is known, and only the error's type is logged.
+
+| Field | Meaning |
+| --- | --- |
+| `url`, `label` | The address, labelled `Proposed URL`, `Will be published at` or `Live at`. |
+| `source` | `delivery_route` (the adaptation PR's `Public URL:` line), `plan_destination` (the plan item; final only for an update to an existing page), `folder_route` (Tin confirmed that the site shows other files from the target folder at this route), or `title_slug` (a proposed slug under the site; never final). |
+| `state` | `proposed`, `planned`, `merged` (merged or committed, page not found yet) or `live`. |
+| `note` | What approving does, or what happened: for example "Approving commits content/answers/x.md to owner/site as a Markdown file only". |
+| `repository`, `file_path`, `pull_request` | The delivery target when Tin writes to GitHub. |
+| `checked_at`, `checkable` | When Tin last looked, and whether another look can change anything. |
+| `route_missing` | Tin looked and found no page on the site that shows the file's folder. |
+| `deploy_overdue` | Merged or committed longer ago than a deploy takes, and still not found. |
+| `published_outside_tin` | No GitHub delivery: the proposed URL is only a suggestion. |
+
+Card polling reads one Postgres projection per run (`page-url:<run_id>` in
+`effect_receipts`). Provider reads happen only in an explicit check
+(`GET /api/workflows/runs/{id}/page-url?check=true`, and MCP `get_run`), at most every ten
+minutes per run and within a 20-second bound:
+
+- an open PR is read once from GitHub to learn whether it merged;
+- after a merge or a direct commit, one vetted public GET (public addresses only, same-site
+  redirects) must return 200 at the same path with the article's title before Tin says
+  `Live at`. Until then the page is not called published. After 30 minutes the note says
+  "Committed to owner/site main; not a page on example.com yet" and names the file;
+- for the Markdown publisher, Tin lists the target folder and tries up to two existing files
+  under three common routes (`/<folder>/<slug>`, `/<slug>`, `/blog/<slug>`). A route counts
+  only when a made-up slug under it does not also answer 200. Without one, the card says
+  before approval that approving commits a Markdown file only.
+
+`Publish now` still uses the exact Markdown publisher for answer pages and public articles;
+this section only makes its result visible. Routing those drafts through repository
+adaptation needs `content.deliver` to accept non-plan sources.

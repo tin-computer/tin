@@ -9,6 +9,11 @@ KEY = "brand.capture"
 VALIDATOR = "brand-design-capture.v1"
 BRAND_PATH, DESIGN_PATH = "brand/BRAND.md", "DESIGN.md"
 BRAND_MAX, DESIGN_MAX = 48_000, 64_000
+# Proposals land in a dated folder; runs pinned before 1.1.0 keep their run-ID folder.
+PROPOSAL_TEMPLATES = {
+    ("brand/proposals/{run_folder}/BRAND.md", "brand/proposals/{run_folder}/DESIGN.md"),
+    ("brand/proposals/{run_id}/BRAND.md", "brand/proposals/{run_id}/DESIGN.md"),
+}
 TOKEN_SCHEMA, ASSESSMENT_SCHEMA = "tin-brand.v1", "tin-brand-assessment.v1"
 BRAND_SECTIONS = ("Brand direction", "Visual style", "Generation rules", "Assessment and sources")
 DESIGN_SECTIONS = (

@@ -3,8 +3,8 @@
   "definition": {
     "key": "content.release_announce",
     "title": "Announce a new release",
-    "description": "Turn a changelog or release notes into an X post, a LinkedIn post and a newsletter email for people who already follow the product, mentioning only what actually shipped. Drafts only: Tin never posts, sends or publishes them.",
-    "version": "1.1.0",
+    "description": "Turn a changelog or release notes into posts written for X, LinkedIn, Reddit and Hacker News, plus a newsletter email for people who already follow the product, mentioning only what actually shipped. Drafts only: Tin never posts, sends or publishes them.",
+    "version": "1.2.0",
     "executor": "workflow.code",
     "schedule_modes": ["on_demand"],
     "human_review": {
@@ -101,12 +101,19 @@
           "model": "gpt-6-luna",
           "max_calls": 1,
           "max_input_bytes": 32000,
+          "max_output_tokens": 3072
+        },
+        "social": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 32000,
           "max_output_tokens": 4096
         }
       },
       "output": {
         "kind": "project.artifact",
-        "path": "reports/RELEASE_ANNOUNCE.md",
+        "path": "content/releases/{date}-{slug}.md",
         "media_type": "text/markdown",
         "max_bytes": 32000
       }

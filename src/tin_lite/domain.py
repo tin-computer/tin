@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -34,7 +35,9 @@ ARTIFACT_PATH = "DESIGN.md"
 MEMORY_INDEX_PATH = "wiki/INDEX.md"
 SCAN_REPORT_PATH = "reports/SCAN.md"
 VISIBILITY_AUDIT_PATH = "reports/AI_VISIBILITY.md"
+# Answer pages drafted before per-page names all saved here; their runs still point at it.
 ANSWER_PAGE_PATH = "reports/ANSWER_PAGE.md"
+ANSWER_PAGE_DIR = "content/answers"
 RESEARCH_DEEP_DIVE_PATH = "reports/RESEARCH_DEEP_DIVE.md"
 PUBLIC_ARTICLE_PATH = "reports/PUBLIC_ARTICLE.md"
 EMAIL_SHORTLIST_PATH = "outreach/email/SHORTLIST.csv"
@@ -74,6 +77,12 @@ def visibility_evidence_path(run_id: UUID | str) -> str:
 
 def answer_page_evidence_path(run_id: UUID | str) -> str:
     return f"reports/answer-page/{run_id}/evidence.json"
+
+
+def answer_page_path(title: str, day: str) -> str:
+    """Name each answer page by its date and question, so Files and chat can tell them apart."""
+    slug = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:80].rstrip("-")
+    return f"{ANSWER_PAGE_DIR}/{day}-{slug or 'answer-page'}.md"
 
 
 class RunStatus(StrEnum):

@@ -46,10 +46,14 @@ The definition selects `executor: workflow.code` and a `code` object with:
 - `entrypoint`: a declared package-relative `.py` file exporting `run(ctx, inputs)`;
 - `files`: 1–32 explicitly declared UTF-8 files, at most 64,000 bytes each and 256,000 bytes total;
 - `timeout_seconds`: 1–60 seconds;
-- `output`: one `project.artifact` with a safe fixed path, media type, and `max_bytes` ≤ 64,000.
+- `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 64,000. The file
+  name may carry `{date}` and `{slug}` once each, so repeated runs keep separate, readable files.
 
 `run` may be synchronous or asynchronous and returns exactly `{ "path": "…", "content": "…" }`.
-The path must match the contract. Tin checks nonempty UTF-8 content, byte limits and NUL rejection;
+The path must match the contract: `{date}` is the run's creation date (`ctx["created_at"][:10]`,
+UTC) and `{slug}` is lowercase letters, digits and single hyphens, at most 80 characters, chosen by
+the code. Tin records a named path before writing the checkpoint, so recovery after worker loss
+reads the same file. Tin checks nonempty UTF-8 content, byte limits and NUL rejection;
 JSON media additionally requires parseable JSON. This is a fixed text-result schema, not an
 arbitrary JSON-Schema implementation or multi-artifact protocol. Inputs use the existing bounded
 closed JSON-Schema subset. `ctx` contains the stable run ID and creation timestamp. Relative file

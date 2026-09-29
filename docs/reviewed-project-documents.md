@@ -9,11 +9,11 @@ The procedure output contract declares both proposals and both destinations:
 ```json
 {
   "kind": "project.artifact",
-  "path_template": "brand/proposals/{run_id}/BRAND.md",
+  "path_template": "brand/proposals/{run_folder}/BRAND.md",
   "media_type": "text/markdown",
   "max_bytes": 48000,
   "companion": {
-    "path_template": "brand/proposals/{run_id}/DESIGN.md",
+    "path_template": "brand/proposals/{run_folder}/DESIGN.md",
     "max_bytes": 64000,
     "label": "Design"
   },
@@ -24,7 +24,10 @@ The procedure output contract declares both proposals and both destinations:
 }
 ```
 
-Each proposal must have a distinct run-owned path, with one `{run_id}` substitution. Both
+Each proposal must have a distinct run-owned path, with one `{run_id}` or `{run_folder}`
+substitution. `{run_folder}` resolves to the run's UTC creation date and the first eight
+characters of its identifier, such as `2026-09-28-1a2b3c4d`, so the folder reads well in Files
+and a retry resolves the same path. It is reserved for reviewed document pairs. Both
 outputs are required, nonempty UTF-8 Markdown, at most 64,000 bytes each. Destinations are
 ordinary fixed Markdown paths, separate from proposals and managed runtime files. This
 contract requires `human_review.eligible: true`; it cannot combine with a section writer,

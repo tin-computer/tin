@@ -1817,6 +1817,7 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .main {
+  container: view / inline-size;
   min-width: 0;
   flex: 1;
 }
@@ -4455,7 +4456,8 @@ html[data-theme="dark"] .markdown-logo::before {
 .decision-list {
   display: flex;
   width: 380px;
-  flex: 0 0 380px;
+  min-width: 260px;
+  flex: 0 1 380px;
   flex-direction: column;
 }
 
@@ -4542,8 +4544,7 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 14px;
 }
 
-.decision-detail-card > header button,
-.decision-output button {
+.decision-detail-card > header button {
   padding: 0;
   background: transparent;
   color: var(--accent-text);
@@ -4582,40 +4583,56 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 23px;
 }
 
-.decision-outputs {
+p.page-url-line {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  max-width: 680px;
+  margin: 0;
+  font-size: 13px;
+  line-height: 19px;
 }
 
-.decision-output {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--card-border);
-  border-radius: 4px;
+p.page-url-line[hidden],
+.markdown-document > p.page-url-status[hidden] {
+  display: none;
 }
 
-.decision-output > span {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.decision-output strong {
-  font-size: 14px;
-  line-height: 18px;
-}
-
-.decision-output code,
-.decision-no-output {
+.page-url-label {
   color: var(--ink-muted);
+  font-family: var(--sans);
+}
+
+.page-url-line code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-secondary);
   font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+}
+
+/* Directly under the path bar, above the title, in the document column. */
+.markdown-document > p.page-url-status {
+  margin: -40px 0 28px;
+  color: var(--ink-secondary);
+  font-size: 14px;
+  line-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+.markdown-document > p.page-url-status a {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 13px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (max-width: 760px) {
+  .markdown-document > p.page-url-status {
+    margin-top: -28px;
+  }
 }
 
 .decision-feedback {
@@ -5368,6 +5385,33 @@ button.activity-ref {
   white-space: nowrap;
 }
 
+/* Folders in an open file's path open that folder in Files. */
+.project-file-context .project-file-path button,
+.markdown-context-bar .markdown-filename button {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 400;
+  cursor: pointer;
+}
+
+.project-file-context nav.project-file-path button:hover,
+.project-file-context nav.project-file-path button:focus-visible,
+.markdown-context-bar .markdown-filename button:hover,
+.markdown-context-bar .markdown-filename button:focus-visible {
+  color: var(--accent-text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.project-file-path [aria-current="page"],
+.markdown-filename [aria-current="page"] {
+  color: var(--ink);
+}
+
 .project-file-facts {
   margin-left: auto;
   white-space: nowrap;
@@ -5711,8 +5755,11 @@ button.activity-ref {
 .project-diagram-help { margin: 0; color: var(--ink-muted); font: 11px/16px var(--sans); }
 .project-diagram-help[hidden], .project-diagram-zoom[hidden] { display: none; }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .project-file-view.project-diagram-view { height: calc(100dvh - var(--top-menu-height)); }
+}
+
+@media (max-width: 900px) {
   .project-diagram-view .project-diagram-body { padding: 12px; gap: 10px; }
   .project-diagram-view .project-file-context { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
   .project-diagram-view .project-file-path { flex: 1 1 120px; }
@@ -6581,7 +6628,8 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   opacity: 1;
 }
 
-@media (max-width: 900px) {
+/* Below 1100px the rail becomes the top menu, so a browser side panel leaves the page its width. */
+@media (max-width: 1100px) {
   .app-shell {
     display: block;
   }
@@ -7304,11 +7352,15 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .system-template-setup-body {
     grid-template-columns: minmax(0, 1fr) 300px;
   }
+}
 
+@media (max-width: 1100px) {
   .decisions-view {
     min-height: calc(100svh - var(--top-menu-height));
   }
+}
 
+@container view (max-width: 1000px) {
   .decisions-layout {
     gap: 20px;
   }
@@ -7316,6 +7368,32 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .decision-list {
     width: 300px;
     flex-basis: 300px;
+  }
+
+  /* The list gives way first, so the open card keeps a readable width beside it. */
+  .decision-detail-card {
+    min-width: 440px;
+  }
+}
+
+/* A narrow page lists the decisions above the open card; the list scrolls on its own. */
+@container view (max-width: 760px) {
+  .decisions-layout {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .decision-list {
+    width: auto;
+    min-width: 0;
+    max-height: min(320px, 40svh);
+    flex: none;
+    overflow-y: auto;
+  }
+
+  .decision-detail-card {
+    min-width: 0;
+    flex: none;
   }
 }
 
@@ -7486,6 +7564,10 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   overflow-x: clip;
 }
 
+.markdown-viewer {
+  container: markdown-viewer / inline-size;
+}
+
 .viewer-loading,
 .viewer-error {
   display: grid;
@@ -7626,7 +7708,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 
 .markdown-reader-layout.has-no-map {
   display: block;
-  width: 680px;
+  width: min(680px, 100%);
   transform: none;
 }
 
@@ -7663,7 +7745,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 
 .markdown-document {
   min-width: 0;
-  width: 680px;
+  width: min(680px, 100%);
   padding: 64px 0 96px;
   color: var(--ink);
   font-family: var(--sans);
@@ -8115,15 +8197,11 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   stroke-width: 1.5px;
 }
 
-@media (max-width: 1199px) {
-  .markdown-context-bar .markdown-return,
-  .markdown-context-bar .markdown-context-separator {
-    display: none;
-  }
-
+/* The map and the offset reading column need about 1040px of the viewer's own width. */
+@container markdown-viewer (max-width: 1100px) {
   .markdown-reader-layout {
     display: block;
-    width: 680px;
+    width: min(680px, 100%);
     transform: none;
   }
 
@@ -8695,9 +8773,14 @@ html[data-theme="dark"] .lock-page-line {
   stroke-width: 1.5px;
 }
 
-@media (max-width: 900px) {
+@media (max-width: 1100px) {
   .lock-page {
     min-height: calc(100svh - var(--top-menu-height));
+  }
+}
+
+@media (max-width: 900px) {
+  .lock-page {
     padding: 32px 18px 64px;
   }
 

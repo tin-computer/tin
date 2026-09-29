@@ -383,7 +383,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "clearIntegrationCallbackUrl(connected.project_id)" in script
     assert "clearIntegrationCallbackUrl(error.detail.project_id)" in script
     assert "function clearIntegrationCallbackUrl(projectId = null)" in script
-    assert 'if (projectId) callbackUrl.searchParams.set("project", projectId)' in script
+    assert 'if (project) callbackUrl.searchParams.set("project", project)' in script
     assert (
         "await bootstrap(invitedProject?.id || integrationReturn?.projectId || null, "
         "integrationReturn)" in script
@@ -560,9 +560,10 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "${escapeHtml(item.title)}</strong></span>" in script
     assert "${escapeHtml(item.workflow_title)}</strong><small>" not in script
     assert "${escapeHtml(decision.title)}</h2>" not in script
-    assert 'data-decision-read="${escapeHtml(decision.id)}">Observe →' in script
-    assert 'const showRunAction = decision.kind === "output_conflict" || !outputs.length;' in script
-    assert '${showRunAction ? `<button type="button" data-decision-read=' in script
+    # One Open link and prose only: no file rows or diffs on the card.
+    assert 'data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →' in script
+    assert '? "Open draft" : "Open run";' in script
+    assert "decision-output" not in script
     assert 'const consequence = String(decision.consequence || "").trim();' in script
     assert 'class="is-actions-only"' in script
     assert ".decision-detail-card > footer.is-actions-only" in stylesheet
@@ -851,12 +852,12 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     )
     assert "function connectedRepository()" in script
     assert "function repositoryDeliveryAvailable(run)" in script
-    assert 'data-delivery="github_commit">Publish now</button>' in script
-    assert 'data-delivery="github_pr">Open a pull request</button>' in script
+    assert 'data-delivery="github_commit"${blocked}>Publish now</button>' in script
+    assert 'data-delivery="github_pr"${blocked}>Open a pull request</button>' in script
     assert (
-        '<label class="decision-remember"><input type="checkbox" data-decision-remember>' in script
+        '<label class="decision-remember"><input type="checkbox" '
+        "data-decision-remember${blocked}> Do this for future drafts</label>" in script
     )
-    assert "data-decision-remember> Do this for future drafts</label>" in script
     assert "data-decision-not-now>Not now</button>" in script
     assert "Approved drafts stay in Tin until GitHub is connected." in script
     assert 'href="/integrations" data-decision-connect-github>Connect GitHub</a>' in script

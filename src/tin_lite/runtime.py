@@ -305,6 +305,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         activity_instance.deliver_content_draft,
         style_activities.prepare,
         style_activities.extract,
+        style_activities.propose,
+        style_activities.record_approval,
         style_activities.publish,
         style_activities.failure,
         plan_activities.prepare,

@@ -19,13 +19,13 @@ from temporalio.exceptions import ApplicationError
 from tin_lite.answer_page import (
     AnswerPageDrafter,
     AnswerPageSource,
+    page_title,
     validate_answer_page_artifacts,
 )
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
 from tin_lite.domain import (
-    ANSWER_PAGE_PATH,
     ANSWER_PAGE_WORKFLOW_NAME,
     ARTIFACT_PATH,
     CODEX_PROCEDURE_EXECUTOR,
@@ -52,6 +52,7 @@ from tin_lite.domain import (
     Workflow,
     WorkflowRun,
     answer_page_evidence_path,
+    answer_page_path,
     site_health_report_path,
     visibility_evidence_path,
     weekly_brief_evidence_path,
@@ -1978,16 +1979,21 @@ class TinActivities:
                 execute=lambda: reporter.draft(
                     project_name=project.name,
                     sources=sources,
+                    today=(run.created_at or datetime.now(UTC)).date().isoformat(),
                 ),
             ),
             details={"stage": "answer_page_draft"},
         )
         evidence_path = answer_page_evidence_path(run_id)
+        title = page_title(str(draft["markdown"]))
+        artifact_path = answer_page_path(
+            title, (run.created_at or datetime.now(UTC)).date().isoformat()
+        )
         page, evidence = reporter.build_artifacts(
             run_id=str(run_id),
             source_refs=[source.artifact_ref for source in sources],
             draft=draft,
-            artifact_path=ANSWER_PAGE_PATH,
+            artifact_path=artifact_path,
             evidence_path=evidence_path,
         )
         execution_key = f"{run_id}:answer_page_commit"
@@ -2001,7 +2007,7 @@ class TinActivities:
                     canonical_sha, changed = await self._storage.publish_state_documents(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
-                        documents={ANSWER_PAGE_PATH: page, evidence_path: evidence},
+                        documents={artifact_path: page, evidence_path: evidence},
                         workflow_key=ANSWER_PAGE_WORKFLOW_NAME,
                         execution_key=execution_key,
                         run_id=str(run_id),
@@ -2009,7 +2015,7 @@ class TinActivities:
                 await self._db.add_activity(
                     run_id=run_id,
                     event_type="answer_page_drafted",
-                    details={"source_count": len(sources), "changed": changed},
+                    details={"source_count": len(sources), "changed": changed, "title": title},
                     dedupe_key=f"{execution_key}:answer_page_drafted",
                 )
                 await self._db.complete_effect(
@@ -2017,7 +2023,8 @@ class TinActivities:
                     execution_key=execution_key,
                     result={
                         "canonical_commit_sha": canonical_sha,
-                        "artifact_path": ANSWER_PAGE_PATH,
+                        "artifact_path": artifact_path,
+                        "title": title,
                         "evidence_path": evidence_path,
                         "source_refs": [source.artifact_ref for source in sources],
                         "changed": changed,
@@ -2126,6 +2133,7 @@ class TinActivities:
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
+            artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
         )
 
     @activity.defn(name="record_answer_page_approval")
@@ -3693,6 +3701,11 @@ class TinActivities:
                             "repository": pull_request.repository,
                             "pull_request_number": pull_request.number,
                             "pull_request_branch": pull_request.branch,
+                            **(
+                                {"public_route": copy_proof["public_route"]}
+                                if copy_proof and copy_proof.get("public_route")
+                                else {}
+                            ),
                         }
                         await self._db.add_activity(
                             run_id=run_id,
@@ -3996,29 +4009,30 @@ class TinActivities:
         from tin_lite.content_delivery import ContentDelivery
 
         delivery = await ContentDelivery(database=self._db, storage=self._storage).status(run)
-        artifact_title = None
-        if workflow_definition.key in {"content.generate", "content.public_article"}:
-            # These drafts live at a run-owned path, so their heading is the readable label.
-            from tin_lite.content_delivery import display_title
+        artifact_title = lede = None
+        if path.casefold().endswith((".md", ".markdown")):
+            # A document's own heading names it better than its file name, and its first
+            # paragraph says what the reviewer is about to read.
+            from tin_lite.content_delivery import display_title, summary_line
 
-            artifact_title = display_title(
-                await self._storage.read_canonical_artifact(
-                    repo_id=project.state_repo_id, commit_sha=sha, path=path
-                )
+            raw = await self._storage.read_canonical_artifact(
+                repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
+            artifact_title, lede = display_title(raw), summary_line(raw)
+        destination = (
+            f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
+            + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
+            if delivery and delivery.get("approval_label")
+            else ""
+        )
         required = await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=artifact_title,
-            summary=(
-                f"{workflow_definition.title} is ready for your review. Approval opens an unmerged "
-                f"GitHub PR in {delivery['repository']}"
-                + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
-                if delivery and delivery.get("approval_label")
-                else f"{workflow_definition.title} is ready for your review."
-            ),
+            summary=f"{workflow_definition.title} is ready for your review. {destination}".strip(),
+            explanation=" ".join(part for part in (lede, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress

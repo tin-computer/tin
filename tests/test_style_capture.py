@@ -1,5 +1,6 @@
 import json
 from copy import deepcopy
+from datetime import timedelta
 from io import BytesIO
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -10,10 +11,13 @@ import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import ValidationError
+from temporalio import workflow as temporal_workflow
+from temporalio.common import RetryPolicy
 from temporalio.exceptions import ApplicationError
 from test_private_workflows import ACTOR, app, mcp, structured
 from test_private_workflows import fixture as project_fixture
 from test_procedure_publication import publication_db as publication_db
+from test_project_codex_execution import temporal_env as temporal_env
 
 from tin_lite.billing_contracts import test_terms as billing_test_terms
 from tin_lite.catalog import BUILTIN_WORKFLOWS
@@ -148,13 +152,15 @@ def test_document_conversion_is_bounded_and_text_only():
             extract_sample(filename, content)
 
 
-async def capture_fixture(db):
+async def capture_fixture(db, *, reviewed=True):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
     )
     builtin = next(w for w in BUILTIN_WORKFLOWS if w.key == KEY)
     definition = builtin.definition
+    if not reviewed:  # A run pinned to the definition from before review.
+        definition = {k: v for k, v in definition.items() if k != "human_review"}
     revision = "d" * 40
     await db.upsert_registry_workflow(
         workflow_id=builtin.id,
@@ -204,6 +210,11 @@ async def capture_fixture(db):
     return f
 
 
+async def approve(f, run):
+    assert await f.activities.propose(str(run.id))
+    await f.activities.record_approval(str(run.id))
+
+
 async def start(f, *, key=None):
     return await start_workflow_run(
         runtime=f.runtime,
@@ -218,6 +229,7 @@ async def start(f, *, key=None):
 
 async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     f = await capture_fixture(publication_db)
+    f.storage.repo.edit({STYLE_PATH: b"My current guide\n"})
     key = str(uuid4())
     run = await start(f, key=key)
     assert (await start(f, key=key)).id == run.id
@@ -227,14 +239,29 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     for _ in range(2):
         await f.activities.extract(str(run.id))
     for _ in range(2):
+        assert await f.activities.propose(str(run.id))
+    waiting = await f.db.get_run(run.id)
+    assert waiting.status.value == "needs_input" and waiting.review_required
+    proposal = waiting.artifact_path
+    assert proposal.startswith("style/proposals/") and proposal.endswith(
+        f"-writing-style-{str(run.id)[:8]}.md"
+    )
+    assert waiting.artifact_title == "Proposed writing style guide"
+    head = f.storage.repo.trees[f.storage.repo.head]
+    assert head[STYLE_PATH][1] == b"My current guide\n" and b"provisional" in head[proposal][1]
+    decisions = await f.db.list_pending_decisions(project_id=f.project.id)
+    assert [d["run_id"] for d in decisions] == [run.id]
+    for _ in range(2):
+        await f.activities.record_approval(str(run.id))
+    for _ in range(2):
         await f.activities.publish(str(run.id))
     done = await f.db.get_run(run.id)
     assert done.status.value == "succeeded" and done.artifact_path == STYLE_PATH
-    assert done.retained_output is None and not done.review_required
+    assert done.retained_output is None and done.review_decision == "approved"
     assert f.router.generate.await_count == 1 and f.storage.stage_native_output.await_count == 1
     result = await read_run_output(storage=f.storage, run=done, repo_id=f.project.state_repo_id)
     assert b"provisional" in result.content and done.expected_head_sha.encode() in result.content
-    assert f.storage.repo.writes == 1
+    assert f.storage.repo.writes == 2  # the proposal and the saved guide
     assert (
         await f.db.pool.fetchval(
             "SELECT count(*) FROM activity_events "
@@ -245,11 +272,55 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     )
 
 
+async def test_guide_waits_for_approval_and_saves_the_approved_edit(publication_db):
+    f = await capture_fixture(publication_db)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    await f.activities.extract(str(run.id))
+    assert await f.activities.propose(str(run.id))
+    with pytest.raises(ApplicationError, match="waits for your approval"):
+        await f.activities.publish(str(run.id))
+    assert STYLE_PATH not in f.storage.repo.trees[f.storage.repo.head]
+    proposal = (await f.db.get_run(run.id)).artifact_path
+    f.storage.repo.edit({proposal: b"# Writing style\n\nMy corrected guide.\n"})
+    await f.activities.record_approval(str(run.id))
+    await f.activities.publish(str(run.id))
+    head = f.storage.repo.trees[f.storage.repo.head]
+    assert head[STYLE_PATH][1] == b"# Writing style\n\nMy corrected guide.\n"
+
+
+async def test_removed_proposal_leaves_the_current_guide(publication_db):
+    f = await capture_fixture(publication_db)
+    f.storage.repo.edit({STYLE_PATH: b"My current guide\n"})
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    await f.activities.extract(str(run.id))
+    assert await f.activities.propose(str(run.id))
+    proposal = (await f.db.get_run(run.id)).artifact_path
+    f.storage.repo.edit({proposal: b""})
+    with pytest.raises(ApplicationError, match="removed or is too large"):
+        await f.activities.record_approval(str(run.id))
+    assert f.storage.repo.trees[f.storage.repo.head][STYLE_PATH][1] == b"My current guide\n"
+
+
+async def test_runs_pinned_before_review_save_the_guide_directly(publication_db):
+    f = await capture_fixture(publication_db, reviewed=False)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    await f.activities.extract(str(run.id))
+    assert not await f.activities.propose(str(run.id))
+    await f.activities.publish(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "succeeded" and done.artifact_path == STYLE_PATH
+    assert not done.review_required and f.storage.repo.writes == 1
+
+
 async def test_capture_conflict_reuses_the_existing_comparison(publication_db):
     f = await capture_fixture(publication_db)
     run = await start(f)
     await f.activities.prepare(str(run.id))
     await f.activities.extract(str(run.id))
+    await approve(f, run)
     f.storage.repo.edit({STYLE_PATH: b"My concurrently edited guide\n"})
     with pytest.raises(ApplicationError, match="guide changed"):
         await f.activities.publish(str(run.id))
@@ -280,6 +351,7 @@ async def test_lost_publish_response_does_not_overwrite_later_edit(publication_d
     run = await start(f)
     await f.activities.prepare(str(run.id))
     await f.activities.extract(str(run.id))
+    await approve(f, run)
     f.storage.repo.lose_response = True
     with pytest.raises(PublicationPendingError):
         await f.activities.publish(str(run.id))
@@ -288,7 +360,7 @@ async def test_lost_publish_response_does_not_overwrite_later_edit(publication_d
     await f.activities.publish(str(run.id))
     assert (await f.db.get_run(run.id)).canonical_commit_sha == original
     assert f.storage.repo.trees[f.storage.repo.head][STYLE_PATH][1] == b"Later user correction"
-    assert f.storage.repo.writes == 1
+    assert f.storage.repo.writes == 2  # the proposal and the saved guide
 
 
 async def test_no_model_repurchase_or_invalid_guide_replacement(publication_db):
@@ -404,7 +476,7 @@ async def test_invalid_extraction_preserves_current_guide(publication_db):
     await f.activities.extract(str(run.id))
     for _ in range(2):
         with pytest.raises(ApplicationError, match="invalid"):
-            await f.activities.publish(str(run.id))
+            await f.activities.propose(str(run.id))
     assert f.router.generate.await_count == 1
     f.storage.stage_native_output.assert_not_awaited()
     assert (
@@ -439,3 +511,81 @@ async def test_native_checkpoint_reconciles_lost_creation_response():
         await storage.stage_native_output(**args)
     assert await storage.stage_native_output(**args) == "b" * 40
     assert len(calls) == 1 and calls[0]["ephemeral"] is True
+
+
+async def test_capture_waits_in_temporal_for_approval_and_replays(publication_db, temporal_env):
+    import asyncio
+
+    from temporalio.worker import Replayer, Worker
+
+    from tin_lite.workflows import StyleCaptureWorkflow
+
+    f = await capture_fixture(publication_db)
+    a = f.activities
+    activities = [a.prepare, a.extract, a.propose, a.record_approval, a.publish, a.failure]
+    async with Worker(
+        temporal_env.client,
+        task_queue="style-review",
+        workflows=[StyleCaptureWorkflow],
+        activities=activities,
+    ):
+        run = await start(f)
+        handle = await temporal_env.client.start_workflow(
+            StyleCaptureWorkflow.run, str(run.id), id=f"style-{run.id}", task_queue="style-review"
+        )
+        for _ in range(200):
+            if (await f.db.get_run(run.id)).status.value == "needs_input":
+                break
+            await asyncio.sleep(0.05)
+        assert STYLE_PATH not in f.storage.repo.trees[f.storage.repo.head]
+        await handle.signal("approve")
+        await asyncio.wait_for(handle.result(), 30)
+        history = await handle.fetch_history()
+    await Replayer(workflows=[StyleCaptureWorkflow]).replay_workflow(history)
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "succeeded" and done.artifact_path == STYLE_PATH
+    assert str(run.id) in history.to_json() and "provisional" not in history.to_json()
+
+
+async def test_capture_started_before_review_replays_unchanged(publication_db, temporal_env):
+    import asyncio
+
+    from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+
+    from tin_lite.workflows import StyleCaptureWorkflow
+
+    legacy = await capture_fixture(publication_db, reviewed=False)
+    b = legacy.activities
+    async with Worker(
+        temporal_env.client,
+        task_queue="style-legacy",
+        workflows=[CaptureBeforeReview],
+        activities=[b.prepare, b.extract, b.publish, b.failure],
+        # The earlier workflow lives in this test module, which the sandbox cannot import.
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        old_run = await start(legacy)
+        old = await temporal_env.client.start_workflow(
+            CaptureBeforeReview.run,
+            str(old_run.id),
+            id=f"style-{old_run.id}",
+            task_queue="style-legacy",
+        )
+        await asyncio.wait_for(old.result(), 30)
+        old_history = await old.fetch_history()
+    await Replayer(workflows=[StyleCaptureWorkflow]).replay_workflow(old_history)
+
+
+@temporal_workflow.defn(name="style.capture")
+class CaptureBeforeReview:
+    """The capture workflow as it ran before review, to replay its histories."""
+
+    @temporal_workflow.run
+    async def run(self, run_id: str) -> None:
+        for step in ("style_prepare", "style_extract", "style_publish"):
+            await temporal_workflow.execute_activity(
+                step,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )

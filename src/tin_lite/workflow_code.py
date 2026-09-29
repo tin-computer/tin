@@ -22,6 +22,10 @@ ROUTE_KEYS = ("provider", "model", "max_calls", "max_input_bytes", "max_output_t
 MAX_FILE_BYTES = 64_000
 MAX_PACKAGE_BYTES = 256_000
 MAX_OUTPUT_BYTES = 64_000
+# An output file name may carry the run's date and a slug the package picks, so repeated
+# runs keep separate, readable files. Nothing else is substituted.
+OUTPUT_PLACEHOLDERS = {"{date}": r"\d{4}-\d{2}-\d{2}", "{slug}": r"[a-z0-9]+(?:-[a-z0-9]+)*"}
+MAX_OUTPUT_SLUG = 80
 
 
 @dataclass(frozen=True)
@@ -154,7 +158,7 @@ def validate_code_definition(definition) -> CodeSpec:
     path = relative_path(output["path"])
     if (
         output["kind"] != "project.artifact"
-        or not safe_project_file_path(path)
+        or not safe_project_file_path(_sample_output_path(path))
         or path == "wiki/INDEX.md"
         or path.split("/")[0] in {".tin-lite", "procedures", "registry", "workflow_packages"}
         or output["media_type"]
@@ -235,14 +239,51 @@ async def load_code_package(*, storage, repo_id, commit_sha, definition_path):
     return source.definition, spec, files
 
 
-def validate_code_result(raw: bytes, spec: CodeSpec) -> bytes:
+def _sample_output_path(template: str) -> str:
+    """Check a declared output path; placeholders may appear once each, in the file name."""
+    head, _, name = template.rpartition("/")
+    for placeholder in OUTPUT_PLACEHOLDERS:
+        if template.count(placeholder) > 1 or placeholder in head:
+            raise ValueError("code output placeholders belong once in the file name")
+    if re.search(r"[{}]", re.sub("|".join(map(re.escape, OUTPUT_PLACEHOLDERS)), "", name)):
+        raise ValueError("code output supports only {date} and {slug} placeholders")
+    return template.replace("{date}", "2026-01-01").replace("{slug}", "sample")
+
+
+def output_path_allowed(spec: CodeSpec, path: object, created_at=None) -> bool:
+    """Whether one concrete output path is what this run's declared output allows."""
+    if not isinstance(path, str):
+        return False
+    template = spec.output_path
+    if not any(placeholder in template for placeholder in OUTPUT_PLACEHOLDERS):
+        return path == template
+    if "{date}" in template and created_at is None:
+        return False
+    pattern = re.escape(template)
+    for placeholder, expression in OUTPUT_PLACEHOLDERS.items():
+        pattern = pattern.replace(re.escape(placeholder), f"(?P<{placeholder[1:-1]}>{expression})")
+    match = re.fullmatch(pattern, path)
+    return bool(
+        match
+        and ("{date}" not in template or match["date"] == created_at.date().isoformat())
+        and ("{slug}" not in template or len(match["slug"]) <= MAX_OUTPUT_SLUG)
+        and safe_project_file_path(path)
+    )
+
+
+def code_result_path(raw: bytes) -> str:
+    """The concrete path a result names; validate_code_result checks it against the contract."""
+    return json.loads(raw)["path"]
+
+
+def validate_code_result(raw: bytes, spec: CodeSpec, *, created_at=None) -> bytes:
     if len(raw) > spec.max_bytes * 6 + 2048:
         raise ValueError("code result envelope exceeds its bound")
     value = json.loads(raw)
     if (
         not isinstance(value, dict)
         or set(value) != {"path", "content"}
-        or value["path"] != spec.output_path
+        or not output_path_allowed(spec, value["path"], created_at)
         or not isinstance(value["content"], str)
     ):
         raise ValueError("code result must contain the declared path and text content")

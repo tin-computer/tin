@@ -88,7 +88,7 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 1000});
       const spacing = await page.locator(".decision-detail-card").evaluate(card => ({
-        gap: card.querySelector("footer").getBoundingClientRect().top - card.querySelector(".decision-outputs").getBoundingClientRect().bottom,
+        gap: card.querySelector("footer").getBoundingClientRect().top - card.querySelector(".decision-summary").getBoundingClientRect().bottom,
         padding: parseFloat(getComputedStyle(card.querySelector(".decision-detail-body")).paddingBottom),
         emptyReviewDisplay: getComputedStyle(card.querySelector(".workflow-review")).display,
       }));
@@ -153,7 +153,7 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     assert.equal(await page.locator(".decision-detail-card .review-composer").count(), 1);
     assert.doesNotMatch(await page.locator(".review-composer").innerText(), /Add reference files|Add file/);
     assert.deepEqual(fileReads, []);
-    await page.getByRole("button", {name: "Read →", exact: true}).click();
+    await page.getByRole("button", {name: "Open draft →", exact: true}).click();
     await page.getByRole("heading", {name: "An article with a purpose", exact: true}).waitFor();
     assert.equal(await page.locator(".review-composer").count(), 0);
     await page.getByRole("button", {name: "Compare", exact: true}).click();

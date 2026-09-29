@@ -588,3 +588,19 @@ def test_routing_evaluation_has_eighty_unique_cases_and_routed_workflows() -> No
     }
     assert any(case["expects_question"] for case in cases)
     assert sum(case["source"].startswith("strangeloop:") for case in cases) == 35
+
+
+def test_chat_sees_each_output_by_its_title():
+    from tin_lite.luna import _bounded_run_state
+
+    state = _bounded_run_state(
+        [
+            {
+                "id": "run-1",
+                "workflow_name": "content.answer_page",
+                "artifact_path": "content/answers/2026-09-28-which-tools-work.md",
+                "artifact_title": "Which tools work with coding agents?",
+            }
+        ]
+    )
+    assert state[0]["artifact_title"] == "Which tools work with coding agents?"

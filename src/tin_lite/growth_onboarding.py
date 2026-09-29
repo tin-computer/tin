@@ -654,7 +654,7 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
     },
     "content.release_announce": {
         "first": "a minute or two",
-        "lands": "Files, reports/RELEASE_ANNOUNCE.md",
+        "lands": "Files, content/releases/<date>-<release>.md",
         "watch": "post and send the drafts you approve",
     },
     "growth.score_quiz": {

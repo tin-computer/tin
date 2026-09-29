@@ -70,6 +70,14 @@ model call yields concise source-backed rules and an original demonstration. Det
 rejects nonexistent source IDs and bounds the output; conversational/reference-only evidence is
 explicitly provisional. Stated preferences remain verbatim, with later direction taking precedence.
 
+Capture 1.1.0 proposes the guide before it takes effect, the way brand capture proposes its
+documents. The run saves the extracted guide to a run-owned file,
+`style/proposals/<date>-writing-style-<run>.md`, and waits in Decisions. The active guide stays
+unchanged until a member approves. Approval binds the proposal as it stands at that moment,
+including edits made to it in Files, and only then is it saved as the guide. A proposal removed or
+emptied before approval fails the run and leaves the current guide alone. Runs pinned to 1.0.0
+save the guide directly, as before.
+
 The result is `.agents/skills/writing-style/SKILL.md`. The same canonical publication mechanism
 used for saved procedure outputs checks whether that destination changed since capture began.
 An unrelated file edit is fine; a concurrent guide edit preserves the current file and retains

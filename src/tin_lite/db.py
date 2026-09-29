@@ -55,6 +55,33 @@ _warned_unknown_workflow_system_ids: set[str] = set()
 
 # One cheap, Postgres-only eligibility predicate for Decisions and its count.
 # Applying decisions stay visible until their uncertain outcome is settled.
+# A one-off task that revises a run's saved output file: still waiting for approval, or
+# applied after that output was saved. Approving the run would otherwise use the older copy.
+_OUTPUT_REVISION_SQL = """
+    SELECT jsonb_build_object(
+        'run_id', task.id,
+        'title', task.task_title,
+        'state', CASE WHEN task.status = 'succeeded' THEN 'applied' ELSE 'waiting' END,
+        'revision', task.canonical_commit_sha,
+        'at', COALESCE(task.reviewed_at, task.review_requested_at, task.created_at)
+    )
+    FROM workflow_runs AS task
+    WHERE task.project_id = run.project_id
+      AND task.executor = 'project.task'
+      AND task.id <> run.id
+      AND run.artifact_path IS NOT NULL
+      AND task.task_diff->'files'
+          @> jsonb_build_array(jsonb_build_object('path', run.artifact_path))
+      AND (
+          (task.status = 'needs_input' AND task.task_phase = 'review')
+          OR (task.status = 'running' AND task.task_phase = 'applying')
+          OR (task.status = 'succeeded' AND task.review_decision = 'approved'
+              AND task.reviewed_at > COALESCE(run.review_requested_at, run.created_at))
+      )
+    ORDER BY task.status = 'succeeded', task.created_at DESC
+    LIMIT 1
+"""
+
 _PENDING_OUTPUT_CONFLICT_SQL = """
     run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
@@ -3242,16 +3269,11 @@ class Database:
                    workflow.key AS workflow_key,
                    workflow.title AS workflow_title,
                    COALESCE(decision.kind, 'review') AS kind,
-                   CASE WHEN workflow.key='content.generate' AND workflow.project_id IS NULL
-                       AND COALESCE(decision.title, 'Review workflow output')
-                           ='Review workflow output'
-                       THEN COALESCE('Review: ' || (
-                           SELECT receipt.result->'item'->>'title' FROM effect_receipts receipt
-                           WHERE receipt.execution_key=
-                               'content-draft:' || run.id::text || ':prepare'
-                             AND receipt.operation='content.generate' AND receipt.status='completed'
-                       ), 'Review ' || workflow.title)
-                       ELSE COALESCE(decision.title, 'Review ' || workflow.title) END AS title,
+                   -- Older reviews saved one generic title; name what they produced instead.
+                   CASE WHEN COALESCE(decision.title, 'Review workflow output')
+                           <>'Review workflow output'
+                       THEN decision.title
+                       ELSE 'Review: ' || COALESCE(output.title, workflow.title) END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -3287,9 +3309,29 @@ class Database:
                    decision.deadline_at,
                    COALESCE(decision.created_at, run.review_requested_at, run.created_at)
                        AS created_at,
-                   NULL::jsonb AS output_resolution
+                   NULL::jsonb AS output_resolution,
+                   COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
+                   ({_OUTPUT_REVISION_SQL}) AS revision,
+                   output.title AS output_title
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            -- What the run produced, in its own words: the document's heading, the planned
+            -- article's brief, or the task's title.
+            LEFT JOIN LATERAL (
+                SELECT COALESCE(
+                    NULLIF(run.artifact_title, ''),
+                    CASE WHEN workflow.key='content.generate' AND workflow.project_id IS NULL
+                        THEN (
+                        SELECT receipt.result->'item'->>'title' FROM effect_receipts receipt
+                        WHERE receipt.execution_key=
+                            'content-draft:' || run.id::text || ':prepare'
+                          AND receipt.operation='content.generate'
+                          AND receipt.status='completed'
+                    ) END,
+                    CASE WHEN run.executor = 'project.task'
+                        THEN NULLIF(run.task_title, '') END
+                ) AS title
+            ) AS output ON true
             LEFT JOIN LATERAL (
                 SELECT pending.*
                 FROM run_decisions AS pending
@@ -3299,7 +3341,11 @@ class Database:
             ) AS decision ON true
             WHERE run.project_id = $1
               AND run.status = 'needs_input'
-              AND (run.review_required OR run.executor = 'project.task')
+              -- A task asking a question waits on an answer, not a decision.
+              AND (run.review_required OR (
+                  run.executor = 'project.task' AND run.task_phase = 'review'
+                  AND run.task_has_changes IS NOT FALSE
+              ))
             UNION ALL
             SELECT run.id, run.id, run.project_id, workflow.key, workflow.title,
                    'output_conflict',
@@ -3314,7 +3360,7 @@ class Database:
                        'media_type', run.retained_output->>'media_type',
                        'source', 'retained'
                    )), '{{}}'::jsonb, false, 'pending', NULL::timestamptz,
-                   run.created_at, run.output_resolution
+                   run.created_at, run.output_resolution, run.created_at, NULL::jsonb, NULL
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
             WHERE run.project_id = $1 AND ({_PENDING_OUTPUT_CONFLICT_SQL})
@@ -3334,9 +3380,22 @@ class Database:
                     if row.get("output_resolution") is not None
                     else None
                 ),
+                "revision": (
+                    _json_object(row["revision"], field="output revision")
+                    if row.get("revision") is not None
+                    else None
+                ),
             }
             for row in rows
         ]
+
+    async def output_revision(self, *, run_id: UUID) -> dict[str, Any] | None:
+        """The task that revises this run's saved output, if one waits or already applied."""
+        value = await self.pool.fetchval(
+            f"SELECT ({_OUTPUT_REVISION_SQL}) FROM workflow_runs AS run WHERE run.id = $1",  # noqa: S608 — static SQL, no caller text
+            run_id,
+        )
+        return _json_object(value, field="output revision") if value is not None else None
 
     async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(
@@ -6387,7 +6446,8 @@ class Database:
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
-                  AND status NOT IN ('failed', 'stopped', 'superseded') AND NOT review_required
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                  AND (NOT review_required OR review_decision = 'approved')
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
                 """,
@@ -6413,6 +6473,20 @@ class Database:
             await self.complete_effect(
                 conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
             )
+
+    async def clear_style_review_projection(self, run_id: UUID) -> None:
+        """After approval, a style run's proposal stops being its result; saving the guide
+        projects the real one through the ordinary publication and conflict path."""
+        await self.pool.execute(
+            """
+            UPDATE workflow_runs
+            SET canonical_commit_sha = NULL, artifact_ref = NULL, artifact_path = NULL,
+                artifact_title = NULL
+            WHERE id = $1 AND executor = 'style.capture' AND review_decision = 'approved'
+              AND status = 'running' AND artifact_path LIKE 'style/proposals/%'
+            """,
+            run_id,
+        )
 
     async def retain_procedure_output(
         self,
@@ -6799,8 +6873,12 @@ class Database:
         artifact_path: str,
         summary: str = "Answer page draft is ready for your review.",
         artifact_title: str | None = None,
+        explanation: str | None = None,
     ) -> bool:
-        """Expose a reviewable artifact and pause only when this run pinned review."""
+        """Expose a reviewable artifact and pause only when this run pinned review.
+
+        `summary` goes to Activity; `explanation`, when given, is the decision card's line.
+        """
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE",
@@ -6860,11 +6938,16 @@ class Database:
                 )
             if review_required and row["review_decision"] is None:
                 filename = artifact_title or artifact_path.rsplit("/", 1)[-1]
-                revision_supported = await conn.fetchval(
-                    "SELECT project_id IS NULL "
+                workflow_row = await conn.fetchrow(
+                    "SELECT title, project_id IS NULL "
                     "AND key IN ('content.generate','content.public_article') "
-                    "FROM workflows WHERE id=$1",
+                    "AS revision_supported FROM workflows WHERE id=$1",
                     row["workflow_id"],
+                )
+                revision_supported = workflow_row and workflow_row["revision_supported"]
+                # Name what the run produced, or the workflow when the output has no title.
+                title = "Review: " + (
+                    artifact_title or (workflow_row and workflow_row["title"]) or "workflow output"
                 )
                 await conn.execute(
                     """
@@ -6873,12 +6956,13 @@ class Database:
                         items, response_schema, feedback_supported, status
                     )
                     VALUES (
-                        $5, $2, $1, 'review', 'Review workflow output', $3,
+                        $5, $2, $1, 'review', $7, $3,
                         '',
                         $4::jsonb, '{}'::jsonb, $6, 'pending'
                     )
                     ON CONFLICT (id) DO UPDATE SET
-                        run_id=EXCLUDED.run_id, explanation=EXCLUDED.explanation,
+                        run_id=EXCLUDED.run_id, title=EXCLUDED.title,
+                        explanation=EXCLUDED.explanation,
                         items=EXCLUDED.items, feedback_supported=EXCLUDED.feedback_supported,
                         status='pending', response=NULL, applied_at=NULL,
                         applied_by_clerk_user_id=NULL
@@ -6886,7 +6970,7 @@ class Database:
                     """,
                     run_id,
                     row["project_id"],
-                    summary[:2000],
+                    (summary if explanation is None else explanation)[:2000],
                     json.dumps(
                         [
                             {
@@ -6908,6 +6992,7 @@ class Database:
                     ),
                     row["review_root_run_id"] or run_id,
                     bool(revision_supported),
+                    title[:160],
                 )
                 await conn.execute(
                     """

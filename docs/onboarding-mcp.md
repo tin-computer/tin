@@ -84,3 +84,32 @@ The onboarding conversation should lead with a concrete experiment and first use
 result, then explain access, review control and delivery. Close with what is running,
 what arrives next and when, where the result will be received, and the next decision.
 Do not read a long catalog or optimistic outlook in place of that handoff.
+
+## Revising a produced document
+
+Every `result_links` entry, in `get_run` and in each onboarding `first_deliverables` item, also
+tells the founder's agent how to revise that document. `read_run_output` carries the same
+fields for the canonical output. The fields are additive; `url` stays for older clients.
+
+| Field | Meaning |
+| --- | --- |
+| `artifact_path`, `revision` | The project file and the commit it was saved at. |
+| `review_url` | The founder's link to read or review this copy (the same link as `url`). |
+| `review_pending`, `review_decision` | Whether a review decision is still open, and the decision once made. |
+| `revise` | The one existing route that changes the document, or why none exists yet. |
+
+`revise.direct_edit` is true when the agent can edit the file itself. Then `before` lists the
+calls to make first (`list_project_files` for the current project revision, `read_project_file`
+for the current text), `tool` and `arguments` give the `commit_project_changes` call with its
+placeholders, and `revised_url` is the Files link to hand the founder once `{revision}` is
+filled with the revision the commit returns. `review_url` keeps showing the run's own copy.
+
+A draft waiting for review is never revised by editing its file: approval and delivery use
+the saved copy at `revision`, so the edit would not reach them. For articles `revise` names
+`request_workflow_changes` (after `get_workflow_review` for the `review_token`), a metered new
+version of the same piece that keeps the review. Other waiting drafts have `tool: null` and a
+reason until the founder decides in Decisions. After a decision the file can be edited, but
+the decided copy, and any pull request or applied document made from it, stay as they were.
+A content plan snapshot points to `edit_content_plan`, an email campaign to
+`revise_email_campaign`, a waiting onboarding plan to `record_onboarding_picks`, and a file
+MCP cannot edit (video, images) has no route.

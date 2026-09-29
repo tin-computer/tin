@@ -669,6 +669,7 @@ class RunView(BaseModel):
     result_summary: str | None = None
     prerequisite_evidence: dict | None = None
     content_delivery: dict | None = None
+    page_url: dict | None = None
 
 
 class OutreachCampaignView(BaseModel):
@@ -872,6 +873,9 @@ class DecisionView(BaseModel):
     created_at: datetime
 
     output_resolution: dict | None = None
+    version_saved_at: datetime | None = None
+    revision: dict | None = None
+    output_title: str | None = None
 
 
 class DecisionApply(BaseModel):
@@ -3036,11 +3040,14 @@ async def list_project_runs(
     runs = await request.app.state.runtime.database.list_runs(project_id=project_id, limit=limit)
     response.headers["X-Tin-Read-Source"] = "postgres"
     from tin_lite.content_delivery import ContentDelivery
+    from tin_lite.page_urls import PageUrls
 
-    deliveries = await ContentDelivery(database=request.app.state.runtime.database).statuses(runs)
+    database = request.app.state.runtime.database
+    deliveries = await ContentDelivery(database=database).statuses(runs)
+    pages = await PageUrls(database=database).views(runs, deliveries)
     return [
         RunView.model_validate(item).model_copy(
-            update={"content_delivery": deliveries.get(item.id)}
+            update={"content_delivery": deliveries.get(item.id), "page_url": pages.get(item.id)}
         )
         for item in runs
     ]
@@ -3287,11 +3294,33 @@ async def get_run(
 ) -> RunView:
     run = await _run_from_postgres(run_id, request, user)
     response.headers["X-Tin-Read-Source"] = "postgres"
-    from tin_lite.content_delivery_api import delivery_service
+    from tin_lite.content_delivery_api import delivery_service, page_url_service
 
+    runtime = request.app.state.runtime
+    delivery = await delivery_service(runtime).status(run)
     return RunView.model_validate(run).model_copy(
-        update={"content_delivery": await delivery_service(request.app.state.runtime).status(run)}
+        update={
+            "content_delivery": delivery,
+            "page_url": await page_url_service(runtime).view(run, delivery),
+        }
     )
+
+
+@router.get("/api/workflows/runs/{run_id}/page-url")
+async def get_run_page_url(
+    run_id: UUID,
+    request: Request,
+    check: bool = Query(default=False),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Where a proposed page appears; `check` asks GitHub and the public site, at most every
+    ten minutes per run, whether it merged and is live."""
+    run = await _run_from_postgres(run_id, request, user)
+    from tin_lite.content_delivery_api import delivery_service, page_url_service
+
+    runtime = request.app.state.runtime
+    delivery = await delivery_service(runtime).status(run)
+    return {"page_url": await page_url_service(runtime).view(run, delivery, check=check)}
 
 
 @router.get("/api/workflows/runs/{run_id}/usage")
@@ -3810,9 +3839,15 @@ async def approve_run(
     payload: WorkflowReviewApproval | None = None,
 ) -> RunView:
     run = await _run_from_postgres(run_id, request, user)
+    from tin_lite.review_revisions import approval_conflict
     from tin_lite.workflow_review_store import ReviewConflict
     from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
+    conflict = await approval_conflict(
+        request.app.state.runtime.database, run, payload.delivery if payload else None
+    )
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
     if payload is not None and payload.delivery is not None:
         # Record the pick before the approval so a refused pick never approves blindly.
         await _choose_content_delivery(run, payload, request, user)

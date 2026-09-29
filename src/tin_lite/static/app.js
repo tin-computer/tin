@@ -63,10 +63,12 @@ if (BILLING_ENABLED) ALLOWED_VIEWS.add("billing");
 // One small History API router. Legacy bookmarks are input-only compatibility;
 // new links use paths. Document heading fragments are not application routes.
 const DASHBOARD_ROUTE = /^(?:system|workflows|chat|activity|decisions|files|integrations|connect|billing|file|(?:document|task|compare)\/[^/?]+)(?:\?|$)/;
-function routeUrl(route, base = window.location.href) {
+// `carry` names the only current query parameters that survive; null keeps the rest.
+function routeUrl(route, base = window.location.href, carry = null) {
   const url = new URL(base);
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
+  if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
   for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
@@ -86,7 +88,8 @@ function currentRoute() {
   return `${window.location.pathname.replace(/^\//, "")}${window.location.search}`;
 }
 function goToRoute(route) {
-  const target = routeUrl(route);
+  // Moving inside the dashboard keeps only the project; sign-in and callback leftovers stay behind.
+  const target = routeUrl(route, window.location.href, ["project"]);
   if (`${window.location.pathname}${window.location.search}${window.location.hash}` !== target) window.history.pushState(null, "", target);
   routeChanged();
 }
@@ -159,13 +162,24 @@ function clearConnectRequest() {
   } catch (_error) {}
 }
 
+const TIN_FOLDER_SHAPE = '<path d="M1.75 5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 13.5H3a1.25 1.25 0 0 1-1.25-1.25z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/>';
+const TIN_FOLDER_OPEN_SHAPE = '<path d="M1.75 8V5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25V8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M3.4 8.25H14l-1.4 4.6a.9.9 0 0 1-.86.65H2.75a.85.85 0 0 1-.82-1.08z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/>';
+
+// The tree draws this in place of a folder's chevron: a disclosure mark and a folder, closed or
+// open. The row's --tin-tree-open (projectFileTreeUnsafeCss) picks one, so no code edits the rows.
+const TIN_TREE_FOLDER_SYMBOL = `<symbol id="tin-tree-folder" viewBox="0 0 38 16">
+  <g style="opacity: calc(1 - var(--tin-tree-open, 0))"><path d="M5.5 5 8.5 8l-3 3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><g transform="translate(22 0)">${TIN_FOLDER_SHAPE}</g></g>
+  <g style="opacity: var(--tin-tree-open, 0)"><path d="M4 6.5 7 9.5l3-3" fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round"/><g transform="translate(22 0)">${TIN_FOLDER_OPEN_SHAPE}</g></g>
+</symbol>`;
+
 const TIN_FILE_ICON_SPRITE = `<svg aria-hidden="true" width="0" height="0" style="position:absolute;overflow:hidden">
   <symbol id="file-tree-icon-chevron" viewBox="0 0 16 16"><path d="M5.5 3.5 10 8l-4.5 4.5" fill="none" stroke="currentColor" stroke-width=".95" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="file-tree-icon-file" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
   <symbol id="file-tree-icon-dot" viewBox="0 0 16 16"><circle cx="8" cy="8" r="1" fill="currentColor"/></symbol>
   <symbol id="file-tree-icon-lock" viewBox="0 0 16 16"><path d="M5 7V5.5a3 3 0 0 1 6 0V7m-7 0h8v6H4z" fill="none" stroke="currentColor" stroke-width=".95"/></symbol>
-  <symbol id="tin-folder" viewBox="0 0 16 16"><path d="M1.75 5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25v5.5A1.25 1.25 0 0 1 13 13.5H3a1.25 1.25 0 0 1-1.25-1.25z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
-  <symbol id="tin-folder-open" viewBox="0 0 16 16"><path d="M1.75 8V5.25A1.25 1.25 0 0 1 3 4h3l1.5 1.5H13a1.25 1.25 0 0 1 1.25 1.25V8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M3.4 8.25H14l-1.4 4.6a.9.9 0 0 1-.86.65H2.75a.85.85 0 0 1-.82-1.08z" fill="var(--file-icon-folder)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
+  <symbol id="tin-folder" viewBox="0 0 16 16">${TIN_FOLDER_SHAPE}</symbol>
+  <symbol id="tin-folder-open" viewBox="0 0 16 16">${TIN_FOLDER_OPEN_SHAPE}</symbol>
+  ${TIN_TREE_FOLDER_SYMBOL}
   <symbol id="tin-file" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/></symbol>
   <symbol id="tin-markdown" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3M5.5 8.5h5M5.5 11h3.25" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="tin-json" viewBox="0 0 16 16"><path d="M4 1.75h5.25l3 3v9.5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V2.75a1 1 0 0 1 1-1z" fill="var(--file-icon-surface)" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M9.25 1.75v3h3" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".95" stroke-linejoin="round"/><path d="M6.7 7.6c-.6 0-.9.3-.9.8v.7c0 .4-.25.6-.6.65.35.05.6.25.6.65v.7c0 .5.3.8.9.8M9.3 7.6c.6 0 .9.3.9.8v.7c0 .4.25.6.6.65-.35.05-.6.25-.6.65v.7c0 .5-.3.8-.9.8" fill="none" stroke="var(--file-icon-stroke)" stroke-width=".8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
@@ -235,7 +249,6 @@ const state = {
   filesSearch: "",
   filesDirectory: "",
   filesTree: null,
-  filesTreeObserver: null,
   filesTreeSubscription: null,
   filesUpdated: false,
   fileCache: new Map(),
@@ -3078,6 +3091,11 @@ function renderDocument() {
             }
           : null,
     });
+    const readerColumn = route.source !== "retained" && !route.taskPath ? main.querySelector?.(".markdown-document") : null;
+    if (readerColumn) {
+      readerColumn.insertAdjacentHTML("afterbegin", pageUrlLine(run, "document"));
+      bindPageUrls();
+    }
     if (route.source !== "retained" && supportsArticleFeedback(run)) {
       const cleanReader = state.documentCleanup;
       const cleanReview = mountArticleFeedback(main, run.id, true);
@@ -4231,15 +4249,8 @@ function selectedDecision() {
   return state.decisions.find((item) => item.id === state.decisionId) || state.decisions[0];
 }
 
-function decisionItemHtml(decision, item, index) {
-  const title = item.title || item.file || `Output ${index + 1}`;
-  const facts = [item.file, item.words ? `${item.words} words` : null, item.sources ? `${item.sources} sources` : null]
-    .filter(Boolean)
-    .join(" · ");
-  return `<article class="decision-output">
-    <span><strong>${escapeHtml(title)}</strong><code>${escapeHtml(facts)}</code></span>
-    <button type="button" data-decision-output="${escapeHtml(decision.id)}" data-decision-output-index="${index}">Read →</button>
-  </article>`;
+function sameText(left, right) {
+  return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
 }
 
 const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page"]);
@@ -4261,42 +4272,141 @@ function repositoryDeliveryAvailable(run) {
 
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
-  if (repositoryDeliveryAvailable(run)) {
-    return `<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>
-      <button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr">Open a pull request</button>
-      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit">Publish now</button>`;
+  const revision = decision.revision;
+  // A waiting revision must be resolved first. Once applied, the older copy may stay in Tin
+  // but never be published; the server refuses both too.
+  const blocked = revision?.state === "waiting" ? " disabled" : "";
+  if (revision?.state === "applied" && isContentDraftReview(run)) {
+    return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
   }
-  const label = run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
+  if (repositoryDeliveryAvailable(run)) {
+    return `<label class="decision-remember"><input type="checkbox" data-decision-remember${blocked}> Do this for future drafts</label>
+      <button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+      <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
+      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
+  }
+  const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
   return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-    <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
+    <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>${escapeHtml(label)}</button>`;
+}
+
+function versionTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "earlier";
+  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
+  const options = { hour: "2-digit", minute: "2-digit", hour12: false };
+  try {
+    const day = (item) => item.toLocaleDateString(undefined, { timeZone });
+    const time = date.toLocaleTimeString([], { ...options, timeZone });
+    if (day(date) === day(new Date())) return time;
+    return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone })}, ${time}`;
+  } catch {
+    return ledgerTime(date);
+  }
+}
+
+// Names the exact copy an approval uses, and any newer revision of it, so an older copy
+// cannot go out unnoticed.
+function decisionVersionLabel(decision, run) {
+  if (decision.kind === "output_conflict") return "";
+  const when = versionTime(decision.version_saved_at || decision.created_at);
+  const revision = decision.revision?.state;
+  const version = revision === "applied" && isContentDraftReview(run)
+    ? `Keeps the draft from ${when} in Tin`
+    : run?.workflow_name === "project.task" ? `Applies the changes from ${when}` : `Approves the draft from ${when}`;
+  if (revision === "waiting") return `${version} · a newer revision is waiting in Decisions`;
+  if (revision === "applied") return `${version} · a newer revision was applied`;
+  return version;
+}
+
+function pageUrlLine(run, mode = "card") {
+  if (!run || !window.TinPageUrl) return "";
+  const pending = isContentDraftReview(run) && (mode === "card" || run.review_decision === "approved");
+  return window.TinPageUrl[mode](run.page_url, run.id, {pending});
+}
+
+function bindPageUrls() {
+  window.TinPageUrl?.bind(main, {
+    api,
+    onUpdate: (id, page) => {
+      const run = state.runs.find((item) => item.id === id);
+      if (run) run.page_url = page;
+    },
+  });
+}
+
+// The card leads with what the run produced; the workflow and the wait follow in plain words.
+function decisionHeading(decision, run) {
+  const output = decision.output_title || (run?.workflow_name === "project.task" ? run.task_title : "") || "";
+  const waited = waitingLabel(decision.created_at);
+  return {
+    title: output || decision.workflow_title || "Decision",
+    subtitle: [
+      output && !sameText(output, decision.workflow_title) ? decision.workflow_title : null,
+      waited === "now" ? "Just arrived" : `Waiting ${waited}`,
+      decision.kind === "output_conflict" ? "result saved" : null,
+    ].filter(Boolean).join(" · "),
+  };
+}
+
+function taskChangeLine(run) {
+  const files = run?.task_diff?.files || [];
+  if (!files.length) return "";
+  if (files.length === 1) return `Edits ${files[0].path}.`;
+  let shared = String(files[0].path || "").split("/").slice(0, -1);
+  for (const file of files.slice(1)) {
+    const parts = String(file.path || "").split("/");
+    let index = 0;
+    while (index < shared.length && shared[index] === parts[index]) index += 1;
+    shared = shared.slice(0, index);
+  }
+  return `Edits ${files.length} files${shared.length ? ` in ${shared.join("/")}` : ""}.`;
+}
+
+// Older reviews saved a sentence that only restates the workflow; it never reaches the card.
+const GENERIC_REVIEW_LINE = /^(?:[^.]*\bis ready for your review|Review the complete output before this workflow continues|Review the proposed project changes before they are applied)\.\s*/;
+
+// The card body is prose only: one sentence on what the output is, or a few on what a
+// task changes. Files and diffs stay behind the Open link.
+function decisionBodyLine(decision, run, heading) {
+  const isTask = run?.workflow_name === "project.task";
+  const text = isTask
+    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run)
+    : String(decision.explanation || "").replace(GENERIC_REVIEW_LINE, "").trim();
+  const line = (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text]).slice(0, isTask ? 3 : 1).join(" ").trim();
+  return [heading.title, heading.subtitle].some((text) => sameText(text, line)) ? "" : line;
 }
 
 function decisionDetailHtml(decision) {
   if (!decision) return "";
   const outputs = decision.items || [];
-  // Output rows already open the review. Keep a run action only when it is
-  // distinct (conflicts), or when there is no output row to open.
-  const showRunAction = decision.kind === "output_conflict" || !outputs.length;
   const run = state.runs.find((item) => item.id === decision.run_id);
+  const isTask = run?.workflow_name === "project.task";
+  const runActionLabel = isTask ? "Open task" : outputs.length && decision.kind !== "output_conflict" ? "Open draft" : "Open run";
   const deliveryNote = decision.kind !== "output_conflict" && isContentDraftReview(run) && !connectedRepository()
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
   const consequence = String(decision.consequence || "").trim();
+  const heading = decisionHeading(decision, run);
+  const bodyLine = decisionBodyLine(decision, run, heading);
+  const version = decisionVersionLabel(decision, run);
+  const footerNote = [
+    version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
+    [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" "),
+  ].filter(Boolean).join(" · ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
-      <span><strong>${escapeHtml(decision.workflow_title)}</strong><code>${escapeHtml(decision.workflow_key)} · ${escapeHtml(shortRunId(decision.run_id))} · ${escapeHtml(waitingLabel(decision.created_at))}${decision.kind === "output_conflict" ? " · result saved" : ""}</code></span>
-      ${showRunAction ? `<button type="button" data-decision-read="${escapeHtml(decision.id)}">Observe →</button>` : ""}
+      <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
+      <button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>
     </header>
     <div class="decision-detail-body">
-      <p>${escapeHtml(decision.explanation)}</p>
-      <div class="decision-outputs">
-        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : '<span class="decision-no-output">Open the run to review its proposed changes.</span>'}
-      </div>
+      ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
+      ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
     </div>
-    <footer${consequence || deliveryNote ? "" : ' class="is-actions-only"'}>
-      ${consequence || deliveryNote ? `<span>${escapeHtml(consequence)}${consequence && deliveryNote ? " " : ""}${deliveryNote}</span>` : ""}
+    <footer${footerNote ? "" : ' class="is-actions-only"'}>
+      ${footerNote ? `<span>${footerNote}</span>` : ""}
       ${decision.kind === "output_conflict" ? `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
       <button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
     </footer>
@@ -4338,8 +4448,8 @@ function renderDecisions() {
     state.decisionId = state.decisions.find((item) => item.id !== decision.id)?.id || decision.id;
     renderDecisions();
   });
-  main.querySelectorAll("[data-decision-read], [data-decision-output]").forEach((button) => {
-    button.addEventListener("click", () => openDecisionReview(decision, button));
+  main.querySelectorAll("[data-decision-read]").forEach((button) => {
+    button.addEventListener("click", () => openDecisionReview(decision));
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
@@ -4349,22 +4459,18 @@ function renderDecisions() {
     navigate("integrations");
   });
   main.querySelector("[data-output-compare]")?.addEventListener("click", () => openOutputComparison(decision.run_id, "decisions"));
+  bindPageUrls();
   if (decision && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
 }
 
-function openDecisionReview(decision, button) {
+function openDecisionReview(decision) {
   if (decision.kind === "output_conflict") {
-    if (button.hasAttribute("data-decision-read")) {
-      const event = state.activity.find((item) => item.run_id === decision.run_id);
-      state.activityFilter = "all";
-      if (event) state.expandedRun = { runId: decision.run_id, eventId: event.id };
-      navigate("activity");
-      return;
-    }
-    const item = decision.items[Number(button.dataset.decisionOutputIndex || 0)];
-    goToRoute(`file?${new URLSearchParams({ path: item.file, revision: item.revision, compareRun: decision.run_id, return: "decisions", back: "decisions", source: "retained" })}`);
+    const event = state.activity.find((item) => item.run_id === decision.run_id);
+    state.activityFilter = "all";
+    if (event) state.expandedRun = { runId: decision.run_id, eventId: event.id };
+    navigate("activity");
     return;
   }
   const run = state.runs.find((item) => item.id === decision.run_id);
@@ -4372,8 +4478,8 @@ function openDecisionReview(decision, button) {
     openTask(run.id);
     return;
   }
-  const index = Number(button.dataset.decisionOutputIndex || 0);
-  const item = decision.items?.[index];
+  // The card opens its first output; the reader links any related documents.
+  const item = decision.items?.[0];
   if (item?.file && item?.revision && item.file !== run?.artifact_path) {
     openProjectFile(item.file, item.revision, decision.run_id);
     return;
@@ -4418,6 +4524,7 @@ async function applyDecision(decision, button) {
 function deliveryToast(delivery, fallback) {
   if (delivery === "github_commit") return "Draft approved. Publishing it to the repository now.";
   if (delivery === "github_pr") return "Draft approved. GitHub PR delivery will follow; nothing is merged.";
+  if (delivery === "none") return "Draft kept in Tin. Nothing was published.";
   return fallback;
 }
 
@@ -4672,15 +4779,8 @@ function projectFileTreeUnsafeCss() {
       justify-content: flex-start;
       gap: 8px;
     }
-    .tin-tree-disclosure {
-      width: 14px;
-      color: var(--ink-muted);
-      font-family: "Geist Mono", "SFMono-Regular", Consolas, monospace;
-      font-size: 11px;
-      line-height: 1;
-      text-align: center;
-    }
-    .tin-tree-folder { width: 16px; height: 16px; flex: 0 0 16px; }
+    [data-item-type="folder"] > [data-item-section="icon"] > svg { transform: none; }
+    [data-item-type="folder"][aria-expanded="true"] { --tin-tree-open: 1; }
     [data-item-type="folder"] > [data-item-section="content"] {
       display: flex;
       align-items: center;
@@ -4696,39 +4796,6 @@ function projectFileTreeUnsafeCss() {
       font-size: 11px;
     }
   `;
-}
-
-function decorateProjectFileTree() {
-  const container = state.filesTree?.getFileTreeContainer();
-  const root = container?.shadowRoot;
-  if (!root) return;
-  let scheduled = false;
-  const apply = () => {
-    scheduled = false;
-    root.querySelectorAll('[data-type="item"][data-item-type="folder"]').forEach((row) => {
-      const icon = row.querySelector('[data-item-section="icon"]');
-      if (icon && !icon.querySelector(".tin-tree-disclosure")) {
-        const open = row.getAttribute("aria-expanded") === "true";
-        icon.innerHTML = `<span class="tin-tree-disclosure">${open ? "⌄" : "›"}</span><svg class="tin-tree-folder" aria-hidden="true" viewBox="0 0 16 16"><use href="#${open ? "tin-folder-open" : "tin-folder"}"></use></svg>`;
-      } else if (icon) {
-        const open = row.getAttribute("aria-expanded") === "true";
-        const disclosure = icon.querySelector(".tin-tree-disclosure");
-        const glyph = open ? "⌄" : "›";
-        const href = `#${open ? "tin-folder-open" : "tin-folder"}`;
-        if (disclosure.textContent !== glyph) disclosure.textContent = glyph;
-        const use = icon.querySelector("use");
-        if (use?.getAttribute("href") !== href) use?.setAttribute("href", href);
-      }
-    });
-  };
-  const observer = new MutationObserver(() => {
-    if (scheduled) return;
-    scheduled = true;
-    window.requestAnimationFrame(apply);
-  });
-  observer.observe(root, { attributes: true, childList: true, subtree: true });
-  state.filesTreeObserver = observer;
-  apply();
 }
 
 function mountProjectFileTree() {
@@ -4754,7 +4821,10 @@ function mountProjectFileTree() {
       set: "none",
       colored: false,
       spriteSheet: TIN_FILE_ICON_SPRITE,
-      remap: { "file-tree-icon-file": "tin-file" },
+      remap: {
+        "file-tree-icon-file": "tin-file",
+        "file-tree-icon-chevron": { name: "tin-tree-folder", width: 38, height: 16, viewBox: "0 0 38 16" },
+      },
       byFileExtension: { md: "tin-markdown", markdown: "tin-markdown", json: "tin-json" },
       byFileName: { "SKILL.md": "tin-skill" },
     },
@@ -4810,12 +4880,25 @@ function mountProjectFileTree() {
     Object.entries(styles).forEach(([name, value]) => container.style.setProperty(name, value));
   }
   state.filesTree = tree;
-  decorateProjectFileTree();
+  revealFilesDirectory(tree, state.filesDirectory);
+}
+
+// Files opened from a folder in a file's path: expand that folder and its parents, select it
+// and scroll to it. A folder that no longer exists leaves the tree as it is.
+function revealFilesDirectory(tree, directory) {
+  const segments = String(directory || "").split("/").filter(Boolean);
+  if (!segments.length) return;
+  segments.forEach((_segment, index) => {
+    const item = tree.getItem(`${segments.slice(0, index + 1).join("/")}/`);
+    if (item?.isDirectory() && !item.isExpanded()) item.expand();
+  });
+  const folder = tree.getItem(`${segments.join("/")}/`);
+  if (!folder) return;
+  folder.select();
+  tree.scrollToPath(folder.getPath(), { focus: false, offset: "nearest" });
 }
 
 function disposeFilesTree() {
-  state.filesTreeObserver?.disconnect();
-  state.filesTreeObserver = null;
   state.filesTreeSubscription?.();
   state.filesTreeSubscription = null;
   state.filesTree?.cleanUp();
@@ -4850,14 +4933,46 @@ function filesSearchResults(paths, query) {
     }).join("")}</div>`;
 }
 
-function filesBreadcrumb(directory) {
+function filesBreadcrumb(directory, { root = true } = {}) {
   const segments = directory ? directory.split("/").filter(Boolean) : [];
-  const crumbs = ['<button type="button" data-files-directory="">Project</button>'];
+  const crumbs = root ? ['<button type="button" data-files-directory="">Project</button>'] : [];
   segments.forEach((segment, index) => {
     const path = segments.slice(0, index + 1).join("/");
-    crumbs.push(`<span>/</span><button type="button" data-files-directory="${escapeHtml(path)}">${escapeHtml(segment)}</button>`);
+    crumbs.push(`${crumbs.length ? "<span>/</span>" : ""}<button type="button" data-files-directory="${escapeHtml(path)}">${escapeHtml(segment)}</button>`);
   });
   return crumbs.join("");
+}
+
+// An open file's path: each folder opens that folder in Files, and the file name stays text.
+// A file opened from a comparison may not exist in the project, so its path stays plain.
+function projectFilePathHtml(route) {
+  if (route.compareRun) return escapeHtml(route.path);
+  const segments = String(route.path).split("/");
+  const name = segments.pop();
+  const folders = filesBreadcrumb(segments.join("/"), { root: false });
+  return `${folders}${folders ? "<span>/</span>" : ""}<span aria-current="page">${escapeHtml(name)}</span>`;
+}
+
+function projectFilePathElement(route, className = "project-file-path") {
+  const path = document.createElement("nav");
+  path.className = className;
+  path.setAttribute("aria-label", "File path");
+  path.title = route.path;
+  path.innerHTML = projectFilePathHtml(route);
+  bindFilesDirectoryLinks(path);
+  return path;
+}
+
+function bindFilesDirectoryLinks(root) {
+  root?.querySelectorAll("[data-files-directory]").forEach((button) => {
+    button.addEventListener("click", () => openFilesDirectory(button.dataset.filesDirectory));
+  });
+}
+
+function openFilesDirectory(directory) {
+  state.filesDirectory = directory;
+  state.filesSearch = "";
+  navigate("files");
 }
 
 function filesDrillName(entry) {
@@ -5061,6 +5176,7 @@ async function downloadProjectFile(route, open = false) {
 }
 
 function bindFileContextActions(route, returnView = "files") {
+  bindFilesDirectoryLinks(document.querySelector(".project-file-context .project-file-path"));
   const back = document.querySelector("[data-back-files]");
   if (route.compareRun && back) back.textContent = `← ${comparisonFileReturnLabel(route)}`;
   back?.addEventListener("click", () => route.compareRun || route.backTo ? returnFromComparisonFile(route) : navigate(returnView));
@@ -5092,6 +5208,7 @@ function renderDelimitedProjectFile(route, file) {
     : `${type} · ${table.totalRows} rows · ${table.headers.length} columns · ${formatFileSize(file.bytes)} · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`;
   state.documentCleanup = window.TinDelimitedViewer.mount(main, file, {
     contextLabel: route.path,
+    pathElement: projectFilePathElement(route),
     factsText: facts,
     returnLabel: comparisonFileReturnLabel(route),
     onReturn: () => returnFromComparisonFile(route),
@@ -5134,6 +5251,7 @@ function renderJsonProjectFile(route, file) {
   state.documentCleanup = window.TinJsonViewer.mount(main, file, {
     view: route.jsonView,
     contextLabel: route.path,
+    pathElement: projectFilePathElement(route),
     sizeLabel: `${file.tooLarge && !file.exactSize ? "over " : ""}${formatFileSize(file.bytes)}`,
     revisionLabel: route.compareRun
       ? `${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`
@@ -5163,7 +5281,7 @@ function renderTextProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy</button>
       <button type="button" data-download-file>Download raw</button>
@@ -5240,7 +5358,7 @@ function renderMediaProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy path</button>
       <button type="button" data-download-file>Download</button>
@@ -5267,7 +5385,7 @@ function renderDiagramProjectFile(route, file) {
     ${TIN_FILE_ICON_SPRITE}
     <header class="project-file-context">
       <button type="button" data-back-files>← ${escapeHtml(returnLabel)}</button><span></span>
-      <code class="project-file-path">${escapeHtml(route.path)}</code>
+      <nav class="project-file-path" aria-label="File path" title="${escapeHtml(route.path)}">${projectFilePathHtml(route)}</nav>
       <code class="project-file-facts">${escapeHtml(facts)}</code>
       <button type="button" data-copy-file-path>Copy path</button>
       <button type="button" data-download-file>Download source</button>
@@ -5363,6 +5481,7 @@ function renderFile() {
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached.document, {
       mode: "in-app",
       contextLabel: route.path,
+      pathElement: projectFilePathElement(route, "markdown-filename"),
       factsText: `markdown · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`,
       returnTo: { label: comparisonFileReturnLabel(route), onActivate: () => returnFromComparisonFile(route) },
       rawAction: { label: "View raw", onActivate: () => downloadProjectFile(route, true) },
@@ -6229,7 +6348,7 @@ function resetProjectState(project) {
   state.taskRoute = null;
   state.fileRoute = null;
   state.compareRoute = null;
-  window.history.replaceState(null, "", routeUrl(nextView));
+  window.history.replaceState(null, "", routeUrl(nextView, window.location.href, ["project"]));
 }
 
 async function loadProject(project, { announce = false, integrationReturn = null } = {}) {
@@ -6462,10 +6581,10 @@ function callbackProjectId() {
 
 function clearIntegrationCallbackUrl(projectId = null) {
   const callbackUrl = new URL(window.location.href);
-  for (const key of ["code", "state", "installation_id", "setup_action", "error", "error_description"]) {
-    callbackUrl.searchParams.delete(key);
-  }
-  if (projectId) callbackUrl.searchParams.set("project", projectId);
+  // Providers add their own parameters (GitHub sends `iss`); keep only the project.
+  const project = projectId || callbackUrl.searchParams.get("project");
+  callbackUrl.search = "";
+  if (project) callbackUrl.searchParams.set("project", project);
   callbackUrl.pathname = "/integrations";
   callbackUrl.hash = "";
   window.history.replaceState(null, "", `${callbackUrl.pathname}${callbackUrl.search}${callbackUrl.hash}`);

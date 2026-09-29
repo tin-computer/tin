@@ -17,5 +17,8 @@ Run available relevant checks. Never claim a full build succeeded if dependencie
 network access, configuration or services prevent it. The mandatory Tin check is
 `git diff --check`; it is not a site build or factual check. In the PR body separate
 checks actually run and their results from checks not run, with reasons. Include the
-source article's Tin run ID, intended public route, and a request to inspect the site
-preview before merging. No merge, deployment, publication or outreach.
+source article's Tin run ID and a request to inspect the site preview before merging.
+Put the page's address on its own line, `Public URL: https://<site host>/<route>`: the
+full URL the page will have once this PR merges and the site deploys, worked out from
+the route you added. Write `Public URL: unknown` if the repository does not show it.
+No merge, deployment, publication or outreach.

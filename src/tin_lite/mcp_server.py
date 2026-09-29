@@ -27,7 +27,12 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.content_delivery import DeliverySettings
-from tin_lite.content_delivery_api import SaveDelivery, delivery_service, retry_delivery
+from tin_lite.content_delivery_api import (
+    SaveDelivery,
+    delivery_service,
+    page_url_service,
+    retry_delivery,
+)
 from tin_lite.content_plan import ContentPlan
 from tin_lite.content_program_api import (
     EditPlan,
@@ -36,6 +41,7 @@ from tin_lite.content_program_api import (
     stop_content_run,
 )
 from tin_lite.content_programs import ContentPrograms
+from tin_lite.document_handoff import document_handoff
 from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -519,6 +525,8 @@ setup from completion. Lead with first_deliverables: the first useful result, it
 time and the decision it enables. Link individual result_links as soon as they exist; a saved
 schedule is not a completed audit. Explain where to receive the next result and what needs a
 decision. Structured live facts take precedence over an older completion report.
+When the founder wants a produced document changed, follow its result link's `revise`: it names
+the file, the one route that changes it and the link to give the founder afterwards.
 
 After onboarding: when the founder asks for anything they do by hand, read
 get_workflow_authoring_guide and build it with create_project_workflow (or update one with
@@ -2459,6 +2467,7 @@ def create_mcp_app(
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="get_run")
         review_summary = await _review_summary(runtime().database, run)
+        delivery = await delivery_service(runtime()).status(run)
         return {
             "id": str(run.id),
             "project_id": str(run.project_id),
@@ -2483,7 +2492,9 @@ def create_mcp_app(
             "allowed_actions": _run_allowed_actions(run),
             "error": run.error_message,
             "review_summary": review_summary,
-            "content_delivery": await delivery_service(runtime()).status(run),
+            "content_delivery": delivery,
+            # Where a proposed page will appear, and whether Tin has found it live.
+            "page_url": await page_url_service(runtime()).view(run, delivery, check=True),
             "progress": {
                 "step": getattr(run, "progress_step", None),
                 "current": getattr(run, "progress_current", None),
@@ -2638,6 +2649,11 @@ def create_mcp_app(
             "content": content[:100_000],
             "byte_count": len(output.content),
             "truncated": len(content) > 100_000,
+            **(
+                document_handoff(settings, run)
+                if source == "canonical" and output.path == run.artifact_path
+                else {}
+            ),
         }
 
     @server.tool()
@@ -3128,8 +3144,13 @@ def create_mcp_app(
         if run is None:
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="approve_workflow_run")
+        from tin_lite.review_revisions import approval_conflict
         from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
+        if run.executor != PROJECT_TASK_WORKFLOW_NAME and (
+            conflict := await approval_conflict(runtime().database, run, delivery)
+        ):
+            raise ToolError(f"conflict: {conflict}")
         delivery_words = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS

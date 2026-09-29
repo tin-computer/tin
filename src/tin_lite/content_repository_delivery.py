@@ -55,6 +55,8 @@ def status_projection(run, source, publication, recovery):
         "error": run.error_message if not pr else None,
         "pull_request": pr,
         "approval_label": None,
+        # The address the adaptation says the page will have once merged; a claim, not proof.
+        "public_route": recovery.get("public_route") or publication.get("public_route"),
     }
 
 
@@ -316,11 +318,15 @@ def validate_copy(manifest, source):
             "Keep the approved article unchanged in exactly one Markdown file "
             "or JSON string consumed by the site's Markdown renderer."
         )
+    from tin_lite.page_urls import public_route
+
+    route = public_route(manifest.get("body"))
     return {
         "article_path": matches[0],
         "article_sha256": source["article_sha256"],
         "copy_check": "exact_source_preserved",
         "build_check": "not_verified_by_tin",
+        **({"public_route": route} if route else {}),
     }
 
 

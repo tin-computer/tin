@@ -1665,6 +1665,67 @@ class IntegrationService:
         except (KeyError, TypeError, ValueError, UnicodeDecodeError) as exc:
             raise IntegrationUpstreamError("The Markdown destination could not be read") from exc
 
+    async def _selected_repository_token(self, project_id: UUID, repository: str) -> str:
+        """A read token for the project's selected repository, and only that repository."""
+        connection = await self._connection(project_id, GITHUB_PROVIDER)
+        if (
+            not isinstance(repository, str)
+            or repository.count("/") != 1
+            or connection.configuration.get("selected_repository") != repository
+        ):
+            raise IntegrationAuthorizationError("Read only the selected GitHub repository")
+        return await self._github_installation_token(_installation_id(connection))
+
+    async def github_pull_request_state(
+        self, *, project_id: UUID, repository: str, number: int
+    ) -> dict[str, Any]:
+        """Whether one pull request merged. Bodies, reviews and auth never leave this method."""
+        if type(number) is not int or number < 1:
+            raise IntegrationError("GitHub pull request number is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        response = await self._client.get(
+            f"https://api.github.com/repos/{quote(repository, safe='/')}/pulls/{number}",
+            headers=self._github_headers(token),
+        )
+        payload = _provider_json(response, provider="GitHub")
+        merged_at = payload.get("merged_at")
+        return {
+            "state": payload.get("state") if payload.get("state") in {"open", "closed"} else None,
+            "merged": payload.get("merged") is True or isinstance(merged_at, str),
+            "merged_at": merged_at if isinstance(merged_at, str) else None,
+        }
+
+    async def github_markdown_names(
+        self, *, project_id: UUID, repository: str, folder: str, ref: str | None = None
+    ) -> list[str]:
+        """Names of up to 50 Markdown files directly inside one folder, on the default branch
+        unless a branch or commit is named."""
+        if not _safe_github_path(folder) or (ref is not None and not _safe_github_ref(ref)):
+            raise IntegrationAuthorizationError("Choose a repository folder")
+        token = await self._selected_repository_token(project_id, repository)
+        response = await self._client.get(
+            f"https://api.github.com/repos/{quote(repository, safe='/')}/contents/"
+            f"{quote(folder, safe='/')}",
+            headers=self._github_headers(token),
+            params={"ref": ref} if ref else None,
+        )
+        if response.status_code == 404:
+            return []
+        try:
+            payload = response.json() if response.status_code == 200 else None
+        except ValueError:
+            payload = None
+        if not isinstance(payload, list):
+            raise IntegrationUpstreamError("The repository folder could not be listed")
+        return [
+            item["name"]
+            for item in payload
+            if isinstance(item, dict)
+            and item.get("type") == "file"
+            and isinstance(item.get("name"), str)
+            and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,120}\.mdx?", item["name"])
+        ][:50]
+
     async def github_repository_bundle(
         self,
         *,

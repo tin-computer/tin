@@ -3,9 +3,10 @@
 import json
 from copy import deepcopy
 from dataclasses import replace
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -129,6 +130,54 @@ def test_pair_contract_is_bounded_and_requires_review():
         change(invalid)
         with pytest.raises(ValueError):
             validate_codex_procedure_definition(invalid)
+
+
+async def test_pair_paths_may_use_a_readable_run_folder():
+    from tin_lite.procedures import load_pinned_codex_procedure
+
+    source = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
+    _, resources = source.definition_and_resource_files()
+    value = definition()
+    output = value["procedure"]["output"]
+    output["path_template"] = "brand/proposals/{run_folder}/BRAND.md"
+    output["companion"]["path_template"] = "brand/proposals/{run_folder}/DESIGN.md"
+
+    async def read(**kw):
+        return (
+            json.dumps(value).encode()
+            if kw["path"] == source.definition_path
+            else resources[kw["path"]]
+        )
+
+    procedure = await load_pinned_codex_procedure(
+        storage=SimpleNamespace(read_canonical_artifact=read),
+        repo_id="registry/workflows",
+        commit_sha="d" * 40,
+        definition_path=source.definition_path,
+    )
+    run_id = UUID("9f8e7d6c-0000-4000-8000-00000000abcd")
+    created = datetime(2026, 9, 28, 12, tzinfo=UTC)
+    resolved = procedure.resolve_inputs({}, run_id=run_id, started_at=created)
+    assert resolved.output_path == "brand/proposals/2026-09-28-9f8e7d6c/BRAND.md"
+    assert resolved.companion_path == "brand/proposals/2026-09-28-9f8e7d6c/DESIGN.md"
+    for template in (
+        "brand/proposals/{run_folder}/{run_id}/BRAND.md",
+        "brand/proposals/{run_folder}/{slug}.md",
+        "brand/proposals/latest/BRAND.md",
+    ):
+        invalid = deepcopy(value)
+        invalid["procedure"]["output"]["path_template"] = template
+        with pytest.raises(ValueError):
+            validate_codex_procedure_definition(invalid)
+    report = deepcopy(value)
+    report["procedure"]["output"] = {
+        "kind": "project.artifact",
+        "path_template": "reports/{run_folder}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 48_000,
+    }
+    with pytest.raises(ValueError, match="reviewed documents"):
+        validate_codex_procedure_definition(report)
 
 
 async def approve(f):

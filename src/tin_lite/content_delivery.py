@@ -162,17 +162,72 @@ def display_title(raw):
     return " ".join(title.split())[:160].strip() or None
 
 
-def new_page_header(settings, title, date, slug):
-    if not settings.frontmatter:
-        return ""
+def summary_line(raw):
+    """One sentence from a saved document that says what it contains, or None.
+
+    The first paragraph or list item after the title, skipping notes set entirely in
+    emphasis, quotes, tables, rules and code. A list item keeps its section's name.
+    """
+    try:
+        lines = raw.decode("utf-8").splitlines()
+    except (AttributeError, UnicodeDecodeError):
+        return None
+    if lines and lines[0].strip() == "---":  # front matter
+        closing = next((i for i, line in enumerate(lines[1:], 1) if line.strip() == "---"), 0)
+        lines = lines[closing + 1 :]
+    section, fenced = None, False
+    for line in lines:
+        text = line.strip()
+        if text.startswith(("```", "~~~")):
+            fenced = not fenced
+            continue
+        if fenced or not text or text.startswith(("|", ">", "<", "![", "---", "***")):
+            continue
+        heading = re.match(r"(#+)\s+(.*)", text)
+        if heading:
+            section = heading.group(2).strip() if len(heading.group(1)) == 2 else section
+            continue
+        if re.fullmatch(r"([*_]).+\1", text):
+            continue
+        item = re.match(r"(?:[-*+]|\d+[.)])\s+(.*)", text)
+        body = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", item.group(1) if item else text)
+        body = " ".join(re.sub(r"[`*_]", "", body).split())
+        sentence = re.match(r"(.+?[.!?])(?:\s|$)", body)
+        body = sentence.group(1) if sentence else body
+        if item and section:
+            body = f"{section}: {body}"
+        return body[:240].strip() or None
+    return None
+
+
+def new_page_header(settings, title, date, slug, page_metadata=None):
     values = {"title": title, "date": date, "slug": slug}
     metadata = {
-        key: re.sub(r"\{(title|date|slug)\}", lambda m: values[m[1]], value)
-        if isinstance(value, str)
-        else value
-        for key, value in settings.frontmatter.items()
+        **(page_metadata or {}),
+        **{
+            key: re.sub(r"\{(title|date|slug)\}", lambda m: values[m[1]], value)
+            if isinstance(value, str)
+            else value
+            for key, value in settings.frontmatter.items()
+        },
     }
+    if not metadata:
+        return ""
     return "---\n" + yaml.safe_dump(metadata, allow_unicode=True, sort_keys=False) + "---\n\n"
+
+
+def page_frontmatter(article):
+    """Split a reviewed document's own plain frontmatter (an answer page's search listing)
+    from its copy, so delivery writes one merged header instead of two."""
+    match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n+", article, re.S)
+    if not match:
+        return {}, article
+    metadata = yaml.safe_load(match[1])
+    if not isinstance(metadata, dict) or not all(
+        isinstance(value, str | int | float | bool) for value in metadata.values()
+    ):
+        raise ValueError("The reviewed document's frontmatter is unsupported.")
+    return metadata, article[match.end() :]
 
 
 def article_body(raw, context):
@@ -756,7 +811,8 @@ class ContentDelivery:
                     )
                 path, slug = document_destination(settings, title, run.id)
                 date = run.created_at.date().isoformat() if run.created_at else ""
-                content = new_page_header(settings, title, date, slug) + article
+                metadata, article = page_frontmatter(article)
+                content = new_page_header(settings, title, date, slug, metadata) + article
             else:
                 path, content, title = render_file(raw, context.result, settings, existing)
             if path != intent["path"]:
