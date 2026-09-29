@@ -423,6 +423,9 @@ async def test_answer_page_approval_signals_temporal() -> None:
             assert run_id == run.id
             assert clerk_user_id == "user_test"
 
+        async def output_revision(self, *, run_id):
+            return None
+
     class Handle:
         def __init__(self) -> None:
             self.signals: list[str] = []

@@ -873,6 +873,8 @@ class DecisionView(BaseModel):
     created_at: datetime
 
     output_resolution: dict | None = None
+    version_saved_at: datetime | None = None
+    revision: dict | None = None
 
 
 class DecisionApply(BaseModel):
@@ -3836,9 +3838,15 @@ async def approve_run(
     payload: WorkflowReviewApproval | None = None,
 ) -> RunView:
     run = await _run_from_postgres(run_id, request, user)
+    from tin_lite.review_revisions import approval_conflict
     from tin_lite.workflow_review_store import ReviewConflict
     from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
+    conflict = await approval_conflict(
+        request.app.state.runtime.database, run, payload.delivery if payload else None
+    )
+    if conflict:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=conflict)
     if payload is not None and payload.delivery is not None:
         # Record the pick before the approval so a refused pick never approves blindly.
         await _choose_content_delivery(run, payload, request, user)

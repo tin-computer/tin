@@ -3144,8 +3144,13 @@ def create_mcp_app(
         if run is None:
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="approve_workflow_run")
+        from tin_lite.review_revisions import approval_conflict
         from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
+        if run.executor != PROJECT_TASK_WORKFLOW_NAME and (
+            conflict := await approval_conflict(runtime().database, run, delivery)
+        ):
+            raise ToolError(f"conflict: {conflict}")
         delivery_words = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS

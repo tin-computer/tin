@@ -55,6 +55,33 @@ _warned_unknown_workflow_system_ids: set[str] = set()
 
 # One cheap, Postgres-only eligibility predicate for Decisions and its count.
 # Applying decisions stay visible until their uncertain outcome is settled.
+# A one-off task that revises a run's saved output file: still waiting for approval, or
+# applied after that output was saved. Approving the run would otherwise use the older copy.
+_OUTPUT_REVISION_SQL = """
+    SELECT jsonb_build_object(
+        'run_id', task.id,
+        'title', task.task_title,
+        'state', CASE WHEN task.status = 'succeeded' THEN 'applied' ELSE 'waiting' END,
+        'revision', task.canonical_commit_sha,
+        'at', COALESCE(task.reviewed_at, task.review_requested_at, task.created_at)
+    )
+    FROM workflow_runs AS task
+    WHERE task.project_id = run.project_id
+      AND task.executor = 'project.task'
+      AND task.id <> run.id
+      AND run.artifact_path IS NOT NULL
+      AND task.task_diff->'files'
+          @> jsonb_build_array(jsonb_build_object('path', run.artifact_path))
+      AND (
+          (task.status = 'needs_input' AND task.task_phase = 'review')
+          OR (task.status = 'running' AND task.task_phase = 'applying')
+          OR (task.status = 'succeeded' AND task.review_decision = 'approved'
+              AND task.reviewed_at > COALESCE(run.review_requested_at, run.created_at))
+      )
+    ORDER BY task.status = 'succeeded', task.created_at DESC
+    LIMIT 1
+"""
+
 _PENDING_OUTPUT_CONFLICT_SQL = """
     run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
@@ -3278,7 +3305,9 @@ class Database:
                    decision.deadline_at,
                    COALESCE(decision.created_at, run.review_requested_at, run.created_at)
                        AS created_at,
-                   NULL::jsonb AS output_resolution
+                   NULL::jsonb AS output_resolution,
+                   COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
+                   ({_OUTPUT_REVISION_SQL}) AS revision
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
             LEFT JOIN LATERAL (
@@ -3309,7 +3338,7 @@ class Database:
                        'media_type', run.retained_output->>'media_type',
                        'source', 'retained'
                    )), '{{}}'::jsonb, false, 'pending', NULL::timestamptz,
-                   run.created_at, run.output_resolution
+                   run.created_at, run.output_resolution, run.created_at, NULL::jsonb
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
             WHERE run.project_id = $1 AND ({_PENDING_OUTPUT_CONFLICT_SQL})
@@ -3329,9 +3358,22 @@ class Database:
                     if row.get("output_resolution") is not None
                     else None
                 ),
+                "revision": (
+                    _json_object(row["revision"], field="output revision")
+                    if row.get("revision") is not None
+                    else None
+                ),
             }
             for row in rows
         ]
+
+    async def output_revision(self, *, run_id: UUID) -> dict[str, Any] | None:
+        """The task that revises this run's saved output, if one waits or already applied."""
+        value = await self.pool.fetchval(
+            f"SELECT ({_OUTPUT_REVISION_SQL}) FROM workflow_runs AS run WHERE run.id = $1",  # noqa: S608 — static SQL, no caller text
+            run_id,
+        )
+        return _json_object(value, field="output revision") if value is not None else None
 
     async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(

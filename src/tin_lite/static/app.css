@@ -4668,6 +4668,30 @@ p.page-url-line[hidden],
   margin: 0;
 }
 
+.decision-detail-body .decision-revision {
+  padding: 10px 14px;
+  background: rgb(var(--accent-deep-rgb) / 8%);
+  border-left: 3px solid var(--accent-deep);
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.decision-revision button {
+  padding: 0;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.decision-detail-card > footer .decision-version {
+  display: block;
+  color: var(--ink);
+  font-weight: 600;
+}
+
 .decision-output code,
 .decision-no-output {
   color: var(--ink-muted);

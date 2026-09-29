@@ -4279,15 +4279,58 @@ function repositoryDeliveryAvailable(run) {
 
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
+  const revision = decision.revision;
+  // A waiting revision must be resolved first. Once applied, the older copy may stay in Tin
+  // but never be published; the server refuses both too.
+  const blocked = revision?.state === "waiting" ? " disabled" : "";
+  if (revision?.state === "applied" && isContentDraftReview(run)) {
+    return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
+  }
   if (repositoryDeliveryAvailable(run)) {
-    return `<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>
+    return `<label class="decision-remember"><input type="checkbox" data-decision-remember${blocked}> Do this for future drafts</label>
       <button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr">Open a pull request</button>
-      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit">Publish now</button>`;
+      <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
+      <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
   }
   const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
   return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-    <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
+    <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>${escapeHtml(label)}</button>`;
+}
+
+function versionTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "earlier";
+  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
+  const options = { hour: "2-digit", minute: "2-digit", hour12: false };
+  try {
+    const day = (item) => item.toLocaleDateString(undefined, { timeZone });
+    const time = date.toLocaleTimeString([], { ...options, timeZone });
+    if (day(date) === day(new Date())) return time;
+    return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone })}, ${time}`;
+  } catch {
+    return ledgerTime(date);
+  }
+}
+
+// Names the exact copy an approval uses, so an older one cannot go out unnoticed.
+function decisionVersionLabel(decision, run) {
+  if (decision.kind === "output_conflict") return "";
+  const when = versionTime(decision.version_saved_at || decision.created_at);
+  if (decision.revision?.state === "applied" && isContentDraftReview(run)) return `Keeps the draft from ${when} in Tin.`;
+  return run?.workflow_name === "project.task" ? `Applies the changes from ${when}.` : `Approves the draft from ${when}.`;
+}
+
+function decisionRevisionHtml(decision) {
+  const revision = decision.revision;
+  if (!revision) return "";
+  const task = revision.title ? `“${escapeHtml(revision.title)}”` : "";
+  if (revision.state === "waiting") {
+    return `<p class="decision-revision" role="status">A revision of this draft is waiting${task ? ` in ${task}` : ""}. Review it first.
+      <button type="button" data-open-revision="${escapeHtml(revision.run_id)}">Review the revision →</button></p>`;
+  }
+  return `<p class="decision-revision" role="status">${task || "A one-off task"} revised this draft after it was saved, so publishing here would send the older copy.
+    <button type="button" data-open-revised-copy>Open the revised copy →</button></p>`;
 }
 
 function pageUrlLine(run, mode = "card") {
@@ -4330,6 +4373,12 @@ function decisionDetailHtml(decision) {
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
   const consequence = String(decision.consequence || "").trim();
+  const version = decisionVersionLabel(decision, run);
+  const footerNote = [
+    version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
+    escapeHtml(consequence),
+    deliveryNote,
+  ].filter(Boolean).join(" ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
@@ -4339,12 +4388,13 @@ function decisionDetailHtml(decision) {
     <div class="decision-detail-body">
       <p>${escapeHtml(decision.explanation)}</p>
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
+      ${decisionRevisionHtml(decision)}
       <div class="decision-outputs">
         ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index)).join("") : taskChanges || `<span class="decision-no-output">${isTask ? "Open the task to review its proposed changes." : "Open the run to review its output."}</span>`}
       </div>
     </div>
-    <footer${consequence || deliveryNote ? "" : ' class="is-actions-only"'}>
-      ${consequence || deliveryNote ? `<span>${escapeHtml(consequence)}${consequence && deliveryNote ? " " : ""}${deliveryNote}</span>` : ""}
+    <footer${footerNote ? "" : ' class="is-actions-only"'}>
+      ${footerNote ? `<span>${footerNote}</span>` : ""}
       ${decision.kind === "output_conflict" ? `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
       <button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
     </footer>
@@ -4391,6 +4441,11 @@ function renderDecisions() {
   });
   main.querySelectorAll(".decision-detail-card [data-task-document]").forEach((button) => {
     button.addEventListener("click", () => openTaskDocument(decision.run_id, button.dataset.taskDocument));
+  });
+  main.querySelector("[data-open-revision]")?.addEventListener("click", (event) => openTask(event.currentTarget.dataset.openRevision));
+  main.querySelector("[data-open-revised-copy]")?.addEventListener("click", () => {
+    const file = decision.items?.[0]?.file || state.runs.find((item) => item.id === decision.run_id)?.artifact_path;
+    if (file && decision.revision?.revision) openProjectFile(file, decision.revision.revision);
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
@@ -4470,6 +4525,7 @@ async function applyDecision(decision, button) {
 function deliveryToast(delivery, fallback) {
   if (delivery === "github_commit") return "Draft approved. Publishing it to the repository now.";
   if (delivery === "github_pr") return "Draft approved. GitHub PR delivery will follow; nothing is merged.";
+  if (delivery === "none") return "Draft kept in Tin. Nothing was published.";
   return fallback;
 }
 
