@@ -4522,6 +4522,8 @@ class TinActivities:
                         expected_head_sha=current_head_sha,
                         raw_diff=raw_diff,
                         expected_diff_sha256=expected_diff_sha,
+                        original_base_sha=run.expected_head_sha,
+                        reviewed_files=run.task_diff["files"],
                         execution_key=execution_key,
                         run_id=str(run_id),
                     )
