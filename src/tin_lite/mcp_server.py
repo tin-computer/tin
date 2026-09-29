@@ -520,6 +520,8 @@ setup from completion. Lead with first_deliverables: the first useful result, it
 time and the decision it enables. Link individual result_links as soon as they exist; a saved
 schedule is not a completed audit. Explain where to receive the next result and what needs a
 decision. Structured live facts take precedence over an older completion report.
+When the founder wants a produced document changed, follow its result link's `revise`: it names
+the file, the one route that changes it and the link to give the founder afterwards.
 
 After onboarding: when the founder asks for anything they do by hand, read
 get_workflow_authoring_guide and build it with create_project_workflow (or update one with
