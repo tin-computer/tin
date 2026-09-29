@@ -822,3 +822,24 @@ async def test_named_output_with_another_date_never_publishes(publication_db, mo
     with pytest.raises(Exception, match="validation"):
         await ActivityEnvironment().run(code.execute, run_id)
     assert storage.repo.writes == 0
+
+
+async def test_named_output_heading_titles_its_review(publication_db, monkeypatch):
+    f = await fixture(publication_db)
+    storage = CheckpointStorage()
+    compute = SyntheticCompute()
+    server, _common, code = await setup(f, monkeypatch, compute=compute, storage=storage)
+    manifest = json.loads(example_files()[PATH])
+    manifest["definition"]["code"]["output"]["path"] = "reports/custom/{date}-{slug}.md"
+    manifest["definition"]["human_review"] = {"eligible": True, "reason": "Review the report."}
+    f.revision = storage.repo.edit({PATH: json.dumps(manifest).encode()})
+    active = await activate_code(f, server)
+    run_id = (await start(f, server, active))["id"]
+    run = await f.db.get_run(UUID(run_id))
+    path = f"reports/custom/{run.created_at.date().isoformat()}-september-orders.md"
+    compute.result = {"path": path, "content": "# September orders\nTotal: 3900 cents\n"}
+    await ActivityEnvironment().run(code.execute, run_id)
+    await code.publish(run_id)
+    assert await code.review(run_id)
+    run = await f.db.get_run(UUID(run_id))
+    assert run.artifact_path == path and run.artifact_title == "September orders"
