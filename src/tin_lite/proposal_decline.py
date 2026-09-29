@@ -1,8 +1,9 @@
-"""Turn down a proposed writing style or brand guide.
+"""Turn down anything waiting for approval in Decisions.
 
-A proposal only takes effect when a member approves it. Discarding it records the run's
-review as declined, ends the waiting run and leaves the current guide exactly as it is. The
-proposed files stay readable in Files; nothing is deleted.
+A draft, report or proposal only takes effect when a member approves it. Discarding it records
+the run's review as declined and ends the waiting run. Nothing it proposed is used, published or
+applied, and its files stay readable in Files; nothing is deleted. A one-off task's proposal is
+discarded by stopping the task instead (see the decisions API).
 """
 
 from __future__ import annotations
@@ -14,6 +15,13 @@ from uuid import UUID
 PROPOSALS = {"style.capture": "writing style guide", "brand.capture": "brand guide"}
 
 
+def discard_summary(workflow: Any) -> str:
+    kind = PROPOSALS.get(workflow.key) if workflow and workflow.project_id is None else None
+    if kind:
+        return f"You discarded the proposed {kind}. The current guide is unchanged."
+    return "You discarded this. It stays readable in Files; nothing was published or applied."
+
+
 async def decline_proposal(*, database: Any, run_id: UUID, actor: str) -> Any:
     run = await database.get_run(run_id)
     if run is None or not await database.has_project_access(
@@ -21,11 +29,6 @@ async def decline_proposal(*, database: Any, run_id: UUID, actor: str) -> Any:
     ):
         raise LookupError("run not found")
     workflow = await database.get_workflow(run.workflow_id)
-    kind = PROPOSALS.get(workflow.key) if workflow and workflow.project_id is None else None
-    if kind is None:
-        raise ValueError("Only a proposed writing style or brand guide can be discarded.")
     return await database.decline_review(
-        run_id=run.id,
-        clerk_user_id=actor,
-        summary=f"You discarded the proposed {kind}. The current guide is unchanged.",
+        run_id=run.id, clerk_user_id=actor, summary=discard_summary(workflow)
     )

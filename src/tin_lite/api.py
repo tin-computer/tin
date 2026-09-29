@@ -884,7 +884,8 @@ class DecisionView(BaseModel):
 class DecisionApply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # "decline" turns down a proposed writing style or brand guide; the current one stays.
+    # "decline" discards what is waiting: the run ends as declined and nothing it proposed is
+    # used. A one-off task is stopped instead, without applying its changes.
     action: Literal["approve", "decline"]
     feedback: str | None = Field(default=None, max_length=8000)
     review_token: str | None = Field(default=None, max_length=64)
@@ -2614,7 +2615,12 @@ async def apply_decision(
         from tin_lite.proposal_decline import decline_proposal
 
         if decision["kind"] != "review":
-            raise HTTPException(status_code=409, detail="Only a proposal can be discarded.")
+            raise HTTPException(
+                status_code=409,
+                detail="Only a decision with something to approve can be discarded.",
+            )
+        if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
+            return await stop_project_task(decision["run_id"], request, user)
         try:
             declined = await decline_proposal(
                 database=database, run_id=decision["run_id"], actor=user.clerk_user_id

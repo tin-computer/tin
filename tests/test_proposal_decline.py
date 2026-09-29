@@ -1,6 +1,6 @@
-"""A proposed writing style or brand guide can be discarded instead of approved.
+"""Anything waiting in Decisions can be discarded instead of approved.
 
-The run ends as declined, the current guide stays unchanged, the proposal leaves Decisions and
+The run ends as declined, a current guide stays unchanged, the decision leaves Decisions and
 every count, and the waiting durable run is ended through the review dispatcher.
 """
 
@@ -153,20 +153,26 @@ async def test_a_declined_proposal_is_decided_once(publication_db):
 
 
 @pytest.mark.asyncio
-async def test_only_a_waiting_proposal_can_be_discarded(publication_db):
+async def test_any_waiting_draft_can_be_discarded_once(publication_db):
     db = publication_db
     _, brand = await proposal(db, "brand.capture")
     project, research = await proposal(db, "research.deep_dive")
     async with client_for(db) as client:
         [decision] = await db.list_pending_decisions(project_id=project.id)
-        refused = await client.post(
+        accepted = await client.post(
             f"/api/decisions/{decision['id']}/apply", json={"action": "decline"}
         )
-        assert refused.status_code == 409
-        assert refused.json()["detail"] == (
-            "Only a proposed writing style or brand guide can be discarded."
+        assert accepted.status_code == 202, accepted.text
+        run = await db.get_run(research)
+        assert (run.status.value, run.review_decision) == ("stopped", "declined")
+        event = await db.pool.fetchval(
+            "SELECT summary FROM activity_events "
+            "WHERE run_id=$1 AND event_type='human_review_declined'",
+            research,
         )
-        assert (await db.get_run(research)).status.value == "needs_input"
+        assert event == (
+            "You discarded this. It stays readable in Files; nothing was published or applied."
+        )
 
         brand_decision = await db.pool.fetchval(
             "SELECT id FROM run_decisions WHERE run_id=$1", brand
@@ -180,9 +186,10 @@ async def test_only_a_waiting_proposal_can_be_discarded(publication_db):
             f"/api/decisions/{brand_decision}/apply", json={"action": "decline"}
         )
         assert gone.status_code == 404
+    _, running = await proposal(db, "research.deep_dive")
     with pytest.raises(RuntimeError, match="no longer waiting"):
-        await db.pool.execute("UPDATE workflow_runs SET status='running' WHERE id=$1", research)
-        await db.decline_review(run_id=research, clerk_user_id=MEMBER, summary="Discarded.")
+        await db.pool.execute("UPDATE workflow_runs SET status='running' WHERE id=$1", running)
+        await db.decline_review(run_id=running, clerk_user_id=MEMBER, summary="Discarded.")
 
 
 @pytest.mark.asyncio
@@ -213,3 +220,32 @@ async def test_the_dispatcher_ends_the_waiting_run_until_temporal_accepts(public
         "declined",
         None,
     )
+
+
+@pytest.mark.asyncio
+async def test_discarding_a_task_stops_it_without_applying_its_changes(publication_db):
+    from test_task_slots import task, task_workflow
+
+    db = publication_db
+    project, _ = await proposal(db)
+    run_id = await task(
+        db, project.id, await task_workflow(db), status="needs_input", phase="review"
+    )
+    decision = next(
+        item
+        for item in await db.list_pending_decisions(project_id=project.id)
+        if item["run_id"] == run_id
+    )
+    handle = SimpleNamespace(signal=AsyncMock())
+    temporal = SimpleNamespace(get_workflow_handle=lambda _id: handle)
+    async with client_for(db, temporal=temporal) as client:
+        client._transport.app.state.runtime.sandboxes = SimpleNamespace(
+            control_task=AsyncMock(return_value=True), kill=AsyncMock()
+        )
+        response = await client.post(
+            f"/api/decisions/{decision['id']}/apply", json={"action": "decline"}
+        )
+    assert response.status_code == 202, response.text
+    handle.signal.assert_awaited_once_with("stop")
+    run = await db.get_run(run_id)
+    assert run.task_control == "stop" and run.review_decision is None
