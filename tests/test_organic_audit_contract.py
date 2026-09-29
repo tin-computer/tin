@@ -322,8 +322,9 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
     await finish(activities, run)
     first_calls = len(calls)
     await finish(activities, run)
-    # Research, draft, four blind interpretations, review, 8 answer/judge pairs, 2 branded probes.
-    assert len(calls) == first_calls == 25
+    # Research, draft, four blind interpretations, review, 12 answer/judge pairs (three answers
+    # to each of four questions), 2 branded probes.
+    assert len(calls) == first_calls == 33
     await activities.organic_project(str(run.id))
     saved = await publication_db.get_run(run.id)
     evidence = json.loads(
@@ -334,7 +335,7 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
         )
     )
     assert evidence["ai_visibility"]["metrics"] == {
-        "mentioned": 8,
+        "mentioned": 12,
         "owned_domain_cited": 0,
         "shortlisted": 0,
         "selected_first": 0,

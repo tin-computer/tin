@@ -94,6 +94,12 @@ AUDIT_POLICY = {
     "low_ctr_min_impressions": 50,
     "pagespeed_max_urls": 3,
     "finding_format": "issue_impact_evidence_fix_priority",
+    # A project's buyer questions are frozen by its first v10 audit of a site and market and
+    # reused, three answers each, until a run asks for new ones. Keeping the first two
+    # proposed buyer jobs (eight questions) holds answers at the earlier 12 x 2 = 24.
+    "reuse_questions": True,
+    "repetitions": 3,
+    "max_panel_jobs": 2,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -120,6 +126,37 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "finding_format",
     }
 )
+
+# How a NEW question panel is drafted. An existing panel records its own answer count, so an
+# explicit answer completion of an older run may ignore these too.
+PANEL_PREPARATION_POLICY_KEYS = frozenset({"reuse_questions", "repetitions", "max_panel_jobs"})
+AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
+
+
+def panel_repetitions(panel: dict | None) -> int:
+    """Answers per question. Panels drafted before v10 carry no count and used two."""
+    return (panel or {}).get("repetitions", 2)
+
+
+def question_results(panel: dict, observations: list[dict]) -> list[dict]:
+    """Scored counts per frozen question. Unknown answers are neither negatives nor positives."""
+    rows = []
+    for index in range(len(panel["questions"])):
+        scored = [
+            row
+            for row in observations
+            if row.get("question_index") == index and row.get("status") == "completed"
+        ]
+        rows.append(
+            {
+                "scored": len(scored),
+                **{
+                    key: sum(bool(row["classification"][key]) for row in scored)
+                    for key in AI_RESULT_KEYS
+                },
+            }
+        )
+    return rows
 
 
 def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
@@ -593,7 +630,9 @@ def content_review_findings(
     groups: dict[str, list[dict]] = {}
     for index, question in enumerate(ai["panel"]["questions"]):
         answers = [row for row in ai["observations"] if row.get("question_index") == index]
-        if len(answers) != 2 or any(row.get("status") != "completed" for row in answers):
+        if len(answers) != panel_repetitions(ai["panel"]) or any(
+            row.get("status") != "completed" for row in answers
+        ):
             continue
         if any(row["classification"]["owned_domain_cited"] for row in answers):
             continue
@@ -631,7 +670,9 @@ def content_review_findings(
                     "Buyers can find clear, accurate answers on the public website."
                 ),
                 "suggested_remedy": (
-                    "The website was not cited in either sampled answer to these questions. "
+                    "The website was not cited in "
+                    + ("either" if panel_repetitions(ai["panel"]) == 2 else "any")
+                    + " sampled answer to these questions. "
                     "Inspect existing public answers before deciding whether to improve, "
                     "add, or link content. This is not proof of missing content or a promise "
                     "that a new page will gain citations."
@@ -700,6 +741,7 @@ def ai_report_details(ai: dict) -> list[str]:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     observations = {row["index"]: row for row in ai.get("observations", [])}
+    repetitions = panel_repetitions(panel)
     limited_search = sum(
         bool(
             {"failed", "searching", "in_progress"}.intersection(
@@ -713,7 +755,7 @@ def ai_report_details(ai: dict) -> list[str]:
     )
     gaps = []
     for index, question in enumerate(panel["questions"]):
-        rows = [observations.get(index * 2 + repeat, {}) for repeat in range(2)]
+        rows = [observations.get(index * repetitions + repeat, {}) for repeat in range(repetitions)]
         scored = [row for row in rows if row.get("status") == "completed"]
         label = re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", question["question"])
         label = " ".join(label.split())
@@ -721,7 +763,9 @@ def ai_report_details(ai: dict) -> list[str]:
             str(sum(row["classification"][key] for row in scored)) if scored else "Unknown"
             for key in ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
         ]
-        lines.append(f"| Q{index + 1}. {label} | {len(scored)}/2 | " + " | ".join(counts) + " |")
+        lines.append(
+            f"| Q{index + 1}. {label} | {len(scored)}/{repetitions} | " + " | ".join(counts) + " |"
+        )
         for repeat, row in enumerate(rows, 1):
             if row.get("status") == "completed":
                 continue

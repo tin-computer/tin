@@ -32,6 +32,8 @@ from tin_lite.organic_audit import (
     grounded_preparation,
     in_scope_url,
     normalize_pages,
+    panel_repetitions,
+    question_results,
 )
 from tin_lite.organic_audit_ai import (
     AI_SCHEMAS,
@@ -890,7 +892,8 @@ class OrganicAuditActivities:
             raise ApplicationError(
                 "Observation index is outside its frozen panel.", non_retryable=True
             )
-        question = panel["questions"][index // 2]["question"]
+        repetitions = panel_repetitions(panel)
+        question = panel["questions"][index // repetitions]["question"]
         answer = await self._model(
             run_id,
             f"answer:{index}",
@@ -906,8 +909,8 @@ class OrganicAuditActivities:
         result = {
             "status": "unavailable",
             "index": index,
-            "question_index": index // 2,
-            "repetition": index % 2 + 1,
+            "question_index": index // repetitions,
+            "repetition": index % repetitions + 1,
             "answer": answer,
         }
         absent = (
@@ -971,8 +974,8 @@ class OrganicAuditActivities:
             result = {
                 "status": "unavailable",
                 "index": index,
-                "question_index": index // 2,
-                "repetition": index % 2 + 1,
+                "question_index": index // repetitions,
+                "repetition": index % repetitions + 1,
                 "answer": answer,
                 "reason": "classification_exceeded_evidence_budget",
             }
@@ -1068,6 +1071,26 @@ class OrganicAuditActivities:
                         )
                     }
                 ai["brand_checks"] = await self._result(run_id, "brand_checks")
+                # Only v10 question sets carry an answer count and can be reused or compared.
+                if (
+                    panel
+                    and "repetitions" in panel
+                    and audit_policy(policy_version).get("reuse_questions")
+                ):
+                    preparation = ai.get("preparation") or {}
+                    ai["question_set"] = {
+                        "sha256": panel["sha256"],
+                        "questions": len(panel["questions"]),
+                        "repetitions": panel_repetitions(panel),
+                        "method": preparation.get("method"),
+                        "source_run_id": preparation.get("source_run_id"),
+                    }
+                    baseline = await self._result(run_id, "panel_baseline")
+                    if baseline and baseline["panel_sha256"] == panel["sha256"]:
+                        ai["comparison"] = {
+                            "baseline": baseline,
+                            "current": question_results(panel, observations),
+                        }
                 documents = build_documents(
                     run_id=run_id,
                     project_id=str(run.project_id),

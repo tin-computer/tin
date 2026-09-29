@@ -79,9 +79,10 @@ needs no new storage read.
 ## MCP-first journey
 
 1. `list_workflows(project_id)` discovers the workflow and input schema.
-2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`,
-   and an optional stable UUID `request_id`. Reuse it after an uncertain client response.
-   HTTP retains the existing `Idempotency-Key` header. Neither path requires Luna.
+2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`
+   (plus `refresh_questions` from v10), and an optional stable UUID `request_id`. Reuse
+   it after an uncertain client response. HTTP retains the existing `Idempotency-Key`
+   header. Neither path requires Luna.
 3. `get_run` reads Postgres state and the artifact revision. `read_run_output` reads the
    report; `read_project_file` with that revision reads findings/evidence.
 4. `stop_organic_audit(run_id)` stops future work before publication. HTTP uses
@@ -245,7 +246,9 @@ pages in sitemap order and skipped 37 of 137 sitemap pages, including the pages 
 most search impressions, yet the report said "completed". Search Console was read at page
 level only and printed as a top-20 table. robots.txt, sitemap quality, noindex, H1,
 language, structured data and speed were never checked, and duplicate pages competing for
-the same searches went unnoticed. The pinned `organic-audit-v10` policy fixes these.
+the same searches went unnoticed. Each run also drafted new AI buyer questions, so AI
+visibility could not be compared between runs. The pinned `organic-audit-v10` policy
+fixes these.
 
 ### Which pages are inspected
 
@@ -349,6 +352,30 @@ were not collected. When evidence would exceed its 3 MB bound, query rows, unrea
 records and then sitemap URLs are trimmed after findings are computed, and the counts are
 recorded under `trimmed_for_size`.
 
+### One buyer-question set per site and market
+
+Before v10 each audit drafted new buyer questions, so AI-visibility results could not be
+compared between runs. From v10:
+
+- The first v10 audit of a site and market drafts the question set as before (public
+  research, grounded draft, blind interpretation, review) and keeps the first two proposed
+  buyer jobs, eight questions at most. The selection uses only the proposal's order,
+  before any answer is measured.
+- Each question gets three answers instead of two. Eight questions times three answers
+  keeps the earlier maximum of 24 answers, so the answer spend and its reservations do
+  not grow.
+- Later audits of the same site and market in the project reuse the newest published v10
+  question set unchanged, with no research or drafting calls. The earlier run's
+  per-question results are saved as the `panel_baseline` receipt.
+- `refresh_questions` (default false) drafts a new set; comparison starts again from it.
+- The report names the question set and, when it was reused, shows a table of each
+  question's mentions, website citations, shortlists and first choices, before → now, as
+  positives out of scored answers. Unknown answers are neither negatives nor positives.
+  The comparison is saved in `evidence.json` under `ai_visibility.comparison`.
+- A panel records its own answer count. Panels drafted before v10 keep two answers per
+  question and their earlier wording, so an explicit answer completion of an older run
+  still works under v10 and older question sets are never reused.
+
 ### Limits and acceptance
 
 - Language is checked against the URL's language prefix, not detected from the content.
@@ -356,6 +383,9 @@ recorded under `trimmed_for_size`.
 - These are observations and hypotheses, not ranking guarantees.
 - The growth plan's frozen program copy (`growth_plan_assets/programs.json`) keeps the
   earlier one-line audit description; it is part of that plan's pinned contract.
+
+Question-set reuse, three answers per question and the comparison table are covered
+by `tests/test_organic_audit_questions.py`.
 
 Offline tests model tin.computer's site, Search Console rows and crawl
 (`tests/organic_tin_fixture.py`) and require the report to show each defect the earlier

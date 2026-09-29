@@ -135,6 +135,65 @@ def analyze(
     }
 
 
+def question_set_lines(ai: dict) -> list[str]:
+    """Which frozen questions were asked, and how answers moved since the previous audit."""
+    question_set = ai.get("question_set")
+    if not question_set:
+        return []
+    count, answers = question_set["questions"], question_set["repetitions"]
+    comparison = ai.get("comparison")
+    if question_set.get("method") == "reused_frozen_panel" and comparison:
+        baseline = comparison["baseline"]
+        started = (baseline.get("source_started_at") or "")[:10]
+        lines = [
+            f"Question set: the same {count} questions as the audit started {started} "
+            f"(`{baseline['source_run_id']}`), {answers} answers each, so results compare. "
+            "Start an audit with refresh_questions to draft a new set.",
+            "",
+            "### Change since the previous audit",
+            "",
+            "Each cell is before → now, as positive answers out of scored answers. Unknown "
+            "answers are neither negatives nor positives.",
+            "",
+            "| Question | Mentioned | Website cited | Shortlisted | Preferred first |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+        keys = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
+        totals = {
+            "before": {
+                key: sum(row[key] for row in baseline["questions"]) for key in ("scored", *keys)
+            },
+            "now": {
+                key: sum(row[key] for row in comparison["current"]) for key in ("scored", *keys)
+            },
+        }
+        pairs = list(zip(baseline["questions"], comparison["current"], strict=True))
+        for index, (before, now) in enumerate(pairs, 1):
+            lines.append(
+                f"| Q{index} | "
+                + " | ".join(
+                    f"{before[key]}/{before['scored']} → {now[key]}/{now['scored']}" for key in keys
+                )
+                + " |"
+            )
+        lines.append(
+            "| All questions | "
+            + " | ".join(
+                f"{totals['before'][key]}/{totals['before']['scored']} → "
+                f"{totals['now'][key]}/{totals['now']['scored']}"
+                for key in keys
+            )
+            + " |"
+        )
+        return [*lines, ""]
+    return [
+        f"Question set: drafted in this run ({count} questions, {answers} answers each). "
+        "Later audits of this site and market reuse it so results compare; start one with "
+        "refresh_questions to draft a new set.",
+        "",
+    ]
+
+
 def _finding_block(item: dict, evidence_limit: int) -> list[str]:
     shown = item["evidence"][:evidence_limit]
     lines = [
@@ -459,6 +518,7 @@ def report_lines(
             "",
             ai.get("summary", "Not measured."),
             "",
+            *question_set_lines(ai),
             *ai_details,
             "Branded fact-check answers are separate observations in the evidence. "
             "They do not count toward the unbranded baseline or certify factual accuracy.",

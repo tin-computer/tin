@@ -961,6 +961,17 @@ BUILTIN_WORKFLOWS = (
                     ),
                     "x-tin-ui": {"control": "select", "order": 20},
                 },
+                "refresh_questions": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "Draft new buyer questions",
+                    "description": (
+                        "Later audits of the same site and market reuse the last question set "
+                        "so AI results compare. Turn on to draft a new set; comparison starts "
+                        "again."
+                    ),
+                    "x-tin-ui": {"control": "segmented", "order": 30},
+                },
             },
             "required": ["project_id", "site_url", "market"],
         },

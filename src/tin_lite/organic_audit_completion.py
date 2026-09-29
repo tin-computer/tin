@@ -6,6 +6,7 @@ from uuid import UUID
 
 from tin_lite.organic_audit import (
     AUDIT_POLICY,
+    PANEL_PREPARATION_POLICY_KEYS,
     SITE_EVIDENCE_POLICY_KEYS,
     audit_paths,
     audit_policy,
@@ -20,6 +21,7 @@ NEUTRAL_KEYS = {
     "check_applicability",
     "respect_sitemap",
     *SITE_EVIDENCE_POLICY_KEYS,
+    *PANEL_PREPARATION_POLICY_KEYS,
 }
 
 
