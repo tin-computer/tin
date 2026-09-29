@@ -165,14 +165,47 @@ def _history(files):
 
 
 def _unused_sentences(material, used):
-    # A sentence is preferred; a whole bullet is usable when notes omit punctuation.
-    # Never turn a URL dot or a wrapped fragment into a new evidence statement.
-    result, seen = [], set()
+    # Join ordinary wrapped prose before finding statements. Bullets remain separate.
+    blocks, current, bullet, provenance = [], [], False, False
+
+    def finish():
+        if current:
+            blocks.append(" ".join(current))
+            current.clear()
+
     for raw in material.splitlines():
-        line = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+)", "", raw).strip()
-        if not line or line.startswith(("#", "|", "```")):
+        line = raw.strip()
+        if not line:
+            finish()
+            provenance = False
             continue
-        pieces = re.split(r"(?<=[.!?。！？])\s+(?=[A-Z0-9])", line)
+        if line.startswith(("#", "|", "```")):
+            finish()
+            provenance = False
+            continue
+        if re.match(r"(?i)^(?:sources?:|checked(?:\s|:))", line):
+            finish()
+            provenance = True
+            continue
+        if provenance:
+            continue
+        marker = re.match(r"^(?:[-*+]\s+|\d+[.)]\s+)", line)
+        if marker:
+            finish()
+            current.append(line[marker.end() :])
+            bullet = True
+        elif bullet and raw[:1].isspace():
+            current.append(line)
+        else:
+            if bullet:
+                finish()
+            current.append(line)
+            bullet = False
+    finish()
+
+    result, seen = [], set()
+    for block in blocks:
+        pieces = re.split(r"(?<=[.!?。！？])\s+(?=[A-Z0-9])", block)
         for piece in pieces:
             statement = piece.strip()
             key = " ".join(statement.split()).casefold()
@@ -446,7 +479,14 @@ def _render_weekly(source, posts):
             lines.append(f"- {slot['day']} — {slot['platform']}: {slot['idea']}")
         lines.append("")
     if held:
-        lines.extend(["## Current material held for later", ""])
+        lines.extend(
+            [
+                "## Other source statements",
+                "",
+                "These were not cited directly; some may support ideas already used above.",
+                "",
+            ]
+        )
         lines.extend(f"- {item}" for item in held)
         lines.append("")
     result = "\n".join(lines)

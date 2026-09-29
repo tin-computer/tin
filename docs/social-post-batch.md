@@ -35,8 +35,9 @@ not search unrelated reports for product facts.
 
 Each draft follows a calendar slot and includes an exact supporting source
 statement. Earlier batch files help exclude already used statements and identical
-drafts. The result reports history coverage, used material, material held for later
-and any unfilled slots. This is a record of drafting, not proof that a post was
+drafts. The result reports history coverage, cited statements, other source
+statements and any unfilled slots. Uncited statements may still support an idea
+already used in the batch. This is a record of drafting, not proof that a post was
 approved or published. Semantic repetition and paraphrases still need human review.
 
 Each run saves its own `social/posts/{date}-{slug}.md`. The date is the run's UTC

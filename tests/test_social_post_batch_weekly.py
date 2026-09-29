@@ -122,7 +122,8 @@ async def test_second_batch_reads_edits_and_keeps_prior_review_annotations():
     result1 = await module.run(first, inputs())
     assert len(first.calls) == 1
     assert first.calls[0]["data"]["slots"][0]["idea"] == "Explain import traceability"
-    assert "Current material held for later" in result1["content"]
+    assert "Other source statements" in result1["content"]
+    assert "These were not cited directly" in result1["content"]
     assert "A reviewer can inspect" in result1["content"]
     assert "Status: Draft" in result1["content"]
     validate_code_result(
@@ -211,6 +212,47 @@ def test_mixed_sentence_and_bullet_notes_remain_eligible():
         "The import retains a source transaction for each accepted row.",
         "Reviewers can compare one imported row with its source record",
     ]
+
+
+def test_source_provenance_paragraph_is_not_evidence():
+    module, _ = package()
+    notes = (
+        "Source: public Tin repository, read-only snapshot.\n"
+        "at commit 12345, checked for this brief.\n\n"
+        "Checked September 29, 2026 against the public source.\n\n"
+        "The CSV import retains a source record for each accepted row.\n"
+    )
+    assert module._unused_sentences(notes, set()) == [
+        "The CSV import retains a source record for each accepted row."
+    ]
+
+
+async def test_wrapped_qualification_cannot_be_cited_as_first_line_alone():
+    module, spec = package()
+    source = "The export includes every imported record\nexcept rows that fail validation."
+    assert module._unused_sentences(source, set()) == [
+        "The export includes every imported record except rows that fail validation."
+    ]
+    one_slot = PLAN.replace(
+        "| Thursday | LinkedIn | Product proof | Explain validation choices |\n", ""
+    )
+    output = {
+        "posts": [
+            {
+                "platform": "X",
+                "body": "Validation decides which records reach the export.",
+                "source_excerpt": "The export includes every imported record",
+            }
+        ]
+    }
+    ctx = Context(
+        Files({"social/PLAN.md": one_slot, "context/social-updates.md": source}),
+        spec,
+        output,
+        "a0000000-0000-0000-0000-000000000098",
+    )
+    with pytest.raises(ValueError, match="complete unused source statement"):
+        await module.run(ctx, inputs())
 
 
 async def test_raw_material_adds_to_current_notes_and_fragment_is_rejected():
