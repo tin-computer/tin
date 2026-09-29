@@ -64,12 +64,104 @@ V7_AUDIT_POLICY = {
     "question_interpretation_concurrency": 4,
 }
 V8_AUDIT_POLICY = {**V7_AUDIT_POLICY, "version": "organic-audit-v8", "answer_timeout_seconds": 180}
-AUDIT_POLICY = {
+V9_AUDIT_POLICY = {
     **V8_AUDIT_POLICY,
     "version": "organic-audit-v9",
     "check_applicability": True,
     "respect_sitemap": True,
 }
+AUDIT_POLICY = {
+    **V9_AUDIT_POLICY,
+    "version": "organic-audit-v10",
+    # The ceiling for an operator-configured page cap; each run pins its own cap in scope.
+    # At the published basic rate ($0.00015/page) 300 pages stay inside the $0.05 reservation.
+    "max_pages": 300,
+    "default_page_cap": 100,
+    "max_priority_urls": 20,
+    "max_crawl_evidence_bytes": 600_000,
+    # Tin reads robots.txt, sitemaps and the static HTML of selected pages itself.
+    "site_checks": True,
+    "max_sitemap_files": 20,
+    "max_sitemap_urls": 5000,
+    "max_page_bytes": 2_000_000,
+    "page_fetch_concurrency": 4,
+    "search_console_days": 28,
+    "search_console_page_rows": 1000,
+    "search_console_query_rows": 5000,
+    "near_page_one_positions": [4, 15],
+    "near_page_one_min_impressions": 20,
+    "low_ctr_max_position": 10,
+    "low_ctr_min_impressions": 50,
+    "pagespeed_max_urls": 3,
+    "finding_format": "issue_impact_evidence_fix_priority",
+    # A project's buyer questions are frozen by its first v10 audit of a site and market and
+    # reused, three answers each, until a run asks for new ones. Keeping the first two
+    # proposed buyer jobs (eight questions) holds answers at the earlier 12 x 2 = 24.
+    "reuse_questions": True,
+    "repetitions": 3,
+    "max_panel_jobs": 2,
+    # Each buyer job asks at most one question per family (four), so two jobs ask at most
+    # eight. The cost ceiling is computed from this bound: 8 x 3 answers, like 12 x 2 before.
+    "max_questions": 8,
+}
+
+# Crawl, site-file and Search Console settings. They never change how an AI answer is
+# requested or graded, so an explicit answer completion may ignore them.
+SITE_EVIDENCE_POLICY_KEYS = frozenset(
+    {
+        "max_pages",
+        "default_page_cap",
+        "max_priority_urls",
+        "max_crawl_evidence_bytes",
+        "site_checks",
+        "max_sitemap_files",
+        "max_sitemap_urls",
+        "max_page_bytes",
+        "page_fetch_concurrency",
+        "search_console_days",
+        "search_console_page_rows",
+        "search_console_query_rows",
+        "near_page_one_positions",
+        "near_page_one_min_impressions",
+        "low_ctr_max_position",
+        "low_ctr_min_impressions",
+        "pagespeed_max_urls",
+        "finding_format",
+    }
+)
+
+# How a NEW question panel is drafted. An existing panel records its own answer count, so an
+# explicit answer completion of an older run may ignore these too.
+PANEL_PREPARATION_POLICY_KEYS = frozenset(
+    {"reuse_questions", "repetitions", "max_panel_jobs", "max_questions"}
+)
+AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
+
+
+def panel_repetitions(panel: dict | None) -> int:
+    """Answers per question. Panels drafted before v10 carry no count and used two."""
+    return (panel or {}).get("repetitions", 2)
+
+
+def question_results(panel: dict, observations: list[dict]) -> list[dict]:
+    """Scored counts per frozen question. Unknown answers are neither negatives nor positives."""
+    rows = []
+    for index in range(len(panel["questions"])):
+        scored = [
+            row
+            for row in observations
+            if row.get("question_index") == index and row.get("status") == "completed"
+        ]
+        rows.append(
+            {
+                "scored": len(scored),
+                **{
+                    key: sum(bool(row["classification"][key]) for row in scored)
+                    for key in AI_RESULT_KEYS
+                },
+            }
+        )
+    return rows
 
 
 def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
@@ -82,6 +174,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V6_AUDIT_POLICY,
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
+        V9_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -97,6 +190,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V6_AUDIT_POLICY,
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
+        V9_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -359,8 +453,9 @@ def normalize_pages(
     aliases: tuple[str, ...] = (),
     policy_version: str = LEGACY_AUDIT_POLICY["version"],
 ) -> list[dict]:
-    applicability = audit_policy(policy_version).get("check_applicability", False)
-    if len(items) > AUDIT_POLICY["max_pages"]:
+    policy = audit_policy(policy_version)
+    applicability = policy.get("check_applicability", False)
+    if len(items) > policy["max_pages"]:
         raise ValueError("Provider page collection exceeded its pinned limit.")
     pages = []
     seen: set[str] = set()
@@ -406,7 +501,7 @@ def normalize_pages(
             }
         )
     pages = sorted(pages, key=lambda page: page["url"])
-    if len(canonical_json(pages)) > 240_000:
+    if len(canonical_json(pages)) > policy.get("max_crawl_evidence_bytes", 240_000):
         raise ValueError("Normalized crawl exceeded its evidence budget.")
     return pages
 
@@ -497,6 +592,30 @@ def technical_findings(
                 "evidence_refs": ["crawl.pages"],
             }
         )
+        if audit_policy(policy_version).get("finding_format"):
+            from tin_lite.organic_audit_format import TECHNICAL_FORMAT, evidence_lines
+
+            area, priority = TECHNICAL_FORMAT[check_id]
+            unknown = coverage[-1].get("outcomes", {}).get("unknown", 0)
+            findings[-1].update(
+                area=area,
+                issue=observation,
+                impact=severity,
+                evidence=evidence_lines(
+                    [
+                        f"The provider crawl flagged {len(affected)} of {len(observed)} pages "
+                        "it could check"
+                        + (f"; {unknown} pages could not be checked." if unknown else "."),
+                        "Examples: " + ", ".join(affected[:5]),
+                    ]
+                ),
+                fix=remedy,
+                priority=priority,
+            )
+    if audit_policy(policy_version).get("finding_format"):
+        from tin_lite.organic_audit_format import order_key
+
+        return sorted(findings, key=order_key), coverage
     order = {"high": 0, "medium": 1, "low": 2}
     return sorted(findings, key=lambda item: (order[item["severity"]], item["id"])), coverage
 
@@ -516,7 +635,9 @@ def content_review_findings(
     groups: dict[str, list[dict]] = {}
     for index, question in enumerate(ai["panel"]["questions"]):
         answers = [row for row in ai["observations"] if row.get("question_index") == index]
-        if len(answers) != 2 or any(row.get("status") != "completed" for row in answers):
+        if len(answers) != panel_repetitions(ai["panel"]) or any(
+            row.get("status") != "completed" for row in answers
+        ):
             continue
         if any(row["classification"]["owned_domain_cited"] for row in answers):
             continue
@@ -554,7 +675,9 @@ def content_review_findings(
                     "Buyers can find clear, accurate answers on the public website."
                 ),
                 "suggested_remedy": (
-                    "The website was not cited in either sampled answer to these questions. "
+                    "The website was not cited in "
+                    + ("either" if panel_repetitions(ai["panel"]) == 2 else "any")
+                    + " sampled answer to these questions. "
                     "Inspect existing public answers before deciding whether to improve, "
                     "add, or link content. This is not proof of missing content or a promise "
                     "that a new page will gain citations."
@@ -576,6 +699,23 @@ def content_review_findings(
                 ),
             }
         )
+        if audit_policy(policy_version).get("finding_format"):
+            from tin_lite.organic_audit_format import evidence_lines
+
+            findings[-1].update(
+                area="content",
+                issue=f"AI answers to buyer questions about {job} do not cite your website",
+                impact="medium",
+                evidence=evidence_lines(
+                    [
+                        f"{len(questions)} buyer questions; the website was not cited in any "
+                        "sampled answer to them.",
+                        *(f'"{q["question"]}"' for q in questions[:4]),
+                    ]
+                ),
+                fix=findings[-1]["suggested_remedy"],
+                priority="long_term",
+            )
     return findings
 
 
@@ -606,6 +746,7 @@ def ai_report_details(ai: dict) -> list[str]:
         "| --- | --- | --- | --- | --- | --- |",
     ]
     observations = {row["index"]: row for row in ai.get("observations", [])}
+    repetitions = panel_repetitions(panel)
     limited_search = sum(
         bool(
             {"failed", "searching", "in_progress"}.intersection(
@@ -619,7 +760,7 @@ def ai_report_details(ai: dict) -> list[str]:
     )
     gaps = []
     for index, question in enumerate(panel["questions"]):
-        rows = [observations.get(index * 2 + repeat, {}) for repeat in range(2)]
+        rows = [observations.get(index * repetitions + repeat, {}) for repeat in range(repetitions)]
         scored = [row for row in rows if row.get("status") == "completed"]
         label = re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", question["question"])
         label = " ".join(label.split())
@@ -627,7 +768,9 @@ def ai_report_details(ai: dict) -> list[str]:
             str(sum(row["classification"][key] for row in scored)) if scored else "Unknown"
             for key in ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
         ]
-        lines.append(f"| Q{index + 1}. {label} | {len(scored)}/2 | " + " | ".join(counts) + " |")
+        lines.append(
+            f"| Q{index + 1}. {label} | {len(scored)}/{repetitions} | " + " | ".join(counts) + " |"
+        )
         for repeat, row in enumerate(rows, 1):
             if row.get("status") == "completed":
                 continue
@@ -700,8 +843,24 @@ def build_documents(
     spending: dict,
     policy_version: str = AUDIT_POLICY["version"],
     search_console: dict | None = None,
+    search_queries: dict | None = None,
+    site: dict | None = None,
 ) -> dict[str, bytes]:
     policy = audit_policy(policy_version)
+    if policy.get("site_checks"):
+        return site_check_documents(
+            run_id=run_id,
+            project_id=project_id,
+            definition_sha=definition_sha,
+            scope=scope,
+            crawl=crawl,
+            ai=ai,
+            spending=spending,
+            policy=policy,
+            search_console=search_console,
+            search_queries=search_queries,
+            site=site or {},
+        )
     modern = policy != LEGACY_AUDIT_POLICY
     hosts = audit_hosts(scope)
     pages = crawl.get("pages", [])
@@ -752,7 +911,7 @@ def build_documents(
         "",
         "This is a read-only, sampled audit. Nothing on your website changed.",
         f"Result: {'completed within the stated scope' if complete else 'partial evidence'}. "
-        f"Inspected {len(pages)} {page_unit} (limit {AUDIT_POLICY['max_pages']}).",
+        f"Inspected {len(pages)} {page_unit} (limit {policy['max_pages']}).",
         "",
         "## What to tackle first",
         "",
@@ -935,6 +1094,191 @@ def build_documents(
     for name, limit in ARTIFACT_LIMITS.items():
         if name == "evidence.json":
             limit = policy.get("max_evidence_bytes", 900_000)
+        if not 0 < len(documents[paths[name]]) <= limit:
+            raise ValueError(f"Audit {name} exceeded its bounded artifact contract.")
+    return documents
+
+
+def _fit_evidence(evidence: dict, limit: int) -> dict:
+    """Keep evidence inside its artifact bound by dropping the least useful detail first.
+
+    Findings are computed before this step; dropped rows are counted, never silently lost.
+    """
+    steps = (
+        ("search_console_queries", 1000),
+        ("site_pages", None),
+        ("sitemap_urls", 1000),
+        ("search_console_queries", 200),
+    )
+    for step, keep in steps:
+        if len(canonical_json(evidence)) <= limit:
+            break
+        trimmed = evidence.setdefault("trimmed_for_size", {})
+        if step == "search_console_queries":
+            value = (evidence.get("search_console_queries") or {}).get("value")
+            if value and len(value["queries"]) > keep:
+                trimmed[step] = trimmed.get(step, 0) + len(value["queries"]) - keep
+                value["queries"] = value["queries"][:keep]
+        elif step == "site_pages":
+            pages = evidence["site"].get("pages", [])
+            kept = [row for row in pages if row.get("fetch") == "observed"]
+            trimmed[step] = len(pages) - len(kept)
+            evidence["site"]["pages"] = kept
+        else:
+            sitemaps = (evidence["site"].get("files") or {}).get("sitemaps") or {}
+            if len(sitemaps.get("urls", [])) > keep:
+                trimmed[step] = len(sitemaps["urls"]) - keep
+                sitemaps["urls"] = sitemaps["urls"][:keep]
+    return evidence
+
+
+def site_check_documents(
+    *,
+    run_id: str,
+    project_id: str,
+    definition_sha: str,
+    scope: dict,
+    crawl: dict,
+    ai: dict,
+    spending: dict,
+    policy: dict,
+    search_console: dict | None,
+    search_queries: dict | None,
+    site: dict,
+) -> dict[str, bytes]:
+    """organic-audit-v10: coverage-honest report with site, search and crawl findings."""
+    import copy
+
+    from tin_lite.organic_audit_format import PRIORITIES, order_key, urgency_key
+    from tin_lite.organic_audit_report import analyze, report_lines
+
+    hosts = audit_hosts(scope)
+    host = scope["host"]
+    pages = crawl.get("pages", [])
+    technical, coverage_rows = technical_findings(pages, host, policy_version=policy["version"])
+    content = content_review_findings(ai, host, policy_version=policy["version"], aliases=hosts)
+    analysis = analyze(
+        scope=scope,
+        hosts=hosts,
+        crawl=crawl,
+        ai=ai,
+        policy=policy,
+        search_console=search_console,
+        search_queries=search_queries,
+        site=site,
+    )
+    findings = sorted([*technical, *content, *analysis["findings"]], key=order_key)
+    evidence = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "project_id": project_id,
+        "definition_commit_sha": definition_sha,
+        "policy": policy,
+        "scope": scope,
+        "crawl": crawl,
+        "ai_visibility": ai,
+        "spending": spending,
+        "search_console": search_console or {"status": "not_available"},
+        "search_console_queries": copy.deepcopy(search_queries) or {"status": "not_available"},
+        "site": {
+            "status": "observed" if site else "not_collected",
+            "files": copy.deepcopy(site.get("files")),
+            "plan": site.get("plan"),
+            "pages": sorted(site.get("pages", []), key=lambda row: row["url"]),
+            "pages_status": site.get("pages_status", "not_collected"),
+            "pagespeed": analysis["pagespeed"],
+        },
+        "coverage": analysis["coverage"],
+    }
+    evidence = _fit_evidence(evidence, policy["max_evidence_bytes"])
+    technical_status = (
+        "partial"
+        if not pages or any(row["outcomes"]["unknown"] for row in coverage_rows)
+        else "complete"
+    )
+    cover = analysis["coverage"]
+    urgent = sorted(findings, key=urgency_key)
+    inventory = {
+        "schema_version": 3,
+        "run_id": run_id,
+        "target_host": host,
+        "evidence_sha256": digest(evidence),
+        "finding_format": policy["finding_format"],
+        "findings": findings,
+        "check_coverage": coverage_rows,
+        "evidence_status": technical_status,
+        "coverage_status": cover["status"],
+        "coverage": {
+            key: cover[key]
+            for key in (
+                "status",
+                "site_collected",
+                "sitemap_read",
+                "sitemap_pages",
+                "inspected_sitemap_pages",
+                "inspected_pages",
+                "page_cap",
+                "skipped_sitemap_pages",
+            )
+        },
+        "site_check_coverage": analysis["site_check_coverage"],
+        "summary": {
+            "by_priority": {
+                name: sum(f["priority"] == name for f in findings) for name in PRIORITIES
+            },
+            "top_issue_ids": [f["id"] for f in urgent[:5]],
+            "quick_win_ids": [f["id"] for f in urgent if f["priority"] == "quick_win"][:10],
+        },
+        "downstream_authority": "recommendations_only",
+    }
+    complete = (
+        crawl.get("status") == "completed"
+        and ai.get("status") == "completed"
+        and technical_status == "complete"
+        and cover["status"] == "complete"
+    )
+    paths = audit_paths(run_id)
+    for evidence_limit in (8, 3, 1):
+        lines = report_lines(
+            scope=scope,
+            crawl=crawl,
+            ai=ai,
+            findings=findings,
+            technical_coverage=coverage_rows,
+            analysis=analysis,
+            search_console=search_console,
+            search_queries=search_queries,
+            site=site,
+            complete=complete,
+            ai_details=ai_report_details(ai),
+            evidence_limit=evidence_limit,
+        )
+        lines.extend(
+            [
+                "## For the next workflow",
+                "",
+                "Use this run's immutable artifact revision, the findings digest, "
+                "and selected finding IDs. "
+                "Recheck the affected URLs and repository ownership before proposing a fix. "
+                "This report grants no authority to edit, publish, or contact anyone.",
+                "",
+                f"Findings SHA-256: `{digest(inventory)}`",
+                "",
+                "The adjacent `findings.json` and `evidence.json` contain bounded, "
+                "machine-readable evidence.",
+            ]
+        )
+        report = ("\n".join(lines) + "\n").encode()
+        if len(report) <= ARTIFACT_LIMITS["AUDIT.md"]:
+            break
+    documents = {
+        paths["AUDIT.md"]: report,
+        paths["findings.json"]: canonical_json(inventory),
+        paths["evidence.json"]: canonical_json(evidence),
+    }
+    for name, limit in ARTIFACT_LIMITS.items():
+        if name == "evidence.json":
+            limit = policy["max_evidence_bytes"]
         if not 0 < len(documents[paths[name]]) <= limit:
             raise ValueError(f"Audit {name} exceeded its bounded artifact contract.")
     return documents

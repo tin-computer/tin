@@ -922,12 +922,14 @@ BUILTIN_WORKFLOWS = (
         key=AUDIT_KEY,
         title="Audit organic visibility",
         description=(
-            "Audit technical SEO and AI visibility (GEO). Check up to 100 public pages "
-            "and see whether AI answers mention, cite, or recommend your business. "
-            "Get a report, actionable findings, and supporting evidence. No GitHub required."
+            "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
+            "Search Console queries, check up to 100 public pages by default, chosen by "
+            "search impressions and URL section, and see whether AI answers mention, cite, "
+            "or recommend your business. Get prioritized findings with evidence and fixes. "
+            "No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -963,6 +965,17 @@ BUILTIN_WORKFLOWS = (
                         "not inferred from timezone."
                     ),
                     "x-tin-ui": {"control": "select", "order": 20},
+                },
+                "refresh_questions": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "Draft new buyer questions",
+                    "description": (
+                        "Later audits of the same site and market reuse the last question set "
+                        "so AI results compare. Turn on to draft a new set; comparison starts "
+                        "again."
+                    ),
+                    "x-tin-ui": {"control": "segmented", "order": 30},
                 },
             },
             "required": ["project_id", "site_url", "market"],

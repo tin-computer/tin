@@ -49,12 +49,16 @@ async def draft_intent(database, *, parent_id, project_id, actor, selected):
         or content.status != "completed"
     ):
         raise ValueError("The organic system's draft authority is unavailable.")
-    plan_run = await database.get_run(UUID(content.result["run_id"]))
-    if (
-        not plan_run
-        or plan_run.project_id != project_id
-        or str(plan_run.project_workflow_id) != selected["program_id"]
-    ):
+    programs = set()
+    if content.result.get("run_id"):
+        plan_run = await database.get_run(UUID(content.result["run_id"]))
+        if plan_run and plan_run.project_id == project_id and plan_run.project_workflow_id:
+            programs.add(str(plan_run.project_workflow_id))
+    # A v4 system whose own plan did not finish drafts from the program it saved as fallback.
+    fallback = await database.get_effect(f"traffic:{parent_id}:content_fallback")
+    if fallback and fallback.status == "completed" and fallback.result.get("program"):
+        programs.add(fallback.result["program"]["program_id"])
+    if selected["program_id"] not in programs:
         raise ValueError("The draft does not belong to this system's content program.")
     return {**prepared.result["content_delivery"], "system_run_id": str(parent_id)}
 

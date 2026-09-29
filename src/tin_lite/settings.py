@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     organic_audit_max_cost_usd: float = Field(
         default=0, ge=0, le=25, allow_inf_nan=False, alias="TIN_LITE_ORGANIC_AUDIT_MAX_COST_USD"
     )
+    # Pages one organic audit crawls and inspects. Each run pins the value it started with;
+    # up to 300 pages stay inside the existing $0.05 crawl reservation.
+    organic_audit_max_pages: int = Field(
+        default=100, ge=10, le=300, alias="TIN_LITE_ORGANIC_AUDIT_MAX_PAGES"
+    )
+    # Optional Google API key for PageSpeed Insights. Without it, speed is reported as unknown.
+    pagespeed_api_key: SecretStr | None = Field(default=None, alias="TIN_LITE_PAGESPEED_API_KEY")
     keyword_plan_max_cost_usd: float = Field(
         default=0, ge=0, le=25, allow_inf_nan=False, alias="TIN_LITE_KEYWORD_PLAN_MAX_COST_USD"
     )

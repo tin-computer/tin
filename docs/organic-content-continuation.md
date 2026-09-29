@@ -107,3 +107,18 @@ guards, Markdown retention and light/dark browser controls. Model output, storag
 GitHub calls use fixtures. No paid ClawMessenger generation, article approval, customer
 PR or website publication is claimed by these tests; that acceptance exercise is
 intentionally not a release blocker for this composition change.
+
+## When the new plan does not finish (0.4.0)
+
+`organic.traffic_system` 0.4.0 pins policy `organic-traffic-v4`. If its own content plan
+fails or is blocked, for example because the plan's model call timed out or research was
+unavailable, the draft and the weekly articles use the project's most recent content program
+whose plan did finish. Tin picks that program once per run and saves the choice, so a retried
+step reads the same program. `RESULT.md` gains a "Content plan used" section naming it. The
+run itself still reports that a step could not finish. Without any finished plan, the draft
+and weekly steps stay blocked or skipped with `content_plan_unavailable`, as before. v3 and
+older recipes keep their behaviour.
+
+Reusing a program also preserves its existing article schedule and any pause or timing edits.
+Tin creates a schedule only when that program has none; concurrent system runs share this
+short save. A paused schedule stays paused and the result says `existing_schedule_paused`.

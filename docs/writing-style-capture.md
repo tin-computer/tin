@@ -16,8 +16,8 @@ only material the user elected to share with project members. Preferences-only i
 
 ## MCP source discovery is part of the workflow experience
 
-Both `list_workflows` and `get_workflow` expose a `preparation` next call for the built-in
-`style.capture`: `get_writing_style_guide(project_id)`. Attempting a new start or saved
+`get_workflow` and the full `list_workflows` listing (`detail="full"`) expose a `preparation`
+next call for the built-in `style.capture`: `get_writing_style_guide(project_id)`. Attempting a new start or saved
 configuration without a source path returns `style_sources_required` with that same next call,
 before creating a run or configuration. A prepared packet remains an ordinary, retryable input;
 there is no new consent table or activation gate. The dashboard's copied prompt starts the same
@@ -60,6 +60,11 @@ or attest to permissions granted outside Tin. The server enforces membership, pa
 and ordinary run boundaries; it does not invent a server-verified consent boolean. The guide's
 source template is deliberately empty and invalid until populated with actual evidence or
 explicit preferences, rather than supplying runnable example preferences.
+
+When Tin refuses a source packet, at start or when the run reads it, the message names the file
+and what is wrong with it: a path Tin cannot read, not Markdown, missing at the revision, empty,
+over 100 KB, binary, not UTF-8, off the template, something that looks like a credential, or the
+first field problem in the samples block. The message never repeats the file's contents.
 
 ## Hosted extraction
 

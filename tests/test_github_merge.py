@@ -96,6 +96,7 @@ class GitHub:
                         "ref": "tin/0123456789abcdef",
                         "repo": {"full_name": "example-org/site"},
                     },
+                    "base": {"ref": "main"},
                     **self.pull,
                 },
             )
@@ -156,6 +157,7 @@ async def test_merge_state_reports_only_the_verdict_and_head(tmp_path) -> None:
         "mergeable_state": "unknown",
         "head_sha": HEAD,
         "head_ref": "tin/0123456789abcdef",
+        "base_ref": "main",
         "same_repository": True,
     }
 
@@ -210,6 +212,17 @@ async def test_merge_refuses_a_pull_request_that_changed(tmp_path, files) -> Non
     github = GitHub(files=files)
     async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
         with pytest.raises(IntegrationAuthorizationError, match="changed after Tin opened it"):
+            await merge(service_for(tmp_path, database, github, client), binding)
+    assert not any(method == "PUT" for method, _ in github.requests)
+
+
+@pytest.mark.asyncio
+async def test_merge_refuses_a_retargeted_pull_request(tmp_path) -> None:
+    database = FakeIntegrationDatabase()
+    binding = connected(database)
+    github = GitHub(pull={"base": {"ref": "release/elsewhere"}})
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        with pytest.raises(IntegrationAuthorizationError, match="destination branch"):
             await merge(service_for(tmp_path, database, github, client), binding)
     assert not any(method == "PUT" for method, _ in github.requests)
 

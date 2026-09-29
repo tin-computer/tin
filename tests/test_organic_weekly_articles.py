@@ -27,7 +27,7 @@ def definition(key):
     return next(w for w in BUILTIN_WORKFLOWS if w.key == key).definition
 
 
-def test_catalog_offers_weekly_drafting_and_the_v3_recipe():
+def test_catalog_offers_weekly_drafting_and_the_v4_recipe():
     recipe = definition(organic_system.KEY)
     assert recipe["organic_system_policy"] == organic_system.POLICY
     assert recipe["organic_system_policy"]["schedule"] == "weekly_articles"
@@ -161,6 +161,8 @@ async def test_system_saves_nothing_when_weekly_drafting_does_not_apply(
         monkeypatch,
         temporal=None if case == "no_temporal" else client,
         inputs={"article_weekdays": []} if case == "off" else None,
+        # v4 would fall back to an earlier finished plan; v3 has no fallback.
+        policy=organic_system.WEEKLY_POLICY if case == "no_plan" else None,
     )
     if case == "no_plan":
         await f.db.pool.execute(

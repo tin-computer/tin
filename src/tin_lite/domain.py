@@ -32,6 +32,10 @@ AWESOME_SUBMIT_WORKFLOW_NAME = "outreach.awesome_submit"
 CREATIVE_CHARACTER_WORKFLOW_NAME = "creative.character"
 CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME = "creative.product_demo"
 CODEX_PROCEDURE_EXECUTOR = "codex.procedure"
+# A run admitted while a prerequisite run is still in progress carries this Temporal memo
+# (the awaited run ids) and waits, with no compute, up to this many minutes for them.
+PREREQUISITE_WAIT_MEMO = "tin_prerequisite_wait"
+PREREQUISITE_WAIT_MINUTES = 30
 ARTIFACT_PATH = "DESIGN.md"
 MEMORY_INDEX_PATH = "wiki/INDEX.md"
 SCAN_REPORT_PATH = "reports/SCAN.md"

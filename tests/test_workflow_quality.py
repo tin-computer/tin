@@ -43,7 +43,9 @@ async def test_native_schedule_billing_block_projects_existing_pause_path(monkey
         inputs={},
         settings_revision=1,
     )
-    workflow = SimpleNamespace(executor="content.answer_page", definition={})
+    workflow = SimpleNamespace(
+        key="content.answer_page", executor="content.answer_page", definition={}
+    )
     db = SimpleNamespace(
         get_project_workflow=AsyncMock(return_value=configured),
         get_workflow=AsyncMock(return_value=workflow),

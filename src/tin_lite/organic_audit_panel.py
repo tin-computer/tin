@@ -9,7 +9,7 @@ import re
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from tin_lite.organic_audit import audit_policy, canonical_json, digest
+from tin_lite.organic_audit import audit_policy, canonical_json, digest, question_results
 from tin_lite.organic_audit_ai import (
     AuditValidationError,
     BuyerPanel,
@@ -101,6 +101,92 @@ async def interpret_questions(activities, run_id, questions, scope, suffix):
     }
 
 
+def limit_panel(panel: dict, *, max_jobs: int, repetitions: int) -> dict:
+    """Keep the first proposed buyer jobs before any answer is measured.
+
+    The selection depends only on the proposal's order, never on answers or scores. The
+    question-set digest covers exactly the questions that will be asked.
+    """
+    jobs = list(dict.fromkeys(question["job"] for question in panel["questions"]))[:max_jobs]
+    value = {
+        key: item for key, item in panel.items() if key not in {"sha256", "planned_observations"}
+    }
+    value["questions"] = [q for q in panel["questions"] if q["job"] in jobs]
+    return {
+        **value,
+        "sha256": digest(value),
+        "planned_observations": len(value["questions"]) * repetitions,
+        "repetitions": repetitions,
+    }
+
+
+async def reuse_panel(activities, run_id, scope):
+    """The newest published audit of this project, host and market with a v10 question set.
+
+    Its panel is copied unchanged, with its per-question results as the comparison
+    baseline. A run that asked for new questions, or has no earlier set, drafts its own.
+    """
+    run = await activities._active(run_id)
+    policy = audit_policy(scope["policy_version"])
+    reader = getattr(activities.db, "list_prerequisite_runs", None)
+    if not policy.get("reuse_questions") or run.input.get("refresh_questions") or reader is None:
+        return None
+    # A retry after a crash keeps the source it already chose, even if a newer audit exists.
+    chosen = await activities._result(run_id, "panel_baseline")
+    if chosen:
+        candidates = [chosen["source_run_id"]]
+    else:
+        candidates = [
+            str(source.id)
+            for _, source in await reader(
+                project_id=run.project_id, workflow_keys=["organic.audit"], limit=20
+            )
+        ]
+    for source_id in candidates:
+        if source_id == run_id:
+            continue
+        source_scope = await activities._result(source_id, "scope") or {}
+        panel = await activities._result(source_id, "panel") or {}
+        if (
+            panel.get("status") != "completed"
+            or source_scope.get("host") != scope["host"]
+            or source_scope.get("market") != scope["market"]
+            or panel.get("repetitions") != policy["repetitions"]
+        ):
+            continue
+        observations = [
+            await activities._result(source_id, f"observation:{index}") or {}
+            for index in range(panel["planned_observations"])
+        ]
+        rows = question_results(panel, observations)
+        await activities._save(
+            run_id,
+            "panel_baseline",
+            {
+                "source_run_id": source_id,
+                "source_started_at": source_scope.get("started_at"),
+                "panel_sha256": panel["sha256"],
+                "repetitions": panel["repetitions"],
+                "questions": rows,
+                "planned": panel["planned_observations"],
+            },
+        )
+        await activities._save(
+            run_id,
+            "panel_preparation",
+            {
+                "status": "completed",
+                "reason": None,
+                "method": "reused_frozen_panel",
+                "source_run_id": source_id,
+                "attempts": [],
+                "research_sha256": None,
+            },
+        )
+        return await activities._save(run_id, "panel", panel)
+    return None
+
+
 async def prepare_panel(activities, run_id):
     saved = await activities._result(run_id, "panel")
     if saved:
@@ -108,6 +194,9 @@ async def prepare_panel(activities, run_id):
     scope = await activities._result(run_id, "scope")
     policy_version = scope["policy_version"]
     policy = audit_policy(policy_version)
+    reused = await reuse_panel(activities, run_id, scope)
+    if reused:
+        return reused["planned_observations"]
     aliases = audit_hosts(scope)[1:]
     reason, research, research_stage = None, None, None
     attempts = []
@@ -203,6 +292,12 @@ async def prepare_panel(activities, run_id):
                     candidate = grounded_panel(
                         draft["value"], value, scope["host"], aliases=aliases
                     )
+                    if policy.get("max_panel_jobs"):
+                        candidate = limit_panel(
+                            candidate,
+                            max_jobs=policy["max_panel_jobs"],
+                            repetitions=policy["repetitions"],
+                        )
                     review_data = {**evidence, "panel": candidate}
                     if policy.get("standalone_question_review"):
                         review_data = {

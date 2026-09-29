@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from organic_site_stub import minimal_site
 from test_procedure_publication import HistoryStorage, run_fixture
 
 from tin_lite.catalog import BUILTIN_WORKFLOWS
@@ -128,7 +129,7 @@ def test_three_bounded_artifacts_and_stable_downstream_inventory():
     findings = json.loads(docs[paths["findings.json"]])
     assert findings["downstream_authority"] == "recommendations_only"
     assert len(findings["evidence_sha256"]) == 64
-    assert b"partial evidence" in docs[paths["AUDIT.md"]]
+    assert b"Result: partial: site files were not collected" in docs[paths["AUDIT.md"]]
 
 
 def response(text="Useful answer", *, search=True, citations=None):
@@ -487,6 +488,7 @@ async def activities_fixture(*, budget="8"):
         settings=SimpleNamespace(organic_audit_max_cost_usd=budget),
         provider=provider,
         site_resolver=AsyncMock(return_value={"status": "observed", "redirects": []}),
+        site_reader=minimal_site().reader,
     )
     await activities.organic_prepare(str(db.run.id))
     return activities, db, storage, provider
@@ -508,7 +510,7 @@ async def test_full_native_technical_path_survives_duplicate_delivery():
     assert provider.pages.await_count == 1
     assert storage.repo.writes == 1
     report = storage.repo.trees[storage.repo.head][audit_paths(run_id)["AUDIT.md"]][1]
-    assert b"partial evidence" in report and b"HTML title is missing" in report
+    assert b"Result: partial" in report and b"HTML title is missing" in report
 
 
 @pytest.mark.asyncio
