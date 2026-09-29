@@ -117,7 +117,7 @@ The full listing runs to well over 100K characters, too much for an agent's cont
 `list_workflows(project_id)` is short by default: per workflow only `id`, `key`, `title`, a
 one-line `description`, `schedule_modes`, the `readiness` state, `required_inputs` (required
 names without a default), `needs` (required connections) and, when blocked, `blocked_because`.
-That is about 320 characters per workflow, or about 32K for 100 workflows. `get_workflow` then
+That is about 370 characters per workflow, or about 37K for 100 workflows. `get_workflow` then
 gives the chosen one's full contract; `detail="full"` still returns every definition.
 
 Private packages may declare `run` prerequisites naming built-in or their own active `custom.*`

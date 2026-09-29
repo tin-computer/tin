@@ -1679,7 +1679,7 @@ def create_mcp_app(
         key to read its full input schema and prerequisites.
 
         detail="full" returns every definition with its input schema, prerequisites and
-        readiness details. It is large: about 3,500 characters per workflow.
+        readiness details. It is large: about 3,000 characters per workflow.
         """
         token = await caller()
         clerk_user_id = token.subject
