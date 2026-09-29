@@ -61,6 +61,11 @@ and ordinary run boundaries; it does not invent a server-verified consent boolea
 source template is deliberately empty and invalid until populated with actual evidence or
 explicit preferences, rather than supplying runnable example preferences.
 
+When Tin refuses a source packet, at start or when the run reads it, the message names the file
+and what is wrong with it: a path Tin cannot read, not Markdown, missing at the revision, empty,
+over 100 KB, binary, not UTF-8, off the template, something that looks like a credential, or the
+first field problem in the samples block. The message never repeats the file's contents.
+
 ## Hosted extraction
 
 Start `style.capture` through the same HTTP/MCP run service with `source_path` and optional

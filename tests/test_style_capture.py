@@ -30,9 +30,11 @@ from tin_lite.run_service import start_workflow_run
 from tin_lite.style_capture import (
     KEY,
     SourcePacket,
+    StyleSourceError,
     explicit_preferences,
     packet_markdown,
     parse_packet,
+    read_sources,
     render_guide,
 )
 from tin_lite.style_capture_activities import StyleCaptureActivities
@@ -101,6 +103,60 @@ def test_empty_duplicate_and_assistant_samples_rejected():
         parse_packet(b"x" * 100001)
     with pytest.raises(ValueError):
         parse_packet(b"not a source packet")
+
+
+def packet_text(**changes):
+    return packet_markdown(PACKET.model_copy(update=changes)).encode()
+
+
+@pytest.mark.parametrize(
+    "content,reason",
+    [
+        (b"", "is empty"),
+        (b" \n", "is empty"),
+        (b"x" * 100_001, "is 100,001 bytes; a sample packet holds at most 100,000 bytes"),
+        (b"# Style samples\x00", "looks like a binary file"),
+        (b"# Style samples \xff", "is not UTF-8 text (byte 16 cannot be read)"),
+        (b"not a source packet", "does not follow the source template"),
+        (b'# Style samples\n\n```json\n{"purpose": \n```\n', "Invalid JSON"),
+        (
+            b'# Style samples\n\n```json\n{"purpose": "Articles"}\n```\n',
+            "Add a writing sample or explicit preferences before capture",
+        ),
+        (
+            packet_text(preferences="api_key = sk-proj-" + "a" * 32),
+            "appears to contain an OpenAI key",
+        ),
+    ],
+)
+def test_rejected_packet_names_the_file_and_the_reason(content, reason):
+    with pytest.raises(StyleSourceError) as caught:
+        parse_packet(content, path=SOURCE)
+    message = str(caught.value)
+    assert message.startswith(SOURCE) and reason in message
+    assert "sk-proj" not in message  # Never echo what the file holds.
+
+
+@pytest.mark.parametrize(
+    "path,reason",
+    [
+        ("../outside.md", "is not a project file path Tin can read"),
+        (".env", "is not a project file path Tin can read"),
+        (STYLE_PATH, "is the writing guide itself"),
+        ("style/sources/notes.txt", "is not a Markdown file"),
+        ("style/sources/missing.md", "does not exist in this project's Files at revision"),
+    ],
+)
+async def test_rejected_source_path_names_the_file_and_the_reason(path, reason):
+    storage = SimpleNamespace(
+        get_repo=AsyncMock(return_value="repo"),
+        head_sha=AsyncMock(return_value="e" * 40),
+        read_output_destination=AsyncMock(return_value=None),
+    )
+    project = SimpleNamespace(state_repo_id="projects/style", canonical_branch="main")
+    with pytest.raises(StyleSourceError) as caught:
+        await read_sources(storage, project, path)
+    assert path in str(caught.value) and reason in str(caught.value)
 
 
 def test_no_hallucinated_source_and_preserve_preferences():
@@ -447,6 +503,32 @@ async def test_discovery_and_incomplete_starts_lead_to_the_conversation(
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
     assert await f.db.pool.fetchval("SELECT count(*) FROM project_workflows") == 0
     f.runtime.temporal.start_workflow.assert_not_called()
+    f.router.generate.assert_not_called()
+
+
+async def test_rejected_source_file_is_named_at_start_and_on_the_failed_run(
+    publication_db, monkeypatch
+):
+    f = await capture_fixture(publication_db)
+    server = mcp(f, monkeypatch)
+    args = {"project_id": str(f.project.id), "workflow_id": KEY, "inputs": {"source_path": SOURCE}}
+    f.storage.repo.edit({SOURCE: b"\xff\xfe binary export"})
+    with pytest.raises(ToolError) as caught:
+        await server.call_tool("start_workflow", {**args, "request_id": str(uuid4())})
+    assert f"{SOURCE} is not UTF-8 text" in str(caught.value)
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+
+    # The file changes after admission; the run fails with the same kind of answer.
+    f.storage.repo.edit({SOURCE: packet_markdown(PACKET).encode()})
+    run = await start(f)
+    f.storage.repo.edit({SOURCE: packet_text(preferences="password: " + "p" * 24)})
+    with pytest.raises(ApplicationError) as failure:
+        await f.activities.prepare(str(run.id))
+    reason = f"{SOURCE} appears to contain a secret assignment"
+    assert failure.value.message.startswith(reason) and failure.value.non_retryable
+    await f.activities.failure(str(run.id))
+    failed = await f.db.get_run(run.id)
+    assert failed.status.value == "failed" and failed.error_message.startswith(reason)
     f.router.generate.assert_not_called()
 
 

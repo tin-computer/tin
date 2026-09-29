@@ -172,7 +172,7 @@ async def start_workflow_run(
         if evaluation.results:
             prerequisite_evidence = evaluation.evidence(inputs=normalized_inputs)
     if workflow.executor == "style.capture" and existing is None:
-        from tin_lite.style_capture import read_sources
+        from tin_lite.style_capture import StyleSourceError, read_sources
 
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError(
@@ -185,6 +185,9 @@ async def start_workflow_run(
             raise LookupError("project not found")
         try:
             await read_sources(runtime.storage, project, normalized_inputs["source_path"])
+        except StyleSourceError as exc:
+            # Tin's own words: which file, and what is wrong with it.
+            raise WorkflowInputError(str(exc)) from None
         except ValueError:
             raise WorkflowInputError(
                 "Choose a valid style source packet in this project's Files before starting."
