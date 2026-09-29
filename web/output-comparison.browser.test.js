@@ -148,9 +148,8 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     if (process.env.TIN_RECOVERY_SCREENSHOT) await page.screenshot({path: process.env.TIN_RECOVERY_SCREENSHOT, clip: {x: 0, y: 0, width: 1440, height: 420}});
     assert.deepEqual(writes, []);
     interrupted = false;
-    // Ordinary document reviews have one reader action per output, not a
-    // second header shortcut to the first document. No-output reviews retain
-    // their only route into the run; conflicts retain their distinct route.
+    // A decision card is prose with one Open link: it opens the draft for an
+    // ordinary review, the run when nothing is attached, and Activity for a conflict.
     for (const workflow of ["content.diagram", "content.generate"]) {
       ordinaryReview = {...decisions()[0], kind: "review", workflow_key: workflow,
         workflow_title: workflow === "content.diagram" ? "Create a diagram" : "Draft planned content",
@@ -158,28 +157,27 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
         items: [{file: filePath, revision: "c".repeat(40)}]};
       await page.goto(`${base}/#decisions`);
       await page.locator(".decision-detail-card").waitFor();
-      assert.equal(await page.locator("[data-decision-read]").count(), 0);
-      assert.equal(await page.getByRole("button", {name: "Read →", exact: true}).count(), 1);
+      assert.equal(await page.locator("[data-decision-read]").count(), 1);
+      assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).count(), 1);
+      assert.equal(await page.locator(".decision-detail-card .decision-summary").count(), 0);
       assert.equal(await page.getByRole("button", {name: "Approve", exact: true}).count(), 1);
       await page.getByRole("button", {name: "Not now", exact: true}).click();
       assert.equal(reviewApprovals.length, 0);
       for (const width of [1440, 390]) {
         await page.setViewportSize({width, height: 1000});
-        assert.equal(await page.locator("[data-decision-read]").count(), 0);
-        assert.equal(await page.getByRole("button", {name: "Read →", exact: true}).isVisible(), true);
+        assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).isVisible(), true);
         if (process.env.TIN_COMPARISON_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_COMPARISON_SCREENSHOTS}/decision-${workflow}-${theme}-${width}.png`, fullPage: true});
       }
-      await page.getByRole("button", {name: "Read →", exact: true}).click();
+      await page.getByRole("button", {name: "Open draft →", exact: true}).click();
       await page.getByRole("heading", {name: "Why small teams ship faster", exact: true}).waitFor();
       assert.equal(new URL(page.url()).pathname, `/document/${runId}`);
       assert.equal(reviewApprovals.length, 0);
     }
-    ordinaryReview.items.push({file: "reports/SECOND.md", revision: "c".repeat(40)});
+    // A saved output at another path opens that file at the reviewed revision.
+    ordinaryReview.items = [{file: "reports/SECOND.md", revision: "c".repeat(40)}];
     await page.goto(`${base}/#decisions`);
     await page.locator(".decision-detail-card").waitFor();
-    assert.equal(await page.locator("[data-decision-read]").count(), 0);
-    assert.equal(await page.getByRole("button", {name: "Read →", exact: true}).count(), 2);
-    await page.getByRole("button", {name: "Read →", exact: true}).nth(1).click();
+    await page.getByRole("button", {name: "Open draft →", exact: true}).click();
     await page.waitForURL(/\/file\?/);
     const selectedFile = new URL(page.url()).searchParams;
     assert.equal(selectedFile.get("path"), "reports/SECOND.md");
@@ -195,7 +193,7 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     await page.reload();
     await page.locator(".decision-detail-card").waitFor();
     assert.equal(await page.getByRole("button", {name: "Open run →", exact: true}).count(), 1);
-    assert.equal(await page.getByRole("button", {name: "Read →", exact: true}).count(), 0);
+    assert.equal(await page.getByRole("button", {name: "Open draft →", exact: true}).count(), 0);
     ordinaryReview = null;
     await page.setViewportSize({width: 1440, height: 1000});
     // A plain dashboard visit starts in My system; explicit routes still win.
@@ -254,12 +252,9 @@ test("packaged app: Decisions, readers, exact apply/reload, and responsive compa
     await page.locator(".decision-detail-card").waitFor();
     if (theme === "dark") {
       assert.equal(await page.locator(".decision-detail-card").evaluate((node) => getComputedStyle(node).borderTopColor), "rgba(246, 241, 231, 0.08)");
-      assert.equal(await page.locator(".decision-output").first().evaluate((node) => getComputedStyle(node).borderTopColor), "rgba(246, 241, 231, 0.08)");
       assert.equal(await page.locator("#project-create-name").evaluate((node) => getComputedStyle(node).borderTopColor), "rgba(246, 241, 231, 0.14)");
       assert.equal(await page.locator("#project-switcher").evaluate((node) => getComputedStyle(node).borderTopColor), "rgba(0, 0, 0, 0)");
     }
-    await page.getByRole("button", { name: "Read →", exact: true }).click();
-    await page.getByRole("button", { name: "← decisions", exact: true }).click();
     await page.getByRole("button", { name: "Compare", exact: true }).click();
     await page.locator(".compare-diff").waitFor();
     if (theme === "dark") {

@@ -4253,24 +4253,6 @@ function sameText(left, right) {
   return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
 }
 
-// The row names the file without repeating the card title or its own name in the path.
-function decisionItemHtml(decision, item, index, cardTitle = "") {
-  const path = String(item.file || "");
-  const name = path.split("/").at(-1) || "";
-  const runNamed = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-/i.test(name);
-  const title = item.title && !sameText(item.title, cardTitle)
-    ? item.title
-    : (runNamed ? "Draft" : name) || `Output ${index + 1}`;
-  const where = sameText(title, item.title) && !sameText(title, name) ? path : path.split("/").slice(0, -1).join("/");
-  const facts = [where, item.words ? `${item.words} words` : null, item.sources ? `${item.sources} sources` : null]
-    .filter(Boolean)
-    .join(" · ");
-  return `<article class="decision-output">
-    <span><strong>${escapeHtml(title)}</strong><code>${escapeHtml(facts)}</code></span>
-    <button type="button" data-decision-output="${escapeHtml(decision.id)}" data-decision-output-index="${index}">Read →</button>
-  </article>`;
-}
-
 const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page"]);
 
 function connectedRepository() {
@@ -4324,24 +4306,18 @@ function versionTime(value) {
   }
 }
 
-// Names the exact copy an approval uses, so an older one cannot go out unnoticed.
+// Names the exact copy an approval uses, and any newer revision of it, so an older copy
+// cannot go out unnoticed.
 function decisionVersionLabel(decision, run) {
   if (decision.kind === "output_conflict") return "";
   const when = versionTime(decision.version_saved_at || decision.created_at);
-  if (decision.revision?.state === "applied" && isContentDraftReview(run)) return `Keeps the draft from ${when} in Tin.`;
-  return run?.workflow_name === "project.task" ? `Applies the changes from ${when}.` : `Approves the draft from ${when}.`;
-}
-
-function decisionRevisionHtml(decision) {
-  const revision = decision.revision;
-  if (!revision) return "";
-  const task = revision.title ? `“${escapeHtml(revision.title)}”` : "";
-  if (revision.state === "waiting") {
-    return `<p class="decision-revision" role="status">A revision of this draft is waiting${task ? ` in ${task}` : ""}. Review it first.
-      <button type="button" data-open-revision="${escapeHtml(revision.run_id)}">Review the revision →</button></p>`;
-  }
-  return `<p class="decision-revision" role="status">${task || "A one-off task"} revised this draft after it was saved, so publishing here would send the older copy.
-    <button type="button" data-open-revised-copy>Open the revised copy →</button></p>`;
+  const revision = decision.revision?.state;
+  const version = revision === "applied" && isContentDraftReview(run)
+    ? `Keeps the draft from ${when} in Tin`
+    : run?.workflow_name === "project.task" ? `Applies the changes from ${when}` : `Approves the draft from ${when}`;
+  if (revision === "waiting") return `${version} · a newer revision is waiting in Decisions`;
+  if (revision === "applied") return `${version} · a newer revision was applied`;
+  return version;
 }
 
 function pageUrlLine(run, mode = "card") {
@@ -4377,7 +4353,7 @@ function decisionHeading(decision, run) {
 function taskChangeLine(run) {
   const files = run?.task_diff?.files || [];
   if (!files.length) return "";
-  if (files.length === 1) return `Edits ${files[0].path}`;
+  if (files.length === 1) return `Edits ${files[0].path}.`;
   let shared = String(files[0].path || "").split("/").slice(0, -1);
   for (const file of files.slice(1)) {
     const parts = String(file.path || "").split("/");
@@ -4385,16 +4361,20 @@ function taskChangeLine(run) {
     while (index < shared.length && shared[index] === parts[index]) index += 1;
     shared = shared.slice(0, index);
   }
-  return `Edits ${files.length} files${shared.length ? ` in ${shared.join("/")}` : ""}`;
+  return `Edits ${files.length} files${shared.length ? ` in ${shared.join("/")}` : ""}.`;
 }
 
 // Older reviews saved a sentence that only restates the workflow; it never reaches the card.
 const GENERIC_REVIEW_LINE = /^(?:[^.]*\bis ready for your review|Review the complete output before this workflow continues|Review the proposed project changes before they are applied)\.\s*/;
 
+// The card body is prose only: one sentence on what the output is, or a few on what a
+// task changes. Files and diffs stay behind the Open link.
 function decisionBodyLine(decision, run, heading) {
-  const line = run?.workflow_name === "project.task"
-    ? String(run.task_summary || "").trim() || taskChangeLine(run)
+  const isTask = run?.workflow_name === "project.task";
+  const text = isTask
+    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run)
     : String(decision.explanation || "").replace(GENERIC_REVIEW_LINE, "").trim();
+  const line = (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text]).slice(0, isTask ? 3 : 1).join(" ").trim();
   return [heading.title, heading.subtitle].some((text) => sameText(text, line)) ? "" : line;
 }
 
@@ -4403,12 +4383,7 @@ function decisionDetailHtml(decision) {
   const outputs = decision.items || [];
   const run = state.runs.find((item) => item.id === decision.run_id);
   const isTask = run?.workflow_name === "project.task";
-  // A task's changes are already loaded with its run; show them here rather than behind a link.
-  const taskChanges = isTask ? taskReviewView(run) : "";
-  // Output rows already open the review. Keep a run action only when it is
-  // distinct (conflicts), or when there is no output row to open.
-  const showRunAction = decision.kind === "output_conflict" || !outputs.length;
-  const runActionLabel = isTask ? "Open task" : "Open run";
+  const runActionLabel = isTask ? "Open task" : outputs.length && decision.kind !== "output_conflict" ? "Open draft" : "Open run";
   const deliveryNote = decision.kind !== "output_conflict" && isContentDraftReview(run) && !connectedRepository()
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
@@ -4418,22 +4393,17 @@ function decisionDetailHtml(decision) {
   const version = decisionVersionLabel(decision, run);
   const footerNote = [
     version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
-    escapeHtml(consequence),
-    deliveryNote,
-  ].filter(Boolean).join(" ");
+    [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" "),
+  ].filter(Boolean).join(" · ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
       <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
-      ${showRunAction ? `<button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>` : ""}
+      <button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>
     </header>
     <div class="decision-detail-body">
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
-      ${decisionRevisionHtml(decision)}
-      <div class="decision-outputs">
-        ${outputs.length ? outputs.map((item, index) => decisionItemHtml(decision, item, index, heading.title)).join("") : taskChanges || `<span class="decision-no-output">${isTask ? "Open the task to review its proposed changes." : "Open the run to review its output."}</span>`}
-      </div>
     </div>
     <footer${footerNote ? "" : ' class="is-actions-only"'}>
       ${footerNote ? `<span>${footerNote}</span>` : ""}
@@ -4478,16 +4448,8 @@ function renderDecisions() {
     state.decisionId = state.decisions.find((item) => item.id !== decision.id)?.id || decision.id;
     renderDecisions();
   });
-  main.querySelectorAll("[data-decision-read], [data-decision-output]").forEach((button) => {
-    button.addEventListener("click", () => openDecisionReview(decision, button));
-  });
-  main.querySelectorAll(".decision-detail-card [data-task-document]").forEach((button) => {
-    button.addEventListener("click", () => openTaskDocument(decision.run_id, button.dataset.taskDocument));
-  });
-  main.querySelector("[data-open-revision]")?.addEventListener("click", (event) => openTask(event.currentTarget.dataset.openRevision));
-  main.querySelector("[data-open-revised-copy]")?.addEventListener("click", () => {
-    const file = decision.items?.[0]?.file || state.runs.find((item) => item.id === decision.run_id)?.artifact_path;
-    if (file && decision.revision?.revision) openProjectFile(file, decision.revision.revision);
+  main.querySelectorAll("[data-decision-read]").forEach((button) => {
+    button.addEventListener("click", () => openDecisionReview(decision));
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
@@ -4503,17 +4465,12 @@ function renderDecisions() {
   }
 }
 
-function openDecisionReview(decision, button) {
+function openDecisionReview(decision) {
   if (decision.kind === "output_conflict") {
-    if (button.hasAttribute("data-decision-read")) {
-      const event = state.activity.find((item) => item.run_id === decision.run_id);
-      state.activityFilter = "all";
-      if (event) state.expandedRun = { runId: decision.run_id, eventId: event.id };
-      navigate("activity");
-      return;
-    }
-    const item = decision.items[Number(button.dataset.decisionOutputIndex || 0)];
-    goToRoute(`file?${new URLSearchParams({ path: item.file, revision: item.revision, compareRun: decision.run_id, return: "decisions", back: "decisions", source: "retained" })}`);
+    const event = state.activity.find((item) => item.run_id === decision.run_id);
+    state.activityFilter = "all";
+    if (event) state.expandedRun = { runId: decision.run_id, eventId: event.id };
+    navigate("activity");
     return;
   }
   const run = state.runs.find((item) => item.id === decision.run_id);
@@ -4521,8 +4478,8 @@ function openDecisionReview(decision, button) {
     openTask(run.id);
     return;
   }
-  const index = Number(button.dataset.decisionOutputIndex || 0);
-  const item = decision.items?.[index];
+  // The card opens its first output; the reader links any related documents.
+  const item = decision.items?.[0];
   if (item?.file && item?.revision && item.file !== run?.artifact_path) {
     openProjectFile(item.file, item.revision, decision.run_id);
     return;

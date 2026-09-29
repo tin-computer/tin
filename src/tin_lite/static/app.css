@@ -4544,8 +4544,7 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 14px;
 }
 
-.decision-detail-card > header button,
-.decision-output button {
+.decision-detail-card > header button {
   padding: 0;
   background: transparent;
   color: var(--accent-text);
@@ -4634,70 +4633,6 @@ p.page-url-line[hidden],
   .markdown-document > p.page-url-status {
     margin-top: -28px;
   }
-}
-
-.decision-outputs {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.decision-output {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border: 1px solid var(--card-border);
-  border-radius: 4px;
-}
-
-.decision-output > span {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.decision-output strong {
-  font-size: 14px;
-  line-height: 18px;
-}
-
-.decision-outputs .task-diff {
-  margin: 0;
-}
-
-.decision-detail-body .decision-revision {
-  padding: 10px 14px;
-  background: rgb(var(--accent-deep-rgb) / 8%);
-  border-left: 3px solid var(--accent-deep);
-  border-radius: 4px;
-  font-size: 14px;
-  line-height: 20px;
-}
-
-.decision-revision button {
-  padding: 0;
-  background: transparent;
-  color: var(--accent-text);
-  font-size: 13px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.decision-detail-card > footer .decision-version {
-  display: block;
-  color: var(--ink);
-  font-weight: 600;
-}
-
-.decision-output code,
-.decision-no-output {
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 14px;
 }
 
 .decision-feedback {
