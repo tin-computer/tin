@@ -4758,7 +4758,7 @@ p.page-url-line[hidden],
   align-self: center;
   padding: 7px 0;
   background: transparent;
-  color: var(--ember-text);
+  color: var(--bermellon-text);
   font-size: 12.5px;
   line-height: 16px;
   cursor: pointer;

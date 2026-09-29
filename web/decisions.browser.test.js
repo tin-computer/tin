@@ -361,7 +361,7 @@ test("a proposal can be discarded: it leaves Decisions and every count, the guid
     await page.locator('[data-decision-id="style-decision"]').click();
     assert.equal(await card.locator("footer > span").innerText(), "Proposal from Sep 29, 12:10");
     assert.deepEqual(await card.locator("footer button").allTextContents(), ["Discard", "Not now", "Approve guide"]);
-    assert.equal(await card.getByRole("button", {name: "Discard", exact: true}).evaluate(button => getComputedStyle(button).color), "rgb(236, 75, 26)");
+    assert.equal(await card.getByRole("button", {name: "Discard", exact: true}).evaluate(button => getComputedStyle(button).color), "rgb(190, 58, 0)");
 
     await card.getByRole("button", {name: "Discard", exact: true}).click();
     await page.getByText("Proposal discarded. The current guide is unchanged.", {exact: true}).waitFor();
