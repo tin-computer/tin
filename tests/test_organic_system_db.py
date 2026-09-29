@@ -382,6 +382,42 @@ async def test_summary_report_publishes_once_with_honest_status(
     )
 
 
+@pytest.mark.parametrize("child_status", ["failed", "succeeded"])
+async def test_parent_retry_links_only_its_failed_keyword_child(
+    publication_db, monkeypatch, child_status
+):
+    f = await parent_fixture(publication_db, monkeypatch)
+    await f.activities.organic_system_prepare(str(f.run.id))
+    result = await f.activities.organic_system_step({"run_id": str(f.run.id), "step": "keywords"})
+    old_child_id = UUID(result["run_id"])
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status=$2, lease_active=false, finished_at=now() WHERE id=$1",
+        old_child_id,
+        child_status,
+    )
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='failed', lease_active=false, finished_at=now() "
+        "WHERE id=$1",
+        f.run.id,
+    )
+    template = await f.db.get_workflow(f.run.workflow_id)
+    retried, _ = await f.db.create_run(
+        project_id=f.run.project_id,
+        workflow_id=f.run.workflow_id,
+        started_by_clerk_user_id=f.run.started_by_clerk_user_id,
+        input_payload=f.run.input,
+        pinned_definition=template.definition,
+        definition_commit_sha=f.run.definition_commit_sha,
+        retry_of_run_id=f.run.id,
+    )
+    await f.activities.organic_system_prepare(str(retried.id))
+    result = await f.activities.organic_system_step({"run_id": str(retried.id), "step": "keywords"})
+    new_child = await f.db.get_run(UUID(result["run_id"]))
+    assert new_child.id != old_child_id
+    assert new_child.retry_of_run_id == (old_child_id if child_status == "failed" else None)
+    assert new_child.definition_commit_sha == f.run.definition_commit_sha
+
+
 async def test_parent_stop_fences_future_child_creation(publication_db, monkeypatch):
     f = await parent_fixture(publication_db, monkeypatch)
     await f.activities.organic_system_prepare(str(f.run.id))
