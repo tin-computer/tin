@@ -68,13 +68,13 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v5 import (
+from tin_lite.keyword_plan_v6 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
@@ -508,7 +508,7 @@ BUILTIN_WORKFLOWS = (
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.3.0",
+        version_label="0.4.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -815,7 +815,7 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=ModelRoute(
@@ -898,9 +898,9 @@ BUILTIN_WORKFLOWS = (
                 },
                 "max_cost_usd": {
                     "type": "number",
-                    "minimum": 5,
+                    "minimum": 2,
                     "maximum": 25,
-                    "default": 10,
+                    "default": 2,
                     "title": "Maximum research spend (USD)",
                     "description": (
                         "Includes conservative provider and model reservations. "

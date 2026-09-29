@@ -20,26 +20,23 @@ Tin keeps their worker capacity separate.
 - There are no waiting semaphores consuming the trusted slots, no new service,
   database table, version picker or execution engine.
 
-## Project-scoped execution
+## Independent project workflows
 
-`tin.project_codex_execution` is one internal Temporal child workflow, not a catalog
-template or a product run. Its stable ID is `tin.project-codex:<project_id>`. Temporal
-allows only one active execution of that ID, even across workers. The project ID is
-resolved from the authorized run by a trusted activity, never supplied by a caller.
+Independent runs in the same project can execute at the same time. Each run keeps its
+own sandbox and checkpoint; the existing four activity slots bound compute per worker.
+When those slots are busy, Temporal holds pending activities until capacity is available.
+There is no additional per-project execution queue. Prerequisites, task-turn ordering,
+and billing admission limits still apply.
 
-The child holds the position from sandbox creation through execution/checkpoint
-cleanup. A task holds it for one active turn. Save, review, paused tasks and questions
-do not hold it. All entry points (HTTP, MCP, schedules and parent workflows) use the
-same executors, so they acquire the same position. Existing product-task admission
-and billing concurrency/spending policies still apply before execution.
+The existing internal `tin.project_codex_execution` child uses
+`tin.run-codex:<run_id>:<turn_number>` for new execution. It carries identifiers only and
+preserves the existing retries and cancellation cleanup. It is not a catalog entry or
+another product run. Historical children keep their project-scoped IDs during replay.
 
-Contenders wait with durable timers (backoff from one to thirty seconds), consuming
-no compute activity slot, sandbox or database connection. This is mutual exclusion,
-not strict FIFO or a queue-position UI. Waiting is bounded at four hours to keep
-history finite; a timeout fails without starting compute and can be retried normally.
-Activity retry budgets are unchanged. A failed compute child is never mistaken for
-queue contention or automatically purchased again. Cancellation waits for activity
-cleanup before the child releases its ID. Stopping a queued task wakes its wait.
+Canonical saves still take the existing project lock and use `expectedHeadSha`. Procedure
+publication preserves unrelated edits and retains conflicting output for inspection;
+task approval applies only its exact reviewed proposal. Parallel compute does not grant
+permission to overwrite another run's work.
 
 The outbound interceptor changes only activity routing options, not command order,
 activity names, payloads, retries, definitions or effect keys. Routing is a pure
@@ -56,24 +53,13 @@ Keeping the old queue is essential: moving all registrations would strand pendin
 activities. Codex remains on the original queue; trusted work retains its own capacity.
 
 New Codex execution uses protected API controllers. The pooled-login broker and local
-auth cache are removed; project execution gates remain distributed through Temporal.
+auth cache are removed. Compute capacity belongs to the worker, not a login account.
 
-Workflow patches preserve old histories. **For the first gate deployment, drain old
-compute and verify no pending pre-gate compute before increasing the original worker's
-slots.** Do not perform a mixed old/new worker rollout. Idle review runs are safe;
-paused tasks patch each future turn separately and acquire the gate when resumed.
+Workflow patches preserve old histories and activity routing. Already-running children
+finish with their recorded IDs; new runs and later task turns use independent IDs. Keep
+legacy child workflow and activity registrations so those histories can drain and replay.
 
-Four trusted slots are bounded, not a promise of zero queueing. Native work can still
-fill them; project-state locks intentionally serialize conflicting writes. A future
-observed multi-tenant backlog may justify separating native compute further and
-adding Temporal Task Queue Fairness. That optional capability is not
-enabled by this fix; it also cannot preempt a running long task. See the
-[Temporal Python SDK's interceptor contract](https://github.com/temporalio/sdk-python)
-for the underlying routing mechanism.
-
-The future [Agents API](https://developers.openai.com/api/docs/guides/agents-api/overview)
-migration changes execution/authentication, not this project-level coordination
-contract. No Agents API route, key or model migration is included here.
+Four trusted slots are bounded too: native work can still wait for capacity.
 
 ## Honest progress and retry behavior
 
@@ -97,11 +83,11 @@ work, not approval or website publication.
 - An activity scheduled by the old worker drains from the old queue after upgrade;
   its next step uses the trusted queue. Both old and new histories replay.
 - Accepted production-history replay includes the new routing interceptor.
-- Mixed procedures, design runs and task turns in one project serialize across
-  independent workers; another project completes while that project's backlog waits.
-- Review releases the project position; cancellation releases it only after cleanup.
+- Mixed procedures, code workflows, design runs and task turns in one project overlap
+  across independent workers; worker capacity still bounds active compute.
+- Review uses no compute slot; cancellation waits for active compute cleanup.
 - Worker restart, failed compute, cancelled queue entries and a pre-upgrade paused
-  task resuming through the gate are covered by real local Temporal tests.
+  task resuming alongside another run are covered by real local Temporal tests.
 - Database tests exercise save/review progress, late duplicate deliveries,
   approved-review retries, atomic projection failure and terminal monotonicity.
 

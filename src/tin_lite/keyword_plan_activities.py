@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import nullcontext
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from functools import partial
 from uuid import UUID
 
 from temporalio import activity
@@ -16,6 +18,7 @@ from tin_lite import keyword_plan_v2 as v2
 from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v4 as v4
 from tin_lite import keyword_plan_v5 as v5
+from tin_lite import keyword_plan_v6 as v6
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -57,6 +60,11 @@ from tin_lite.workflow_evidence import integration_inventory
 # candidate, so they can run for minutes; seed proposals keep the provider's default wait.
 MODEL_TIMEOUT_SECONDS = {"triage": 240, "review": 420}
 STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review": "keyword review"}
+# How many provider lookups one activity keeps in flight. Each holds one database connection
+# for its receipt lock (the pool allows ten), and DataForSEO's live endpoints accept far more.
+LOOKUP_CONCURRENCY = 4
+# The lowest ceiling any supported policy accepts; the pinned policy may require more.
+MINIMUM_CEILING = Decimal(v6.POLICY["minimum_ceiling_usd"])
 
 CONTRACTS = {
     POLICY["version"]: (POLICY, INSTRUCTIONS, SCHEMAS),
@@ -64,7 +72,10 @@ CONTRACTS = {
     v3.POLICY["version"]: (v3.POLICY, v3.INSTRUCTIONS, v3.SCHEMAS),
     v4.POLICY["version"]: (v4.POLICY, v4.INSTRUCTIONS, v4.SCHEMAS),
     v5.POLICY["version"]: (v5.POLICY, v5.INSTRUCTIONS, v5.SCHEMAS),
+    v6.POLICY["version"]: (v6.POLICY, v6.INSTRUCTIONS, v6.SCHEMAS),
 }
+# Research and seed contracts shared by later policies; v6 only resizes reservations.
+BUYER_JOB_SEEDS = {v5.POLICY["version"], v6.POLICY["version"]}
 
 
 def modern_scope(scope):
@@ -73,6 +84,7 @@ def modern_scope(scope):
         v3.POLICY["version"],
         v4.POLICY["version"],
         v5.POLICY["version"],
+        v6.POLICY["version"],
     }
 
 
@@ -106,8 +118,10 @@ class KeywordPlanActivities:
             raise ApplicationError("Keyword planning is not active.", non_retryable=True)
         return run
 
-    async def _result(self, run_id: str, stage: str):
-        receipt = await self.db.get_effect(self.key(run_id, stage))
+    async def _result(self, run_id: str, stage: str, *, conn=None):
+        receipt = await self.db.get_effect(
+            self.key(run_id, stage), **({"conn": conn} if conn is not None else {})
+        )
         return receipt.result if receipt and receipt.status == "completed" else None
 
     async def _save(self, run_id: str, stage: str, value: dict):
@@ -119,20 +133,74 @@ class KeywordPlanActivities:
             await self.db.complete_effect(conn, execution_key=key, result=value)
         return value
 
-    async def _reserve(self, run_id: str, stage: str, amount: str) -> bool:
-        scope = await self._result(run_id, "scope")
+    async def _reserve(self, run_id: str, stage: str, amount: str, *, conn=None) -> bool:
+        return (await self._reserve_in_order(run_id, [(stage, amount)], conn=conn))[0]
+
+    async def _reserve_in_order(self, run_id: str, stages: list, *, conn=None) -> list[bool]:
+        """Reserve stages one after another, exactly as separate `_reserve` calls in this
+        order would, under one budget lock. Reserving a whole batch in its original order
+        before running it concurrently keeps a binding ceiling refusing the same calls.
+
+        A caller already holding a receipt lock passes its connection, so a paid call never
+        waits for a second pooled connection while it holds the first.
+        """
+        scope = await self._result(run_id, "scope", conn=conn)
+        maximum = Decimal(scope["max_cost_usd"])
         key = self.key(run_id, "budget")
-        async with self.db.effect_lock(key, KEY) as (conn, existing):
+        lock = (
+            self.db.effect_lock(key, KEY, conn=conn)
+            if conn is not None
+            else self.db.effect_lock(key, KEY)
+        )
+        reserved, added = [], False
+        async with lock as (lock_conn, existing):
             ledger = dict(existing.result or {}) if existing else {}
             total = sum((Decimal(value) for value in ledger.values()), Decimal(0))
-            if stage in ledger:
-                return total <= Decimal(scope["max_cost_usd"])
-            if total + Decimal(amount) > Decimal(scope["max_cost_usd"]):
-                return False
-            ledger[stage] = amount
-            await self.db.start_effect(conn, execution_key=key, operation=KEY)
-            await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
-            return True
+            for stage, amount in stages:
+                if stage in ledger:
+                    reserved.append(total <= maximum)
+                elif total + Decimal(amount) > maximum:
+                    reserved.append(False)
+                else:
+                    ledger[stage] = amount
+                    total += Decimal(amount)
+                    reserved.append(True)
+                    added = True
+            if added:
+                await self.db.start_effect(lock_conn, execution_key=key, operation=KEY)
+                await self.db.save_effect_progress(lock_conn, execution_key=key, result=ledger)
+        return reserved
+
+    @staticmethod
+    async def _bounded(calls, limit=LOOKUP_CONCURRENCY) -> list:
+        """Run receipted calls `limit` at a time and return their results in call order.
+
+        After one call fails no further call starts, as when they ran one by one; calls
+        already in flight finish so their receipts settle. The first failure in call order
+        is raised.
+        """
+        semaphore, failed = asyncio.Semaphore(limit), asyncio.Event()
+
+        async def run(call):
+            async with semaphore:
+                if failed.is_set():
+                    return None
+                try:
+                    return await call()
+                except BaseException:
+                    failed.set()
+                    raise
+
+        results = await asyncio.gather(*(run(call) for call in calls), return_exceptions=True)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        return results
+
+    def _provider_session(self):
+        """One shared provider client for a batch of lookups, when the adapter offers one."""
+        session = getattr(self.provider, "session", None)
+        return session() if callable(session) else nullcontext()
 
     async def _paid(
         self, run_id: str, stage: str, request: dict, amount: str, call, *, classify=None
@@ -162,7 +230,7 @@ class KeywordPlanActivities:
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             if saved.get("attempted_at"):
                 result = {"status": "unknown", "reason": "unconfirmed_previous_request"}
-            elif not await self._reserve(run_id, stage, amount):
+            elif not await self._reserve(run_id, stage, amount, conn=conn):
                 result = {"status": "unavailable", "reason": "spending_limit"}
             else:
                 saved = {
@@ -246,8 +314,8 @@ class KeywordPlanActivities:
             )
         return result["value"]["data"]
 
-    async def _query(self, run_id: str, stage: str, kind: str, value):
-        scope = await self._result(run_id, "scope")
+    async def _query(self, run_id: str, stage: str, kind: str, value, *, scope=None):
+        scope = scope or await self._result(run_id, "scope")
         request = request_for(
             kind, market=scope["market"], value=value, tag=self.key(run_id, stage)
         )
@@ -304,7 +372,9 @@ class KeywordPlanActivities:
                 "request": request,
             }
 
-        amount = POLICY["serp_reservation_usd" if kind == "serp" else "labs_reservation_usd"]
+        amount = self._policy(scope)[
+            "serp_reservation_usd" if kind == "serp" else "labs_reservation_usd"
+        ]
         result = await self._paid(
             run_id, stage, {"endpoint": ENDPOINTS[kind], "request": request}, amount, call
         )
@@ -376,9 +446,9 @@ class KeywordPlanActivities:
 
     @activity.defn
     async def keyword_prepare(self, run_id: str) -> None:
-        if await self._result(run_id, "scope"):
+        if scope := await self._result(run_id, "scope"):
             # A crash between scope pinning and reservation must not spend the review budget.
-            await self._reserve(run_id, "review", POLICY["review_reservation_usd"])
+            await self._reserve(run_id, "review", self._policy(scope)["review_reservation_usd"])
             await self.db.mark_run_running(UUID(run_id))
             return
         run = await self._active(run_id)
@@ -392,11 +462,11 @@ class KeywordPlanActivities:
             or self.router is None
             or not getattr(self.settings, "luna_api_key", None)
             or not maximum.is_finite()
-            or maximum < 5
+            or maximum < MINIMUM_CEILING
         ):
             raise ApplicationError(
                 "Configure DataForSEO, the native model, "
-                "and a keyword-plan ceiling of at least $5.",
+                f"and a keyword-plan ceiling of at least ${MINIMUM_CEILING}.",
                 non_retryable=True,
             )
         if not run.definition_commit_sha:
@@ -429,6 +499,14 @@ class KeywordPlanActivities:
             raise ApplicationError(
                 "The pinned keyword definition is not supported by this worker.", non_retryable=True
             )
+        # Policies before v6 reserve $4 for the review alone and keep their $5 floor.
+        floor = Decimal(policy.get("minimum_ceiling_usd", "5"))
+        if maximum < floor:
+            raise ApplicationError(
+                "Configure DataForSEO, the native model, "
+                f"and a keyword-plan ceiling of at least ${floor}.",
+                non_retryable=True,
+            )
         url, target = await self.provider.validate_target(run.input["site_url"])
         scope = {
             "url": url,
@@ -440,7 +518,7 @@ class KeywordPlanActivities:
             "max_cost_usd": str(maximum),
             "policy_version": policy["version"],
         }
-        if policy["version"] == v5.POLICY["version"]:
+        if policy["version"] in BUYER_JOB_SEEDS:
             scope["integrations"] = await integration_inventory(self.db, run.project_id)
         if run.input.get("audit_run_id"):
             scope["audit"] = await self._audit_context(
@@ -475,7 +553,7 @@ class KeywordPlanActivities:
                     "reason": "No connected Search Console property matches this exact website.",
                 }
         await self._save(run_id, "scope", scope)
-        await self._reserve(run_id, "review", POLICY["review_reservation_usd"])
+        await self._reserve(run_id, "review", policy["review_reservation_usd"])
         if modern_scope(scope):
             await self._reserve(run_id, "triage", policy["triage_reservation_usd"])
         await self.db.mark_run_running(run.id)
@@ -520,18 +598,179 @@ class KeywordPlanActivities:
 
         return await self._paid(run_id, "gsc", selection, "0", call)
 
+    async def _reuse_collected_research(self, run) -> bool:
+        """An explicit retry can keep the finished research for the exact same job."""
+        if run.retry_of_run_id is None:
+            return False
+        previous = await self.db.get_run(run.retry_of_run_id)
+        if (
+            previous is None
+            or previous.status.value != "failed"
+            or previous.project_id != run.project_id
+            or previous.workflow_id != run.workflow_id
+            or previous.definition_commit_sha != run.definition_commit_sha
+            or previous.input != run.input
+        ):
+            return False
+        source_id, run_id = str(previous.id), str(run.id)
+        collection = await self._result(source_id, "collection")
+        if not collection:
+            return False
+        scope = await self._result(run_id, "scope")
+
+        def request_fingerprint(owner, stage, keyword):
+            return digest(
+                {
+                    "endpoint": ENDPOINTS["serp"],
+                    "request": request_for(
+                        "serp", market=scope["market"], value=keyword, tag=self.key(owner, stage)
+                    ),
+                }
+            )
+
+        for index, candidate in enumerate(self._sample_candidates(collection["candidates"])):
+            stage = f"serp:{index}"
+            saved = await self.db.get_effect(self.key(source_id, stage))
+            if saved is None:
+                continue  # An unattempted read is still eligible for normal execution.
+
+            record = saved.result or {}
+            if saved.operation != KEY or record.get("request_sha256") != request_fingerprint(
+                source_id, stage, candidate["keyword"]
+            ):
+                raise ApplicationError(
+                    "Saved keyword research does not match this retry.", non_retryable=True
+                )
+            if saved.status != "completed":
+                record = {"status": "unknown", "reason": "unconfirmed_previous_request"}
+            await self._save(
+                run_id,
+                stage,
+                {
+                    **record,
+                    "request_sha256": request_fingerprint(run_id, stage, candidate["keyword"]),
+                    "reused_from_run_id": source_id,
+                },
+            )
+        # Write the collection last: an interrupted copy can finish before collect skips work.
+        await self._save(run_id, "collection", {**collection, "reused_from_run_id": source_id})
+        return True
+
+    @staticmethod
+    def _policy(scope: dict) -> dict:
+        return CONTRACTS[scope.get("policy_version", POLICY["version"])][0]
+
+    async def _seeds(self, run, scope: dict) -> list[str]:
+        run_id = str(run.id)
+        if run.input.get("seed_phrases"):
+            return phrases(run.input["seed_phrases"])
+        core_seeds = scope.get("policy_version") in {
+            v3.POLICY["version"],
+            v4.POLICY["version"],
+            *BUYER_JOB_SEEDS,
+        }
+        value = await self._model(run_id, "seeds", v3.seed_input(scope) if core_seeds else scope)
+        try:
+            return (
+                v5.seed_values(value)
+                if scope.get("policy_version") in BUYER_JOB_SEEDS
+                else v3.seed_values(value)
+                if core_seeds
+                else phrases(Seeds.model_validate(value).seeds)
+            )
+        except ValueError:
+            raise ApplicationError(
+                "The saved seed proposal failed validation.", non_retryable=True
+            ) from None
+
+    async def _collect_sources(self, run, scope: dict, modern: bool):
+        """Buy the collection lookups a few at a time, with the same calls, receipts and
+        spending order as when they ran one by one.
+
+        The target footprint, competitor discovery and Search Console read do not need seeds,
+        so they run while the seed proposal is written. Reservations are taken in the old
+        sequential order before each group starts, and `sources` is rebuilt in that fixed
+        order because candidate selection takes one row from each source in turn.
+        """
+        run_id = str(run.id)
+        policy = self._policy(scope)
+        labs = policy["labs_reservation_usd"]
+        supplied = list(
+            dict.fromkeys(
+                host(value).removeprefix("www.") for value in run.input.get("competitor_hosts", [])
+            )
+        )
+        if not run.input.get("seed_phrases"):
+            (seeds_reserved,) = await self._reserve_in_order(
+                run_id, [("seeds", policy["seed_reservation_usd"])]
+            )
+            if not seeds_reserved:
+                # Refused before any lookup is bought: record it the usual way and stop.
+                await self._seeds(run, scope)
+        await self._reserve_in_order(
+            run_id, [("target", labs)] + ([] if supplied else [("competitors", labs)])
+        )
+
+        async def discover():
+            if supplied:
+                return None
+            return await self._query(
+                run_id, "competitors", "competitors", scope["host"], scope=scope
+            )
+
+        seeds, target, discovered, gsc = await self._bounded(
+            [
+                lambda: self._seeds(run, scope),
+                lambda: self._query(run_id, "target", "ranked", scope["host"], scope=scope),
+                discover,
+                lambda: self._gsc(run_id),
+            ]
+        )
+        seed_record = await self._save(run_id, "seed_selection", {"seeds": seeds})
+        seeds = seed_record["seeds"]
+        competitors = (
+            supplied
+            or (discovered.get("value", {}).get("domains", [])[: POLICY["max_competitors"]])
+        )
+        lookups = [
+            (
+                f"competitor:{index}",
+                "ranked_relevant" if modern else "ranked",
+                {"host": competitor, "seeds": seeds} if modern else competitor,
+            )
+            for index, competitor in enumerate(competitors)
+        ]
+        lookups.append(("seed_metrics", "overview", seeds))
+        for index, seed in enumerate(seeds):
+            for kind in ("suggestions" if modern else "ideas", "related"):
+                lookups.append((f"{kind}:{index}", kind, seed))
+        await self._reserve_in_order(run_id, [(stage, labs) for stage, _, _ in lookups])
+        results = await self._bounded(
+            [
+                partial(self._query, run_id, stage, kind, value, scope=scope)
+                for stage, kind, value in lookups
+            ]
+        )
+        sources = {"target": target}
+        if not supplied:
+            sources["competitors"] = discovered
+        sources.update(zip((stage for stage, _, _ in lookups), results, strict=True))
+        sources["gsc"] = gsc
+        return seeds, competitors, sources
+
     @activity.defn
     async def keyword_collect(self, run_id: str) -> None:
         if await self._result(run_id, "collection"):
             return
-        if not await self._reserve(run_id, "review", POLICY["review_reservation_usd"]):
-            raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
         run = await self._active(run_id)
+        if await self._reuse_collected_research(run):
+            return
         scope = await self._result(run_id, "scope")
+        policy = self._policy(scope)
+        if not await self._reserve(run_id, "review", policy["review_reservation_usd"]):
+            raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
         modern = modern_scope(scope)
-        if modern and not await self._reserve(
-            run_id, "triage", v2.POLICY["triage_reservation_usd"]
-        ):
+        if modern and not await self._reserve(run_id, "triage", policy["triage_reservation_usd"]):
             raise ApplicationError("Keyword screening budget is unavailable.", non_retryable=True)
         await self.db.project_run_progress(
             run_id=run.id,
@@ -539,62 +778,8 @@ class KeywordPlanActivities:
             step="research",
             summary="Researching buyer queries and search competitors.",
         )
-        if run.input.get("seed_phrases"):
-            seeds = phrases(run.input["seed_phrases"])
-        else:
-            core_seeds = scope.get("policy_version") in {
-                v3.POLICY["version"],
-                v4.POLICY["version"],
-                v5.POLICY["version"],
-            }
-            value = await self._model(
-                run_id, "seeds", v3.seed_input(scope) if core_seeds else scope
-            )
-            try:
-                seeds = (
-                    v5.seed_values(value)
-                    if scope.get("policy_version") == v5.POLICY["version"]
-                    else v3.seed_values(value)
-                    if core_seeds
-                    else phrases(Seeds.model_validate(value).seeds)
-                )
-            except ValueError:
-                raise ApplicationError(
-                    "The saved seed proposal failed validation.", non_retryable=True
-                ) from None
-        seed_record = await self._save(run_id, "seed_selection", {"seeds": seeds})
-        seeds = seed_record["seeds"]
-        sources = {}
-        sources["target"] = await self._query(run_id, "target", "ranked", scope["host"])
-        supplied = list(
-            dict.fromkeys(
-                host(value).removeprefix("www.") for value in run.input.get("competitor_hosts", [])
-            )
-        )
-        if supplied:
-            competitors = supplied
-        else:
-            sources["competitors"] = await self._query(
-                run_id, "competitors", "competitors", scope["host"]
-            )
-            competitors = (
-                sources["competitors"]
-                .get("value", {})
-                .get("domains", [])[: POLICY["max_competitors"]]
-            )
-        for index, competitor in enumerate(competitors):
-            sources[f"competitor:{index}"] = await self._query(
-                run_id,
-                f"competitor:{index}",
-                "ranked_relevant" if modern else "ranked",
-                {"host": competitor, "seeds": seeds} if modern else competitor,
-            )
-        sources["seed_metrics"] = await self._query(run_id, "seed_metrics", "overview", seeds)
-        for index, seed in enumerate(seeds):
-            for kind in ("suggestions" if modern else "ideas", "related"):
-                name = f"{kind}:{index}"
-                sources[name] = await self._query(run_id, name, kind, seed)
-        sources["gsc"] = await self._gsc(run_id)
+        async with self._provider_session():
+            seeds, competitors, sources = await self._collect_sources(run, scope, modern)
         usable = {
             name: source["value"].get("rows", [])
             for name, source in sources.items()
@@ -717,6 +902,46 @@ class KeywordPlanActivities:
             summary="Inspecting a bounded sample of search results.",
         )
 
+    @activity.defn
+    async def keyword_inspect_batch(self, run_id: str) -> None:
+        """Inspect every sampled search result in one activity, a few at a time.
+
+        Each sample keeps its own `serp:{index}` receipt, request fingerprint and provider
+        tag, exactly as `keyword_inspect` records it. All reservations are taken in index
+        order before the first request, so a binding ceiling refuses the same samples as
+        inspecting them one by one did.
+        """
+        collection = await self._result(run_id, "collection")
+        scope = await self._result(run_id, "scope")
+        selected = self._sample_candidates(collection["candidates"])
+        del collection  # Read once per batch; it can approach a megabyte.
+        amount = self._policy(scope)["serp_reservation_usd"]
+        await self._reserve_in_order(
+            run_id, [(f"serp:{index}", amount) for index in range(len(selected))]
+        )
+        finished = 0
+
+        async def inspect(index, keyword):
+            nonlocal finished
+            await self._query(run_id, f"serp:{index}", "serp", keyword, scope=scope)
+            finished += 1
+            await self.db.project_run_progress(
+                run_id=UUID(run_id),
+                mode="units",
+                step="serps",
+                current=finished,
+                total=len(selected),
+                summary="Inspecting a bounded sample of search results.",
+            )
+
+        async with self._provider_session():
+            await self._bounded(
+                [
+                    partial(inspect, index, candidate["keyword"])
+                    for index, candidate in enumerate(selected)
+                ]
+            )
+
     async def _samples(self, run_id: str, candidates: list):
         samples, receipts = {}, {}
         for index, candidate in enumerate(self._sample_candidates(candidates)):
@@ -795,6 +1020,11 @@ class KeywordPlanActivities:
                     review=review,
                     coverage=collection["coverage"],
                     evidence={
+                        **(
+                            {"reused_research_from_run_id": collection["reused_from_run_id"]}
+                            if collection.get("reused_from_run_id")
+                            else {}
+                        ),
                         "collection": {
                             stage: receipt_evidence(value)
                             for stage, value in collection["sources"].items()

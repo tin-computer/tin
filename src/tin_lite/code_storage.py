@@ -1322,6 +1322,7 @@ class CodeStorage:
         execution_key: str,
         run_id: str,
         workflow_key: str = "content.design_md",
+        validate_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         repo = await self.get_repo(repo_id)
         commit_message = f"{workflow_key} {run_id} [{execution_key}]"
@@ -1331,7 +1332,18 @@ class CodeStorage:
             commits = recent.get("commits", [])
             if commits and commits[0].get("message") == commit_message:
                 return commits[0]["sha"]
-            raise RuntimeError("canonical project state changed before artifact commit")
+            if not _is_commit_sha(current_head_sha) or not _is_commit_sha(expected_head_sha):
+                raise RuntimeError("canonical project revision is unavailable")
+            async with asyncio.timeout(120):
+                original = await self._publication_file(
+                    repo, ref=expected_head_sha, path=artifact_path
+                )
+                current = await self._publication_file(
+                    repo, ref=current_head_sha, path=artifact_path
+                )
+            if original != current:
+                raise OutputConflictError("The output file changed while this run was working.")
+            expected_head_sha = current_head_sha
         if await self._file_equals(
             repo,
             ref=expected_head_sha,
@@ -1340,6 +1352,8 @@ class CodeStorage:
         ):
             return expected_head_sha
         try:
+            if validate_lease is not None:
+                await validate_lease()
             result = await (
                 repo.create_commit(
                     target_branch=branch,
@@ -1368,18 +1382,21 @@ class CodeStorage:
         base_branch: str,
         expected_base_sha: str,
     ) -> tuple[dict[str, Any], str]:
-        """Return a bounded product projection and the exact unified diff to approve."""
+        """Review the task's changes against its original snapshot, never a moving HEAD."""
+        del base_branch
+        if not _is_commit_sha(expected_base_sha):
+            raise ValueError("task review requires its original project revision")
         repo = await self.get_repo(repo_id)
-        current_base_sha = await self.head_sha(repo, base_branch)
-        if current_base_sha != expected_base_sha:
-            raise RuntimeError("canonical project state changed before task review")
-        result = await repo.get_branch_diff(
-            branch=branch,
-            base=base_branch,
-            ephemeral=True,
-            ephemeral_base=False,
+        revision = await self.procedure_checkpoint_revision(repo_id=repo_id, branch=branch)
+        if revision is None:
+            raise RuntimeError("task checkpoint is unavailable")
+        result = await repo.get_commit_diff(
+            sha=revision,
+            base_sha=expected_base_sha,
             ttl=300,
         )
+        if result.get("sha") != revision:
+            raise RuntimeError("task diff did not resolve the saved checkpoint")
         files = result.get("files", [])
         filtered = result.get("filtered_files", [])
         if filtered or len(files) > _TASK_DIFF_MAX_FILES:
@@ -1411,6 +1428,8 @@ class CodeStorage:
         if raw_diff:
             raw_diff += "\n"
         projection = {
+            "base_sha": expected_base_sha,
+            "source_revision": revision,
             "stats": dict(result.get("stats", {})),
             "files": projected_files,
             "sha256": hashlib.sha256(raw_diff.encode()).hexdigest(),
@@ -1425,6 +1444,9 @@ class CodeStorage:
         expected_head_sha: str,
         raw_diff: str,
         expected_diff_sha256: str,
+        original_base_sha: str,
+        reviewed_files: list[dict[str, Any]],
+        validate_lease: Callable[[], Awaitable[None]],
         execution_key: str,
         run_id: str,
     ) -> str:
@@ -1433,6 +1455,38 @@ class CodeStorage:
         repo = await self.get_repo(repo_id)
         commit_message = f"project.task {run_id} [{execution_key}]"
         try:
+            # Applying the same patch to a new HEAD must not overwrite a concurrent edit
+            # merely because its hunks happen to apply. Check both sides of renames too.
+            if not _is_commit_sha(original_base_sha) or not _is_commit_sha(expected_head_sha):
+                raise ValueError("task application requires immutable project revisions")
+            if original_base_sha != expected_head_sha:
+                paths = {
+                    str(value)
+                    for item in reviewed_files
+                    for value in (item.get("path"), item.get("old_path"))
+                    if value is not None
+                }
+                if not paths or len(paths) > 2 * _TASK_DIFF_MAX_FILES:
+                    raise ValueError("task review has no bounded file selection")
+                async with asyncio.timeout(120):
+                    remaining = 2 * _TASK_DIFF_MAX_BYTES
+                    for path in sorted(paths):
+                        if not _safe_repo_path(path):
+                            raise ValueError("task review contains an unsafe path")
+                        original = await self._publication_file(
+                            repo, ref=original_base_sha, path=path, max_bytes=remaining
+                        )
+                        remaining -= len(original[1]) if original is not None else 0
+                        current = await self._publication_file(
+                            repo, ref=expected_head_sha, path=path, max_bytes=remaining
+                        )
+                        remaining -= len(current[1]) if current is not None else 0
+                        if original != current:
+                            raise OutputConflictError(
+                                "A proposed file changed while the task was working. "
+                                "The saved proposal needs a new review."
+                            )
+            await validate_lease()
             result = await repo.create_commit_from_diff(
                 target_branch=branch,
                 expected_head_sha=expected_head_sha,

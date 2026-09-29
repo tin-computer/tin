@@ -52,9 +52,10 @@ schema version explicitly. No new table, executor, model route, UI, or consumer 
   market (US, GB, CA, AU). Optional seeds, competitor hosts, exact audit run, and Search Console.
 - An explicit per-run dollar limit is bounded by the switchboard ceiling, which defaults to
   zero. The existing DataForSEO and native model credentials stay on the switchboard.
-  Enable `TIN_LITE_KEYWORD_PLAN_MAX_COST_USD` with a value from `5` to `25`; the effective
-  limit is the lower of this setting and the run's limit (default `10`). No environment or
-  production spending configuration is changed by this implementation.
+  Enable `TIN_LITE_KEYWORD_PLAN_MAX_COST_USD` with a value from `2` to `25`; the effective
+  limit is the lower of this setting and the run's limit (default `2` for policy v6; runs
+  pinned to v5 or earlier need at least `5`). No environment or production spending
+  configuration is changed by this implementation.
 - Up to eight seeds, three competitor footprints, 300 selected keyword candidates, and 40
   live top-ten SERP samples. No universal difficulty/volume rejection rules, cadence promises,
   category-name viability verdict, backlink API, calendar, rescore mode, or new table.
@@ -123,6 +124,37 @@ Reuse canonical CAS publication and lost-response reconciliation, generic run pr
 Postgres-backed Activity, and identifier-only Temporal execution. Stopping fences later paid
 work but cannot refund accepted calls. Once publication starts, reconcile it before completion
 instead of declaring the run stopped while its files may already have been committed.
+
+## Policy v6 reservations — September 29, 2026
+
+New definitions pin `keyword-plan-v6`: the v5 research, instructions, schemas and caps, with
+reservations sized from list prices and a $2 floor instead of $5. Lookups reserve $0.05
+(largest list price $0.036), search-result samples $0.005 ($0.002), and the seed, screening and
+review calls $0.10, $0.10 and $0.15 (worst cases $0.083, $0.085 and $0.099 at long-context
+rates). A full run reserves at most $1.65. Arithmetic and sources are in
+[workflow billing coverage](workflow-billing-coverage.md#ceilings-sized-to-measured-cost--september-29-2026).
+A provider charge above its reservation still stops research rather than overspending.
+
+## Concurrent lookups — September 29, 2026
+
+Research buys the same calls as before, but no longer one at a time. Policies, seed counts,
+sample caps, model inputs, request fingerprints and receipts are unchanged.
+
+- Collection runs the target footprint, competitor discovery and the Search Console read while
+  the seed proposal is written, then the competitor footprints, seed metrics, suggestions and
+  related keywords four at a time. `sources` is rebuilt in the old fixed order, because
+  candidate selection takes one row from each source in turn.
+- New runs inspect the search-result samples in one `keyword_inspect_batch` activity, four at a
+  time, behind the `keyword-inspect-batch-v1` patch. Each sample keeps its `serp:{index}`
+  receipt. Histories started earlier still schedule one `keyword_inspect` per sample.
+- Reservations are taken in the old sequential order before each group starts, so a binding
+  ceiling refuses the same calls. After a failure no further call starts; calls in flight
+  finish so their receipts settle. A paid call reserves on the database connection that
+  already holds its receipt lock, so each lookup in flight uses one pooled connection.
+- One DataForSEO client and its connections are shared across a batch; each lookup keeps its
+  own timeout, size bound and receipt.
+- If the seed proposal fails after the target and competitor lookups started, those two lookups
+  were still bought. A refused seed reservation buys no lookup.
 
 ## Acceptance
 

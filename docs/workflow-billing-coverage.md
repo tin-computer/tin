@@ -73,8 +73,9 @@ Provider adapters remain independent from pricing. A new Anthropic, Gemini or
 OpenRouter route needs a verified explicit rate card before a billed request can
 be dispatched; keys or model prefixes never choose a provider or a price.
 
-The normal native maximum is $2, the organic audit maximum is $5, and keyword
-planning uses its configured total research ceiling. These are conservative estimates
+The normal native maximum is $2, the organic audit maximum is $2 (it was $5 until
+September 29, 2026; see below), and keyword planning uses its configured total research
+ceiling. These are conservative estimates
 and ceilings, not fixed charges. The organic parent ceiling composes its selected stages:
 audit, keyword research, planning, optional technical fix, and, for the current content
 continuation, drafting and optional delivery. The pinned definition and inputs determine
@@ -150,3 +151,82 @@ grant the once-per-person welcome credits, and create missing limits without ove
 existing policies. Self-host billing remains optional and off by default. Live Stripe mode
 remains unsupported; the defaults are not a live-payment launch. See
 [self-hosted and hosted configuration](self-hosted-billing.md).
+
+## Ceilings sized to measured cost — September 29, 2026
+
+Production runs cost a small part of their ceilings: an organic traffic system run used $0.73
+(audit, keyword plan and a content plan that failed) against $31, and a `content.generate` run
+was charged $0.97 against $5. Ceilings now sit near three times typical cost, and never below
+the worst case one run can reach, so a normal run is never refused. Charges stay actual usage.
+
+| Workflow | Before | After | Why |
+| --- | --- | --- | --- |
+| `organic.keyword_plan` (new runs) | $10 default, $5 floor | $2 default and floor | Keyword policy v6 reserves at most $1.65 for a full run |
+| `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
+| `organic.traffic_system` | $26 ($31 with a technical fix) | $15 ($20); $10 draft-only | $2 keywords + $2 audit + $1 content plan + $5 draft + $5 PR adaptation |
+| `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
+
+Keyword policy v6 (`keyword_plan_v6.py`) changes only reservations and the floor; v5 and older
+runs keep theirs. From list prices checked September 29, 2026:
+
+- DataForSEO Labs: $0.012 per task plus $0.00012 per returned item. The largest lookup returns
+  200 rows, $0.036. Reserve $0.05 (was $0.10).
+- Live organic SERP: $0.002 per page of ten results. Reserve $0.005 (was $0.03).
+- GPT-6 Luna model steps, at the pinned card's long-context rates ($0.25 per million input
+  tokens at the cache-write rate, $0.75 per million output tokens), counting one token per byte
+  of the 300,000-byte input cap plus instructions and schema (about 325,000 tokens, $0.081):
+  seeds $0.083, screening $0.085, review $0.099. Reserve $0.10, $0.10 and $0.15 (were $0.50,
+  $0.50 and $4.00).
+- A full run: three model calls ($0.35), 22 lookups ($1.10) and 40 samples ($0.20) reserve
+  $1.65, under the $2 floor. At list prices a run whose every lookup returns its full row limit
+  costs about $0.95, even with the model calls at their bounds. The measured $0.73 covered the
+  audit too, so a typical keyword run costs less than that; $2 is roughly three times it.
+
+Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
+unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With
+every input at its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per
+search), 6,000 output tokens and three $0.01 searches per searched call, a v10 run costs $1.83
+($1.92 under v9). The traffic system's
+content plan share is $1: its one call is under $0.10 at long-context rates. Standalone
+`content.plan` runs keep the $2 native maximum. These composition changes apply to every
+traffic definition; a saved configuration keeps its own keyword limit (for example $9 gives
+$22). Weekly `content.generate` occurrences stay outside the parent's ceiling.
+
+`content.generate` keeps $5. Its session contract bounds a job by spend and sandbox time, not by
+tokens or requests. One maximal GPT-6 Sol response (a 1,050,000-token context and 128,000 output
+tokens) costs $2.34 at list price with the whole context cached and $6.12 without, so no
+code-level bound sits below $5, and one measured run is not enough to show that a lower ceiling
+would never stop a normal draft.
+
+## Weekly articles and the default limits — September 29, 2026
+
+Hosted projects start with $10 per run, $10 a month and $10 per scheduled run (migration 047).
+These defaults are unchanged. Admission counts a charged run at what it cost and a run still
+going at its full maximum. A scheduled run starts only if its maximum fits the per-run and
+scheduled-run limits and this month's charges plus its maximum fit the monthly limit.
+
+A weekly `content.generate` occurrence carries a $5 maximum, and its configured estimate is the
+same $5. At the measured $0.97 a draft, five Tuesday drafts fit: the fifth needs $3.88 + $5.00.
+Every other charge in the month counts against the same $10. When each approved draft also opens
+a PR adaptation costing about as much, charges pass $5 during the third week and later drafts
+that month do not start. A Start here traffic run is included and not counted; one started
+directly is estimated at $15 and needs a higher per-run limit ($10 when drafts stay in Tin).
+
+The Start here handoff now says this. When the report is written, Tin reads the project's
+limits, every active saved schedule's maximum as admission prices it, and the weekly articles
+an organic traffic system started by this setup will save. If a schedule's maximum exceeds the
+per-run or scheduled-run limit, or the schedules' runs in a month at their estimates exceed the
+monthly limit, the onboarding result's `relay` gains one line that names the schedule, the
+limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
+
+> Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
+> $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, so some runs may
+> not start. To keep every run, raise the monthly limit with set_project_spending_limits or on
+> the Billing page.
+
+Tin starts a run only if this month's charges plus that run's maximum fit the limit, and a run
+still going counts at its maximum.
+
+The words are saved with the setup, so a retried report reads the same. Projects without
+billing, or with nothing billed on a schedule, get no line.
+

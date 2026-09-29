@@ -100,6 +100,9 @@ AUDIT_POLICY = {
     "reuse_questions": True,
     "repetitions": 3,
     "max_panel_jobs": 2,
+    # Each buyer job asks at most one question per family (four), so two jobs ask at most
+    # eight. The cost ceiling is computed from this bound: 8 x 3 answers, like 12 x 2 before.
+    "max_questions": 8,
     # Site and search evidence beyond the page facts. Translations of one page do not
     # compete, and a search needs this many impressions before two pages count as competing.
     "cannibalization_min_impressions": 10,
@@ -153,7 +156,14 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
 # How a NEW question panel is drafted. An existing panel records its own answer count, so an
 # explicit answer completion of an older run may ignore these too.
 PANEL_PREPARATION_POLICY_KEYS = frozenset(
-    {"reuse_questions", "repetitions", "max_panel_jobs", "answer_ladder", "unsearched_answers"}
+    {
+        "reuse_questions",
+        "repetitions",
+        "max_panel_jobs",
+        "max_questions",
+        "answer_ladder",
+        "unsearched_answers",
+    }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
 
