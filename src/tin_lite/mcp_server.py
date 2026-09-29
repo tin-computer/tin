@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID, uuid4
@@ -26,11 +27,12 @@ from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
-from tin_lite.content_delivery import DeliverySettings
+from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
     delivery_service,
     page_url_service,
+    publish_preview,
     retry_delivery,
 )
 from tin_lite.content_plan import ContentPlan
@@ -109,6 +111,7 @@ from tin_lite.projects import (
 from tin_lite.publication import read_run_output as read_project_run_output
 from tin_lite.publication import related_output_documents, retained_output_view
 from tin_lite.run_service import (
+    ContentProgramNotSavedError,
     TemporalStartError,
     WorkflowExecutorUnavailableError,
     start_workflow_run,
@@ -129,6 +132,79 @@ from tin_lite.writing_style import style_capture_preparation
 
 MCP_SCOPE = "openid"
 logger = logging.getLogger(__name__)
+
+
+PROJECT_WORKFLOW_NOT_FOUND = (
+    "project workflow not found in this project; call list_project_workflows to get its id"
+)
+_WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
+
+
+async def _content_program_next_call(
+    database: Any, project_id: UUID, exc: ContentProgramNotSavedError
+) -> dict[str, Any]:
+    """The exact MCP calls that save a content program and start it, ids filled in when known."""
+    inputs = exc.inputs
+    saved = next(
+        (
+            item
+            for item in await database.list_project_workflows(project_id=project_id)
+            if item.workflow_key == "content.plan"
+            and item.status != "archived"
+            and item.inputs == inputs
+        ),
+        None,
+    )
+    if saved is not None:
+        return {
+            "code": "content_program_not_saved",
+            "message": (
+                f"This content program is already saved as {saved.name!r}. Start it with "
+                f"start_project_workflow and project_workflow_id {saved.id}."
+            ),
+            "next_tool": {
+                "name": "start_project_workflow",
+                "arguments": {
+                    "project_id": str(project_id),
+                    "project_workflow_id": str(saved.id),
+                    "request_id": str(uuid4()),
+                },
+            },
+        }
+    project = await database.get_project(project_id)
+    try:
+        weekday = _WEEKDAYS[date.fromisoformat(str(inputs.get("start_date"))).weekday()]
+    except ValueError:
+        weekday = "monday"
+    return {
+        "code": "content_program_not_saved",
+        "message": str(exc),
+        "next_tool": {
+            "name": "create_project_workflow",
+            "arguments": {
+                "project_id": str(project_id),
+                "workflow_id": "content.plan",
+                "name": "Content program",
+                "inputs": inputs,
+                # Weekly ticks prepare each batch; the first run builds the whole roadmap.
+                "schedule": {
+                    "cadence": "weekly",
+                    "weekdays": [weekday],
+                    "local_time": "09:00",
+                    "timezone": getattr(project, "timezone", None) or "UTC",
+                },
+                "request_id": str(uuid4()),
+            },
+        },
+        "then": {
+            "name": "start_project_workflow",
+            "arguments": {
+                "project_id": str(project_id),
+                "project_workflow_id": "<id returned by create_project_workflow>",
+                "request_id": str(uuid4()),
+            },
+        },
+    }
 
 
 def _require_style_sources(workflow, project_id, inputs):
@@ -155,6 +231,8 @@ def _mcp_uuid(value: str, *, field: str) -> UUID:
         hint = {
             "project_id": "; call list_projects to get it",
             "workspace_id": "; call list_workspaces to get it",
+            "project_workflow_id": "; call list_project_workflows to get it",
+            "run_id": "; call list_project_runs to get it",
         }.get(field, "")
         raise ToolError(f"{field} must be a UUID{hint}") from exc
 
@@ -163,6 +241,56 @@ def _mcp_input_schema(definition: dict[str, Any]) -> dict[str, Any]:
     """Return the workflow inputs a caller supplies, excluding Tin-bound project state."""
 
     return client_input_schema(definition)
+
+
+SHORT_DESCRIPTION_CHARS = 160
+
+
+def _one_line(text: str | None) -> str:
+    """The first sentence of a description on one line, cut to a bounded length."""
+    words = " ".join((text or "").split())
+    sentence = re.split(r"(?<=[.!?])\s", words, maxsplit=1)[0]
+    if len(sentence) <= SHORT_DESCRIPTION_CHARS:
+        return sentence
+    return sentence[: SHORT_DESCRIPTION_CHARS - 1].rstrip() + "…"
+
+
+def _short_workflow_view(workflow: Any, readiness: dict[str, Any]) -> dict[str, Any]:
+    """The few facts an agent needs to pick a workflow; get_workflow returns the rest."""
+    schema = _mcp_input_schema(workflow.definition)
+    properties = schema.get("properties") or {}
+    view = {
+        "id": str(workflow.id),
+        "key": workflow.key,
+        "title": workflow.title,
+        "description": _one_line(workflow.description),
+        "schedule_modes": workflow.definition.get(
+            "schedule_modes", ["on_demand", "daily", "weekly"]
+        ),
+        "readiness": readiness["state"],
+        # Inputs the caller must supply: required and without a default Tin fills in.
+        "required_inputs": [
+            name
+            for name in schema.get("required") or []
+            if "default" not in (properties.get(name) or {})
+        ],
+        # Connections a start fails without, so an agent can ask for them before starting.
+        "needs": [
+            item["provider_key"]
+            for item in workflow.definition.get("integration_requirements") or []
+            if item.get("required")
+        ],
+    }
+    if readiness["state"] == "blocked":
+        blocking = next(
+            (item for item in readiness["unmet"] if item.get("level") == "required"),
+            readiness["unmet"][0] if readiness["unmet"] else None,
+        )
+        if blocking is not None:
+            view["blocked_because"] = _one_line(
+                blocking.get("how_to_satisfy") or blocking.get("reason")
+            )
+    return view
 
 
 def _mcp_workflow(workflows: list[Any], identifier: str, *, parameter: str = "workflow_id") -> Any:
@@ -746,6 +874,17 @@ def _join_names(needs: list[dict[str, Any]]) -> str:
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _prerequisite_facts(run: Any) -> dict[str, Any]:
+    """What a start or run view says about prerequisites: waits, advisories, plain notes."""
+    evidence = getattr(run, "prerequisite_evidence", None)
+    evidence = evidence if isinstance(evidence, dict) else {}
+    return {
+        "advisories": evidence.get("advisories", []),
+        **({"waiting": evidence["waiting"]} if evidence.get("waiting") else {}),
+        "prerequisite_notes": list(evidence.get("notes") or []),
+    }
+
+
 def _founder_words(
     *, quote: str | None = None, relay: list[str] | str | None = None
 ) -> dict[str, Any]:
@@ -1049,8 +1188,10 @@ def create_mcp_app(
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
-        Does not approve a draft, run a model, change article bytes, merge, or publish.
-        Read get_run.content_delivery for status and the confirmed PR link.
+        Does not approve a draft, change article bytes, merge, or publish. It runs no model,
+        except for an answer page or public article whose adaptation could not start (for
+        example, too few credits): then it tries that metered adaptation again. Read
+        get_run.content_delivery for status and the confirmed PR link.
         """
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -1529,12 +1670,19 @@ def create_mcp_app(
         )
 
     @server.tool()
-    async def list_workflows(project_id: str) -> list[dict[str, Any]]:
+    async def list_workflows(
+        project_id: str, detail: Literal["full", "short"] = "short"
+    ) -> list[dict[str, Any]]:
         """List callable workflow definitions for one accessible Tin project.
 
-        Each entry carries its declared prerequisites and a project-level readiness
-        (ready, advisory or blocked) computed without inputs; exact scopes, via_input run ids
-        and {placeholder} paths are only checked against real inputs at start_workflow.
+        The default listing is short, for choosing a workflow: per entry id, key, title, a
+        one-line description, schedule_modes, readiness (ready, advisory or blocked, computed
+        without inputs), required_inputs (input names the caller must supply), needs (required
+        connections) and, when blocked, blocked_because. Then call get_workflow for the chosen
+        key to read its full input schema and prerequisites.
+
+        detail="full" returns every definition with its input schema, prerequisites and
+        readiness details. It is large: about 3,000 characters per workflow.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -1558,6 +1706,8 @@ def create_mcp_app(
             project_id=parsed_project_id,
             workflows=workflows,
         )
+        if detail == "short":
+            return [_short_workflow_view(item, readiness[item.id]) for item in workflows]
         return [
             {
                 "id": str(workflow.id),
@@ -1651,7 +1801,7 @@ def create_mcp_app(
                 else {"code": "not_registered"},
                 "next": (
                     "Onboarding is unavailable for this project. Use list_workflows "
-                    "to inspect individual workflows and their prerequisites; funded "
+                    "to choose a workflow and get_workflow for its prerequisites; funded "
                     "runs still require their own supported quote. Do not start the "
                     "onboarding planner separately to bypass this restriction."
                 ),
@@ -2130,7 +2280,7 @@ def create_mcp_app(
         services = runtime()
         existing = await services.database.get_project_workflow(parsed_workflow_id)
         if existing is None or existing.project_id != parsed_project_id:
-            raise ToolError("project workflow not found")
+            raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
         workflow = await services.database.get_workflow(existing.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
@@ -2227,7 +2377,7 @@ def create_mcp_app(
         services = runtime()
         configured = await services.database.get_project_workflow(parsed_workflow_id)
         if configured is None or configured.project_id != parsed_project_id:
-            raise ToolError("project workflow not found")
+            raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
         workflow = await services.database.get_workflow(configured.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
@@ -2269,7 +2419,7 @@ def create_mcp_app(
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
             "status": run.status.value,
-            "advisories": (run.prerequisite_evidence or {}).get("advisories", []),
+            **_prerequisite_facts(run),
         }
 
     @server.tool()
@@ -2499,7 +2649,17 @@ def create_mcp_app(
             "review_summary": review_summary,
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
-            "page_url": await page_url_service(runtime()).view(run, delivery, check=True),
+            "page_url": await page_url_service(runtime(), settings).view(run, delivery, check=True),
+            # Before approval: what Publish does for a page Tin adapts to the site.
+            **(
+                {
+                    "delivery_preview": await publish_preview(
+                        runtime=runtime(), settings=settings, run=run, actor=clerk_user_id
+                    )
+                }
+                if run.status is RunStatus.NEEDS_INPUT and run.workflow_id in ADAPTED_WORKFLOW_IDS
+                else {}
+            ),
             "progress": {
                 "step": getattr(run, "progress_step", None),
                 "current": getattr(run, "progress_current", None),
@@ -2529,6 +2689,7 @@ def create_mcp_app(
                 else {}
             ),
             "prerequisite_evidence": getattr(run, "prerequisite_evidence", None),
+            "prerequisite_notes": _prerequisite_facts(run)["prerequisite_notes"],
             **(
                 {"system": await _organic_system_facts(run)}
                 if run.executor == "organic.traffic_system"
@@ -2771,6 +2932,8 @@ def create_mcp_app(
         outside inputs. instruction and title are only for project.task;
         omit them for other workflows. Reuse request_id (UUID) when retrying the same start.
         Funds are checked automatically; no billing quote or extra spending approval is required.
+        prerequisite_notes says in plain words what the run lacks or waits for; `waiting` lists
+        prerequisite runs still in progress that this run waits for (up to 30 minutes).
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -2823,6 +2986,12 @@ def create_mcp_app(
         except PrerequisiteError as exc:
             # The JSON diagnostic names the upstream workflow and a replayable suggested call.
             raise ToolError(json.dumps(exc.diagnostic())) from exc
+        except ContentProgramNotSavedError as exc:
+            raise ToolError(
+                json.dumps(
+                    await _content_program_next_call(runtime().database, parsed_project_id, exc)
+                )
+            ) from exc
         except WorkflowInputError as exc:
             if workflow.key == "brand.capture" and workflow.project_id is None:
                 raise ToolError(
@@ -2853,7 +3022,7 @@ def create_mcp_app(
             "workflow": run.workflow_name,
             "status": run.status.value,
             "already_started": replayed,
-            "advisories": (run.prerequisite_evidence or {}).get("advisories", []),
+            **_prerequisite_facts(run),
             **({"assumed": assumed} if assumed else {}),
             **({"meanwhile": meanwhile} if meanwhile else {}),
             **_founder_words(
@@ -2880,7 +3049,10 @@ def create_mcp_app(
                         + " now, so the first setup can use them.",
                     ]
                     if workflow.executor == GROWTH_ONBOARDING_KEY
-                    else f"Tin started {workflow.title}. I will tell you when the result lands."
+                    else [
+                        f"Tin started {workflow.title}. I will tell you when the result lands.",
+                        *_prerequisite_facts(run)["prerequisite_notes"],
+                    ]
                 )
             ),
         }
@@ -3138,6 +3310,35 @@ def create_mcp_app(
             "result": "Revision accepted; queued for execution.",
         }
 
+    async def _adaptation_words(
+        run: Any, chosen: dict[str, Any], actor: str
+    ) -> tuple[list[str], dict[str, Any] | None]:
+        """What the founder hears when approval starts a metered adaptation of the page."""
+        from tin_lite.content_delivery import about_usd, chosen_mode
+        from tin_lite.content_delivery_api import delivery_cost
+
+        cost = await delivery_cost(
+            runtime=runtime(),
+            settings=settings,
+            run=run,
+            actor=actor,
+            repository=chosen["settings"]["repository"],
+        )
+        about = about_usd(cost["estimated_usd"]) if cost else None
+        words = [
+            "Approved. Tin is adapting the page to the site's own format in a separate run"
+            + (f", up to {about}, charged on actual usage." if about else ".")
+        ]
+        if chosen_mode(chosen) == "github_commit":
+            words.append(
+                "Tin merges its pull request into main when the pull request adds only the page "
+                "and GitHub reports it clean; otherwise the pull request stays open and get_run "
+                "says why."
+            )
+        else:
+            words.append("It opens a pull request; merge it when you like.")
+        return words, cost
+
     @server.tool()
     async def approve_workflow_run(
         run_id: str,
@@ -3152,6 +3353,14 @@ def create_mcp_app(
         default branch now, none keeps it in Tin; `remember` makes it the program's default.
         Without `delivery` the program's setting applies. Tell the founder the result's
         `relay` in your words.
+
+        An answer page or public article with a GitHub repository is not committed as-is:
+        approving with github_pr or github_commit starts a separately metered adaptation
+        (content.deliver, charged on actual usage; `delivery_cost` is its configured
+        preview) that fits the page into the site's own format and opens a pull request.
+        With github_commit, Tin then merges that pull request itself when it adds only the
+        page and GitHub reports it clean; otherwise it stays open and get_run says why.
+        get_run.delivery_preview shows what Publish does before you approve.
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
         and supply its review_token. Approval applies both declared destinations atomically;
@@ -3172,15 +3381,23 @@ def create_mcp_app(
         ):
             raise ToolError(f"conflict: {conflict}")
         delivery_words = None
+        delivery_cost_view: dict[str, Any] | None = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
             from tin_lite.project_files import ProjectFileError
 
             if run.workflow_id not in CHOICE_WORKFLOW_IDS:
                 raise ToolError("invalid: this run does not publish to a repository")
+            from tin_lite.content_delivery_api import adapt_on_approval
+
             try:
-                await delivery_service(runtime()).choose(
-                    run=run, mode=delivery, remember=remember, actor=clerk_user_id
+                chosen = await delivery_service(runtime()).choose(
+                    run=run,
+                    mode=delivery,
+                    remember=remember,
+                    actor=clerk_user_id,
+                    adapt=adapt_on_approval(settings, run),
+                    trigger_source="mcp",
                 )
             except (ValueError, LookupError, ProjectFileError, IntegrationError) as exc:
                 raise ToolError(f"invalid: {exc}") from exc
@@ -3189,6 +3406,10 @@ def create_mcp_app(
                 "github_commit": "Approved. Tin is publishing it to your repository now.",
                 "none": "Approved. The draft stays in Tin under Files.",
             }[delivery]
+            if (chosen or {}).get("adapter"):
+                delivery_words, delivery_cost_view = await _adaptation_words(
+                    run, chosen, clerk_user_id
+                )
 
         from tin_lite.reviewed_documents import document_spec
 
@@ -3206,6 +3427,7 @@ def create_mcp_app(
                 "project_id": str(approved.project_id),
                 "status": approved.status.value,
                 "review_decision": approved.review_decision,
+                **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
                 **_founder_words(relay=delivery_words),
             }
         if run.executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -3266,6 +3488,7 @@ def create_mcp_app(
             "workflow": run.workflow_name,
             "status": run.status.value,
             "review_decision": "approval_signaled",
+            **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
             **_founder_words(
                 relay=delivery_words
                 or (
@@ -3493,7 +3716,7 @@ def create_mcp_app(
                 or configured.project_id != parsed_project_id
                 or configured.workflow_id != workflow.id
             ):
-                raise ToolError("project workflow not found")
+                raise ToolError(PROJECT_WORKFLOW_NOT_FOUND)
             from tin_lite.workflow_definitions import resolve_execution_contract
 
             try:
@@ -3527,8 +3750,9 @@ def create_mcp_app(
             draft_preparation = {
                 "preparation": {
                     **await discover(runtime().database, parsed_project_id),
-                    "instruction": "Choose an approved article by title from preparation.articles "
-                    "in this response. If empty, ask the user to review an existing draft in "
+                    "instruction": "Choose an approved article, answer page or public article "
+                    "by title from preparation.articles in this response. If empty, ask the "
+                    "user to review an existing draft in "
                     "Decisions first; do not generate another article just to deliver it. "
                     "Use get_run to check the selected approval, and get_integration(infra.github) "
                     "to confirm the website repository; never infer it from the product name. "

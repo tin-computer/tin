@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import (
+    article_review,
     awesome_submit,
     content_draft,
     content_plan,
@@ -517,11 +518,13 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
         title="Prepare article PR",
-        description="Adapt an approved Tin article to the connected website repository's "
-        "existing format and components. Preserve its copy, leave a reviewable GitHub PR "
-        "unmerged, and keep the Markdown original in Tin.",
+        description="Adapt an approved article, answer page or public article to the "
+        "connected website repository's own format, adding a Markdown route once when the "
+        "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
+        "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
+        "to main and the PR adds nothing but the page.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -532,7 +535,8 @@ BUILTIN_WORKFLOWS = (
                 "source_run_id": {
                     "type": "string",
                     "format": "uuid",
-                    "title": "Approved article run",
+                    "title": "Approved page run",
+                    "description": "An approved planned article, answer page or public article.",
                 },
                 "retry_run_id": {
                     "type": "string",
@@ -582,7 +586,8 @@ BUILTIN_WORKFLOWS = (
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
                 max_files=5,
-                max_bytes=180_000,
+                # A 300 KB public article, its frontmatter and a small route still fit.
+                max_bytes=400_000,
             ),
         ),
     ),
@@ -596,7 +601,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.6.0",
+        version_label="1.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -1148,7 +1153,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.3.0",
+        version_label="1.4.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1317,7 +1322,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.4.1",
+        version_label="1.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -1387,7 +1392,7 @@ BUILTIN_WORKFLOWS = (
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / PUBLIC_ARTICLE_WORKFLOW_NAME,
             entry_skill="public-article",
-            output_path_template="content/articles/{run_id}.md",
+            output_path_template=article_review.PATH_TEMPLATE,
             output_validator="public-article.v2",
             output_max_bytes=300_000,
             project_skills=(

@@ -78,7 +78,7 @@ needs no new storage read.
 
 ## MCP-first journey
 
-1. `list_workflows(project_id)` discovers the workflow and input schema.
+1. `list_workflows(project_id)` finds the workflow; `get_workflow` returns its input schema.
 2. `start_workflow` takes `workflow_id="organic.audit"`, inputs `site_url` and `market`
    (plus `refresh_questions` from v10), and an optional stable UUID `request_id`. Reuse
    it after an uncertain client response. HTTP retains the existing `Idempotency-Key`

@@ -36,7 +36,10 @@ class ContentPrograms:
             or configured.project_id != project_id
             or configured.workflow_key not in PROGRAM_KEYS
         ):
-            raise LookupError("Content program not found.")
+            raise LookupError(
+                "Content program not found in this project. Call list_project_workflows "
+                "to find the id of a saved content.plan program."
+            )
         return configured
 
     async def facts(self, program_id, *, conn=None):

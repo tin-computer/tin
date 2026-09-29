@@ -459,6 +459,42 @@ def test_schema_coercion_is_pure_and_bounded():
     )
 
 
+def test_schema_coercion_reads_json_lists_before_splitting():
+    from tin_lite.workflow_inputs import coerce_schema_inputs
+
+    strings = {"type": "array", "items": {"type": "string"}}
+    schema = {
+        "properties": {
+            "seed_phrases": strings,
+            "website_hosts": strings,
+            "exclude_domains": {**strings, "maxItems": 2},
+        }
+    }
+    fixed, notes = coerce_schema_inputs(
+        schema,
+        {
+            # A plan wrote these lists as JSON text, the second one encoded twice.
+            "seed_phrases": '["crm for dentists", "dental, practice software"]',
+            "website_hosts": json.dumps(json.dumps(["a.example", " b.example "])),
+            "exclude_domains": '["x.example", "y.example", "z.example"]',
+        },
+    )
+    assert fixed == {
+        "seed_phrases": ["crm for dentists", "dental, practice software"],
+        "website_hosts": ["a.example", "b.example"],
+        "exclude_domains": ["x.example", "y.example"],
+    }
+    assert notes == ["exclude_domains cut to its first 2 items"]
+    # Not JSON: a bracketed list loses its brackets and quotes; plain text still splits.
+    fixed, _ = coerce_schema_inputs(
+        schema, {"seed_phrases": "['a b', \"c\",]", "website_hosts": "a.example, b.example"}
+    )
+    assert fixed == {"seed_phrases": ["a b", "c"], "website_hosts": ["a.example", "b.example"]}
+    # A JSON value that is not a list, or a quoted word, falls back to splitting as before.
+    fixed, _ = coerce_schema_inputs(schema, {"seed_phrases": '"solo"', "website_hosts": "[1"})
+    assert fixed == {"seed_phrases": ['"solo"'], "website_hosts": ["[1"]}
+
+
 async def test_hard_nos_and_founder_rulings_are_enforced_by_code():
     result = await plan.build_plan(
         inputs(hard_nos=["no_cold_email"]), SITE, SITE_TEXT, TODAY, FakeModel()
