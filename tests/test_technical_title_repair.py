@@ -2,6 +2,7 @@ import io
 import json
 import runpy
 import tarfile
+from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -33,9 +34,19 @@ def archive(files):
     return buffer.getvalue()
 
 
-def spec():
-    definition = next(row for row in BUILTIN_WORKFLOWS if row.key == technical_fix.KEY).definition
-    contract = validate_codex_procedure_definition(definition)
+def pinned_definition(policy=technical_fix.POLICY):
+    """The catalog definition as a run pinned to an earlier or the current repair policy."""
+    definition = deepcopy(
+        next(row for row in BUILTIN_WORKFLOWS if row.key == technical_fix.KEY).definition
+    )
+    definition["procedure"]["output"]["repair_policy"] = policy
+    definition["procedure"]["verification"]["commands"] = technical_fix.policy_commands(policy)
+    return definition
+
+
+def spec(policy=technical_fix.POLICY):
+    """These tests cover the metadata-only html-metadata-v3 contract unless told otherwise."""
+    contract = validate_codex_procedure_definition(pinned_definition(policy))
     return PinnedCodexProcedure(
         workflow_key=technical_fix.KEY,
         prompt="test",

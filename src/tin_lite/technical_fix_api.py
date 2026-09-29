@@ -63,6 +63,21 @@ async def stop_control(request, project_id, run_id, user, control):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.get("/runs/{run_id}/live")
+async def live_check(
+    project_id: UUID, run_id: UUID, request: Request, check: bool = False, user: AuthContext = USER
+):
+    """After the fix's PR merges, whether the live site still shows the finding. `check`
+    asks GitHub and the site again, at most every ten minutes per run."""
+    from tin_lite.technical_fix_live import live_service
+
+    await service(request, project_id, user)
+    run = await request.app.state.runtime.database.get_run(run_id)
+    if run is None or run.project_id != project_id:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"live_check": await live_service(request.app.state.runtime).view(run, check=check)}
+
+
 @router.post("/runs/{run_id}/stop")
 async def stop_fix(project_id: UUID, run_id: UUID, request: Request, user: AuthContext = USER):
     from tin_lite.organic_system_control import stop_technical

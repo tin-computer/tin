@@ -1063,7 +1063,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             repair_policy not in technical_fix.POLICY_COMMANDS
             or definition.get("key") != technical_fix.KEY
             or result_kind != GITHUB_PULL_REQUEST_RESULT
-            or verification_commands != [technical_fix.POLICY_COMMANDS.get(repair_policy)]
+            or verification_commands != technical_fix.policy_commands(repair_policy)
             or output_max_files > 3
         ):
             raise ValueError("Unsupported technical repair policy")

@@ -117,6 +117,7 @@ from tin_lite.runtime import RuntimeServices
 from tin_lite.schedules import WorkflowSchedule
 from tin_lite.settings import Settings
 from tin_lite.technical_fix_api import TechnicalFixSelection
+from tin_lite.technical_fix_live import live_service
 from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
@@ -2500,6 +2501,8 @@ def create_mcp_app(
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
             "page_url": await page_url_service(runtime()).view(run, delivery, check=True),
+            # After a technical fix's PR merges: whether the live site still shows the problem.
+            "live_check": await live_service(runtime()).view(run, check=True),
             "progress": {
                 "step": getattr(run, "progress_step", None),
                 "current": getattr(run, "progress_current", None),
