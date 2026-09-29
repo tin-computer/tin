@@ -11,7 +11,7 @@ from test_project_task import TASK_RAW_DIFF
 from tin_lite.publication import OutputConflictError
 
 
-async def apply(storage, base, *, files=None):
+async def apply(storage, base, *, files=None, validate_lease=None):
     return await storage.apply_task_diff(
         repo_id=storage.repo.id,
         branch="main",
@@ -20,6 +20,7 @@ async def apply(storage, base, *, files=None):
         raw_diff=TASK_RAW_DIFF,
         expected_diff_sha256=hashlib.sha256(TASK_RAW_DIFF.encode()).hexdigest(),
         reviewed_files=files or [{"path": "report.md", "old_path": None}],
+        validate_lease=validate_lease or AsyncMock(),
         execution_key="run:task_apply",
         run_id="run",
     )
@@ -70,6 +71,47 @@ async def test_rename_checks_the_original_path_too():
     with pytest.raises(OutputConflictError):
         await apply(storage, base, files=[{"path": "report.md", "old_path": "old.md"}])
     storage.repo.create_commit_from_diff.assert_not_awaited()
+
+
+async def test_task_rechecks_lease_after_comparing_files():
+    storage = ready_storage()
+    base = storage.repo.head
+    storage.repo.edit({"social.md": b"Another run\n"})
+    validate = AsyncMock(side_effect=RuntimeError("lease revoked during comparison"))
+    with pytest.raises(RuntimeError, match="lease revoked"):
+        await apply(storage, base, validate_lease=validate)
+    validate.assert_awaited_once()
+    storage.repo.create_commit_from_diff.assert_not_awaited()
+
+
+@pytest.mark.parametrize("same_file", [False, True])
+async def test_design_save_also_preserves_unrelated_edits_and_refuses_conflicts(same_file):
+    storage = HistoryStorage()
+    storage.repo.list_commits = AsyncMock(return_value={"commits": []})
+    base = storage.repo.head
+    path = "DESIGN.md" if same_file else "social.md"
+    current = storage.repo.edit({path: b"Another run\n"})
+
+    async def save():
+        return await storage.create_canonical_commit(
+            repo_id=storage.repo.id,
+            branch="main",
+            expected_head_sha=base,
+            artifact_path="DESIGN.md",
+            artifact=b"# Design\n",
+            execution_key="design:save",
+            run_id="design",
+        )
+
+    if same_file:
+        with pytest.raises(OutputConflictError):
+            await save()
+        assert storage.repo.head == current and storage.repo.writes == 0
+    else:
+        sha = await save()
+        assert storage.repo.trees[sha]["social.md"][1] == b"Another run\n"
+        assert storage.repo.trees[sha]["DESIGN.md"][1] == b"# Design\n"
+        assert storage.repo.commits[sha]["parent_shas"] == [current]
 
 
 async def test_write_race_keeps_expected_head_and_never_forces_a_patch():

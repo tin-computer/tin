@@ -1322,6 +1322,7 @@ class CodeStorage:
         execution_key: str,
         run_id: str,
         workflow_key: str = "content.design_md",
+        validate_lease: Callable[[], Awaitable[None]] | None = None,
     ) -> str:
         repo = await self.get_repo(repo_id)
         commit_message = f"{workflow_key} {run_id} [{execution_key}]"
@@ -1331,7 +1332,18 @@ class CodeStorage:
             commits = recent.get("commits", [])
             if commits and commits[0].get("message") == commit_message:
                 return commits[0]["sha"]
-            raise RuntimeError("canonical project state changed before artifact commit")
+            if not _is_commit_sha(current_head_sha) or not _is_commit_sha(expected_head_sha):
+                raise RuntimeError("canonical project revision is unavailable")
+            async with asyncio.timeout(120):
+                original = await self._publication_file(
+                    repo, ref=expected_head_sha, path=artifact_path
+                )
+                current = await self._publication_file(
+                    repo, ref=current_head_sha, path=artifact_path
+                )
+            if original != current:
+                raise OutputConflictError("The output file changed while this run was working.")
+            expected_head_sha = current_head_sha
         if await self._file_equals(
             repo,
             ref=expected_head_sha,
@@ -1340,6 +1352,8 @@ class CodeStorage:
         ):
             return expected_head_sha
         try:
+            if validate_lease is not None:
+                await validate_lease()
             result = await (
                 repo.create_commit(
                     target_branch=branch,
@@ -1432,6 +1446,7 @@ class CodeStorage:
         expected_diff_sha256: str,
         original_base_sha: str,
         reviewed_files: list[dict[str, Any]],
+        validate_lease: Callable[[], Awaitable[None]],
         execution_key: str,
         run_id: str,
     ) -> str:
@@ -1471,6 +1486,7 @@ class CodeStorage:
                                 "A proposed file changed while the task was working. "
                                 "The saved proposal needs a new review."
                             )
+            await validate_lease()
             result = await repo.create_commit_from_diff(
                 target_branch=branch,
                 expected_head_sha=expected_head_sha,

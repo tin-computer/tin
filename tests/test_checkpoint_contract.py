@@ -78,6 +78,11 @@ from tin_lite.workflows import (
 
 
 class FakeDatabase:
+    @asynccontextmanager
+    async def project_state_lock(self, conn, project_id):
+        async with self._locks.setdefault(f"project:{project_id}", asyncio.Lock()):
+            yield
+
     def __init__(self, *, run: WorkflowRun, project: Project, workflow: Workflow) -> None:
         self.run = run
         self.project = project
