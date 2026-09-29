@@ -14,12 +14,16 @@ import socket
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
 
 from tin_lite.organic_audit import AUDIT_POLICY, public_site
 from tin_lite.usage_capture import begin_observation, observe_tool
+
+# Every policy before organic-audit-v10 crawled exactly this many pages.
+LEGACY_PAGE_CAP = 100
 
 
 class DataForSEOError(RuntimeError):
@@ -89,15 +93,42 @@ class DataForSEO:
         return url, host
 
     @staticmethod
-    def crawl_request(*, host: str, tag: str, respect_sitemap: bool = False) -> dict:
+    def crawl_request(
+        *,
+        host: str,
+        tag: str,
+        respect_sitemap: bool = False,
+        max_pages: int = LEGACY_PAGE_CAP,
+        priority_urls: tuple[str, ...] | list[str] = (),
+    ) -> dict:
+        """The bounded crawl contract. Defaults reproduce earlier pinned requests exactly."""
         public_site(f"https://{host}/")
         if type(respect_sitemap) is not bool:
             raise ValueError("respect_sitemap must be boolean")
-        return {
+        if type(max_pages) is not int or not 1 <= max_pages <= AUDIT_POLICY["max_pages"]:
+            raise ValueError("The crawl page cap is outside the supported range.")
+        priority = list(priority_urls)
+        if len(priority) > AUDIT_POLICY["max_priority_urls"] or len(set(priority)) != len(priority):
+            raise ValueError("Too many or repeated priority URLs.")
+        for url in priority:
+            # The provider requires the exact target domain; anything else is refused here.
+            if (
+                not isinstance(url, str)
+                or len(url) > 2000
+                or any(ord(c) < 33 for c in url)
+                or urlsplit(url).scheme != "https"
+                or urlsplit(url).hostname != host
+                or urlsplit(url).port not in {None, 443}
+                or urlsplit(url).username
+                or urlsplit(url).password
+                or urlsplit(url).fragment
+            ):
+                raise ValueError("Priority URLs must be HTTPS pages on the crawl target.")
+        request = {
             "target": host,
             "start_url": f"https://{host}/",
             "tag": tag,
-            "max_crawl_pages": AUDIT_POLICY["max_pages"],
+            "max_crawl_pages": max_pages,
             "allow_subdomains": False,
             "enable_www_redirect_check": False,
             "respect_sitemap": respect_sitemap,
@@ -108,12 +139,17 @@ class DataForSEO:
             "store_raw_html": False,
             "crawl_delay": 2000,
         }
+        if priority:
+            request["priority_urls"] = priority
+        return request
 
     async def submit(self, request: dict) -> dict:
         expected = self.crawl_request(
             host=request["target"],
             tag=request["tag"],
             respect_sitemap=request.get("respect_sitemap", False),
+            max_pages=request.get("max_crawl_pages", LEGACY_PAGE_CAP),
+            priority_urls=request.get("priority_urls", ()),
         )
         if request != expected:
             raise ValueError("Crawl request differs from the supported bounded contract.")
@@ -151,7 +187,13 @@ class DataForSEO:
                 raise DataForSEOError("Task recovery metadata is unavailable.")
             for row in rows:
                 metadata = row.get("metadata") or {}
-                if all(metadata.get(key) == value for key, value in request.items()):
+                # The unique tag and every echoed setting must match. Priority URLs are
+                # compared only when the provider echoes them.
+                if all(
+                    metadata.get(key) == value
+                    for key, value in request.items()
+                    if key != "priority_urls" or key in metadata
+                ):
                     task_id = str(UUID(row["id"]))
                     matches[task_id] = {
                         "task_id": task_id,
@@ -185,14 +227,18 @@ class DataForSEO:
             "reported_cost_usd": str(task.get("cost", 0)),
         }
 
-    async def pages(self, task_id: str, *, include_broken: bool = False) -> list[dict[str, Any]]:
+    async def pages(
+        self, task_id: str, *, include_broken: bool = False, limit: int = LEGACY_PAGE_CAP
+    ) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= AUDIT_POLICY["max_pages"]:
+            raise ValueError("The crawl page limit is outside the supported range.")
         task = await self._request(
             "POST",
             "pages",
             [
                 {
                     "id": str(UUID(task_id)),
-                    "limit": AUDIT_POLICY["max_pages"],
+                    "limit": limit,
                     "filters": [["resource_type", "in", ["html", "broken"]]]
                     if include_broken
                     else [["resource_type", "=", "html"]],
@@ -206,7 +252,7 @@ class DataForSEO:
         items = results[0].get("items")
         if items is None and results[0].get("items_count") == 0:
             return []
-        if not isinstance(items, list) or len(items) > AUDIT_POLICY["max_pages"]:
+        if not isinstance(items, list) or len(items) > limit:
             raise DataForSEOError("Crawl pages exceeded their collection contract.")
         return items
 

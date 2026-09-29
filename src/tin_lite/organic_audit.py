@@ -64,12 +64,62 @@ V7_AUDIT_POLICY = {
     "question_interpretation_concurrency": 4,
 }
 V8_AUDIT_POLICY = {**V7_AUDIT_POLICY, "version": "organic-audit-v8", "answer_timeout_seconds": 180}
-AUDIT_POLICY = {
+V9_AUDIT_POLICY = {
     **V8_AUDIT_POLICY,
     "version": "organic-audit-v9",
     "check_applicability": True,
     "respect_sitemap": True,
 }
+AUDIT_POLICY = {
+    **V9_AUDIT_POLICY,
+    "version": "organic-audit-v10",
+    # The ceiling for an operator-configured page cap; each run pins its own cap in scope.
+    # At the published basic rate ($0.00015/page) 300 pages stay inside the $0.05 reservation.
+    "max_pages": 300,
+    "default_page_cap": 100,
+    "max_priority_urls": 20,
+    "max_crawl_evidence_bytes": 600_000,
+    # Tin reads robots.txt, sitemaps and the static HTML of selected pages itself.
+    "site_checks": True,
+    "max_sitemap_files": 20,
+    "max_sitemap_urls": 5000,
+    "max_page_bytes": 2_000_000,
+    "page_fetch_concurrency": 4,
+    "search_console_days": 28,
+    "search_console_page_rows": 1000,
+    "search_console_query_rows": 5000,
+    "near_page_one_positions": [4, 15],
+    "near_page_one_min_impressions": 20,
+    "low_ctr_max_position": 10,
+    "low_ctr_min_impressions": 50,
+    "pagespeed_max_urls": 3,
+    "finding_format": "issue_impact_evidence_fix_priority",
+}
+
+# Crawl, site-file and Search Console settings. They never change how an AI answer is
+# requested or graded, so an explicit answer completion may ignore them.
+SITE_EVIDENCE_POLICY_KEYS = frozenset(
+    {
+        "max_pages",
+        "default_page_cap",
+        "max_priority_urls",
+        "max_crawl_evidence_bytes",
+        "site_checks",
+        "max_sitemap_files",
+        "max_sitemap_urls",
+        "max_page_bytes",
+        "page_fetch_concurrency",
+        "search_console_days",
+        "search_console_page_rows",
+        "search_console_query_rows",
+        "near_page_one_positions",
+        "near_page_one_min_impressions",
+        "low_ctr_max_position",
+        "low_ctr_min_impressions",
+        "pagespeed_max_urls",
+        "finding_format",
+    }
+)
 
 
 def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
@@ -82,6 +132,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V6_AUDIT_POLICY,
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
+        V9_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -97,6 +148,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V6_AUDIT_POLICY,
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
+        V9_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -359,8 +411,9 @@ def normalize_pages(
     aliases: tuple[str, ...] = (),
     policy_version: str = LEGACY_AUDIT_POLICY["version"],
 ) -> list[dict]:
-    applicability = audit_policy(policy_version).get("check_applicability", False)
-    if len(items) > AUDIT_POLICY["max_pages"]:
+    policy = audit_policy(policy_version)
+    applicability = policy.get("check_applicability", False)
+    if len(items) > policy["max_pages"]:
         raise ValueError("Provider page collection exceeded its pinned limit.")
     pages = []
     seen: set[str] = set()
@@ -406,7 +459,7 @@ def normalize_pages(
             }
         )
     pages = sorted(pages, key=lambda page: page["url"])
-    if len(canonical_json(pages)) > 240_000:
+    if len(canonical_json(pages)) > policy.get("max_crawl_evidence_bytes", 240_000):
         raise ValueError("Normalized crawl exceeded its evidence budget.")
     return pages
 
@@ -752,7 +805,7 @@ def build_documents(
         "",
         "This is a read-only, sampled audit. Nothing on your website changed.",
         f"Result: {'completed within the stated scope' if complete else 'partial evidence'}. "
-        f"Inspected {len(pages)} {page_unit} (limit {AUDIT_POLICY['max_pages']}).",
+        f"Inspected {len(pages)} {page_unit} (limit {policy['max_pages']}).",
         "",
         "## What to tackle first",
         "",

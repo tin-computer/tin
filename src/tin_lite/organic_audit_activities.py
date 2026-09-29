@@ -23,6 +23,7 @@ from tin_lite.organic_audit import (
     V6_AUDIT_POLICY,
     V7_AUDIT_POLICY,
     V8_AUDIT_POLICY,
+    V9_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     build_documents,
@@ -271,6 +272,7 @@ class OrganicAuditActivities:
                 V6_AUDIT_POLICY,
                 V7_AUDIT_POLICY,
                 V8_AUDIT_POLICY,
+                V9_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             or definition.get("audit_instructions") != ai_contract(pinned_policy["version"])
@@ -290,7 +292,7 @@ class OrganicAuditActivities:
         from tin_lite.organic_audit_completion import KIND, prepare_completion
 
         if (getattr(run, "prerequisite_evidence", None) or {}).get("kind") == KIND:
-            if pinned_policy not in (V8_AUDIT_POLICY, AUDIT_POLICY):
+            if pinned_policy not in (V8_AUDIT_POLICY, V9_AUDIT_POLICY, AUDIT_POLICY):
                 raise ValueError("Audit completion requires the current compatible policy")
             await prepare_completion(self, run, target_policy=pinned_policy)
             return

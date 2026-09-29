@@ -4,9 +4,23 @@ import json
 from copy import deepcopy
 from uuid import UUID
 
-from tin_lite.organic_audit import AUDIT_POLICY, audit_paths, audit_policy, digest
+from tin_lite.organic_audit import (
+    AUDIT_POLICY,
+    SITE_EVIDENCE_POLICY_KEYS,
+    audit_paths,
+    audit_policy,
+    digest,
+)
 
 KIND = "organic_audit_completion_v1"
+# Settings that never change how an answer is requested or graded.
+NEUTRAL_KEYS = {
+    "version",
+    "answer_timeout_seconds",
+    "check_applicability",
+    "respect_sitemap",
+    *SITE_EVIDENCE_POLICY_KEYS,
+}
 
 
 def completion_seed(
@@ -29,18 +43,8 @@ def completion_seed(
         or evidence["project_id"] != project_id
         or evidence["definition_commit_sha"] != definition_sha
         or evidence["policy"] != policy
-        or {
-            k: v
-            for k, v in policy.items()
-            if k
-            not in {"version", "answer_timeout_seconds", "check_applicability", "respect_sitemap"}
-        }
-        != {
-            k: v
-            for k, v in target_policy.items()
-            if k
-            not in {"version", "answer_timeout_seconds", "check_applicability", "respect_sitemap"}
-        }
+        or {k: v for k, v in policy.items() if k not in NEUTRAL_KEYS}
+        != {k: v for k, v in target_policy.items() if k not in NEUTRAL_KEYS}
         or scope.get("completion")
         or crawl["status"] != "completed"
         or ai["status"] != "partial"
