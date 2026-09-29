@@ -3088,9 +3088,9 @@ function renderDocument() {
             }
           : null,
     });
-    const readerBody = route.source !== "retained" && !route.taskPath ? main.querySelector?.(".markdown-viewer-body") : null;
-    if (readerBody) {
-      readerBody.insertAdjacentHTML("afterbegin", pageUrlLine(run));
+    const readerColumn = route.source !== "retained" && !route.taskPath ? main.querySelector?.(".markdown-document") : null;
+    if (readerColumn) {
+      readerColumn.insertAdjacentHTML("afterbegin", pageUrlLine(run, "document"));
       bindPageUrls();
     }
     if (route.source !== "retained" && supportsArticleFeedback(run)) {
@@ -4287,8 +4287,10 @@ function decisionApprovalHtml(decision, run) {
     <button class="decision-approval" type="button" data-apply-decision="${id}">${escapeHtml(label)}</button>`;
 }
 
-function pageUrlLine(run) {
-  return run && window.TinPageUrl ? window.TinPageUrl.html(run.page_url, run.id, {pending: isContentDraftReview(run)}) : "";
+function pageUrlLine(run, mode = "card") {
+  if (!run || !window.TinPageUrl) return "";
+  const pending = isContentDraftReview(run) && (mode === "card" || run.review_decision === "approved");
+  return window.TinPageUrl[mode](run.page_url, run.id, {pending});
 }
 
 function bindPageUrls() {

@@ -95,7 +95,13 @@ sequence or registered execution engine was changed.
 
 Article, public-article and answer-page runs carry `page_url` in the run API
 (`GET /api/projects/{id}/runs`, `GET /api/workflows/runs/{id}`) and in MCP `get_run`.
-The decision card and the document page show it as one line. Only a live page is a link.
+Before approval, the decision card shows one line, `Proposed URL <address>` or
+`Will be published at <address>`, and nothing when Tin found no page on the site that
+shows the file's folder. After approval, the document page shows one status line above the
+title: the open pull request, the deploy, `Live at <address>` (the only link), or
+"Committed, but not a page on <site> yet". The `note` field stays in the API for agents.
+Resolving or checking a page URL never fails the response that carries it: any lookup or
+provider error means no URL is known, and only the error's type is logged.
 
 | Field | Meaning |
 | --- | --- |
@@ -105,6 +111,8 @@ The decision card and the document page show it as one line. Only a live page is
 | `note` | What approving does, or what happened: for example "Approving commits content/answers/x.md to owner/site as a Markdown file only". |
 | `repository`, `file_path`, `pull_request` | The delivery target when Tin writes to GitHub. |
 | `checked_at`, `checkable` | When Tin last looked, and whether another look can change anything. |
+| `route_missing` | Tin looked and found no page on the site that shows the file's folder. |
+| `deploy_overdue` | Merged or committed longer ago than a deploy takes, and still not found. |
 | `published_outside_tin` | No GitHub delivery: the proposed URL is only a suggestion. |
 
 Card polling reads one Postgres projection per run (`page-url:<run_id>` in
