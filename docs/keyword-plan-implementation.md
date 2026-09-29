@@ -124,6 +124,27 @@ Postgres-backed Activity, and identifier-only Temporal execution. Stopping fence
 work but cannot refund accepted calls. Once publication starts, reconcile it before completion
 instead of declaring the run stopped while its files may already have been committed.
 
+## Concurrent lookups — September 29, 2026
+
+Research buys the same calls as before, but no longer one at a time. Policies, seed counts,
+sample caps, model inputs, request fingerprints and receipts are unchanged.
+
+- Collection runs the target footprint, competitor discovery and the Search Console read while
+  the seed proposal is written, then the competitor footprints, seed metrics, suggestions and
+  related keywords four at a time. `sources` is rebuilt in the old fixed order, because
+  candidate selection takes one row from each source in turn.
+- New runs inspect the search-result samples in one `keyword_inspect_batch` activity, four at a
+  time, behind the `keyword-inspect-batch-v1` patch. Each sample keeps its `serp:{index}`
+  receipt. Histories started earlier still schedule one `keyword_inspect` per sample.
+- Reservations are taken in the old sequential order before each group starts, so a binding
+  ceiling refuses the same calls. After a failure no further call starts; calls in flight
+  finish so their receipts settle. A paid call reserves on the database connection that
+  already holds its receipt lock, so each lookup in flight uses one pooled connection.
+- One DataForSEO client and its connections are shared across a batch; each lookup keeps its
+  own timeout, size bound and receipt.
+- If the seed proposal fails after the target and competitor lookups started, those two lookups
+  were still bought. A refused seed reservation buys no lookup.
+
 ## Acceptance
 
 Fixture-only provider/model tests first; no account credentials or paid calls in tests.
