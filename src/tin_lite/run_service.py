@@ -91,6 +91,7 @@ async def start_workflow_run(
     _billing_parent_run_id: UUID | None = None,
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
+    _approval_delivery: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
     if implementation is None:
@@ -381,6 +382,8 @@ async def start_workflow_run(
                 integrations=runtime.integrations,
                 project_id=project_id,
                 inputs=normalized_inputs,
+                # Internal: an approval's own start carries the founder's delivery setting.
+                approval=_approval_delivery,
             )
         except (ValueError, LookupError, IntegrationError) as exc:
             raise WorkflowInputError(str(exc)) from exc

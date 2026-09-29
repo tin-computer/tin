@@ -26,6 +26,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
 from tin_lite.domain import (
+    ANSWER_PAGE_DIR,
     ANSWER_PAGE_WORKFLOW_NAME,
     ARTIFACT_PATH,
     CODEX_PROCEDURE_EXECUTOR,
@@ -2062,29 +2063,39 @@ class TinActivities:
         project = await self._require_project(run.project_id)
         await self._db.mark_run_running(run_id)
         sources = await self._answer_page_sources(run_id=run_id, project=project)
+        day = (run.created_at or datetime.now(UTC)).date().isoformat()
         draft = await self._await_with_heartbeats(
             self._answer_page_effect(
                 run_id=run_id,
                 execute=lambda: reporter.draft(
                     project_name=project.name,
                     sources=sources,
-                    today=(run.created_at or datetime.now(UTC)).date().isoformat(),
+                    today=day,
                 ),
             ),
             details={"stage": "answer_page_draft"},
         )
+        if draft.get("failed_checks"):
+            # One repair of the exact failed checks, reusing the paid research. Both calls
+            # are receipted, so a retry never buys either of them again.
+            missed = draft
+            draft = await self._await_with_heartbeats(
+                self._answer_page_effect(
+                    run_id=run_id,
+                    execute=lambda: reporter.repair(draft=missed, today=day),
+                    repair=True,
+                ),
+                details={"stage": "answer_page_repair"},
+            )
+            if draft.get("failed_checks"):
+                raise ApplicationError(
+                    "The answer page still misses its checks after one repair: "
+                    f"{draft['failed_checks'][0]}",
+                    type="AnswerPageChecksFailed",
+                    non_retryable=True,
+                )
         evidence_path = answer_page_evidence_path(run_id)
         title = page_title(str(draft["markdown"]))
-        artifact_path = answer_page_path(
-            title, (run.created_at or datetime.now(UTC)).date().isoformat()
-        )
-        page, evidence = reporter.build_artifacts(
-            run_id=str(run_id),
-            source_refs=[source.artifact_ref for source in sources],
-            draft=draft,
-            artifact_path=artifact_path,
-            evidence_path=evidence_path,
-        )
         execution_key = f"{run_id}:answer_page_commit"
         operation = "answer_page_commit"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
@@ -2093,6 +2104,22 @@ class TinActivities:
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 async with self._db.project_state_lock(conn, project.id):
+                    # Under the project lock, so two same-day pages with one question
+                    # cannot both claim the unsuffixed name.
+                    artifact_path = await self._answer_page_destination(
+                        project=project,
+                        run_id=run_id,
+                        title=title,
+                        day=day,
+                        evidence_path=evidence_path,
+                    )
+                    page, evidence = reporter.build_artifacts(
+                        run_id=str(run_id),
+                        source_refs=[source.artifact_ref for source in sources],
+                        draft=draft,
+                        artifact_path=artifact_path,
+                        evidence_path=evidence_path,
+                    )
                     canonical_sha, changed = await self._storage.publish_state_documents(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
@@ -4283,14 +4310,24 @@ class TinActivities:
     @activity.defn(name="deliver_content_draft")
     async def deliver_content_draft(self, run_id_text: str) -> None:
         from tin_lite import content_repository_delivery
-        from tin_lite.content_delivery import ContentDelivery
+        from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
         if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
-            # Normal successful procedures already delivered their PR. Only the
-            # member-requested retry operation reconciles a terminal failed attempt.
             if run.status == RunStatus.SUCCEEDED:
+                # The procedure already opened its PR. When the page's approval asked to
+                # commit to main, Tin merges a page-only PR once GitHub calls it clean.
+                await self._await_with_heartbeats(
+                    content_repository_delivery.publish_after_pull_request(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "content_delivery_merge"},
+                )
                 return
+            # Only the member-requested retry operation reconciles a terminal failed attempt.
             await self._await_with_heartbeats(
                 content_repository_delivery.recover_delivery(
                     database=self._db,
@@ -4301,10 +4338,33 @@ class TinActivities:
                 details={"stage": "content_delivery_recovery"},
             )
             return
+        delivery = ContentDelivery(
+            database=self._db, storage=self._storage, integrations=self._integrations
+        )
+        runtime = SimpleNamespace(
+            database=self._db,
+            storage=self._storage,
+            integrations=self._integrations,
+            temporal=self._temporal,
+        )
+
+        async def start_adaptation(source_run, intent):
+            return await content_repository_delivery.start_approved_adaptation(
+                runtime=runtime, settings=self._settings, run=source_run, intent=intent
+            )
+
+        # An adapted page starts its one content.deliver run; any other approved document
+        # goes to the Markdown publisher. Each path returns at once for the other's intent.
+        try:
+            await self._await_with_heartbeats(
+                delivery.adapt(UUID(run_id_text), start=start_adaptation),
+                details={"stage": "content_adaptation"},
+            )
+        except AdaptationRefused as exc:
+            # Recorded on the page's delivery; only the founder's retry can change it.
+            raise ApplicationError(str(exc), type="AdaptationRefused", non_retryable=True) from exc
         await self._await_with_heartbeats(
-            ContentDelivery(
-                database=self._db, storage=self._storage, integrations=self._integrations
-            ).deliver(UUID(run_id_text)),
+            delivery.deliver(UUID(run_id_text)),
             details={"stage": "content_delivery"},
         )
 
@@ -4835,14 +4895,46 @@ class TinActivities:
             )
         return sources
 
+    async def _answer_page_destination(
+        self, *, project, run_id: UUID, title: str, day: str, evidence_path: str
+    ) -> str:
+        """The page's dated file, with the run's short ID when another page already has it.
+
+        A retry finds its own evidence file and reuses the path that evidence names, so an
+        earlier attempt that committed but lost its receipt never writes a second copy.
+        """
+        path = answer_page_path(title, day)
+        repo = await self._storage.get_repo(project.state_repo_id)
+        head = await self._storage.head_sha(repo, project.canonical_branch)
+        if head is None:
+            return path
+        saved = await self._storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=head, path=evidence_path
+        )
+        if saved is not None:
+            try:
+                prior = json.loads(saved).get("artifact_path")
+            except (ValueError, AttributeError):
+                prior = None
+            if isinstance(prior, str) and prior.startswith(f"{ANSWER_PAGE_DIR}/"):
+                return prior
+        taken = await self._storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=head, path=path
+        )
+        return path if taken is None else answer_page_path(title, day, suffix=run_id.hex[:8])
+
     async def _answer_page_effect(
         self,
         *,
         run_id: UUID,
         execute: Callable[[], Awaitable[dict[str, object]]],
+        repair: bool = False,
     ) -> dict:
-        execution_key = f"{run_id}:answer_page:model"
-        operation = "answer_page_model"
+        # The repair call is its own metered step with its own receipt and usage record.
+        step = "answer_page_repair" if repair else "answer_page"
+        execution_key = f"{run_id}:answer_page:repair" if repair else f"{run_id}:answer_page:model"
+        operation = "answer_page_repair_model" if repair else "answer_page_model"
+        label = "answer page repair" if repair else "answer page"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
             if existing is not None and existing.status == "completed":
                 if existing.result is None:
@@ -4851,9 +4943,9 @@ class TinActivities:
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 await _refuse_repeated_model_request(
-                    self._db, conn, run_id=run_id, step="answer_page", label="answer page"
+                    self._db, conn, run_id=run_id, step=step, label=label
                 )
-                with external_usage_scope(self._db, conn, run_id, "answer_page"):
+                with external_usage_scope(self._db, conn, run_id, step):
                     result = await execute()
                 await self._db.complete_effect(
                     conn,
@@ -4864,7 +4956,7 @@ class TinActivities:
             except BaseException as exc:
                 await _record_effect_failure(self._db, conn, execution_key=execution_key, exc=exc)
                 if isinstance(exc, ObservationAlreadyRecorded):
-                    raise _interrupted_model_request("answer page") from exc
+                    raise _interrupted_model_request(label) from exc
                 raise
 
     async def _answer_page_sources(self, *, run_id: UUID, project) -> list[AnswerPageSource]:

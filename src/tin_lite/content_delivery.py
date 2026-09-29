@@ -36,6 +36,14 @@ CHOICE_WORKFLOW_IDS = frozenset(
 )
 REPOSITORY_MODES = frozenset({"github_pr", "github_commit"})
 APPROVAL_CHOICES = ("github_pr", "github_commit", "none")
+# Approved pages that Tin adapts into the site's own format (content.deliver) instead of
+# committing their Markdown as it is, when Codex API execution is on for the project.
+ADAPTED_WORKFLOW_IDS = frozenset({PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID})
+ADAPTER = "repository"
+ADAPTATION_OPERATION = "content_draft_adaptation_v1"
+ADAPTED_PATH = "Repository-adapted page"
+# The largest reviewed document each workflow saves; the Markdown publisher reads it whole.
+DOCUMENT_MAX_BYTES = {ANSWER_PAGE_WORKFLOW_ID: 150_000, PUBLIC_ARTICLE_WORKFLOW_ID: 300_000}
 
 
 def settings_path(program_id):
@@ -64,6 +72,86 @@ def approval_label(mode):
 
 def chosen_mode(intent):
     return (intent.get("settings") or {}).get("mode")
+
+
+def adaptation_start_key(run_id):
+    """The start key of the one content.deliver run an approval may start."""
+    return f"approval-delivery:{UUID(str(run_id))}"
+
+
+def adaptable(settings, run):
+    """Whether approving this page adapts it to the site instead of committing its Markdown."""
+    from tin_lite.codex_api import api_enabled
+
+    return getattr(run, "workflow_id", None) in ADAPTED_WORKFLOW_IDS and api_enabled(
+        settings, run.project_id
+    )
+
+
+def adapted(intent):
+    return bool(intent) and intent.get("adapter") == ADAPTER
+
+
+class AdaptationRefused(ValueError):
+    """The adaptation was refused and recorded; retrying the same start cannot help."""
+
+
+def adaptation_refusal(exc):
+    """Why the adaptation could not start, when retrying the same start cannot help; else None.
+
+    Credits and limits point to the two ways to try again once they are fixed. Every message
+    here is Tin's own; provider payloads never reach the receipt.
+    """
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.integrations import IntegrationAuthorizationError, IntegrationNotConfiguredError
+    from tin_lite.run_service import WorkflowExecutorUnavailableError
+    from tin_lite.workflow_prerequisites import PrerequisiteError
+
+    if isinstance(exc, BillingError):
+        return (
+            f"Tin could not start adapting this page. {exc} The approved page stays in Tin; "
+            "retry delivery or use Prepare PR once that is fixed."
+        )[:500]
+    if isinstance(
+        exc,
+        (
+            ValueError,
+            LookupError,
+            PrerequisiteError,
+            WorkflowExecutorUnavailableError,
+            IntegrationAuthorizationError,
+            IntegrationNotConfiguredError,
+        ),
+    ):
+        return f"Tin could not start adapting this page. {exc}"[:500]
+    return None
+
+
+def publish_sentence(mode, *, route_missing=False):
+    """What Publish does for an adapted page, in the founder's words.
+
+    Tin merges only a pull request that adds nothing but the page, so when the site has no
+    route for these pages yet the first one stays a pull request whatever the setting says.
+    """
+    if route_missing:
+        return (
+            "Tin adapts it to your site and opens a pull request, "
+            "since your site first needs a route for these pages"
+        )
+    if mode == "github_commit":
+        return "Tin adapts it to your site and commits it to main"
+    return "Tin adapts it to your site and opens a pull request"
+
+
+def about_usd(value):
+    """A cost preview as the card shows it: whole dollars, or cents under a dollar."""
+    try:
+        amount = float(value)
+    except (TypeError, ValueError):
+        return None
+    if amount <= 0:
+        return None
+    return f"${amount:.2f}" if amount < 1 else f"${int(amount + 0.5)}"
 
 
 def markdown_path(value):
@@ -408,8 +496,15 @@ class ContentDelivery:
             )
         return run.project_workflow_id, None
 
-    async def choose(self, *, run, mode, remember=False, actor=None):
-        """Record the reviewer's delivery pick for one document; optionally keep it."""
+    async def choose(
+        self, *, run, mode, remember=False, actor=None, adapt=False, trigger_source="manual"
+    ):
+        """Record the reviewer's delivery pick for one document; optionally keep it.
+
+        `adapt` (the caller checked `adaptable`) sends an answer page or public article
+        through content.deliver instead of the Markdown publisher; `mode` still says
+        whether its pull request stays open or Tin merges it.
+        """
         if run.workflow_id not in CHOICE_WORKFLOW_IDS:
             raise ValueError("This run does not publish to a repository.")
         if mode not in APPROVAL_CHOICES:
@@ -418,6 +513,14 @@ class ContentDelivery:
         existing = existing.result if existing and existing.status == "completed" else None
         if run.review_decision == "approved":
             return existing  # The approval already happened; its delivery choice stands.
+        if adapt and run.workflow_id in ADAPTED_WORKFLOW_IDS and mode in REPOSITORY_MODES:
+            return await self.choose_adaptation(
+                run=run,
+                mode=mode,
+                remember=remember,
+                actor=actor,
+                trigger_source=trigger_source,
+            )
         if run.workflow_id == DRAFT_WORKFLOW_ID:
             from tin_lite.organic_content import intent_for
 
@@ -486,6 +589,74 @@ class ContentDelivery:
             )
         return await self.record_choice(run, record)
 
+    async def saved_mode(self, run):
+        """The delivery the founder saved for this page's workflow: commit or pull request.
+
+        Only an explicit commit-to-main setting commits; draft-only and unsaved pages open
+        a pull request when the founder presses Publish.
+        """
+        try:
+            program_id, _ = await self.program_for(run)
+            configured = await self.settings(project_id=run.project_id, program_id=program_id)
+        except (ValueError, LookupError):
+            return "github_pr"
+        return "github_commit" if configured["settings"]["mode"] == "github_commit" else "github_pr"
+
+    async def choose_adaptation(self, *, run, mode, remember, actor, trigger_source):
+        """Pin the repository and the founder's delivery for a page Tin adapts to the site.
+
+        The page is not copied as-is, so no Markdown destination is computed here: the
+        adaptation picks the site's own folder. A page outside a saved workflow still
+        adapts; only remembering the pick needs one.
+        """
+        try:
+            program_id, _ = await self.program_for(run)
+            configured = await self.settings(project_id=run.project_id, program_id=program_id)
+        except (ValueError, LookupError):
+            program_id, configured = None, None
+        if configured is not None:
+            base = DeliverySettings.model_validate(configured["settings"])
+            available = configured["available_repository"]
+        else:
+            base = DeliverySettings()
+            connection = await self.db.get_integration_connection(
+                project_id=run.project_id, provider_key="infra.github"
+            )
+            available = (
+                connection.configuration.get("selected_repository")
+                if connection and connection.status == "connected"
+                else None
+            )
+        chosen = DeliverySettings.model_validate(
+            {**base.model_dump(), "mode": mode, "repository": base.repository or available or ""}
+        )
+        if self.integrations is None:
+            raise ValueError("Connect GitHub before publishing to a repository.")
+        binding = await self.integrations.github_repository_binding(
+            project_id=run.project_id, expected_repository=chosen.repository
+        )
+        record = {
+            "adapter": ADAPTER,
+            "settings": chosen.model_dump(),
+            "settings_revision": configured["revision"] if configured else None,
+            "path": None,
+            "repository_id": binding.repository_id,
+            "connection_id": str(binding.connection_id),
+            "installation_id": binding.installation_id,
+            "chosen_by": actor,
+            "trigger_source": trigger_source if trigger_source in {"manual", "mcp"} else "manual",
+        }
+        if remember and program_id is not None and chosen.model_dump() != base.model_dump():
+            await self.save_settings(
+                project_id=run.project_id,
+                program_id=program_id,
+                settings=chosen,
+                request_id=uuid5(NAMESPACE_URL, f"tin:delivery-choice:{run.id}:{mode}"),
+                expected_revision=configured["revision"],
+                actor=actor,
+            )
+        return await self.record_choice(run, record)
+
     async def record_choice(self, run, record):
         key = choice_key(run.id)
         async with self.db.effect_lock(key, CHOICE_OPERATION) as (conn, receipt):
@@ -513,8 +684,9 @@ class ContentDelivery:
             commit_sha=run.canonical_commit_sha,
             path=run.artifact_path,
         )
-        if len(raw) > 80_000:
-            raise ValueError("The reviewed document exceeds its size limit.")
+        limit = DOCUMENT_MAX_BYTES.get(run.workflow_id, 80_000)
+        if len(raw) > limit:
+            raise ValueError(f"The reviewed document is larger than {limit // 1000} KB.")
         article, title = document_body(raw)
         return raw, article, title
 
@@ -522,16 +694,21 @@ class ContentDelivery:
         from tin_lite import content_repository_delivery as repository_delivery
 
         if run.workflow_id == repository_delivery.WORKFLOW_ID:
-            source = await repository_delivery.saved_source(self.db, run.id)
-            publication = await self.db.get_effect(f"{run.id}:procedure_canonical_commit")
-            recovered = await self.db.get_effect(repository_delivery.recovery_key(run.id))
-            return repository_delivery.status_projection(
-                run,
-                source,
-                publication.result if publication and publication.status == "completed" else {},
-                recovered.result if recovered and recovered.status == "completed" else {},
-            )
+            facts = await repository_delivery.adaptation_facts(self.db, [run.id])
+            return repository_delivery.child_projection(run, facts.get(run.id))
         intent = await self.intent(run)
+        if adapted(intent):
+            start = await self.db.get_effect(delivery_key(run.id))
+            start = (
+                {
+                    "status": start.status,
+                    "result": start.result,
+                    "error_message": start.error_message,
+                }
+                if start
+                else None
+            )
+            return await repository_delivery.adapted_status(self.db, run, intent, start)
         if not intent:
             if run.workflow_id != DRAFT_WORKFLOW_ID:
                 return None
@@ -580,19 +757,12 @@ class ContentDelivery:
         keys = [
             key
             for run in candidates
+            if run.workflow_id in CHOICE_WORKFLOW_IDS
             for key in (
-                (
-                    content_draft.selection_key(run.id),
-                    delivery_key(run.id),
-                    choice_key(run.id),
-                    f"{run.id}:procedure_canonical_commit",
-                )
-                if run.workflow_id in CHOICE_WORKFLOW_IDS
-                else (
-                    repository_delivery.source_key(run.id),
-                    f"{run.id}:procedure_canonical_commit",
-                    repository_delivery.recovery_key(run.id),
-                )
+                content_draft.selection_key(run.id),
+                delivery_key(run.id),
+                choice_key(run.id),
+                f"{run.id}:procedure_canonical_commit",
             )
         ]
         rows = await self.db.pool.fetch(
@@ -604,21 +774,14 @@ class ContentDelivery:
             r["execution_key"]: {**dict(r), "result": decoded(r["result"] or {})} for r in rows
         }
         output = {}
+        children = await repository_delivery.adaptation_facts(
+            self.db,
+            [run.id for run in candidates if run.workflow_id == repository_delivery.WORKFLOW_ID],
+        )
         for run in candidates:
             if run.workflow_id == repository_delivery.WORKFLOW_ID:
-                source = receipts.get(repository_delivery.source_key(run.id), {})
-                if source.get("status") != "completed":
-                    continue
-                publication = receipts.get(f"{run.id}:procedure_canonical_commit", {})
-                recovery = receipts.get(repository_delivery.recovery_key(run.id), {})
-                output[run.id] = repository_delivery.status_projection(
-                    run,
-                    source["result"],
-                    publication.get("result", {})
-                    if publication.get("status") == "completed"
-                    else {},
-                    recovery.get("result", {}) if recovery.get("status") == "completed" else {},
-                )
+                if run.id in children:
+                    output[run.id] = repository_delivery.child_projection(run, children[run.id])
                 continue
             if run.workflow_id == DRAFT_WORKFLOW_ID:
                 from tin_lite.content_editorial_judgment import no_draft
@@ -653,15 +816,81 @@ class ContentDelivery:
                 continue
             if not intent:
                 continue
+            if adapted(intent):
+                output[run.id] = await repository_delivery.adapted_status(
+                    self.db, run, intent, receipts.get(delivery_key(run.id))
+                )
+                continue
             output[run.id] = delivery_projection(run, intent, receipts.get(delivery_key(run.id)))
         return output
+
+    async def adapt(self, run_id, *, start):
+        """Start the one content.deliver run an adapted page's approval asks for.
+
+        `start(run, intent)` admits and dispatches it (the ordinary run service, billing and
+        Temporal start). The start receipt shares the Markdown publisher's key under another
+        operation, so one approval can never run both. A refused admission (credits, limits,
+        a changed connection) is recorded as a failed delivery the founder can retry and
+        raised as AdaptationRefused; an uncertain one raises as it is, so the activity
+        retries the same idempotent start.
+        """
+        run = await self.db.get_run(UUID(str(run_id)))
+        if run is None:
+            raise LookupError("Page not found.")
+        intent = await self.intent(run)
+        if not adapted(intent):
+            return None
+        if run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
+            raise ValueError("Approve this page before publishing it.")
+        key = delivery_key(run.id)
+        async with self.db.effect_lock(key, ADAPTATION_OPERATION) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result
+            await self.db.start_effect(conn, execution_key=key, operation=ADAPTATION_OPERATION)
+            try:
+                child = await start(run, intent)
+            except Exception as exc:
+                refused = adaptation_refusal(exc)
+                await self.db.fail_effect(
+                    conn,
+                    execution_key=key,
+                    error_message=refused
+                    or "Tin could not confirm that the adaptation started. "
+                    "Retry delivery; the approved page is safe in Tin.",
+                )
+                if refused:
+                    raise AdaptationRefused(refused) from exc
+                raise
+            result = {
+                "run_id": str(child.id),
+                "repository": intent["settings"]["repository"],
+                "mode": chosen_mode(intent),
+            }
+            async with conn.transaction():
+                await self.db.complete_effect(conn, execution_key=key, result=result)
+                await self.db.add_activity(
+                    run_id=run.id,
+                    event_type="content_adaptation_started",
+                    audience="product",
+                    summary="Tin is adapting the approved page to your site.",
+                    details={
+                        "kind": "runs",
+                        "status": "running",
+                        "delivery_run_id": str(child.id),
+                        "repository": result["repository"],
+                    },
+                    dedupe_key=f"{key}:started",
+                    conn=conn,
+                )
+            return result
 
     async def deliver(self, run_id):
         run = await self.db.get_run(UUID(str(run_id)))
         if run is None:
             raise LookupError("Draft not found.")
         intent = await self.intent(run)
-        if not intent:
+        if not intent or adapted(intent):
+            # An adapted page ships through content.deliver (see adapt), never as plain Markdown.
             return
         if run.workflow_id == DRAFT_WORKFLOW_ID:
             from tin_lite.content_editorial_judgment import NO_DRAFT, saved

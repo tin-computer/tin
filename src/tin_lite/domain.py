@@ -84,10 +84,14 @@ def answer_page_evidence_path(run_id: UUID | str) -> str:
     return f"reports/answer-page/{run_id}/evidence.json"
 
 
-def answer_page_path(title: str, day: str) -> str:
-    """Name each answer page by its date and question, so Files and chat can tell them apart."""
+def answer_page_path(title: str, day: str, suffix: str | None = None) -> str:
+    """Name each answer page by its date and question, so Files and chat can tell them apart.
+
+    `suffix` (the start of the run ID) keeps a second page with the same question on the same
+    day from replacing the first.
+    """
     slug = re.sub(r"[^a-z0-9]+", "-", title.casefold()).strip("-")[:80].rstrip("-")
-    return f"{ANSWER_PAGE_DIR}/{day}-{slug or 'answer-page'}.md"
+    return f"{ANSWER_PAGE_DIR}/{day}-{slug or 'answer-page'}{f'-{suffix}' if suffix else ''}.md"
 
 
 class RunStatus(StrEnum):

@@ -28,6 +28,24 @@ send real messages or test activation. An older brief asking for live QA gets an
 `follow-up` entry, explaining that it was not performed and how the article avoids relying on
 it. No additional QA workflow, credential UI or blanket verification gate is introduced.
 
+## Structure for search and answer engines
+
+`content.generate` 1.7.0 and `content.public_article` 1.5.0 pin a `search-and-answer-engines`
+skill adapted from the answer page's `10-search-and-answer-engines` guidance: an answer-first
+opening of 40 to 60 words, headings phrased as the reader's next questions, a comparison table
+when options are compared, an FAQ where it fits and `## Sources` last, with inline citations
+and short paragraphs. It is guidance for the model, not a code check: the answer page's
+structure checks, its `Last updated` line and its repair call stay with `content.answer_page`.
+Updates keep their destination's structure and apply the rules only to changed sections.
+
+A public article starts with a search listing, `meta_title` and `meta_description` as quoted
+one-line frontmatter, then its title. `public-article.v2` accepts that listing, still requires
+the title, and refuses a listing that delivery could not merge (other keys, lists, empty or
+multi-line values, invalid YAML). Delivery merges it into the one site header, as it does for
+answer pages. Planned drafts keep a title-first file with no listing: their delivery paths
+(`render_file`, the approved-article source for `content.deliver`) do not yet split a draft's
+own frontmatter.
+
 New `content.plan` 0.5.0 definitions use editorial policy v4: drafting-time verification lists
 contain desk checks, not mandatory live tests. Historical v1/v2/v3 planning contracts remain
 supported exactly; existing roadmaps are not rewritten.

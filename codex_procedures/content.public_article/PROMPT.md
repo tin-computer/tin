@@ -15,7 +15,9 @@ personal voice. Do not modify the guide or its source samples.
 Plan before drafting, but publish only the finished article in the declared Markdown artifact. The
 article should open in the reader's world, land one salient idea, explain the mechanism, use concrete
 evidence, acknowledge material assumptions and limitations, and leave the reader with a useful
-contribution. Apply the public-article-edit pass before finishing.
+contribution. Shape it with the search-and-answer-engines skill: its search-listing frontmatter
+comes first, then the `# ` title and an answer-first opening. Apply the public-article-edit pass
+before finishing.
 
 This is a reviewable draft, not a publishing action. Do not change another project file, publish to
 a website, send the article, contact anyone, or ask an interactive question. Put unresolved choices
