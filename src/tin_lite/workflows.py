@@ -506,8 +506,7 @@ class ProjectTaskWorkflow:
         turn_number = 1
         try:
             while True:
-                # Patch per turn: an old task's next resumed turn must use the
-                # project gate even when earlier turns predate this deployment.
+                # Preserve the activity sequence of tasks predating child execution.
                 if workflow.patched(f"project-codex-task-v1-{turn_number}"):
                     outcome = await execute_project_codex(
                         run_id,
@@ -589,7 +588,7 @@ class CodeWorkflow:
     @workflow.run
     async def run(self, run_id: str):
         try:
-            # The existing project execution position also bounds pure-code compute.
+            # Code uses the same bounded compute worker as procedures and task turns.
             await execute_project_codex(run_id, "code")
             await workflow.execute_activity(
                 "publish_code_workflow",
