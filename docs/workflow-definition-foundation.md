@@ -113,10 +113,12 @@ run ids and revisions, the identity id, the artifact path and HEAD revision, plu
 `readiness` (`ready`, `advisory`, `blocked`) computed with at most one runs query, one identity
 query, one HEAD listing and one index read for any catalog size; run scopes, `via_input` ids and
 placeholder paths are only checked against real inputs at start, and the response says so.
-The full `list_workflows` listing runs to well over 100K characters, too much for an agent's
-context. `list_workflows(project_id, detail="short")` returns only `key`, `title`, a one-line
-`description`, `schedule_modes`, the `readiness` state and `required_inputs` (required names
-without a default) per workflow; `get_workflow` then gives the chosen one's full contract.
+The full listing runs to well over 100K characters, too much for an agent's context, so
+`list_workflows(project_id)` is short by default: per workflow only `id`, `key`, `title`, a
+one-line `description`, `schedule_modes`, the `readiness` state, `required_inputs` (required
+names without a default), `needs` (required connections) and, when blocked, `blocked_because`.
+That is about 320 characters per workflow, or about 32K for 100 workflows. `get_workflow` then
+gives the chosen one's full contract; `detail="full"` still returns every definition.
 
 Private packages may declare `run` prerequisites naming built-in or their own active `custom.*`
 workflows and `artifact` prerequisites on ordinary project files; identities and `producer`

@@ -16,8 +16,8 @@ only material the user elected to share with project members. Preferences-only i
 
 ## MCP source discovery is part of the workflow experience
 
-Both `list_workflows` and `get_workflow` expose a `preparation` next call for the built-in
-`style.capture`: `get_writing_style_guide(project_id)`. Attempting a new start or saved
+`get_workflow` and the full `list_workflows` listing (`detail="full"`) expose a `preparation`
+next call for the built-in `style.capture`: `get_writing_style_guide(project_id)`. Attempting a new start or saved
 configuration without a source path returns `style_sources_required` with that same next call,
 before creating a run or configuration. A prepared packet remains an ordinary, retryable input;
 there is no new consent table or activation gate. The dashboard's copied prompt starts the same

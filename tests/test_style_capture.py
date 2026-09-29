@@ -470,7 +470,9 @@ async def test_discovery_and_incomplete_starts_lead_to_the_conversation(
     f = await capture_fixture(publication_db)
     server = mcp(f, monkeypatch)
     catalog = structured(
-        await server.call_tool("list_workflows", {"project_id": str(f.project.id)})
+        await server.call_tool(
+            "list_workflows", {"project_id": str(f.project.id), "detail": "full"}
+        )
     )
     rows = catalog["result"] if isinstance(catalog, dict) else catalog
     capture = next(row for row in rows if row["key"] == KEY)

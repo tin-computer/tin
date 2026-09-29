@@ -258,7 +258,8 @@ def _short_workflow_view(workflow: Any, readiness: dict[str, Any]) -> dict[str, 
     """The few facts an agent needs to pick a workflow; get_workflow returns the rest."""
     schema = _mcp_input_schema(workflow.definition)
     properties = schema.get("properties") or {}
-    return {
+    view = {
+        "id": str(workflow.id),
         "key": workflow.key,
         "title": workflow.title,
         "description": _one_line(workflow.description),
@@ -272,7 +273,23 @@ def _short_workflow_view(workflow: Any, readiness: dict[str, Any]) -> dict[str, 
             for name in schema.get("required") or []
             if "default" not in (properties.get(name) or {})
         ],
+        # Connections a start fails without, so an agent can ask for them before starting.
+        "needs": [
+            item["provider_key"]
+            for item in workflow.definition.get("integration_requirements") or []
+            if item.get("required")
+        ],
     }
+    if readiness["state"] == "blocked":
+        blocking = next(
+            (item for item in readiness["unmet"] if item.get("level") == "required"),
+            readiness["unmet"][0] if readiness["unmet"] else None,
+        )
+        if blocking is not None:
+            view["blocked_because"] = _one_line(
+                blocking.get("how_to_satisfy") or blocking.get("reason")
+            )
+    return view
 
 
 def _mcp_workflow(workflows: list[Any], identifier: str, *, parameter: str = "workflow_id") -> Any:
@@ -1651,18 +1668,18 @@ def create_mcp_app(
 
     @server.tool()
     async def list_workflows(
-        project_id: str, detail: Literal["full", "short"] = "full"
+        project_id: str, detail: Literal["full", "short"] = "short"
     ) -> list[dict[str, Any]]:
         """List callable workflow definitions for one accessible Tin project.
 
-        Each entry carries its declared prerequisites and a project-level readiness
-        (ready, advisory or blocked) computed without inputs; exact scopes, via_input run ids
-        and {placeholder} paths are only checked against real inputs at start_workflow.
+        The default listing is short, for choosing a workflow: per entry id, key, title, a
+        one-line description, schedule_modes, readiness (ready, advisory or blocked, computed
+        without inputs), required_inputs (input names the caller must supply), needs (required
+        connections) and, when blocked, blocked_because. Then call get_workflow for the chosen
+        key to read its full input schema and prerequisites.
 
-        detail="short" returns a small listing for choosing a workflow: per entry only key,
-        title, a one-line description, schedule_modes, readiness (the state) and
-        required_inputs (input names the caller must supply). Then call get_workflow for the
-        chosen key to read its full input schema. The default "full" listing is large.
+        detail="full" returns every definition with its input schema, prerequisites and
+        readiness details. It is large: about 3,500 characters per workflow.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -1781,7 +1798,7 @@ def create_mcp_app(
                 else {"code": "not_registered"},
                 "next": (
                     "Onboarding is unavailable for this project. Use list_workflows "
-                    "to inspect individual workflows and their prerequisites; funded "
+                    "to choose a workflow and get_workflow for its prerequisites; funded "
                     "runs still require their own supported quote. Do not start the "
                     "onboarding planner separately to bypass this restriction."
                 ),
