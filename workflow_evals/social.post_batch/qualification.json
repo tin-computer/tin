@@ -3,19 +3,22 @@
   "assumptions": [
     "Cases use synthetic article text in ordinary project files; no producer run, prior approval, external post, or provider connection is required.",
     "When article_path is omitted, Tin uses a candidate only when exactly one article matches. Multiple files require an explicit path or caller-supplied article_text; Tin does not infer recency from filenames.",
-    "The optional writing-style guide is read from the current pinned project revision. Offline fixtures verify source selection and guards; live quality and cost remain unqualified until authorized evaluation."
+    "The optional writing-style guide is read from the current pinned project revision. Offline fixtures verify source selection and guards; live quality and cost remain unqualified until authorized evaluation.",
+    "Weekly mode reads social/PLAN.md and current project source notes; its project fixture must provide those files. Earlier dated batches are checked for already cited material."
   ],
   "cost_drivers": [
     "One gpt-6-sol call, at most 32000 serialized input bytes and 4096 output tokens. Full article and optional current style guide drive input size; overlong content fails before the call."
   ],
   "effects": [
-    "Writes reports/SOCIAL_POST_BATCH.md in this project and enters normal human review. Tin never posts, schedules, or opens a pull request."
+    "Writes a unique social/posts/{date}-{slug}.md review artifact per run. Tin never posts, schedules, or opens a pull request."
   ],
   "cases": [
     {
       "id": "single_project_article",
       "description": "One ordinary project article yields four grounded social drafts with exact source excerpts and no claim that the source was approved.",
-      "inputs": {"project_id": "a0000000-0000-0000-0000-000000000041"},
+      "inputs": {
+        "project_id": "a0000000-0000-0000-0000-000000000041"
+      },
       "expected_status": "needs_input",
       "expect": {
         "contains": [
@@ -26,7 +29,12 @@
           "## 4. Last — LinkedIn",
           "Source excerpt from the article:"
         ],
-        "excludes": ["approved article", "https://unknown.example", "Published on X", "Published on LinkedIn"]
+        "excludes": [
+          "approved article",
+          "https://unknown.example",
+          "Published on X",
+          "Published on LinkedIn"
+        ]
       }
     },
     {
@@ -37,12 +45,50 @@
         "article_text": "A useful analytics chart begins with data that can be checked. The CSV import keeps each row tied to its original transaction. Teams can inspect an imported row and compare it with the source record before using the chart in a decision. The import records a validation result for each row and leaves invalid rows out of the chart."
       },
       "expected_status": "needs_input",
-      "expect": {"contains": ["Caller-supplied article text", "## Source and review"]}
+      "expect": {
+        "contains": [
+          "Caller-supplied article text",
+          "## Source and review"
+        ]
+      }
+    },
+    {
+      "id": "weekly_plan_and_notes",
+      "description": "An edited weekly calendar and current source notes yield manual drafts with exact evidence and visible history coverage. The evaluation project must have synthetic social/PLAN.md and context/social-updates.md.",
+      "inputs": {
+        "project_id": "a0000000-0000-0000-0000-000000000043",
+        "mode": "weekly"
+      },
+      "expected_status": "needs_input",
+      "expect": {
+        "contains": [
+          "# Weekly social post batch",
+          "## Source and review",
+          "Prior batches checked:"
+        ],
+        "excludes": [
+          "Published on X",
+          "Published on LinkedIn"
+        ]
+      }
     }
   ],
   "rubric": [
-    {"id": "grounding", "question": "Do all four draft claims follow from their cited excerpts and the full article, with no invented personal result, number, quotation or link?"},
-    {"id": "voice", "question": "Do the drafts fit the article's voice and, when present, the current writing-style guide without copying four near-identical hooks?"},
-    {"id": "channel", "question": "Can each post stand alone on its named platform and invite useful review without implying Tin posted or scheduled it?"}
+    {
+      "id": "grounding",
+      "question": "Do all four draft claims follow from their cited excerpts and the full article, with no invented personal result, number, quotation or link?"
+    },
+    {
+      "id": "voice",
+      "question": "Do the drafts fit the article's voice and, when present, the current writing-style guide without copying four near-identical hooks?"
+    },
+    {
+      "id": "channel",
+      "question": "Can each post stand alone on its named platform and invite useful review without implying Tin posted or scheduled it?"
+    },
+    {
+      "id": "continuity",
+      "question": "Does a later weekly run avoid prior cited material, preserve earlier reviewed batch files, and honestly report held material or unfilled slots?"
+    }
   ]
 }

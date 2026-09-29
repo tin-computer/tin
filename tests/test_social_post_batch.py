@@ -101,9 +101,16 @@ class Files:
 
 
 class Context:
+    def __getitem__(self, key):
+        return self.context[key]
+
     def __init__(self, files, spec, output=POSTS):
         self.files = files
         self.calls = []
+        self.context = {
+            "run_id": "a0000000-0000-0000-0000-000000000099",
+            "created_at": "2026-09-29T12:00:00+00:00",
+        }
 
         async def generate(**payload):
             request_contract(spec, payload)
@@ -121,7 +128,7 @@ def inputs(**kwargs):
 def test_manifest_uses_project_files_with_optional_plain_text_and_one_model_call():
     _, definition = load_package()
     spec = validate_code_definition(definition)
-    assert definition["version"] == "2.0.0"
+    assert definition["version"] == "3.0.0"
     assert definition["input_schema"]["required"] == ["project_id"]
     assert definition["input_schema"]["properties"]["article_path"]["maxLength"] == 512
     assert definition["input_schema"]["properties"]["article_text"]["maxLength"] == 20000
@@ -129,7 +136,7 @@ def test_manifest_uses_project_files_with_optional_plain_text_and_one_model_call
     assert definition["human_review"]["eligible"] is True
     assert "approved_article" not in definition["code"]
     assert not definition.get("integration_requirements")
-    assert spec.output_path == "reports/SOCIAL_POST_BATCH.md"
+    assert spec.output_path == "social/posts/{date}-{slug}.md"
     assert spec.max_bytes == 24_000
     assert [(route.name, route.model, route.max_calls) for route in spec.model_routes] == [
         ("draft", "gpt-6-sol", 1)
@@ -152,7 +159,7 @@ async def test_single_project_article_is_auto_selected_and_reviewable(with_style
     assert ctx.calls[0]["step"] == "draft_article_social_posts"
     assert ctx.calls[0]["data"]["article"] == ARTICLE
     assert ctx.calls[0]["data"]["style"] == (STYLE if with_style else "")
-    assert result["path"] == "reports/SOCIAL_POST_BATCH.md"
+    assert result["path"] == "social/posts/2026-09-29-a0000000000000000000000000000099.md"
     report = result["content"]
     assert report.count("Source excerpt from the article:") == 4
     assert "## 1. First — X" in report
@@ -162,7 +169,11 @@ async def test_single_project_article_is_auto_selected_and_reviewable(with_style
     assert hashlib.sha256(ARTICLE.encode()).hexdigest() in report
     assert "does not post or schedule" in report
     assert "approved" not in report.casefold()
-    validate_code_result(json.dumps(result).encode(), spec)
+    validate_code_result(
+        json.dumps(result).encode(),
+        spec,
+        created_at=__import__("datetime").datetime.fromisoformat(ctx["created_at"]),
+    )
 
 
 async def test_named_file_wins_over_text_fallback():
