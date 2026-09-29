@@ -20,9 +20,11 @@ test("the menu moves to the top below 1100px and Decisions stacks on a narrow pa
       const rail = await box(page, ".rail");
       const list = await box(page, ".decision-list");
       const card = await box(page, ".decision-detail-card");
-      // A classic scrollbar (Linux CI) takes part of the window; the menu spans the page, not the scrollbar.
+      // The side menu is 248px; the top menu spans the page. A classic scrollbar (Linux CI)
+      // takes part of the window, so compare with the page's width and allow for it.
       const pageWidth = await page.evaluate(() => document.documentElement.clientWidth);
-      assert.equal(Math.abs(rail.width - pageWidth) <= 1, width <= 1100, `top menu at ${width}px`);
+      const onTop = rail.width >= pageWidth - 24 && rail.top <= 1;
+      assert.equal(onTop, width <= 1100, `top menu at ${width}px (menu ${rail.width}px, page ${pageWidth}px, top ${rail.top})`);
       assert.ok(card.width >= 440, `card is ${card.width}px at ${width}px`);
       assert.equal(list.bottom <= card.top, width <= 760, `stacked at ${width}px`);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `no page overflow at ${width}px`);
