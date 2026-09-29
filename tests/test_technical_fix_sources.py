@@ -20,7 +20,13 @@ from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSource
 
 
 def source_fixture(
-    *, count=1, checks=None, crawl_status="completed", policy="organic-audit-v2", ai=None
+    *,
+    count=1,
+    checks=None,
+    crawl_status="completed",
+    policy="organic-audit-v2",
+    ai=None,
+    site=None,
 ):
     import json
 
@@ -67,6 +73,7 @@ def source_fixture(
         ai=ai if ai is not None else {"status": "partial", "summary": "Not measured."},
         spending={},
         policy_version=policy,
+        **({"site": site} if site is not None else {}),
     )
     paths = audit_paths(str(run.id))
     evidence, inventory = (
