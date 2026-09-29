@@ -7369,6 +7369,11 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     width: 300px;
     flex-basis: 300px;
   }
+
+  /* The list gives way first, so the open card keeps a readable width beside it. */
+  .decision-detail-card {
+    min-width: 440px;
+  }
 }
 
 /* A narrow page lists the decisions above the open card; the list scrolls on its own. */
@@ -7387,6 +7392,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   }
 
   .decision-detail-card {
+    min-width: 0;
     flex: none;
   }
 }
