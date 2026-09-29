@@ -26,6 +26,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.code_storage import CodeStorage, reviewed_task_diff
 from tin_lite.db import Database
 from tin_lite.domain import (
+    ANSWER_PAGE_DIR,
     ANSWER_PAGE_WORKFLOW_NAME,
     ARTIFACT_PATH,
     CODEX_PROCEDURE_EXECUTOR,
@@ -1986,16 +1987,7 @@ class TinActivities:
         )
         evidence_path = answer_page_evidence_path(run_id)
         title = page_title(str(draft["markdown"]))
-        artifact_path = answer_page_path(
-            title, (run.created_at or datetime.now(UTC)).date().isoformat()
-        )
-        page, evidence = reporter.build_artifacts(
-            run_id=str(run_id),
-            source_refs=[source.artifact_ref for source in sources],
-            draft=draft,
-            artifact_path=artifact_path,
-            evidence_path=evidence_path,
-        )
+        day = (run.created_at or datetime.now(UTC)).date().isoformat()
         execution_key = f"{run_id}:answer_page_commit"
         operation = "answer_page_commit"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
@@ -2004,6 +1996,22 @@ class TinActivities:
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 async with self._db.project_state_lock(conn, project.id):
+                    # Under the project lock, so two same-day pages with one question
+                    # cannot both claim the unsuffixed name.
+                    artifact_path = await self._answer_page_destination(
+                        project=project,
+                        run_id=run_id,
+                        title=title,
+                        day=day,
+                        evidence_path=evidence_path,
+                    )
+                    page, evidence = reporter.build_artifacts(
+                        run_id=str(run_id),
+                        source_refs=[source.artifact_ref for source in sources],
+                        draft=draft,
+                        artifact_path=artifact_path,
+                        evidence_path=evidence_path,
+                    )
                     canonical_sha, changed = await self._storage.publish_state_documents(
                         repo_id=project.state_repo_id,
                         branch=project.canonical_branch,
@@ -4742,6 +4750,34 @@ class TinActivities:
                 ),
             )
         return sources
+
+    async def _answer_page_destination(
+        self, *, project, run_id: UUID, title: str, day: str, evidence_path: str
+    ) -> str:
+        """The page's dated file, with the run's short ID when another page already has it.
+
+        A retry finds its own evidence file and reuses the path that evidence names, so an
+        earlier attempt that committed but lost its receipt never writes a second copy.
+        """
+        path = answer_page_path(title, day)
+        repo = await self._storage.get_repo(project.state_repo_id)
+        head = await self._storage.head_sha(repo, project.canonical_branch)
+        if head is None:
+            return path
+        saved = await self._storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=head, path=evidence_path
+        )
+        if saved is not None:
+            try:
+                prior = json.loads(saved).get("artifact_path")
+            except (ValueError, AttributeError):
+                prior = None
+            if isinstance(prior, str) and prior.startswith(f"{ANSWER_PAGE_DIR}/"):
+                return prior
+        taken = await self._storage.read_canonical_artifact_if_exists(
+            repo_id=project.state_repo_id, commit_sha=head, path=path
+        )
+        return path if taken is None else answer_page_path(title, day, suffix=run_id.hex[:8])
 
     async def _answer_page_effect(
         self,

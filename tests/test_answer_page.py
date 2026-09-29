@@ -275,6 +275,15 @@ class FakeStorage:
     async def read_canonical_artifact(self, *, path: str, **values) -> bytes:
         return self.documents[path]
 
+    async def get_repo(self, repo_id: str):
+        return repo_id
+
+    async def head_sha(self, repo, branch: str) -> str:
+        return "a" * 40
+
+    async def read_canonical_artifact_if_exists(self, *, path: str, **values) -> bytes | None:
+        return self.documents.get(path)
+
     async def publish_state_documents(self, *, documents: dict[str, bytes], **values):
         self.publishes += 1
         self.documents.update(documents)
@@ -402,6 +411,54 @@ async def test_answer_page_duplicate_execution_reuses_model_commit_and_projectio
         "human_review_approved",
         "answer_page_ready",
     ]
+
+
+@pytest.mark.asyncio
+async def test_same_question_on_the_same_day_keeps_both_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project, first, visibility_run = activity_fixture()
+    created = datetime(2026, 9, 28, 17, 0, tzinfo=UTC)
+    first = replace(first, created_at=created)
+    second_id = uuid4()
+    second = replace(first, id=second_id, temporal_workflow_id=f"content.answer_page:{second_id}")
+    storage = FakeStorage()
+    monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda details: None)
+
+    def activities_for(run: WorkflowRun) -> tuple[TinActivities, FakeDatabase]:
+        database = FakeDatabase(project=project, run=run, visibility_run=visibility_run)
+        return (
+            TinActivities(
+                database=database,  # type: ignore[arg-type]
+                storage=storage,  # type: ignore[arg-type]
+                sandboxes=SimpleNamespace(),
+                settings=SimpleNamespace(),
+                answer_page_drafter=FakeDrafter(),  # type: ignore[arg-type]
+            ),
+            database,
+        )
+
+    first_activities, first_db = activities_for(first)
+    second_activities, second_db = activities_for(second)
+    await first_activities.draft_answer_page(str(first.id))
+    await second_activities.draft_answer_page(str(second.id))
+    path = "content/answers/2026-09-28-how-to-keep-recurring-ai-work-reliable.md"
+    suffixed = path.removesuffix(".md") + f"-{second.id.hex[:8]}.md"
+    assert first_db.receipts[f"{first.id}:answer_page_commit"].result["artifact_path"] == path
+    saved = second_db.receipts[f"{second.id}:answer_page_commit"].result
+    assert saved["artifact_path"] == suffixed
+    assert path in storage.documents and suffixed in storage.documents
+    evidence = json.loads(storage.documents[f"reports/answer-page/{second.id}/evidence.json"])
+    assert evidence["artifact_path"] == suffixed
+
+    # A retry whose commit landed but whose receipt was lost reuses its own file.
+    del second_db.receipts[f"{second.id}:answer_page_commit"]
+    await second_activities.draft_answer_page(str(second.id))
+    retried = second_db.receipts[f"{second.id}:answer_page_commit"].result
+    assert retried["artifact_path"] == suffixed
+    assert sorted(p for p in storage.documents if p.startswith("content/answers/")) == sorted(
+        [path, suffixed]
+    )
 
 
 @pytest.mark.asyncio
@@ -708,6 +765,9 @@ def test_answer_page_names_come_from_the_date_and_question():
         "content/answers/2026-09-28-which-tools-work-with-coding-agents.md"
     )
     assert answer_page_path("", "2026-09-28") == "content/answers/2026-09-28-answer-page.md"
+    assert answer_page_path("", "2026-09-28", suffix="1a2b3c4d") == (
+        "content/answers/2026-09-28-answer-page-1a2b3c4d.md"
+    )
     assert (
         len(answer_page_path("word " * 60, "2026-09-28")) <= len("content/answers/") + 11 + 80 + 3
     )

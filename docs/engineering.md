@@ -200,8 +200,9 @@ is `project_id`; GitHub access is not required. One forced-search Luna call publ
 at `content/answers/{date}-{question-slug}.md`, named from its date and title, with bounded
 evidence under `reports/answer-page/{run_id}/`, atomically through Temporal. The title becomes the
 run's artifact title, which Decisions, the run card and chat show. Pages drafted before per-page
-names keep `reports/ANSWER_PAGE.md`; a later page with the same date and title replaces the file
-at that path, and each run still reads its own pinned revision. Because this is
+names keep `reports/ANSWER_PAGE.md`. A later page with the same date and title gets the first
+eight characters of its run ID after the slug, so it never replaces the earlier file; a retry
+reuses the path its own evidence names. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
 approval from the draft reader resumes and completes it. Workflows presents every live gate through
 one needs-you queue banner and one matching filter count; completed reviews remain historical
