@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import get_type_hints
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -252,15 +253,13 @@ async def test_task_diff_is_bounded_and_bound_to_exact_bytes() -> None:
 
     class Repo:
         async def list_commits(self, **values):
-            assert values["branch"] == "main"
-            return {"commits": [{"sha": "a" * 40}]}
+            raise AssertionError("the moving canonical branch is not the review base")
 
-        async def get_branch_diff(self, **values):
-            assert values["ephemeral"] is True
-            assert values["base"] == "main"
+        async def get_commit_diff(self, **values):
+            assert values["sha"] == "c" * 40
+            assert values["base_sha"] == "a" * 40
             return {
-                "branch": "tasks/run/1",
-                "base": "a" * 40,
+                "sha": "c" * 40,
                 "stats": {"files": 1, "additions": 1, "deletions": 1, "changes": 2},
                 "files": [
                     {
@@ -283,6 +282,7 @@ async def test_task_diff_is_bounded_and_bound_to_exact_bytes() -> None:
         return Repo()
 
     storage.get_repo = get_repo  # type: ignore[method-assign]
+    storage.procedure_checkpoint_revision = AsyncMock(return_value="c" * 40)
     projection, exact = await storage.get_task_branch_diff(
         repo_id="projects/test",
         branch="tasks/run/1",
@@ -293,27 +293,16 @@ async def test_task_diff_is_bounded_and_bound_to_exact_bytes() -> None:
     assert exact == raw
     assert projection["files"][0]["path"] == "app.py"
     assert projection["sha256"] == hashlib.sha256(raw.encode()).hexdigest()
+    assert projection["base_sha"] == "a" * 40
+    assert projection["source_revision"] == "c" * 40
 
 
 @pytest.mark.asyncio
-async def test_task_diff_rejects_a_moved_canonical_head() -> None:
-    class Repo:
-        async def list_commits(self, **values):
-            assert values["branch"] == "main"
-            return {"commits": [{"sha": "b" * 40}]}
-
-        async def get_branch_diff(self, **values):
-            del values
-            raise AssertionError("diff must not be read against a moved canonical branch")
-
+async def test_task_diff_rejects_a_missing_checkpoint() -> None:
     storage = object.__new__(CodeStorage)
-
-    async def get_repo(repo_id):
-        assert repo_id == "projects/test"
-        return Repo()
-
-    storage.get_repo = get_repo  # type: ignore[method-assign]
-    with pytest.raises(RuntimeError, match="canonical project state changed"):
+    storage.get_repo = AsyncMock(return_value=SimpleNamespace())
+    storage.procedure_checkpoint_revision = AsyncMock(return_value=None)
+    with pytest.raises(RuntimeError, match="checkpoint is unavailable"):
         await storage.get_task_branch_diff(
             repo_id="projects/test",
             branch="tasks/run/1",
@@ -435,6 +424,8 @@ async def test_task_approval_applies_exact_reviewed_diff_to_latest_project_head(
     assert storage.apply_values["expected_head_sha"] == "b" * 40
     assert storage.apply_values["raw_diff"] == raw
     assert storage.apply_values["expected_diff_sha256"] == task_diff["sha256"]
+    assert storage.apply_values["original_base_sha"] == "a" * 40
+    assert storage.apply_values["reviewed_files"] == task_diff["files"]
     assert database.completed_sha == "c" * 40
     assert database.effect_result == {"canonical_commit_sha": "c" * 40}
     assert database.deferred is False

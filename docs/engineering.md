@@ -244,6 +244,14 @@ finish with a result; modifying tasks expose the exact bounded diff and cannot r
 project state until a member approves it under the existing lease, fencing, and `expectedHeadSha`
 guard. Stop never applies unfinished changes.
 
+Review compares the task's immutable checkpoint with the project revision it started from.
+Other workflows can save unrelated files while the task works or waits for approval. Applying
+the exact reviewed diff preserves those saves; if a proposed file itself changed, Tin keeps
+both the current file and the isolated proposal and returns the task to review. File previews
+use the saved checkpoint too, so a later task turn cannot silently change an earlier proposal.
+The older `content.design_md` save path also preserves unrelated edits and only conflicts
+when `DESIGN.md` itself changed. Both paths recheck the lease before writing.
+
 ```text
 GET  /api/tasks/{run_id}
 POST /api/tasks/{run_id}/messages
