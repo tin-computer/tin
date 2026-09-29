@@ -11,6 +11,7 @@ from tin_lite import keyword_plan_v2 as v2
 from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v4 as v4
 from tin_lite import keyword_plan_v5 as v5
+from tin_lite import keyword_plan_v6 as v6
 
 
 @pytest.mark.parametrize("core_count", [3, 4])
@@ -78,7 +79,7 @@ def test_core_and_specific_seeds_are_deduplicated_and_use_only_explicit_context(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("contract, version", [(v3, "v3"), (v4, "v4"), (v5, "v5")])
+@pytest.mark.parametrize("contract, version", [(v3, "v3"), (v4, "v4"), (v5, "v5"), (v6, "current")])
 async def test_core_seed_versions_reuse_calls_and_publish_one_complete_inventory(contract, version):
     activities, db, storage, provider, model = await fixture(
         modern=version, inputs={"seed_phrases": []}

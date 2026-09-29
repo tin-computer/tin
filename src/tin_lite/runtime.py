@@ -373,6 +373,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         keywords.keyword_collect,
         keywords.keyword_sample_count,
         keywords.keyword_inspect,
+        keywords.keyword_inspect_batch,
         keywords.keyword_review,
         keywords.keyword_publish,
         keywords.keyword_project,

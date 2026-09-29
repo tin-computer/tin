@@ -441,7 +441,7 @@ class MemoryDB:
         return self.effects.get(key)
 
     @asynccontextmanager
-    async def effect_lock(self, key, operation):
+    async def effect_lock(self, key, operation, *, conn=None):
         async with self.locks.setdefault(key, asyncio.Lock()):
             yield self, self.effects.get(key)
 
