@@ -520,13 +520,73 @@ class KeywordPlanActivities:
 
         return await self._paid(run_id, "gsc", selection, "0", call)
 
+    async def _reuse_collected_research(self, run) -> bool:
+        """An explicit retry can keep the finished research for the exact same job."""
+        if run.retry_of_run_id is None:
+            return False
+        previous = await self.db.get_run(run.retry_of_run_id)
+        if (
+            previous is None
+            or previous.status.value != "failed"
+            or previous.project_id != run.project_id
+            or previous.workflow_id != run.workflow_id
+            or previous.definition_commit_sha != run.definition_commit_sha
+            or previous.input != run.input
+        ):
+            return False
+        source_id, run_id = str(previous.id), str(run.id)
+        collection = await self._result(source_id, "collection")
+        if not collection:
+            return False
+        scope = await self._result(run_id, "scope")
+
+        def request_fingerprint(owner, stage, keyword):
+            return digest(
+                {
+                    "endpoint": ENDPOINTS["serp"],
+                    "request": request_for(
+                        "serp", market=scope["market"], value=keyword, tag=self.key(owner, stage)
+                    ),
+                }
+            )
+
+        for index, candidate in enumerate(self._sample_candidates(collection["candidates"])):
+            stage = f"serp:{index}"
+            saved = await self.db.get_effect(self.key(source_id, stage))
+            if saved is None:
+                continue  # An unattempted read is still eligible for normal execution.
+
+            record = saved.result or {}
+            if saved.operation != KEY or record.get("request_sha256") != request_fingerprint(
+                source_id, stage, candidate["keyword"]
+            ):
+                raise ApplicationError(
+                    "Saved keyword research does not match this retry.", non_retryable=True
+                )
+            if saved.status != "completed":
+                record = {"status": "unknown", "reason": "unconfirmed_previous_request"}
+            await self._save(
+                run_id,
+                stage,
+                {
+                    **record,
+                    "request_sha256": request_fingerprint(run_id, stage, candidate["keyword"]),
+                    "reused_from_run_id": source_id,
+                },
+            )
+        # Write the collection last: an interrupted copy can finish before collect skips work.
+        await self._save(run_id, "collection", {**collection, "reused_from_run_id": source_id})
+        return True
+
     @activity.defn
     async def keyword_collect(self, run_id: str) -> None:
         if await self._result(run_id, "collection"):
             return
+        run = await self._active(run_id)
+        if await self._reuse_collected_research(run):
+            return
         if not await self._reserve(run_id, "review", POLICY["review_reservation_usd"]):
             raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
-        run = await self._active(run_id)
         scope = await self._result(run_id, "scope")
         modern = modern_scope(scope)
         if modern and not await self._reserve(
@@ -795,6 +855,11 @@ class KeywordPlanActivities:
                     review=review,
                     coverage=collection["coverage"],
                     evidence={
+                        **(
+                            {"reused_research_from_run_id": collection["reused_from_run_id"]}
+                            if collection.get("reused_from_run_id")
+                            else {}
+                        ),
                         "collection": {
                             stage: receipt_evidence(value)
                             for stage, value in collection["sources"].items()
