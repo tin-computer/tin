@@ -1,8 +1,9 @@
 # Document contracts
 
-The primary proposal is `brand/proposals/{run_id}/BRAND.md` (48,000 bytes maximum); its required
-companion is `brand/proposals/{run_id}/DESIGN.md` (64,000 bytes maximum). Both are UTF-8 Markdown.
-Use the exact paths resolved in context. Never truncate an existing document to fit a limit.
+The primary proposal is `brand/proposals/{run_folder}/BRAND.md` (48,000 bytes maximum); its
+required companion is `brand/proposals/{run_folder}/DESIGN.md` (64,000 bytes maximum). Both are
+UTF-8 Markdown. `{run_folder}` is the run's date and a short run code, such as
+`2026-09-28-1a2b3c4d`. Use the exact paths resolved in context. Never truncate an existing document to fit a limit.
 
 New BRAND.md contains one title followed by exactly these second-level headings:
 

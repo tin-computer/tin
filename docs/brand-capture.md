@@ -68,8 +68,9 @@ contract is needed, and carried-forward documents remain byte-for-byte unchanged
 
 ## Review and consumption
 
-The run publishes two proposals under `brand/proposals/{run_id}/`, bounded to 48,000 and
-64,000 bytes respectively. The existing reader links the companion, shows palette swatches
+The run publishes two proposals under `brand/proposals/{run_folder}/`, a folder named by the
+run's UTC date and the start of its identifier (`brand/proposals/2026-09-28-1a2b3c4d/`), bounded
+to 48,000 and 64,000 bytes respectively. Runs pinned to 1.0.x keep their run-ID folder. The existing reader links the companion, shows palette swatches
 and describes each destination as new or carried forward unchanged. “Use documents” applies
 the exact reviewed pair. The [reviewed-document harness](reviewed-project-documents.md)
 provides atomic adoption, destination conflict checks and retry recovery. Editing either

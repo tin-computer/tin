@@ -4,7 +4,7 @@ import hashlib
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from tin_lite.domain import RunStatus
-from tin_lite.procedure_documents import validate_document
+from tin_lite.procedure_documents import resolve_run_path, validate_document
 from tin_lite.procedures import validate_codex_procedure_definition
 from tin_lite.publication import OutputCheckpoint, OutputConflictError
 from tin_lite.workflow_packages import load_workflow_source
@@ -62,8 +62,8 @@ class ReviewedDocuments:
         if not receipt or receipt.status != "completed" or not receipt.result:
             raise ReviewConflict("The document pair is not ready for review.")
         checkpoint = OutputCheckpoint.load(receipt.result["checkpoint"], run=run)
-        pair = spec.documents.resolve(run.id)
-        primary = spec.output_path_template.replace("{run_id}", str(run.id))
+        pair = spec.documents.resolve(run.id, run.created_at)
+        primary = resolve_run_path(spec.output_path_template, run.id, run.created_at)
         if (
             [p.artifact_path for p in checkpoint.files] != [primary, pair.companion_path]
             or run.artifact_path != primary

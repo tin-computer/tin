@@ -19,6 +19,7 @@ from tin_lite.memory import MAX_MEMORY_BYTES, validate_memory_index
 from tin_lite.procedure_documents import (
     DocumentPair,
     parse_document_pair,
+    resolve_run_path,
     validate_document,
     validate_document_paths,
 )
@@ -427,15 +428,16 @@ class PinnedCodexProcedure:
         """Turn the definition's output path template into this run's exact artifact path.
 
         `{slug}` comes from the run input; `{host}` and `{started_at}` come from the run's
-        `product_url` and creation time, so a retried attempt resolves the same path.
+        `product_url` and creation time, and `{run_folder}` from its creation date and
+        identifier, so a retried attempt resolves the same path.
         """
         template = self.output_path_template
         if template is None:
             return self
-        if "{run_id}" in template:
+        if "{run_id}" in template or "{run_folder}" in template:
             if run_id is None:
                 raise ValueError("procedure output requires the run identifier")
-            path = template.replace("{run_id}", str(UUID(str(run_id))))
+            path = resolve_run_path(template, UUID(str(run_id)), started_at)
         elif "{slug}" in template:
             slug = inputs.get("slug")
             if not isinstance(slug, str) or len(slug) > 80 or not _DIAGRAM_SLUG.fullmatch(slug):
@@ -445,7 +447,7 @@ class PinnedCodexProcedure:
             path = template.replace("{host}", artifact_host(inputs.get("product_url"))).replace(
                 "{started_at}", artifact_timestamp(started_at)
             )
-        documents = self.documents.resolve(run_id) if self.documents else None
+        documents = self.documents.resolve(run_id, started_at) if self.documents else None
         if documents:
             validate_document_paths([path, documents.companion_path, *documents.destinations])
         return replace(
@@ -878,7 +880,9 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             if not isinstance(raw_output_template, str):
                 raise ValueError("procedure artifact output path template is invalid")
             placeholders = re.findall(r"\{[^{}]*\}", raw_output_template)
-            if placeholders == ["{run_id}"]:
+            if placeholders == ["{run_folder}"] and not documents:
+                raise ValueError("readable run folders are reserved for reviewed documents")
+            if placeholders in (["{run_id}"], ["{run_folder}"]):
                 plain_report = (
                     output_validator is None
                     and raw_output_template.startswith("reports/")
@@ -897,7 +901,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                     raise ValueError("run-owned paths require a plain report or draft validation")
                 sample = raw_output_template.replace(
                     "{run_id}", "00000000-0000-4000-8000-000000000031"
-                )
+                ).replace("{run_folder}", "2026-01-01-00000000")
             elif placeholders == ["{slug}"]:
                 if output_validator in HOST_TIMESTAMP_TEMPLATE_VALIDATORS:
                     raise ValueError(f"{output_validator} paths use {{host}} and {{started_at}}")
@@ -924,8 +928,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             if (
                 definition.get("key") != brand.KEY
                 or documents is None
-                or output_path_template != "brand/proposals/{run_id}/BRAND.md"
-                or documents.companion_path != "brand/proposals/{run_id}/DESIGN.md"
+                or (output_path_template, documents.companion_path) not in brand.PROPOSAL_TEMPLATES
                 or documents.destinations != (brand.BRAND_PATH, brand.DESIGN_PATH)
                 or output_max_bytes != brand.BRAND_MAX
                 or documents.companion_max_bytes != brand.DESIGN_MAX

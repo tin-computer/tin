@@ -2,9 +2,10 @@
 
 import json
 from copy import deepcopy
+from datetime import UTC, datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -15,7 +16,8 @@ from test_procedure_publication import publication_db as publication_db
 from tin_lite import brand_contract as brand
 from tin_lite.activities import TinActivities
 from tin_lite.brand_capture import BrandCaptureSources, resolve_brand, validate_pair
-from tin_lite.procedures import load_pinned_codex_procedure
+from tin_lite.procedure_documents import resolve_run_path
+from tin_lite.procedures import load_pinned_codex_procedure, validate_codex_procedure_definition
 from tin_lite.public_workflows import load_public_workflows
 from tin_lite.run_service import start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
@@ -70,6 +72,46 @@ DESIGN = (
     )
     + '\n\n[site-home]: https://example.com/ "Homepage, 2026-09-24"\n'
 ).encode()
+
+
+def proposal_folder(run):
+    return f"{run.created_at.astimezone(UTC):%Y-%m-%d}-{run.id.hex[:8]}"
+
+
+async def test_proposals_land_in_a_dated_folder_and_pinned_run_id_folders_still_load():
+    package = next(p for p in await load_public_workflows() if p.key == brand.KEY)
+
+    async def read(**kw):
+        return package.files[kw["path"]]
+
+    procedure = await load_pinned_codex_procedure(
+        storage=SimpleNamespace(read_canonical_artifact=read, read_workflow_resource=read),
+        repo_id="registry/workflows",
+        commit_sha="d" * 40,
+        definition_path=package.definition_path,
+    )
+    run_id = UUID("1a2b3c4d-0000-4000-8000-000000000001")
+    # 23:30 in UTC-7 is already the next day in UTC.
+    created = datetime(2026, 9, 28, 23, 30, tzinfo=timezone(timedelta(hours=-7)))
+    resolved = procedure.resolve_inputs({}, run_id=run_id, started_at=created)
+    assert resolved.output_path == "brand/proposals/2026-09-29-1a2b3c4d/BRAND.md"
+    assert resolved.companion_path == "brand/proposals/2026-09-29-1a2b3c4d/DESIGN.md"
+    with pytest.raises(ValueError, match="creation time"):
+        procedure.resolve_inputs({}, run_id=run_id)
+
+    # Runs pinned to 1.0.x keep their run-ID folder.
+    legacy = deepcopy(package.definition)
+    output = legacy["procedure"]["output"]
+    output["path_template"] = "brand/proposals/{run_id}/BRAND.md"
+    output["companion"]["path_template"] = "brand/proposals/{run_id}/DESIGN.md"
+    spec = validate_codex_procedure_definition(legacy)
+    assert (
+        resolve_run_path(spec.output_path_template, run_id) == f"brand/proposals/{run_id}/BRAND.md"
+    )
+    assert spec.documents.resolve(run_id).companion_path == f"brand/proposals/{run_id}/DESIGN.md"
+    output["path_template"] = "brand/other/{run_folder}/BRAND.md"
+    with pytest.raises(ValueError, match="fixed document pair"):
+        validate_codex_procedure_definition(legacy)
 
 
 async def setup(db):
@@ -189,8 +231,8 @@ async def test_url_only_capture_prepares_before_compute_and_reuses_revision(publ
     assert context["brand_capture"] == first
     assert "Keep our green" in context["prompt"]
     assert context["sandbox"]["profile"] == "browser"
-    assert pinned.output_path.endswith(f"{run.id}/BRAND.md")
-    assert pinned.companion_path.endswith(f"{run.id}/DESIGN.md")
+    assert pinned.output_path == f"brand/proposals/{proposal_folder(run)}/BRAND.md"
+    assert pinned.companion_path == f"brand/proposals/{proposal_folder(run)}/DESIGN.md"
 
 
 async def test_missing_sources_and_existing_pair_fail_before_start(publication_db):
@@ -359,7 +401,8 @@ async def test_validated_capture_pair_is_reviewed_then_adopted(publication_db):
         "UPDATE workflow_runs SET expected_head_sha=$2, status='running' WHERE id=$1", run.id, base
     )
     run = replace(run, expected_head_sha=base)
-    procedure = f.procedure.resolve_inputs(run.input, run_id=run.id)
+    procedure = f.procedure.resolve_inputs(run.input, run_id=run.id, started_at=run.created_at)
+    assert procedure.companion_path == f"brand/proposals/{proposal_folder(run)}/DESIGN.md"
     revision = f.storage.repo.edit(
         {procedure.output_path: brand_doc(), procedure.companion_path: DESIGN}
     )
@@ -465,7 +508,7 @@ async def test_malformed_capture_pair_fails_once_without_retries(publication_db)
     prepared = await f.sources.prepare(run, f.procedure)
     base = prepared["project_revision"]
     run = replace(run, expected_head_sha=base)
-    procedure = f.procedure.resolve_inputs(run.input, run_id=run.id)
+    procedure = f.procedure.resolve_inputs(run.input, run_id=run.id, started_at=run.created_at)
     activities = TinActivities(
         database=f.db,
         storage=f.storage,
