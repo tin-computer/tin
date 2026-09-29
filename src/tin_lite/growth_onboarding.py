@@ -995,11 +995,9 @@ def spending_warnings(schedules: list[dict[str, Any]], policy: dict[str, Any] | 
             for item in running
         ]
         warnings.append(
-            f"Spending limit: {_join(parts)}, up to ${usd(total)} a month in all, and this "
-            f"project's monthly limit is ${usd(monthly)}. Tin starts a run only if this "
-            "month's charges plus that run's maximum fit the limit (a run still going counts "
-            "at its maximum), so later runs in a month may not start. To keep every run, "
-            f"raise the monthly limit with {RAISE_LIMITS}."
+            f"Spending limit: {_join(parts)}, up to ${usd(total)} a month, above this "
+            f"project's ${usd(monthly)} monthly limit, so some runs may not start. To keep "
+            f"every run, raise the monthly limit with {RAISE_LIMITS}."
         )
     return warnings
 

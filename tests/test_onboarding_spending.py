@@ -28,15 +28,12 @@ ARTICLE = {
     "estimate_nanos": 5 * DOLLAR,
 }
 ADMISSION = (
-    "Tin starts a run only if this month's charges plus that run's maximum fit the limit "
-    "(a run still going counts at its maximum), so later runs in a month may not start. To "
-    "keep every run, raise the monthly limit with set_project_spending_limits or on the "
-    "Billing page."
+    "so some runs may not start. To keep every run, raise the monthly limit with "
+    "set_project_spending_limits or on the Billing page."
 )
 WARNING = (
     "Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up "
-    "to $5.00 a run, up to $25.00 a month in all, and this project's monthly limit is $10.00. "
-    + ADMISSION
+    "to $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, " + ADMISSION
 )
 
 
@@ -140,8 +137,8 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
     warning = (
         "Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at "
         "up to $5.00 a run and Weekly article — https://blog.example/ can run up to 10 times a "
-        "month at up to $5.00 a run, up to $75.00 a month in all, and this project's monthly "
-        "limit is $10.00. " + ADMISSION
+        "month at up to $5.00 a run, up to $75.00 a month, above this project's $10.00 monthly "
+        "limit, " + ADMISSION
     )
     assert await activities._spending_warnings(run, setup) == [warning]
     # Saved once: a retried report reads the same words even after the limit changes.

@@ -218,10 +218,12 @@ monthly limit, the onboarding result's `relay` gains one line that names the sch
 limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
 
 > Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
-> $5.00 a run, up to $25.00 a month in all, and this project's monthly limit is $10.00. Tin
-> starts a run only if this month's charges plus that run's maximum fit the limit (a run still
-> going counts at its maximum), so later runs in a month may not start. To keep every run, raise
-> the monthly limit with set_project_spending_limits or on the Billing page.
+> $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, so some runs may
+> not start. To keep every run, raise the monthly limit with set_project_spending_limits or on
+> the Billing page.
+
+Tin starts a run only if this month's charges plus that run's maximum fit the limit, and a run
+still going counts at its maximum.
 
 The words are saved with the setup, so a retried report reads the same. Projects without
 billing, or with nothing billed on a schedule, get no line.
