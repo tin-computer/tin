@@ -128,7 +128,7 @@ def test_three_bounded_artifacts_and_stable_downstream_inventory():
     findings = json.loads(docs[paths["findings.json"]])
     assert findings["downstream_authority"] == "recommendations_only"
     assert len(findings["evidence_sha256"]) == 64
-    assert b"partial evidence" in docs[paths["AUDIT.md"]]
+    assert b"Result: partial: site files were not collected" in docs[paths["AUDIT.md"]]
 
 
 def response(text="Useful answer", *, search=True, citations=None):
@@ -508,7 +508,7 @@ async def test_full_native_technical_path_survives_duplicate_delivery():
     assert provider.pages.await_count == 1
     assert storage.repo.writes == 1
     report = storage.repo.trees[storage.repo.head][audit_paths(run_id)["AUDIT.md"]][1]
-    assert b"partial evidence" in report and b"HTML title is missing" in report
+    assert b"Result: partial" in report and b"HTML title is missing" in report
 
 
 @pytest.mark.asyncio

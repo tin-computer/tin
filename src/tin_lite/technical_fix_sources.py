@@ -36,6 +36,13 @@ CONTENT_FINDING_MESSAGE = (
 )
 
 
+SITE_FINDING_MESSAGE = (
+    "This finding comes from the audit's own site or Search Console checks, not the provider "
+    "crawl. The pinned repair policy does not cover it yet; use its fix and evidence to plan "
+    "the change."
+)
+
+
 class TechnicalFixError(ValueError):
     """Only Tin-owned, safe messages cross the HTTP/MCP boundary."""
 
@@ -65,7 +72,7 @@ def _reject_constant(value):
 def _validate_inventory(*, evidence, inventory, run, project_id):
     """Recompute the pinned technical inventory from the complete saved page list."""
     policy = audit_policy(evidence["policy"]["version"])
-    schema = 2 if policy.get("check_applicability") else 1
+    schema = 3 if policy.get("site_checks") else 2 if policy.get("check_applicability") else 1
     if (
         type(evidence["schema_version"]) is not int
         or evidence["schema_version"] != 1
@@ -96,7 +103,7 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
         crawl["status"] not in {"completed", "partial", "unavailable"}
         or not isinstance(pages, list)
         or len(pages) > evidence["policy"]["max_pages"]
-        or len(canonical_json(pages)) > 240_000
+        or len(canonical_json(pages)) > policy.get("max_crawl_evidence_bytes", 240_000)
     ):
         raise _invalid_source()
     seen = set()
@@ -121,7 +128,7 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
     if [page["url"] for page in pages] != sorted(seen):
         raise _invalid_source()
     expected, coverage = technical_findings(pages, host, policy_version=policy["version"])
-    if schema == 2:
+    if schema >= 2:
         for page in pages:
             context = page.get("provider_context", {})
             if (
@@ -141,9 +148,17 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
         if inventory.get("evidence_status") != expected_status:
             raise _invalid_source()
     findings = inventory["findings"]
+    categories = (
+        {"technical", "content", "site", "search"}
+        if schema == 3
+        else {
+            "technical",
+            "content",
+        }
+    )
     if not isinstance(findings, list) or any(
         not isinstance(row, dict)
-        or row.get("category") not in {"technical", "content"}
+        or row.get("category") not in categories
         or not isinstance(row.get("id"), str)
         or not re.fullmatch(r"oa_[0-9a-f]{20}", row["id"])
         or not isinstance(row.get("check_id"), str)
@@ -159,18 +174,20 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
         coverage
     ):
         raise _invalid_source()
-    # Content recommendations are recognized only to explain their exclusion. They
-    # never gain the recomputed crawl evidence or eligibility of a technical finding.
+    # Content, site and search findings are recognized only to explain their exclusion.
+    # They never gain the recomputed crawl evidence or eligibility of a technical finding.
     excluded = [
         {
             "finding": {key: row[key] for key in ("id", "check_id", "category")},
             "source_eligible": False,
-            "ineligible_reason": "content_finding",
-            "next_action": "content.plan",
-            "message": CONTENT_FINDING_MESSAGE,
+            "ineligible_reason": f"{row['category']}_finding",
+            "next_action": "content.plan" if row["category"] == "content" else "review",
+            "message": CONTENT_FINDING_MESSAGE
+            if row["category"] == "content"
+            else SITE_FINDING_MESSAGE,
         }
         for row in findings
-        if row["category"] == "content"
+        if row["category"] != "technical"
     ]
     return scope, crawl, expected, coverage, excluded
 
