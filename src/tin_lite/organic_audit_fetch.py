@@ -2,7 +2,8 @@
 
 Only HTTPS URLs on the audit's verified hosts are contacted. Every host is resolved first and
 refused unless all its addresses are public; the connection then goes to the vetted address
-with the original name for TLS. Redirects are recorded, never followed. No cookies,
+with the original name for TLS. Page redirects are recorded; site-file redirects stay within
+the verified hosts. No cookies,
 credentials or page bodies are kept; only the facts `organic_audit_site` extracts.
 Network exceptions never reach the report: each read returns a Tin-owned status instead.
 """
@@ -109,16 +110,20 @@ class SiteReader:
             return {"status": "out_of_scope"}
         host = urlsplit(url).hostname
         try:
-            address = await self._address(host)
-            request = self._client.build_request(
-                "GET",
-                httpx.URL(url).copy_with(host=address),
-                headers={"Host": host},
-                extensions={"sni_hostname": host},
-            )
             async with asyncio.timeout(REQUEST_SECONDS + 5):
+                address = await self._address(host)
+                request = self._client.build_request(
+                    "GET",
+                    httpx.URL(url).copy_with(host=address),
+                    headers={"Host": host, "Accept-Encoding": "identity"},
+                    extensions={"sni_hostname": host},
+                )
                 response = await self._client.send(request, stream=True)
                 try:
+                    # HTTPX decodes before yielding chunks, which would bypass our byte cap.
+                    # Request plain bytes and leave a noncompliant server's facts unknown.
+                    if response.headers.get("content-encoding", "identity").lower() != "identity":
+                        return {"status": "unsupported_encoding"}
                     headers = {
                         "content_type": response.headers.get("content-type", "")[:200],
                         "location": response.headers.get("location"),
@@ -188,7 +193,7 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
     if response["status"] != "observed":
         robots["status"] = "unreachable"
     elif response["status_code"] == 200:
-        text = response["body"].decode(response.get("charset") or "utf-8", "replace")
+        text = response["body"].decode("utf-8", "replace")
         robots.update(status="observed", **parse_robots(text))
         robots["truncated"] = response["truncated"]
     elif refused(response):
@@ -372,8 +377,8 @@ async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
                     "url": url,
                     "strategy": "mobile",
                     "category": "performance",
-                    "key": api_key,
                 },
+                headers={"X-Goog-Api-Key": api_key},
             ) as response:
                 if response.status_code != 200:
                     return {"status": "unavailable", "reason": "provider_http_error"}

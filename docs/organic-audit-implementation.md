@@ -280,6 +280,11 @@ like bot protection (HTTP 401, 403 or 429, or a 503 challenge page) are recorded
 the page's checks are unknown, not errors, and a refused robots.txt or sitemap is unknown,
 not missing.
 
+The request deadline includes DNS resolution. Tin requests uncompressed HTTP bodies and
+leaves facts unknown if a server ignores that request, so automatic HTTP decompression
+cannot bypass the byte cap. Gzipped sitemap files keep their separate bounded decoder.
+The optional PageSpeed key is sent in Google's `X-Goog-Api-Key` header, never in the URL.
+
 ### Search Console
 
 With a matching connected property, the audit reads page rows (up to 1,000) and
