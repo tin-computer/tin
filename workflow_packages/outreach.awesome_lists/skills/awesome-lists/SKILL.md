@@ -142,8 +142,14 @@ exact changes. Write it as data, not prose:
   and `body`.
 - `section` is the heading line copied exactly from the list's file, including its `#` marks.
   `order` is `alphabetical` when the section is sorted, otherwise `end`.
-- `entry` is one line matched to its neighbours, starting with the same list marker, and it
-  must contain the product or repository URL named in `product`.
+- `entry` is one line written exactly like its neighbours, and it must contain the product or
+  repository URL named in `product`. A bullet starts with the same marker (`- `, `* ` or `+ `).
+  A numbered item starts with any number and a period (`1. `); Tin gives it the next number at
+  the end of the list. A table row copies the table's whole row format, starting and ending
+  with `|`, with the same number of columns as the header and links written as the other rows
+  write them.
+- `section` is the heading directly above the list or table. Tin reads only the items between
+  that heading and the next heading or `---`, so name a subsection's own heading.
 - `body` answers every box of the pull request template. Do not add a disclosure line; Tin
   adds one saying the founder maintains the product and prepared it with Tin.
 - Leave a list out of the block when it is not ready to submit. If no list is ready, write the

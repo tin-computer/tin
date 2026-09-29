@@ -207,7 +207,13 @@ class AwesomeSubmitActivities:
             await self._refuse(run_id, str(exc))
         if not chosen:
             await self._refuse(
-                run_id, "The awesome lists report recommends no list to submit to yet."
+                run_id,
+                "The awesome lists report has no submission Tin can send"
+                + (
+                    ": " + "; ".join(f"{r['list']}: {r['reason']}" for r in packets["rejected"])
+                    if packets["rejected"]
+                    else "."
+                ),
             )
         await self._save(
             run_id,
@@ -217,6 +223,7 @@ class AwesomeSubmitActivities:
                 "source": source,
                 "product": packets["product"],
                 "submissions": chosen,
+                "rejected": packets["rejected"],
                 "account": {
                     "connection_id": str(connection.id),
                     "external_account_id": connection.external_account_id,
@@ -243,7 +250,7 @@ class AwesomeSubmitActivities:
         except IntegrationError as exc:
             await self._refuse(run_id, str(exc))
         product = scope["product"]
-        changes, skipped = [], []
+        changes, skipped = [], list(scope.get("rejected") or [])
 
         async def earlier(name: str) -> str | None:
             receipt = await self.db.get_effect(self.submission_key(run.project_id, name))
@@ -291,6 +298,7 @@ class AwesomeSubmitActivities:
                     **submission,
                     "list": current["full_name"],
                     "body": body,
+                    "entry": placed["entry"],
                     "default_branch": current["default_branch"],
                     "base_commit": current["base_commit"],
                     "base_blob": current["blob_sha"],

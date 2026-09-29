@@ -33,6 +33,9 @@ REPOSITORY = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9._-]{1,10
 LIST_PATH = re.compile(r"^(?!/)(?!.*\.\.)[A-Za-z0-9._/-]{1,200}\.(?:md|markdown)$", re.I)
 HEADING = re.compile(r"^(#{1,6})\s+\S")
 ENTRY_MARKERS = ("- ", "* ", "+ ")
+NUMBERED = re.compile(r"^(\d{1,4})([.)]) ")
+THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(\s*\1){2,}\s*$")
+TABLE_SEPARATOR = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 LINK_TEXT = re.compile(r"\[([^\]]{1,200})\]\(")
 METHODS = ("pull_request", "issue")
 ORDERS = ("alphabetical", "end")
@@ -139,16 +142,43 @@ def parse_packets(report: str) -> dict:
     items = raw.get("submissions")
     if not isinstance(items, list) or len(items) > 20:
         raise PacketError("The submissions block has no usable list of submissions.")
-    submissions, seen = [], set()
+    # One unusable packet is skipped with its reason; the other lists still go ahead.
+    submissions, rejected, seen = [], [], set()
     for item in items:
-        if not isinstance(item, dict):
-            raise PacketError("A submission is not an object.")
-        submission = packet(item, links)
-        if submission["list"].lower() in seen:
-            raise PacketError("The submissions block names a list twice.")
+        named = item.get("list") if isinstance(item, dict) else None
+        label = named if isinstance(named, str) and REPOSITORY.fullmatch(named) else "(unnamed)"
+        if label.lower() in seen:
+            rejected.append({"list": label, "reason": "the report names this list twice"})
+            continue
+        try:
+            if not isinstance(item, dict):
+                raise PacketError("The submission is not an object.")
+            submission = packet(item, links)
+        except PacketError as exc:
+            rejected.append({"list": label, "reason": str(exc)})
+            continue
         seen.add(submission["list"].lower())
         submissions.append(submission)
-    return {"product": {"name": name, "links": links}, "submissions": submissions}
+    return {
+        "product": {"name": name, "links": links},
+        "submissions": submissions,
+        "rejected": rejected,
+    }
+
+
+def entry_kind(line: str) -> str | None:
+    """How a list line is written: a bullet with its marker, a numbered item, or a table row."""
+    if line.startswith(ENTRY_MARKERS):
+        return f"bullet{line[0]}"
+    if NUMBERED.match(line):
+        return "numbered"
+    if line.startswith("|") and line.rstrip().endswith("|") and line.count("|") >= 3:
+        return "table"
+    return None
+
+
+def _cells(line: str) -> list[str]:
+    return [cell.strip() for cell in line.strip().strip("|").split("|")]
 
 
 def packet(item: dict, links: list[str]) -> dict:
@@ -171,8 +201,11 @@ def packet(item: dict, links: list[str]) -> dict:
         section = _text(item.get("section"), "section", lo=2, hi=200)
         if not HEADING.match(section):
             raise PacketError(f"The section for {repository} must be a Markdown heading line.")
-        if not entry.startswith(ENTRY_MARKERS):
-            raise PacketError(f"The entry for {repository} must be a list item.")
+        if entry_kind(entry) is None:
+            raise PacketError(
+                "The entry must be written like its neighbours: a bullet, a numbered item "
+                "or a full table row starting and ending with |."
+            )
         order = item.get("order", "alphabetical")
         if order not in ORDERS:
             raise PacketError("A submission's order must be alphabetical or end.")
@@ -208,16 +241,23 @@ def with_disclosure(body: str, product: str) -> str:
 
 
 def _sort_key(line: str) -> str:
-    match = LINK_TEXT.search(line)
-    text = match.group(1) if match else line[2:]
-    return re.sub(r"[^0-9a-z]+", "", text.casefold())
+    kind = entry_kind(line)
+    if kind == "table":
+        text = _cells(line)[0]
+    else:
+        match = LINK_TEXT.search(line)
+        text = match.group(1) if match else NUMBERED.sub("", line)[2:]
+    match = LINK_TEXT.search(text)
+    return re.sub(r"[^0-9a-z]+", "", (match.group(1) if match else text).casefold())
 
 
 def place(content: str, *, section: str, entry: str, order: str, links: list[str]) -> dict:
     """Insert one entry line in a section of the list's current file.
 
     Refuses when the product is already listed, the heading is missing or ambiguous, or the
-    section has no top-level items to line up with; code never guesses where a line goes.
+    section has no items written the same way to line up with; code never guesses where a line
+    goes. A numbered list takes the next number at its end; a table row must have the table's
+    columns.
     """
     lower = content.lower()
     for link in links:
@@ -232,31 +272,55 @@ def place(content: str, *, section: str, entry: str, order: str, links: list[str
             "The list no longer has that section." if not starts else "The section is ambiguous."
         )
     start = starts[0]
-    level = len(HEADING.match(wanted).group(1))
+    # The entry belongs directly under its heading: the section stops at the next heading of
+    # any level or a thematic break, so a subsection's or the next section's list never counts.
     end = len(lines)
     for i in range(start + 1, len(lines)):
-        heading = HEADING.match(lines[i])
-        if heading and len(heading.group(1)) <= level:
+        if HEADING.match(lines[i]) or THEMATIC_BREAK.match(lines[i]):
             end = i
             break
-    marker = entry[:2]
-    items = [i for i in range(start + 1, end) if lines[i].startswith(marker)]
+    kind = entry_kind(entry)
+    items = []
+    for i in range(start + 1, end):
+        if entry_kind(lines[i]) == kind:
+            items.append(i)
+        elif items and not (lines[i].startswith((" ", "\t")) and lines[i].strip()):
+            break  # the first contiguous block of matching items is the list
+    if kind == "table":
+        separators = [i for i in range(start + 1, end) if TABLE_SEPARATOR.match(lines[i])]
+        if len(separators) != 1:
+            raise PacketError("The section does not have exactly one table to add a row to.")
+        header = separators[0] - 1
+        columns = len(_cells(lines[header]))
+        if len(_cells(entry)) != columns:
+            raise PacketError(f"The entry does not have the table's {columns} columns.")
+        items = [i for i in items if i > separators[0]]
+        if not items:
+            items = [separators[0]]
     if not items:
-        raise PacketError("The section has no list items to line the entry up with.")
+        raise PacketError("The section has no list items written like the entry to line up with.")
     last = items[-1]
     # A top-level item can carry indented sub-items; insert after them, never between.
     while last + 1 < end and lines[last + 1].startswith((" ", "\t")) and lines[last + 1].strip():
         last += 1
     at = last + 1
-    if order == "alphabetical":
+    if kind == "numbered":
+        # Renumbering every later item would rewrite the list; a numbered entry goes last.
+        numbers = [int(NUMBERED.match(lines[i]).group(1)) for i in items]
+        suffix = NUMBERED.match(lines[items[-1]]).group(2)
+        entry = f"{numbers[-1] + 1}{suffix} " + NUMBERED.sub("", entry)
+    elif order == "alphabetical" and entry_kind(lines[items[0]]) == kind:
         key = _sort_key(entry)
         for i in items:
+            if kind == "table" and TABLE_SEPARATOR.match(lines[i]):
+                continue
             if _sort_key(lines[i]) > key:
                 at = i
                 break
     updated = [*lines[:at], entry, *lines[at:]]
     return {
         "content": newline.join(updated),
+        "entry": entry,
         "line": at + 1,
         "context": {
             "before": lines[max(start, at - 2) : at],
