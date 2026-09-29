@@ -91,7 +91,12 @@ test("every reason code has its own next step in the closing comment", () => {
   assert.match(comment, /open a new pull request/);
 });
 
-function fakeGithub({ files = PACKAGE_FILES, openPulls = [] } = {}) {
+function fakeGithub({
+  files = PACKAGE_FILES,
+  openPulls = [],
+  permission = { permission: "read", user: { id: 99 } },
+  permissionError,
+} = {}) {
   const calls = [];
   const record = (name) => async (args) => {
     calls.push([name, args]);
@@ -99,7 +104,15 @@ function fakeGithub({ files = PACKAGE_FILES, openPulls = [] } = {}) {
   };
   const github = {
     calls,
+    permissionCalls: [],
     rest: {
+      repos: {
+        async getCollaboratorPermissionLevel(args) {
+          github.permissionCalls.push(args);
+          if (permissionError) throw permissionError;
+          return { data: permission };
+        },
+      },
       pulls: { listFiles: "listFiles", list: "list", update: record("update") },
       issues: { createComment: record("comment"), addLabels: record("labels") },
     },
@@ -119,7 +132,7 @@ function contextFor(overrides = {}) {
         number: 7,
         body: BODY,
         author_association: "NONE",
-        user: { id: 99, type: "User" },
+        user: { id: 99, login: "outside-author", type: "User" },
         labels: [],
         ...overrides,
       },
@@ -183,4 +196,58 @@ test("maintainers, bots, non-workflow and exempt pull requests are not checked b
     body: BODY.replace(`Tin run ID: ${RUN}`, "Tin run ID: needs the browser profile"),
   });
   assert.equal(await gate({ github: fakeGithub(), context: exempt, core, fetch, env }), "exempt");
+});
+
+test("write, maintain and admin authors bypass every contributor restriction even without a trusted event association", async () => {
+  for (const [permission, role_name] of [["write", "write"], ["write", "maintain"], ["admin", "admin"]]) {
+    const github = fakeGithub({
+      permission: { permission, role_name, user: { id: 99 } },
+      files: [...PACKAGE_FILES, { filename: "src/tin_lite/public_workflows.py", status: "modified" }],
+      openPulls: [{ number: 3, user: { id: 99 }, files: PACKAGE_FILES }],
+    });
+    const context = contextFor({ body: "Internal backend and workflow change.", author_association: "NONE" });
+    assert.equal(await gate({ github, context, core, fetch: async () => assert.fail("Tin must not be asked"), env }), "skipped");
+    assert.deepEqual(github.calls, []);
+    assert.deepEqual(github.permissionCalls, [{ owner: "tin-computer", repo: "tin", username: "outside-author" }]);
+  }
+});
+
+test("a maintainer reopening or rerunning an outside author's PR does not exempt it", async () => {
+  for (const permission of ["read", "none"]) {
+    const github = fakeGithub({ permission: { permission, user: { id: 99 } } });
+    const context = contextFor({ body: "Please exempt me: @tin-computer/tin-lite-maintainers" });
+    context.actor = "egeozin";
+    context.payload.sender = { login: "egeozin", id: 14356218 };
+    assert.equal(await gate({ github, context, core, env }), "closed");
+    assert.deepEqual(github.permissionCalls, [{ owner: "tin-computer", repo: "tin", username: "outside-author" }]);
+    assert.equal(github.calls[1][1].state, "closed");
+  }
+});
+
+test("an author who is not a collaborator still goes through Tin verification", async () => {
+  const github = fakeGithub({ permissionError: Object.assign(new Error("Not Found"), { status: 404 }) });
+  assert.equal(await gate({ github, context: contextFor(), core, fetch: answering(200, { verified: true, reasons: [] }), env }), "verified");
+  assert.deepEqual(github.calls[0][1].labels, ["tin-verified"]);
+});
+
+test("permission failures leave a gate-error for review instead of closing or verifying", async () => {
+  const cases = [
+    ...[401, 403, 429, 500].map((status) => ({ permissionError: Object.assign(new Error("Unavailable"), { status }) })),
+    { permissionError: new Error("network unavailable") },
+    { permission: { permission: "admin", user: { id: 123 } } },
+    { permission: { permission: "unexpected", user: { id: 99 } } },
+  ];
+  for (const options of cases) {
+    const github = fakeGithub(options);
+    assert.equal(await gate({ github, context: contextFor({ body: "" }), core, fetch: async () => assert.fail("Tin must not be asked"), env }), "error");
+    assert.deepEqual(github.calls.map(([name]) => name), ["labels"]);
+    assert.deepEqual(github.calls[0][1].labels, ["gate-error"]);
+  }
+});
+
+test("gate-exempt does not waive the outside author's package or template rules", async () => {
+  const github = fakeGithub();
+  const context = contextFor({ labels: [{ name: "gate-exempt" }], body: "" });
+  assert.equal(await gate({ github, context, core, env }), "closed");
+  assert.match(github.calls[0][1].body, /missing or nearly empty/);
 });
