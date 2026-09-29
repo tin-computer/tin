@@ -53,8 +53,17 @@ from tin_lite.usage_capture import borrowed_connection, effect_connection
 logger = logging.getLogger(__name__)
 _warned_unknown_workflow_system_ids: set[str] = set()
 
-# One cheap, Postgres-only eligibility predicate for Decisions and its count.
-# Applying decisions stay visible until their uncertain outcome is settled.
+# One cheap, Postgres-only eligibility predicate for Decisions and its count: a run with
+# something to approve. A task asking a question waits on an answer, not a decision, and a
+# reviewed task that changed nothing has nothing to approve.
+_DECISION_RUN_SQL = """
+    run.status = 'needs_input'
+    AND (run.review_required OR (
+        run.executor = 'project.task' AND run.task_phase = 'review'
+        AND run.task_has_changes IS NOT FALSE
+    ))
+"""
+
 # A one-off task that revises a run's saved output file: still waiting for approval, or
 # applied after that output was saved. Approving the run would otherwise use the older copy.
 _OUTPUT_REVISION_SQL = """
@@ -82,6 +91,7 @@ _OUTPUT_REVISION_SQL = """
     LIMIT 1
 """
 
+# Applying decisions stay visible until their uncertain outcome is settled.
 _PENDING_OUTPUT_CONFLICT_SQL = """
     run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
@@ -1800,11 +1810,10 @@ class Database:
                       AND created_at >= date_trunc('month', now() AT TIME ZONE projects.timezone)
                           AT TIME ZONE projects.timezone)::integer
                        AS runs_this_month,
+                   -- The same items Decisions lists, so every count agrees.
                    (SELECT count(*) FROM workflow_runs AS run
                     WHERE run.project_id = projects.id AND (
-                        (run.status = 'needs_input'
-                         AND (run.review_required OR run.executor = 'project.task'))
-                        OR ({_PENDING_OUTPUT_CONFLICT_SQL})
+                        ({_DECISION_RUN_SQL}) OR ({_PENDING_OUTPUT_CONFLICT_SQL})
                     ))::integer
                        AS waiting_count,
                    (SELECT count(*) FROM activity_events
@@ -3393,13 +3402,7 @@ class Database:
                 ORDER BY pending.created_at DESC, pending.id DESC
                 LIMIT 1
             ) AS decision ON true
-            WHERE run.project_id = $1
-              AND run.status = 'needs_input'
-              -- A task asking a question waits on an answer, not a decision.
-              AND (run.review_required OR (
-                  run.executor = 'project.task' AND run.task_phase = 'review'
-                  AND run.task_has_changes IS NOT FALSE
-              ))
+            WHERE run.project_id = $1 AND ({_DECISION_RUN_SQL})
             UNION ALL
             SELECT run.id, run.id, run.project_id, workflow.key, workflow.title,
                    'output_conflict',

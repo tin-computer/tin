@@ -101,11 +101,14 @@ async def test_only_tasks_with_changes_to_review_are_decisions(publication_db):
     assert [(item["run_id"], item["title"]) for item in decisions] == [
         (reviewing, "Review: Update the FAQ")
     ]
-    for phase, has_changes in [("needs_input", False), ("review", False)]:
+    assert (await db.get_project_system_summary(project_id=project_id))["waiting_count"] == 1
+    # A task asking a question, and a reviewed task that changed nothing, leave both counts.
+    for phase, has_changes in [("needs_input", False), ("needs_input", None), ("review", False)]:
         project_id, _ = await task_run(
             db, workflow_id, phase=phase, has_changes=has_changes, title="Pick a tone"
         )
         assert not await db.list_pending_decisions(project_id=project_id)
+        assert (await db.get_project_system_summary(project_id=project_id))["waiting_count"] == 0
 
 
 @pytest.mark.asyncio
