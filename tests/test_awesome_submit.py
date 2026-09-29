@@ -99,23 +99,26 @@ def test_packets_parse_validate_and_select() -> None:
 
     def broken(**change):
         item = {**PACKETS["submissions"][0], **change}
-        return report({**PACKETS, "submissions": [item]})
+        rejected = aw.parse_packets(report({**PACKETS, "submissions": [item]}))["rejected"]
+        if rejected:
+            raise aw.PacketError(rejected[0]["reason"])
 
     with pytest.raises(aw.PacketError, match="does not link the product"):
-        aw.parse_packets(broken(entry="- [Acme](https://elsewhere.dev) - Something."))
+        broken(entry="- [Acme](https://elsewhere.dev) - Something.")
     with pytest.raises(aw.PacketError, match="owner/name"):
-        aw.parse_packets(broken(list="not a repo"))
+        broken(list="not a repo")
     with pytest.raises(aw.PacketError, match="Markdown heading"):
-        aw.parse_packets(broken(section="Command line"))
+        broken(section="Command line")
     with pytest.raises(aw.PacketError, match="one line"):
-        aw.parse_packets(broken(entry="- [Acme](https://acme.dev)\n- [Evil](https://x.dev)"))
+        broken(entry="- [Acme](https://acme.dev)\n- [Evil](https://x.dev)")
     with pytest.raises(aw.PacketError, match="Markdown path"):
-        aw.parse_packets(broken(path="../../etc/passwd"))
+        broken(path="../../etc/passwd")
     with pytest.raises(aw.PacketError, match="no submissions block"):
         aw.parse_packets("# A report without the block")
     duplicate = {**PACKETS, "submissions": [PACKETS["submissions"][0]] * 2}
-    with pytest.raises(aw.PacketError, match="twice"):
-        aw.parse_packets(report(duplicate))
+    assert aw.parse_packets(report(duplicate))["rejected"] == [
+        {"list": LIST, "reason": "the report names this list twice"}
+    ]
     with pytest.raises(ValueError, match="at most"):
         aw.check_inputs({"lists": [f"o/l{i}" for i in range(6)]})
 
@@ -720,8 +723,9 @@ def test_the_skill_example_block_is_what_the_submitter_accepts() -> None:
     assert packets["submissions"][0]["list"] == "owner/awesome-thing"
     # A plausible but unusable packet: the entry names another site, so nothing is sent.
     unusable = skill.replace("https://github.com/acme/acme) -", "https://acme.example) -")
-    with pytest.raises(aw.PacketError, match="does not link the product"):
-        aw.parse_packets(unusable)
+    refused = aw.parse_packets(unusable)
+    assert refused["submissions"] == []
+    assert "does not link the product" in refused["rejected"][0]["reason"]
 
 
 # ---------------------------------------------------------------- Postgres contract
@@ -803,3 +807,83 @@ async def test_postgres_accepts_the_provider_and_finishes_only_approved_runs(pub
     assert (
         await db.pool.fetchval("SELECT status FROM workflow_runs WHERE id=$1", pending) == "running"
     )
+
+
+NUMBERED_LIST = """# AI Tools for Photo Editing
+
+A collection of tools.
+
+1. [Remove.bg](https://www.remove.bg) - Remove backgrounds.
+2. [Prisma](https://prisma-ai.com) - Turn photos into art.
+
+---
+
+# Other Tools
+
+## Video
+
+1. [Other](https://other.dev) - Something else.
+2. [More](https://more.dev) - More.
+3. [Last](https://last.dev) - Last.
+"""
+TABLE_LIST = """# AI Image Editor Tools
+
+| Tool Name | Description | Website |
+|-----------|-------------|---------|
+| Blur Background | Blur backgrounds | [https://blur.vip](https://blur.vip) |
+| Cutout Pro | Cutouts | [https://cutout.pro](https://cutout.pro) |
+
+## More Resources
+- [Back](https://example.com)
+"""
+
+
+def test_numbered_lists_take_the_next_number_inside_their_own_section() -> None:
+    links = ["https://acme.dev"]
+    placed = aw.place(
+        NUMBERED_LIST,
+        section="# AI Tools for Photo Editing",
+        entry="99. [Acme](https://acme.dev) - Replace text in images.",
+        order="alphabetical",
+        links=links,
+    )
+    assert placed["entry"] == "3. [Acme](https://acme.dev) - Replace text in images."
+    lines = placed["content"].splitlines()
+    assert lines[lines.index(placed["entry"]) - 1].startswith("2. [Prisma]")
+    assert placed["content"].count("3. [") == 2  # the next section's own item 3 is untouched
+
+
+def test_table_rows_must_match_the_header_columns() -> None:
+    links = ["https://acme.dev"]
+    row = "| Acme | Replace text in images | [https://acme.dev](https://acme.dev) |"
+    placed = aw.place(
+        TABLE_LIST, section="# AI Image Editor Tools", entry=row, order="end", links=links
+    )
+    lines = placed["content"].splitlines()
+    assert lines[lines.index(row) - 1].startswith("| Cutout Pro")
+    alphabetical = aw.place(
+        TABLE_LIST, section="# AI Image Editor Tools", entry=row, order="alphabetical", links=links
+    )["content"].splitlines()
+    assert alphabetical[alphabetical.index(row) + 1].startswith("| Blur Background")
+    with pytest.raises(aw.PacketError, match="3 columns"):
+        aw.place(
+            TABLE_LIST,
+            section="# AI Image Editor Tools",
+            entry="| Acme | [https://acme.dev](https://acme.dev) |",
+            order="end",
+            links=links,
+        )
+
+
+def test_one_unusable_packet_is_skipped_and_the_rest_still_go() -> None:
+    bare_row = {
+        **PACKETS["submissions"][0],
+        "list": "someone/awesome-table",
+        "entry": "Acme | Replace text | https://acme.dev",
+    }
+    packets = aw.parse_packets(
+        report({**PACKETS, "submissions": [bare_row, *PACKETS["submissions"]]})
+    )
+    assert [s["list"] for s in packets["submissions"]] == [LIST, "other/awesome-things"]
+    assert packets["rejected"][0]["list"] == "someone/awesome-table"
+    assert "written like its neighbours" in packets["rejected"][0]["reason"]
