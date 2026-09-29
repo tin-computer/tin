@@ -2293,6 +2293,7 @@ class Database:
         prerequisite_evidence: dict[str, Any] | None = None,
         draft_selection: dict[str, Any] | None = None,
         content_delivery_source: dict[str, Any] | None = None,
+        approved_article_source: dict[str, Any] | None = None,
         review_transition: dict[str, Any] | None = None,
         payment_card=None,
     ) -> tuple[WorkflowRun, bool]:
@@ -2524,7 +2525,18 @@ class Database:
                 if pinned_definition is not None
                 else _json_object(workflow["definition"], field="workflow definition")
             )
-            from tin_lite import content_repository_delivery
+            from tin_lite import code_article_sources, content_repository_delivery
+
+            if executor == "workflow.code":
+                await code_article_sources.guard(
+                    conn,
+                    project_id=project_id,
+                    definition=definition,
+                    inputs=input_payload,
+                    source=approved_article_source,
+                )
+            elif approved_article_source is not None:
+                raise ValueError("Approved article snapshots belong to declared code consumers.")
 
             if workflow_id == content_repository_delivery.WORKFLOW_ID:
                 if content_delivery_source is None:
@@ -2639,6 +2651,12 @@ class Database:
                     conn, execution_key=key, operation=content_repository_delivery.OPERATION
                 )
                 await self.complete_effect(conn, execution_key=key, result=content_delivery_source)
+            if approved_article_source is not None:
+                key = code_article_sources.source_key(run_id)
+                await self.start_effect(
+                    conn, execution_key=key, operation=code_article_sources.OPERATION
+                )
+                await self.complete_effect(conn, execution_key=key, result=approved_article_source)
             if payment_card is not None:
                 await payment_card.store(conn, run_id=run_id, project_id=project_id)
             if draft_selection is not None:

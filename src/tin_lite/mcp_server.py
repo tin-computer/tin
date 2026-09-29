@@ -3445,6 +3445,28 @@ def create_mcp_app(
             else {}
         )
         draft_preparation = {}
+        if parsed_project_id is not None and workflow.executor == "workflow.code":
+            from tin_lite.approved_article import discover as discover_approved_articles
+            from tin_lite.workflow_code import approved_article_input
+
+            source_input = approved_article_input(workflow.definition)
+            if source_input is not None:
+                draft_preparation = {
+                    "preparation": {
+                        "articles": await discover_approved_articles(
+                            runtime().database, parsed_project_id
+                        ),
+                        "source_input": source_input,
+                        "instruction": "Choose an approved article by title from "
+                        "preparation.articles "
+                        "and supply its run_id in the named source_input. Tin pins its approved "
+                        "revision and writing guide. If empty, ask the user to review an existing "
+                        "content.generate draft in Decisions. Do not approve or generate "
+                        "an article "
+                        "merely to test this workflow. Reuse request_id for an ambiguous start. "
+                        "This source selection does not publish or post the article.",
+                    }
+                }
         if (
             parsed_project_id is not None
             and workflow.key == "content.deliver"

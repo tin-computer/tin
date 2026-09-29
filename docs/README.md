@@ -44,6 +44,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   static checks and explicitly budgeted evaluations using existing run evidence.
 - [Public workflow packages](../workflow_packages/README.md): deterministic Python, multi-step
   managed-model Python and Codex procedures, with explicit maintainer registration.
+- [Article-to-social drafts](social-post-batch.md): one approved article, four reviewable
+  posts, and the reusable approved-article input for code workflows.
 - [Product analytics brief](product-analytics-brief.md): the public PostHog package and qualification limits.
 - [Private activation](private-workflow-activation.md), [code workflows](code-workflows.md),
   [managed model steps](code-model-workflows.md) and [code schedules](code-workflow-schedules.md).

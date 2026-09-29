@@ -10,8 +10,8 @@ import re
 from dataclasses import asdict
 from uuid import UUID
 
-from tin_lite import content_draft
-from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, ContentDelivery, article_body
+from tin_lite import approved_article, content_draft
+from tin_lite.content_delivery import ContentDelivery
 from tin_lite.domain import RunStatus
 from tin_lite.integrations import GitHubRepositoryBinding
 
@@ -69,21 +69,12 @@ def binding_from(source):
 
 
 async def discover(database, project_id):
-    rows = await database.pool.fetch(
-        "SELECT r.id, COALESCE(p.result->'item'->>'title', 'Approved article') AS title "
-        "FROM workflow_runs r LEFT JOIN effect_receipts p "
-        "ON p.execution_key='content-draft:' || r.id::text || ':prepare' AND p.status='completed' "
-        "WHERE r.project_id=$1 AND r.workflow_id=$2 "
-        "AND r.status='succeeded' AND r.review_decision='approved' "
-        "ORDER BY r.created_at DESC, r.id DESC LIMIT 100",
-        project_id,
-        DRAFT_WORKFLOW_ID,
-    )
+    articles = await approved_article.discover(database, project_id)
     connection = await database.get_integration_connection(
         project_id=project_id, provider_key="infra.github"
     )
     return {
-        "articles": [{"run_id": str(row["id"]), "title": row["title"]} for row in rows],
+        "articles": articles,
         "repository": connection.configuration.get("selected_repository")
         if connection and connection.status == "connected"
         else None,
@@ -91,38 +82,19 @@ async def discover(database, project_id):
 
 
 async def select_source(*, database, storage, integrations, project_id, inputs):
-    run = await database.get_run(UUID(inputs["source_run_id"]))
-    if not run or run.project_id != project_id or run.workflow_id != DRAFT_WORKFLOW_ID:
-        raise ValueError("Choose an article draft from this project.")
-    if run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
-        raise ValueError("Read and approve this article in Tin before preparing its PR.")
+    source = await approved_article.select(
+        database=database,
+        storage=storage,
+        project_id=project_id,
+        source_run_id=inputs["source_run_id"],
+    )
+    run = await database.get_run(UUID(source["source_run_id"]))
     selected = await database.get_effect(content_draft.selection_key(run.id))
     # The approval-time choice, else the pinned intent: the one the exact publisher uses.
     if await ContentDelivery(database=database).intent(run):
         raise ValueError(
             "This article already has automatic delivery. Use its existing delivery action."
         )
-    prepared = await database.get_effect(content_draft.receipt_key(run.id))
-    publication = await database.get_effect(f"{run.id}:procedure_canonical_commit")
-    if (
-        not prepared
-        or prepared.status != "completed"
-        or not prepared.result
-        or not publication
-        or publication.status != "completed"
-        or not publication.result
-        or publication.result.get("canonical_commit_sha") != run.canonical_commit_sha
-        or publication.result.get("artifact_path") != run.artifact_path
-        or run.artifact_path != content_draft.PATH_TEMPLATE.format(run_id=run.id)
-    ):
-        raise ValueError("The approved article's publication proof is unavailable.")
-    project = await database.get_project(project_id)
-    raw = await storage.read_canonical_artifact(
-        repo_id=project.state_repo_id, commit_sha=run.canonical_commit_sha, path=run.artifact_path
-    )
-    if len(raw) > 80_000:
-        raise ValueError("The approved article exceeds its size limit.")
-    article, title = article_body(raw, prepared.result)
     binding = await integrations.github_repository_binding(
         project_id=project_id, expected_repository=inputs["expected_repository"]
     )
@@ -132,32 +104,16 @@ async def select_source(*, database, storage, integrations, project_id, inputs):
 
         check_destination(system_delivery, binding)
     return {
-        "source_run_id": str(run.id),
-        "source_revision": run.canonical_commit_sha,
-        "source_path": run.artifact_path,
-        "source_sha256": hashlib.sha256(raw).hexdigest(),
-        "article": article,
-        "article_sha256": hashlib.sha256(article.encode()).hexdigest(),
-        "title": title,
-        "item": prepared.result["item"],
-        "program_id": prepared.result["program_id"],
-        "due_date": prepared.result["due_date"],
+        **source,
         "binding": {**asdict(binding), "connection_id": str(binding.connection_id)},
     }
 
 
 async def guard_source(conn, *, project_id, inputs, source):
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
-    approved = await conn.fetchval(
-        "SELECT id FROM workflow_runs WHERE id=$1 AND project_id=$2 AND workflow_id=$3 "
-        "AND status='succeeded' AND review_decision='approved' AND canonical_commit_sha=$4",
-        UUID(source["source_run_id"]),
-        project_id,
-        DRAFT_WORKFLOW_ID,
-        source["source_revision"],
-    )
-    if not approved or inputs["source_run_id"] != source["source_run_id"]:
+    if inputs["source_run_id"] != source["source_run_id"]:
         raise ValueError("The selected article is not approved for delivery.")
+    await approved_article.guard(conn, project_id=project_id, source=source)
     duplicate = await conn.fetchval(
         "SELECT r.id FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "

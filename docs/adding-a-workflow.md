@@ -66,6 +66,11 @@ self-hosted calls use the operator's configured credentials. Don't put provider 
 the package. Declared limits feed the existing estimate, and verified usage is charged.
 Code-only bounded execution uses no Tin credits.
 
+To reuse an approved article, declare `code.approved_article` with a required
+source-run UUID input. Tin supplies the pinned article and its original writing
+guide in `ctx["approved_article"]`. This works for public and private on-demand
+code packages; see [article sources and social drafts](social-post-batch.md).
+
 ### Codex procedures
 
 Use `codex.procedure` when choosing the steps is part of the job: investigating a question,

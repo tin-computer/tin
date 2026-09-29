@@ -301,6 +301,22 @@ async def start_workflow_run(
     }
     from tin_lite import content_repository_delivery
 
+    if workflow.executor == "workflow.code" and existing is None:
+        from tin_lite import code_article_sources
+        from tin_lite.workflow_code import approved_article_input
+
+        if approved_article_input(workflow.definition) is not None:
+            try:
+                create_arguments["approved_article_source"] = await code_article_sources.select(
+                    database=runtime.database,
+                    storage=runtime.storage,
+                    project_id=project_id,
+                    definition=workflow.definition,
+                    inputs=normalized_inputs,
+                )
+            except (ValueError, LookupError) as exc:
+                raise WorkflowInputError(str(exc)) from exc
+
     if workflow.id == content_repository_delivery.WORKFLOW_ID and existing is None:
         try:
             create_arguments[
@@ -377,7 +393,10 @@ async def start_workflow_run(
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
-        if workflow.key in {content_draft.KEY, content_repository_delivery.KEY}:
+        if workflow.key in {content_draft.KEY, content_repository_delivery.KEY} or (
+            workflow.executor == "workflow.code"
+            and workflow.definition.get("code", {}).get("approved_article") is not None
+        ):
             raise WorkflowInputError(str(exc)) from exc
         raise
     if not created and run.status != RunStatus.PENDING:

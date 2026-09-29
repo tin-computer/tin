@@ -89,6 +89,7 @@ class CodeSpec:
     max_bytes: int
     model_routes: tuple[CodeModelRoute, ...] = ()
     services: tuple[ServiceBinding, ...] = ()
+    approved_article_input: str | None = None
 
     @property
     def policy(self):
@@ -127,7 +128,7 @@ def validate_code_definition(definition) -> CodeSpec:
     code = definition.get("code")
     if (
         not isinstance(code, dict)
-        or set(code) - {"model_routes", "services"}
+        or set(code) - {"model_routes", "services", "approved_article"}
         != {"runtime", "entrypoint", "files", "timeout_seconds", "output"}
         or code["runtime"] != RUNTIME
     ):
@@ -163,6 +164,7 @@ def validate_code_definition(definition) -> CodeSpec:
     maximum = output["max_bytes"]
     if type(maximum) is not int or not 1 <= maximum <= MAX_OUTPUT_BYTES:
         raise ValueError("code output exceeds its byte limit")
+    article_input = approved_article_input(definition)
     return CodeSpec(
         entrypoint,
         tuple(files),
@@ -172,7 +174,31 @@ def validate_code_definition(definition) -> CodeSpec:
         maximum,
         model_routes(code.get("model_routes", {})),
         service_bindings(code.get("services", {}), definition.get("integration_requirements")),
+        article_input,
     )
+
+
+def approved_article_input(definition):
+    """One reviewed content.generate source; no arbitrary project-file reader."""
+    value = definition.get("code", {}).get("approved_article")
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {"input"}:
+        raise ValueError("approved_article must name one required UUID input")
+    name = value["input"]
+    schema = definition.get("input_schema", {})
+    field = schema.get("properties", {}).get(name) if isinstance(name, str) else None
+    if (
+        definition.get("executor") != EXECUTOR
+        or name == "project_id"
+        or name not in schema.get("required", [])
+        or not isinstance(field, dict)
+        or field.get("type") != "string"
+        or field.get("format") != "uuid"
+        or definition.get("schedule_modes") != ["on_demand"]
+    ):
+        raise ValueError("approved_article requires a required UUID input and on-demand execution")
+    return name
 
 
 def validate_code_resources(spec, files):

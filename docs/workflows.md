@@ -73,12 +73,13 @@ Tin ships 32 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-13 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+14 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
+| Repurpose an approved article for social (human review)<br>`social.post_batch` | Draft two X posts and two LinkedIn posts from one approved Tin article, with exact source excerpts for review. Nothing is posted or scheduled. | **`source_run_id`** | `reports/SOCIAL_POST_BATCH.md` |
 | Find the errors your users search for<br>`organic.error_surface` | Read the connected repository for the error messages your product shows users, check which your docs already answer, and get a ranked list of pages to write with the cause and fix from the code, ready to add to Plan upcoming content as a context file. It never writes pages, opens pull requests or estimates search volume. | `focus`, `depth`, `self_hosted`, `max_opportunities`, `docs_paths` | `reports/error-surface/{run_id}.md` |
 | Turn unlinked mentions into backlink asks<br>`organic.mention_backlinks` | Each week, find pages and AI-cited sources that name your product without linking to your site, and get one short ask per page in your voice, never repeating an ask from an earlier week. It never sends, posts or contacts anyone. | `brand_name`, `domain`, `aliases`, `max_mentions`, `recency_days` | `reports/backlink-asks/{run_id}.md` |
 
