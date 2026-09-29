@@ -10,6 +10,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from mcp.server.mcpserver.exceptions import ToolError
+from organic_site_stub import minimal_site
 from test_organic_audit import page_fixture, panel_fixture, response
 from test_procedure_publication import HistoryStorage
 from test_procedure_publication import publication_db as publication_db
@@ -95,6 +96,7 @@ async def fixture(db):
         settings=settings,
         provider=provider,
         site_resolver=AsyncMock(return_value={"status": "observed", "redirects": []}),
+        site_reader=minimal_site().reader,
     )
     settings.dataforseo_login = settings.dataforseo_password = "configured"  # noqa: S105
     workflow = await db.get_workflow(spec.id)

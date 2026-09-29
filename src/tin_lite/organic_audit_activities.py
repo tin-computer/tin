@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from temporalio import activity
@@ -29,6 +30,7 @@ from tin_lite.organic_audit import (
     build_documents,
     digest,
     grounded_preparation,
+    in_scope_url,
     normalize_pages,
 )
 from tin_lite.organic_audit_ai import (
@@ -45,6 +47,12 @@ from tin_lite.organic_audit_ai import (
     response_diagnostics,
     summarize,
     validate_panel,
+)
+from tin_lite.organic_audit_fetch import (
+    SiteReader,
+    read_pages,
+    read_pagespeed,
+    read_site_files,
 )
 from tin_lite.organic_audit_panel import prepare_panel
 from tin_lite.organic_audit_publication import publish_audit
@@ -64,11 +72,16 @@ class OrganicAuditActivities:
         integrations=None,
         provider=None,
         site_resolver=resolve_site_identity,
+        site_reader=SiteReader,
+        pagespeed_reader=read_pagespeed,
     ) -> None:
         self.db, self.storage, self.settings = database, storage, settings
         self.responses = responses
         self.integrations = integrations
         self.site_resolver = site_resolver
+        # Factories so tests can supply synthetic sites; production reads the public site.
+        self.site_reader = site_reader
+        self.pagespeed_reader = pagespeed_reader
         login, password = (
             getattr(settings, "dataforseo_login", None),
             getattr(settings, "dataforseo_password", None),
@@ -324,15 +337,33 @@ class OrganicAuditActivities:
                     if pinned_policy.get("check_applicability")
                     else {}
                 ),
+                **(self._site_scope(pinned_policy) if pinned_policy.get("site_checks") else {}),
             },
         )
         await self.db.mark_run_running(UUID(run_id))
+
+    def _site_scope(self, policy: dict) -> dict:
+        """Pin this run's page cap and whether speed can be measured; later config is ignored."""
+        cap = getattr(self.settings, "organic_audit_max_pages", policy["default_page_cap"])
+        if type(cap) is not int or not 10 <= cap <= policy["max_pages"]:
+            cap = policy["default_page_cap"]
+        return {
+            "page_cap": cap,
+            "pagespeed": "configured"
+            if getattr(self.settings, "pagespeed_api_key", None)
+            else "not_configured",
+        }
 
     async def _search_console_evidence(self, run_id, scope):
         from tin_lite.integrations import GSC_PROVIDER
         from tin_lite.keyword_plan import gsc_property_matches
 
-        if await self._result(run_id, "search_console"):
+        existing = await self._result(run_id, "search_console")
+        if existing and (
+            not audit_policy(scope["policy_version"]).get("site_checks")
+            or "request_sha256" not in existing  # No matching property: nothing was read.
+            or await self._result(run_id, "search_console_queries")
+        ):
             return
         if self.integrations is None:
             await self._save(
@@ -356,11 +387,17 @@ class OrganicAuditActivities:
             )
             return
         end = run.created_at.date() - timedelta(days=3)
+        policy = audit_policy(scope["policy_version"])
         request = {
             "property": site,
-            "start_date": (end - timedelta(days=27)).isoformat(),
+            "start_date": (
+                end - timedelta(days=policy.get("search_console_days", 28) - 1)
+            ).isoformat(),
             "end_date": end.isoformat(),
         }
+        if policy.get("site_checks"):
+            await self._search_console_reads(run_id, run, scope, request, policy)
+            return
 
         async def read():
             raw = await self.integrations.search_console_analytics(
@@ -382,20 +419,228 @@ class OrganicAuditActivities:
 
         await self._paid(run_id, "search_console", request, "0", read)
 
+    async def _search_console_reads(self, run_id, run, scope, request, policy):
+        """v10: page rows with position, then query+page rows, each its own receipt."""
+        from tin_lite.organic_audit_search import search_console_rows
+
+        hosts = audit_hosts(scope)
+
+        def in_scope(url):
+            return in_scope_url(url, scope["host"], aliases=hosts)
+
+        async def pages():
+            raw = await self.integrations.search_console_analytics(
+                project_id=run.project_id,
+                start_date=request["start_date"],
+                end_date=request["end_date"],
+                dimensions=("page",),
+                row_limit=policy["search_console_page_rows"],
+                expected_site_url=request["property"],
+                execution_key=self.key(run_id, "search_console:read"),
+                run_id=run.id,
+            )
+            rows, returned = search_console_rows(
+                raw,
+                ("page",),
+                in_scope=in_scope,
+                max_rows=policy["search_console_page_rows"],
+            )
+            return {
+                **request,
+                "pages": sorted(rows, key=lambda r: (-r["impressions"], r["url"])),
+                "returned_rows": returned,
+                "row_limit": policy["search_console_page_rows"],
+                "note": "Page rows for the selected property and dates, filtered to the audited "
+                "hosts; omitted pages are not proven unindexed. Results are not market-filtered.",
+            }
+
+        await self._paid(run_id, "search_console", request, "0", pages)
+
+        async def queries():
+            raw = await self.integrations.search_console_analytics(
+                project_id=run.project_id,
+                start_date=request["start_date"],
+                end_date=request["end_date"],
+                dimensions=("query", "page"),
+                row_limit=policy["search_console_query_rows"],
+                expected_site_url=request["property"],
+                execution_key=self.key(run_id, "search_console_queries:read"),
+                run_id=run.id,
+            )
+            rows, returned = search_console_rows(
+                raw,
+                ("query", "page"),
+                in_scope=in_scope,
+                max_rows=policy["search_console_query_rows"],
+            )
+            rows.sort(key=lambda r: (-r["impressions"], r["query"], r["url"]))
+            return {
+                **request,
+                "fields": ["query", "page", "clicks", "impressions", "position"],
+                "queries": [
+                    [r["query"], r["url"], r["clicks"], r["impressions"], r["position"]]
+                    for r in rows
+                ],
+                "returned_rows": returned,
+                "row_limit": policy["search_console_query_rows"],
+                "note": "Query and page rows for the same property and dates. Google omits "
+                "rare and anonymized queries; totals are lower than page totals.",
+            }
+
+        await self._paid(
+            run_id,
+            "search_console_queries",
+            {**request, "dimensions": ["query", "page"]},
+            "0",
+            queries,
+        )
+
+    async def _site_evidence(self, run_id: str, scope: dict) -> dict:
+        """robots.txt, sitemaps and the page selection, each saved once before the crawl."""
+        from tin_lite.organic_audit_site import select_pages
+
+        policy = audit_policy(scope["policy_version"])
+        hosts = audit_hosts(scope)
+        files = await self._result(run_id, "site_files")
+        if files is None:
+            try:
+                async with self.site_reader(hosts) as reader:
+                    files = await read_site_files(reader, scope["url"], policy)
+                files["status"] = "observed"
+            except Exception:  # noqa: BLE001 - a site-read defect must not stop the crawl.
+                activity.logger.warning("Organic audit site files were not read.", exc_info=True)
+                files = {"status": "unavailable", "reason": "site_read_failed"}
+            files = await self._save(run_id, "site_files", files)
+        plan = await self._result(run_id, "crawl_plan")
+        if plan is None:
+            search = await self._result(run_id, "search_console") or {}
+            rows = (
+                search.get("value", {}).get("pages", [])
+                if search.get("status") == ("completed")
+                else []
+            )
+            sitemap = [
+                row["loc"]
+                for row in (files.get("sitemaps") or {}).get("urls", [])
+                if urlsplit(row["loc"]).scheme == "https"
+                and in_scope_url(row["loc"], scope["host"], aliases=hosts)
+            ]
+            plan = select_pages(
+                home=scope["url"],
+                sitemap_urls=sitemap,
+                search_pages=[r for r in rows if r["impressions"] > 0],
+                cap=scope["page_cap"],
+            )
+            plan["priority_urls"] = [
+                row["url"]
+                for row in plan["selected"]
+                if row["reason"] != "homepage" and urlsplit(row["url"]).hostname == scope["host"]
+            ][: policy["max_priority_urls"]]
+            plan = await self._save(run_id, "crawl_plan", plan)
+        return plan
+
+    async def _collect_page_facts(self, run_id: str, scope: dict, *, seconds: float) -> bool:
+        """Static HTML facts for the selected pages, then for pages the crawl adds.
+
+        Progress is saved after each bounded batch; the receipt completes only when the
+        provider crawl is final and every target was read or refused.
+        """
+        from tin_lite.organic_audit_site import url_key
+
+        key = self.key(run_id, "page_facts")
+        existing = await self.db.get_effect(key)
+        if existing and existing.status == "completed":
+            return True
+        policy = audit_policy(scope["policy_version"])
+        plan = await self._result(run_id, "crawl_plan") or {"selected": []}
+        crawl = await self._result(run_id, "crawl")
+        targets, seen = [], set()
+        for url in [row["url"] for row in plan["selected"]] + [
+            page["url"] for page in (crawl or {}).get("pages", [])
+        ]:
+            if url_key(url) not in seen and len(targets) < scope["page_cap"]:
+                seen.add(url_key(url))
+                targets.append(url)
+        done = dict(((existing.result or {}) if existing else {}).get("pages", {}))
+        pending = [url for url in targets if url not in done]
+        if pending:
+            files = await self._result(run_id, "site_files") or {}
+            found: dict = {}
+            try:
+                async with self.site_reader(audit_hosts(scope)) as reader:
+                    found = await read_pages(
+                        reader,
+                        pending,
+                        robots=files.get("robots"),
+                        policy=policy,
+                        seconds=seconds,
+                    )
+            except Exception:  # noqa: BLE001 - unread pages stay unknown, never passes.
+                activity.logger.warning("Organic audit page facts were not read.", exc_info=True)
+            if not found:
+                # Every started read returns a record, so nothing at all means the reader
+                # itself failed. Record that instead of retrying until the crawl deadline.
+                found = {
+                    url: {"url": url, "fetch": "unavailable", "reason": "site_read_failed"}
+                    for url in pending
+                }
+            done.update(found)
+        final = crawl is not None and all(url in done for url in targets)
+        async with self.db.effect_lock(key, "organic.audit") as (conn, current):
+            if current and current.status == "completed":
+                return True
+            merged = {**((current.result or {}).get("pages", {}) if current else {}), **done}
+            result = {"pages": merged, "targets": len(targets)}
+            await self.db.start_effect(conn, execution_key=key, operation="organic.audit")
+            if final:
+                await self.db.complete_effect(
+                    conn, execution_key=key, result={**result, "status": "complete"}
+                )
+            else:
+                await self.db.save_effect_progress(conn, execution_key=key, result=result)
+        return final
+
+    async def _pagespeed_step(self, run_id: str, scope: dict) -> bool:
+        """One PageSpeed Insights read per call, so each poll stays short."""
+        if await self._result(run_id, "pagespeed"):
+            return True
+        policy = audit_policy(scope["policy_version"])
+        secret = getattr(self.settings, "pagespeed_api_key", None)
+        if scope.get("pagespeed") != "configured" or secret is None:
+            await self._save(run_id, "pagespeed", {"status": "not_configured", "results": []})
+            return True
+        plan = await self._result(run_id, "crawl_plan") or {"selected": []}
+        urls = [row["url"] for row in plan["selected"]][: policy["pagespeed_max_urls"]]
+        results = []
+        for index, url in enumerate(urls):
+            saved = await self._result(run_id, f"pagespeed:{index}")
+            if saved is None:
+                result = await self.pagespeed_reader(url, secret.get_secret_value())
+                await self._save(run_id, f"pagespeed:{index}", {"url": url, "result": result})
+                return False
+            results.append(saved)
+        await self._save(
+            run_id,
+            "pagespeed",
+            {
+                "status": "observed" if results else "unavailable",
+                "strategy": "mobile",
+                "results": results,
+            },
+        )
+        return True
+
     @activity.defn
     async def organic_start_crawl(self, run_id: str) -> None:
         scope = await self._result(run_id, "scope")
-        if audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
-            "check_applicability"
-        ):
+        policy = audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]))
+        if policy.get("check_applicability"):
             await self._search_console_evidence(run_id, scope)
-        options = (
-            {"respect_sitemap": True}
-            if audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
-                "respect_sitemap"
-            )
-            else {}
-        )
+        options = {"respect_sitemap": True} if policy.get("respect_sitemap") else {}
+        site_checks = policy.get("site_checks") and not scope.get("completion")
+        if site_checks:
+            plan = await self._site_evidence(run_id, scope)
+            options.update(max_pages=scope["page_cap"], priority_urls=plan["priority_urls"])
         request = self.provider.crawl_request(
             host=scope["host"], tag=f"tin-organic-{run_id}", **options
         )
@@ -416,9 +661,25 @@ class OrganicAuditActivities:
             lambda: self.provider.submit(request),
             recover=recover,
         )
+        if site_checks:
+            # Read the selected pages while the provider crawls; the poll finishes the rest.
+            await self._collect_page_facts(run_id, scope, seconds=120)
 
     @activity.defn
     async def organic_poll_crawl(self, run_id: str) -> bool:
+        scope = await self._result(run_id, "scope")
+        policy = audit_policy((scope or {}).get("policy_version", LEGACY_AUDIT_POLICY["version"]))
+        if not policy.get("site_checks") or scope.get("completion"):
+            return await self._poll_provider(run_id)
+        crawl_was_final = await self._result(run_id, "crawl") is not None
+        crawl_final = await self._poll_provider(run_id)
+        if not await self._collect_page_facts(run_id, scope, seconds=30):
+            return False
+        if not crawl_was_final and scope.get("pagespeed") == "configured":
+            return False  # Keep this attempt short; speed is read on the next poll.
+        return crawl_final and await self._pagespeed_step(run_id, scope)
+
+    async def _poll_provider(self, run_id: str) -> bool:
         if await self._result(run_id, "crawl"):
             return True
         await self._active(run_id)
@@ -464,6 +725,8 @@ class OrganicAuditActivities:
             )
             else {}
         )
+        if scope.get("page_cap"):
+            options["limit"] = scope["page_cap"]
         raw_pages = await self.provider.pages(task_id, **options)
         pages = normalize_pages(
             raw_pages,
@@ -489,7 +752,7 @@ class OrganicAuditActivities:
                     {
                         "collection": {
                             **self._collection_counts(
-                                raw_pages, pages, include_broken=bool(options)
+                                raw_pages, pages, include_broken="include_broken" in options
                             ),
                         }
                     }
@@ -546,6 +809,7 @@ class OrganicAuditActivities:
                             ).get("check_applicability")
                             else {}
                         ),
+                        **({"limit": scope["page_cap"]} if scope.get("page_cap") else {}),
                     ),
                     scope["host"],
                     aliases=audit_hosts(scope),
@@ -818,6 +1082,11 @@ class OrganicAuditActivities:
                     },
                     policy_version=policy_version,
                     search_console=await self._result(run_id, "search_console"),
+                    **(
+                        await self._site_documents_input(run_id)
+                        if audit_policy(policy_version).get("site_checks")
+                        else {}
+                    ),
                 )
                 artifacts = await self._save(
                     run_id,
@@ -832,10 +1101,22 @@ class OrganicAuditActivities:
                 partial = crawl["status"] != "completed" or ai["status"] != "completed"
                 inventory = json.loads(artifacts[audit_paths(run_id)["findings.json"]])
                 partial = partial or inventory.get("evidence_status") == "partial"
+                coverage = inventory.get("coverage")
+                if coverage:
+                    partial = partial or coverage["status"] == "partial"
+                    inspected = (
+                        f" Inspected {coverage['inspected_sitemap_pages']} of "
+                        f"{coverage['sitemap_pages']} sitemap pages; "
+                        if coverage["sitemap_read"]
+                        else f" Inspected {coverage['inspected_pages']} pages; no readable "
+                        "sitemap; "
+                    )
+                else:
+                    inspected = f" Inspected {len(crawl.get('pages', []))} pages; "
                 summary = (
                     "Organic visibility audit is ready"
                     + (" with partial evidence." if partial else ".")
-                    + f" Inspected {len(crawl.get('pages', []))} pages; "
+                    + inspected
                     + (
                         f"scored {ai['completed']}/{ai['planned']} AI observations."
                         if ai["planned"]
@@ -871,6 +1152,33 @@ class OrganicAuditActivities:
                     **({"summary": summary} if summary is not None else {}),
                 },
             )
+
+    async def _site_documents_input(self, run_id: str) -> dict:
+        """Saved v10 evidence for the report; incomplete progress is reported as partial."""
+        files = await self._result(run_id, "site_files")
+        if files is None:
+            return {"search_queries": await self._result(run_id, "search_console_queries")}
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        progress = (facts.result or {}) if facts else {}
+        pagespeed = await self._result(run_id, "pagespeed")
+        if pagespeed is None:
+            scope = await self._result(run_id, "scope")
+            pagespeed = {"status": "not_collected", "results": []}
+            for index in range(audit_policy(scope["policy_version"])["pagespeed_max_urls"]):
+                saved = await self._result(run_id, f"pagespeed:{index}")
+                if saved:
+                    pagespeed["results"].append(saved)
+                    pagespeed["status"] = "partial"
+        return {
+            "search_queries": await self._result(run_id, "search_console_queries"),
+            "site": {
+                "files": files,
+                "plan": await self._result(run_id, "crawl_plan"),
+                "pages": list(progress.get("pages", {}).values()),
+                "pages_status": "complete" if facts and facts.status == "completed" else "partial",
+                "pagespeed": pagespeed,
+            },
+        }
 
     @activity.defn
     async def organic_project(self, run_id: str) -> None:

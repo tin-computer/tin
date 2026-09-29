@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from organic_site_stub import minimal_site
 from test_procedure_publication import HistoryStorage, run_fixture
 
 from tin_lite.catalog import BUILTIN_WORKFLOWS
@@ -487,6 +488,7 @@ async def activities_fixture(*, budget="8"):
         settings=SimpleNamespace(organic_audit_max_cost_usd=budget),
         provider=provider,
         site_resolver=AsyncMock(return_value={"status": "observed", "redirects": []}),
+        site_reader=minimal_site().reader,
     )
     await activities.organic_prepare(str(db.run.id))
     return activities, db, storage, provider
