@@ -128,6 +128,18 @@ async def load_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> Wor
     return run
 
 
+async def _require_free_slot(runtime, run: WorkflowRun) -> None:
+    """A task in review holds no slot, so waking it needs the one another task may hold."""
+    if run.task_phase != "review":
+        return
+    other = await runtime.database.other_working_task(project_id=run.project_id, run_id=run.id)
+    if other is not None:
+        raise ProjectTaskConflictError(
+            "Another task is working in this project. Send this after it finishes, "
+            "or stop that task first."
+        )
+
+
 async def _resume_waiting_task(runtime, run: WorkflowRun) -> WorkflowRun:
     """Wake a waiting task's workflow, then clear its waiting projection.
 
@@ -152,6 +164,7 @@ async def resume_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> W
     # A resume sent to a running workflow would skip its next question or review.
     if run.status not in {RunStatus.NEEDS_INPUT, RunStatus.PAUSED}:
         raise ProjectTaskConflictError("task is not paused or waiting for an answer")
+    await _require_free_slot(runtime, run)
     try:
         return await _resume_waiting_task(runtime, run)
     except Exception as exc:
@@ -183,6 +196,8 @@ async def send_project_task_message(
         raise ProjectTaskConflictError("task has finished")
     database = runtime.database
     waiting = run.status in {RunStatus.NEEDS_INPUT, RunStatus.PAUSED}
+    if waiting:
+        await _require_free_slot(runtime, run)
     kind = task_message_kind(run)
     prior = None
     if request_id is not None:

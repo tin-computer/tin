@@ -2537,11 +2537,15 @@ class Database:
                 task_title = task_title.strip()
                 instruction = instruction.strip()
                 input_payload = {"title": task_title, "instruction": instruction}
+                # A task that only waits for a decision (review or applying) does not hold
+                # the project; one task may work, ask or be paused at a time.
                 active_task_id = await conn.fetchval(
                     """
                     SELECT id FROM workflow_runs
                     WHERE project_id = $1 AND executor = 'project.task'
                       AND status IN ('pending', 'running', 'needs_input', 'paused')
+                      AND task_phase IS DISTINCT FROM 'review'
+                      AND task_phase IS DISTINCT FROM 'applying'
                     """,
                     project_id,
                 )
@@ -2865,6 +2869,21 @@ class Database:
             run_id,
         )
         return [_project_task_entry(row) for row in rows]
+
+    async def other_working_task(self, *, project_id: UUID, run_id: UUID) -> UUID | None:
+        """Another task that works, asks or is paused here; review and applying hold nothing."""
+        return await self.pool.fetchval(
+            """
+            SELECT id FROM workflow_runs
+            WHERE project_id = $1 AND id <> $2 AND executor = 'project.task'
+              AND status IN ('pending', 'running', 'needs_input', 'paused')
+              AND task_phase IS DISTINCT FROM 'review'
+              AND task_phase IS DISTINCT FROM 'applying'
+            LIMIT 1
+            """,
+            project_id,
+            run_id,
+        )
 
     async def set_task_running(self, *, run_id: UUID, sandbox_id: str | None = None) -> None:
         await self.pool.execute(
