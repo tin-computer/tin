@@ -3062,10 +3062,15 @@ function renderDocument() {
   const cached = state.documentCache.get(cacheKey);
   if (cached) {
     const run = state.runs.find((item) => item.id === route.runId);
+    // A saved output shows its project path with each folder linked, as Files does. A retained
+    // result or a task's proposed file may not exist in the project, so its name stays plain.
+    const projectPath = !route.taskPath && route.source !== "retained" && !previousReviewCopy
+      ? cached.path || run?.artifact_path : null;
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached, {
       mode: "in-app",
       contextLabel: route.source === "retained" && run?.retained_output?.reason === "execution_interrupted"
         ? `Partial result · ${cached.filename}` : undefined,
+      pathElement: projectPath ? projectFilePathElement({ path: projectPath }, "markdown-filename") : undefined,
       returnTo: {
         label: route.returnView,
         onActivate: () => route.taskPath ? openTask(route.runId) : navigate(route.returnView),

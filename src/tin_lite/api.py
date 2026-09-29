@@ -4146,6 +4146,9 @@ async def get_artifact_document(
         markdown=document.markdown,
         html=document.html,
         filename=PurePosixPath(output.path).name,
+        # The reader shows the project path with each folder linked, as Files does.
+        path=output.path,
+        revision=output.revision,
         source_url=f"/api/workflows/runs/{run.id}/artifact"
         + ("?source=retained" if source == "retained" else ""),
         timestamp=run.finished_at or run.created_at,
