@@ -275,3 +275,31 @@ def test_content_findings_need_every_answer_to_a_question():
     # A set drafted before v10 keeps its two answers per question and its wording.
     old = summarize(frozen_panel(), rows[:8], policy_version=V9_AUDIT_POLICY["version"])
     assert "Two fresh answers per question." in old["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_keeps_the_source_it_already_chose():
+    activities, db, _, _ = await activities_fixture()
+    run_id = str(db.run.id)
+    first, panel = previous_audit(db, mentioned={0})
+    await activities.organic_prepare_panel(run_id)
+    # Lose the panel receipt as if the worker stopped after saving the baseline, while a
+    # newer audit with its own question set was published meanwhile.
+    del db.effects[activities.key(run_id, "panel")]
+    newer, other = previous_audit(db)
+    other = {**other, "questions": [dict(q) for q in other["questions"]]}
+    other["questions"][0]["question"] = "Which apps help a small team schedule shared work?"
+    other = {
+        "status": "completed",
+        **limit_panel({k: v for k, v in other.items() if k != "status"}, max_jobs=2, repetitions=3),
+    }
+    from tin_lite.domain import EffectReceipt
+
+    key = f"organic:{newer.id}:panel"
+    db.effects[key] = EffectReceipt(key, "organic.audit", "completed", other)
+    assert other["sha256"] != panel["sha256"]
+    db.list_prerequisite_runs.return_value = [("organic.audit", newer), ("organic.audit", first)]
+    assert await activities.organic_prepare_panel(run_id) == 12
+    assert await activities._result(run_id, "panel") == panel
+    baseline = await activities._result(run_id, "panel_baseline")
+    assert baseline["source_run_id"] == str(first.id)

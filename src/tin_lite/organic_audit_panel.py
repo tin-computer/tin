@@ -131,10 +131,18 @@ async def reuse_panel(activities, run_id, scope):
     reader = getattr(activities.db, "list_prerequisite_runs", None)
     if not policy.get("reuse_questions") or run.input.get("refresh_questions") or reader is None:
         return None
-    for _, source in await reader(
-        project_id=run.project_id, workflow_keys=["organic.audit"], limit=20
-    ):
-        source_id = str(source.id)
+    # A retry after a crash keeps the source it already chose, even if a newer audit exists.
+    chosen = await activities._result(run_id, "panel_baseline")
+    if chosen:
+        candidates = [chosen["source_run_id"]]
+    else:
+        candidates = [
+            str(source.id)
+            for _, source in await reader(
+                project_id=run.project_id, workflow_keys=["organic.audit"], limit=20
+            )
+        ]
+    for source_id in candidates:
         if source_id == run_id:
             continue
         source_scope = await activities._result(source_id, "scope") or {}
