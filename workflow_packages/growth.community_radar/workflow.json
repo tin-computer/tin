@@ -1,0 +1,144 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.community_radar",
+    "title": "Discover community demand and intent",
+    "description": "Scan public online communities (Reddit, Hacker News, GitHub Discussions, forums) for active customer problems, evaluate genuine buying intent, and draft platform-tailored responses for review.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": [
+      "on_demand",
+      "daily",
+      "weekly"
+    ],
+    "human_review": {
+      "eligible": true,
+      "reason": "Community outreach requires founder verification of author context, platform etiquette, and value-first tone.",
+      "review_label": "Review opportunities",
+      "defer_label": "Not now",
+      "summary": "Verified community demand opportunities with platform-tailored response drafts. Never contacts anyone automatically.",
+      "queue_clause": "Community demand opportunities waiting for review"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "problem_statement",
+        "target_customer"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "problem_statement": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 2000,
+          "title": "Problem or job-to-be-done",
+          "description": "What specific friction, technical limitation, or workflow bottleneck does your product solve?",
+          "x-tin-ui": {
+            "control": "textarea",
+            "order": 10
+          }
+        },
+        "target_customer": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 500,
+          "title": "Target customer persona",
+          "description": "Who experiences this problem? (e.g. 'DevOps engineers managing Kubernetes clusters', 'Solo founders handling billing')",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 20
+          }
+        },
+        "competitors_or_alternatives": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Competitors or incumbent tools (optional)",
+          "description": "Comma-separated tools people switch from, complain about, or seek alternatives to (e.g. 'Datadog, New Relic')",
+          "x-tin-ui": {
+            "control": "text",
+            "order": 30
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 50,
+            "enum": [
+              "reddit",
+              "hacker_news",
+              "github_discussions",
+              "technical_forums"
+            ]
+          },
+          "default": [
+            "reddit",
+            "hacker_news",
+            "github_discussions"
+          ],
+          "maxItems": 4,
+          "title": "Platforms to monitor",
+          "description": "Target communities: reddit, hacker_news, github_discussions, technical_forums",
+          "x-tin-ui": {
+            "order": 40
+          }
+        },
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 30,
+          "title": "Recency window (days)",
+          "description": "How many days back to search for discussions.",
+          "x-tin-ui": {
+            "control": "number",
+            "order": 50
+          }
+        },
+        "max_opportunities": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 7,
+          "title": "Maximum opportunities to draft",
+          "description": "Maximum number of high-intent opportunities to draft.",
+          "x-tin-ui": {
+            "control": "number",
+            "order": 60
+          }
+        }
+      }
+    },
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/community-radar/SKILL.md",
+        "skills/community-radar/INTENT_TAXONOMY.md",
+        "skills/community-radar/PLATFORM_RULES.md",
+        "skills/community-radar/RESPONSE_TEMPLATES.md"
+      ],
+      "entry_skill": "community-radar",
+      "workspace": {
+        "kind": "project.state"
+      },
+      "sandbox": {
+        "profile": "isolated",
+        "egress": "fenced",
+        "timeout_seconds": 900
+      },
+      "output": {
+        "kind": "project.artifact",
+        "media_type": "text/markdown",
+        "max_bytes": 192000,
+        "path_template": "reports/community-radar/{run_id}.md"
+      }
+    }
+  }
+}
