@@ -870,17 +870,23 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert "...(delivery ? { delivery, remember } : {})," in script
     # Reader top bar: Request changes, Open a pull request, Publish now (primary).
     assert (
-        "async function approveRun(runId, button, { delivery = null, remember = false } = {})"
-        in script
+        "async function approveRun(runId, button, { delivery = null, remember = false, "
+        "adapted = false } = {})" in script
     )
     assert (
         'repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label'
         in script
     )
-    assert 'repositoryDeliveryAvailable(run) ? { delivery: "github_commit" } : {})' in script
+    assert "repositoryDeliveryAvailable(run) && fallback ? { delivery: fallback } : {}" in script
     assert (
-        'deliveryOptions: reader && repositoryDelivery ? [{ label: "Open a pull request"' in script
+        "deliveryOptions: reader && repositoryDelivery && !adapted "
+        '? [{ label: "Open a pull request"' in script
     )
+    # A page Tin adapts to the site: one Publish button, footer from the server's preview.
+    assert "function publishPreview(run)" in script
+    assert "/publish-preview`" in script
+    assert 'data-adapted="true"${waiting}>Publish</button>' in script
+    assert 'escapeHtml(adapted.footer || "")' in script
     assert '[{ label: "Open a pull request", delivery: "github_pr" }] : []' in script
     assert "context.deliveryOptions || []" in review_script
     assert "is-delivery-option" in review_script
