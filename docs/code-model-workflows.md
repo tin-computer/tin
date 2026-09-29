@@ -90,6 +90,12 @@ may catch that error and use another declared step for a corrective request. Bus
 final artifact validation failures likewise preserve usage already incurred. Output publication,
 stop, review, conflict recovery and projection remain the existing Slice A contracts.
 
+Execution failures retain the failed stage in the existing output receipt: sandbox creation,
+execution, checkpoint storage or result recording. The run's failure view uses that reason.
+Retries keep completed model/service results and the chosen output path; a temporary checkpoint
+write failure does not require another paid model call. Sandbox failures expose fixed descriptions
+for timeout, package exit and result transport failure, without including authored output.
+
 ## Funding
 
 No declared model routes means the unchanged `bounded-code-v1` policy: included compute,

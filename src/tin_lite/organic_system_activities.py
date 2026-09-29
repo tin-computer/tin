@@ -343,6 +343,22 @@ class OrganicSystemActivities:
                         next_run_at=None,
                     )
                     configured_id = configured.id
+                retry_source = None
+                if step == "keywords" and run.retry_of_run_id is not None:
+                    previous = await self.saved(run.retry_of_run_id, "step:keywords")
+                    source = (
+                        await self.db.get_run(UUID(previous["run_id"]))
+                        if previous and previous.get("run_id")
+                        else None
+                    )
+                    if (
+                        source is not None
+                        and source.status.value == "failed"
+                        and source.project_id == run.project_id
+                        and source.workflow_id == template.id
+                        and source.project_workflow_id is None
+                    ):
+                        retry_source = source.id
                 try:
                     child = await start_workflow_run(
                         runtime=SimpleNamespace(
@@ -357,6 +373,7 @@ class OrganicSystemActivities:
                         project_workflow_id=configured_id,
                         definition_commit_sha=prepared["definition_revision"],
                         input_schema=definition["input_schema"],
+                        retry_of_run_id=retry_source,
                         trigger_source=run.trigger_source,
                         trigger_client=run.trigger_client,
                         started_by_oauth_client_id=run.started_by_oauth_client_id,

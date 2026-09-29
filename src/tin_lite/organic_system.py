@@ -77,9 +77,9 @@ INPUT_SCHEMA = {
         "keyword_max_cost_usd": {
             "type": "number",
             "title": "Keyword research limit (USD)",
-            "minimum": 5,
+            "minimum": 2,
             "maximum": 25,
-            "default": 9,
+            "default": 2,
         },
         "technical_fix": {
             "type": "boolean",

@@ -57,6 +57,21 @@ NATIVE_EXECUTORS = {
 }
 PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding"}
 
+# Organic audit ceiling, from its bounded calls at the GPT-6 Luna rates above. A run makes at
+# most 28 searched calls (two research attempts, 12 questions asked twice, two brand checks) and
+# 52 unsearched ones (two question drafts, 24 blind readings, two reviews, 24 judgments), plus
+# one crawl reserved at $0.05. Each request's input is capped at 60,000 bytes and its output at
+# 6,000 tokens. Counting one token per byte of instructions, input and schema (about 61-65 KB)
+# plus 16,384 tokens of results for each of three searches, a searched call costs at most
+# $0.047 and an unsearched one $0.011, so even if every call hit every bound at once the run
+# would cost $1.92. Real runs cost far less: a production audit, keyword plan and content plan
+# together came to $0.73.
+AUDIT_MAXIMUM_USD = 2
+# The content plan's share inside the organic parent. Its one model call reads at most
+# 240,000 bytes of evidence plus instructions and schema and writes at most 16,000 tokens:
+# under $0.10 even at long-context rates. Standalone plans keep the $2 native ceiling.
+CONTENT_PLAN_SHARE_USD = 1
+
 
 def amount_nanos(value):
     """Supplier precision is not restricted to the two-decimal checkout input."""
@@ -80,14 +95,18 @@ def service_terms(definition, *, inputs=None):
     maximum = 2 * NANOS_PER_DOLLAR
     kinds = ["native_model"]
     if executor == "organic.audit":
-        maximum, kinds = 5 * NANOS_PER_DOLLAR, ["native_model", "tool"]
+        maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
     elif executor == "organic.keyword_plan":
         maximum = amount_nanos(inputs.get("max_cost_usd", 9))
         kinds = ["native_model", "tool"]
     elif executor == "organic.traffic_system":
         maximum = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
         if maximum is not None:
-            maximum += (7 + (5 if inputs.get("technical_fix") else 0)) * NANOS_PER_DOLLAR
+            maximum += (
+                AUDIT_MAXIMUM_USD
+                + CONTENT_PLAN_SHARE_USD
+                + (5 if inputs.get("technical_fix") else 0)
+            ) * NANOS_PER_DOLLAR
             if definition.get("organic_system_policy", {}).get("version") in {
                 "organic-traffic-v2",
                 "organic-traffic-v3",
