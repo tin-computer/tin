@@ -376,3 +376,43 @@ def test_a_release_announcement_says_what_it_announces(document, line):
 
     assert release_line(document) == line
     assert review_line(document) == (line or summary_line(document))
+
+
+@pytest.mark.asyncio
+async def test_listing_decisions_names_older_ones_from_their_files(publication_db):
+    from types import SimpleNamespace
+
+    import httpx
+    from fastapi import FastAPI
+
+    from tin_lite.api import router
+    from tin_lite.auth import AuthContext, require_user
+
+    db = publication_db
+    project, _ = await older_reviews(db, 1)
+    await db.pool.execute(
+        "INSERT INTO project_memberships (project_id, clerk_user_id) VALUES ($1, 'user_member')",
+        project.id,
+    )
+    files = PinnedFiles({(SHA, "reports/0.md"): ANNOUNCEMENT})
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[require_user] = lambda: AuthContext(
+        clerk_user_id="user_member",
+        token_type="session_token",  # noqa: S106
+        session_id="sess_test",
+    )
+    app.state.runtime = SimpleNamespace(database=db, storage=files)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        first = await client.get(f"/api/projects/{project.id}/decisions")
+        second = await client.get(f"/api/projects/{project.id}/decisions")
+    assert first.status_code == 200 and first.headers["X-Tin-Read-Source"] == "postgres"
+    [decision] = first.json()
+    assert decision["title"] == "Review: Tin release: brand guides, a public Registry"
+    assert decision["explanation"] == (
+        "Announces six features and one improvement, with drafts for X, LinkedIn "
+        "and your newsletter."
+    )
+    assert second.json() == first.json()
+    assert len(files.reads) == 1
