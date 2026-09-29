@@ -47,6 +47,7 @@ from tin_lite.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+_SHA = re.compile(r"[0-9a-f]{40}")
 GSC_PROVIDER = "analytics.gsc"
 GITHUB_PROVIDER = "infra.github"
 GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
@@ -1742,6 +1743,260 @@ class IntegrationService:
             "merged": payload.get("merged") is True or isinstance(merged_at, str),
             "merged_at": merged_at if isinstance(merged_at, str) else None,
         }
+
+    async def github_pull_request_merge_state(
+        self, *, project_id: UUID, repository: str, number: int
+    ) -> dict[str, Any]:
+        """Whether one pull request can merge now, as GitHub reports it.
+
+        Only state, head identity and GitHub's own merge verdict leave this method; never
+        bodies, reviews, check output or auth. `mergeable` is None while GitHub computes it.
+        """
+        if type(number) is not int or number < 1:
+            raise IntegrationError("GitHub pull request number is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        response = await self._client.get(
+            f"https://api.github.com/repos/{quote(repository, safe='/')}/pulls/{number}",
+            headers=self._github_headers(token),
+        )
+        payload = _provider_json(response, provider="GitHub")
+        head = payload.get("head") if isinstance(payload.get("head"), dict) else {}
+        head_repository = head.get("repo") if isinstance(head.get("repo"), dict) else {}
+        merged_at = payload.get("merged_at")
+        merged = payload.get("merged") is True or isinstance(merged_at, str)
+        merge_sha = payload.get("merge_commit_sha")
+        merge_sha = merge_sha if isinstance(merge_sha, str) and _SHA.fullmatch(merge_sha) else None
+        head_sha = head.get("sha") if isinstance(head.get("sha"), str) else ""
+        head_ref = head.get("ref") if isinstance(head.get("ref"), str) else ""
+        verdict = payload.get("mergeable_state")
+        return {
+            "state": payload.get("state") if payload.get("state") in {"open", "closed"} else None,
+            "merged": merged,
+            "merged_at": merged_at if isinstance(merged_at, str) else None,
+            "merge_commit_sha": merge_sha if merged else None,
+            "url": f"https://github.com/{repository}/commit/{merge_sha}"
+            if merged and merge_sha
+            else None,
+            "mergeable": payload.get("mergeable")
+            if type(payload.get("mergeable")) is bool
+            else None,
+            "mergeable_state": verdict
+            if isinstance(verdict, str) and re.fullmatch(r"[a-z_]{1,24}", verdict)
+            else "unknown",
+            "head_sha": head_sha if _SHA.fullmatch(head_sha) else None,
+            "head_ref": head_ref if _safe_github_ref(head_ref) else None,
+            "same_repository": str(head_repository.get("full_name") or "").casefold()
+            == repository.casefold(),
+        }
+
+    async def github_merge_pull_request(
+        self,
+        *,
+        project_id: UUID,
+        execution_key: str,
+        number: int,
+        expected_head_sha: str,
+        branch: str,
+        files: tuple[GitHubFileChange, ...],
+        expected_binding: GitHubRepositoryBinding,
+        commit_title: str,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Merge one pull request Tin opened, only while its branch holds exactly `files`.
+
+        GitHub merges only if the head is still `expected_head_sha`, so nothing pushed after
+        Tin checked the branch can ride along. The effect is receipted under `execution_key`;
+        a lost response is recovered by reading the pull request, never by merging twice.
+        Returns {"merged": True, "commit", "url"}, or {"merged": False, "reason"} when
+        GitHub refuses (branch protection, a changed head, a disallowed merge method).
+        """
+        if not execution_key or len(execution_key) > 200:
+            raise IntegrationError("GitHub execution key is invalid")
+        if type(number) is not int or number < 1 or not _SHA.fullmatch(expected_head_sha or ""):
+            raise IntegrationError("GitHub pull request to merge is invalid")
+        if not commit_title.strip() or len(commit_title) > 200 or not _safe_github_ref(branch):
+            raise IntegrationError("GitHub merge request is invalid")
+        if not 1 <= len(files) <= 10 or not all(_safe_github_path(item.path) for item in files):
+            raise IntegrationError("GitHub merge must name the pull request's files")
+
+        def request_fingerprint(repository):
+            return _sha256(
+                _canonical_json(
+                    {
+                        "merge": "pull_request",
+                        "repository": repository,
+                        "number": number,
+                        "branch": branch,
+                        "files": [
+                            {"path": item.path, "sha256": _sha256(item.content)} for item in files
+                        ],
+                        "binding": {
+                            "connection_id": str(expected_binding.connection_id),
+                            "installation_id": expected_binding.installation_id,
+                            "repository_id": expected_binding.repository_id,
+                        },
+                    }
+                )
+            )
+
+        def check(receipt, fingerprint):
+            if (
+                receipt.project_id != project_id
+                or receipt.run_id != run_id
+                or receipt.provider_key != GITHUB_PROVIDER
+                or receipt.capability != "contents.write"
+                or receipt.request_fingerprint != fingerprint
+            ):
+                raise SideEffectConflictError("GitHub execution key belongs to a different request")
+
+        saved = await self._database.get_integration_call_receipt(execution_key)
+        if saved and saved.status == "completed" and saved.response_summary is not None:
+            # A recorded merge needs no new permission and survives a later disconnection.
+            check(saved, request_fingerprint(expected_binding.repository))
+            return {"merged": True, **saved.response_summary}
+        connection = await self._connection(project_id, GITHUB_PROVIDER)
+        await self._check_github_binding(project_id, connection, expected_binding, head=False)
+        repository = connection.configuration.get("selected_repository")
+        permissions = connection.configuration.get("permissions", {})
+        if (
+            not isinstance(repository, str)
+            or repository.count("/") != 1
+            or connection.configuration.get("write_opted_in") is not True
+            or not isinstance(permissions, dict)
+            or permissions.get("contents") != "write"
+            or permissions.get("pull_requests") != "write"
+        ):
+            raise IntegrationAuthorizationError(
+                "Choose a GitHub repository with write access first"
+            )
+        fingerprint = request_fingerprint(repository)
+
+        async def record(status, **extra):
+            await self._database.record_integration_call(
+                execution_key=execution_key,
+                project_id=project_id,
+                run_id=run_id,
+                connection_id=connection.id,
+                provider_key=GITHUB_PROVIDER,
+                capability="contents.write",
+                request_fingerprint=fingerprint,
+                status=status,
+                **extra,
+            )
+
+        async with self._database.integration_call_lock(execution_key):
+            existing = await self._database.get_integration_call_receipt(execution_key)
+            if existing is not None:
+                check(existing, fingerprint)
+                if existing.status == "completed" and existing.response_summary is not None:
+                    return {"merged": True, **existing.response_summary}
+                state = await self.github_pull_request_merge_state(
+                    project_id=project_id, repository=repository, number=number
+                )
+                if state["merged"] and state["merge_commit_sha"]:
+                    summary = {
+                        "repository": repository,
+                        "number": number,
+                        "commit": state["merge_commit_sha"],
+                        "url": state["url"],
+                    }
+                    await record("completed", response_summary=summary)
+                    return {"merged": True, **summary}
+            token = await self._github_installation_token(_installation_id(connection))
+            headers = self._github_headers(token)
+            root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
+            await self._github_validate_pull_request_files(
+                headers=headers, root=root, number=number, head_sha=expected_head_sha, files=files
+            )
+            settings = _provider_json(
+                await self._client.get(root, headers=headers), provider="GitHub"
+            )
+            # One commit per page when the repository allows it; its own rules otherwise.
+            method = next(
+                (
+                    name
+                    for name, allowed in (
+                        ("squash", "allow_squash_merge"),
+                        ("merge", "allow_merge_commit"),
+                        ("rebase", "allow_rebase_merge"),
+                    )
+                    if settings.get(allowed) is True
+                ),
+                "merge",
+            )
+            await record("started")
+            try:
+                response = await self._client.put(
+                    f"{root}/pulls/{number}/merge",
+                    headers=headers,
+                    json={
+                        "sha": expected_head_sha,
+                        "merge_method": method,
+                        "commit_title": commit_title.strip(),
+                    },
+                )
+            except httpx.HTTPError as exc:
+                raise IntegrationDeliveryUnknownError(
+                    "GitHub did not confirm the merge. Tin checks it again before retrying."
+                ) from exc
+            if response.status_code in {405, 409, 422}:
+                await record("failed", error_code=f"merge_refused_{response.status_code}")
+                return {
+                    "merged": False,
+                    "reason": "Its branch changed before the merge, so Tin left it open."
+                    if response.status_code == 409
+                    else "GitHub refused the merge, so Tin left it open.",
+                }
+            try:
+                payload = _provider_json(response, provider="GitHub")
+                commit = payload.get("sha")
+                if payload.get("merged") is not True or not _SHA.fullmatch(str(commit or "")):
+                    raise IntegrationUpstreamError("GitHub did not confirm the merge")
+            except IntegrationError:
+                await record("failed", error_code="provider_request_failed")
+                raise
+            summary = {
+                "repository": repository,
+                "number": number,
+                "commit": commit,
+                "url": f"https://github.com/{repository}/commit/{commit}",
+            }
+            await record(
+                "completed",
+                response_summary=summary,
+                provider_request_id=response.headers.get("x-github-request-id"),
+            )
+            return {"merged": True, **summary}
+
+    async def _github_validate_pull_request_files(self, *, headers, root, number, head_sha, files):
+        """The pull request changes exactly `files`, with exactly their content, at head_sha."""
+        response = await self._client.get(
+            f"{root}/pulls/{number}/files", headers=headers, params={"per_page": 100}
+        )
+        changes = _provider_list(response, provider="GitHub")
+        expected = {item.path: item.content for item in files}
+        if len(changes) != len(expected) or any(
+            not isinstance(item, dict)
+            or item.get("status") not in {"added", "modified"}
+            or item.get("filename") not in expected
+            for item in changes
+        ):
+            raise IntegrationAuthorizationError("The pull request changed after Tin opened it")
+        for path, content in expected.items():
+            response = await self._client.get(
+                f"{root}/contents/{quote(path, safe='/')}",
+                headers=headers,
+                params={"ref": head_sha},
+            )
+            payload = _provider_json(response, provider="GitHub")
+            try:
+                actual = base64.b64decode(
+                    "".join(payload["content"].split()), validate=True
+                ).decode()
+            except (KeyError, TypeError, AttributeError, ValueError, UnicodeDecodeError) as exc:
+                raise IntegrationUpstreamError("The pull request cannot be verified") from exc
+            if actual != content:
+                raise IntegrationAuthorizationError("The pull request changed after Tin opened it")
 
     async def github_markdown_names(
         self, *, project_id: UUID, repository: str, folder: str, ref: str | None = None

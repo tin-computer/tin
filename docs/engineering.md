@@ -200,8 +200,9 @@ is `project_id`; GitHub access is not required. One forced-search Luna call publ
 at `content/answers/{date}-{question-slug}.md`, named from its date and title, with bounded
 evidence under `reports/answer-page/{run_id}/`, atomically through Temporal. The title becomes the
 run's artifact title, which Decisions, the run card and chat show. Pages drafted before per-page
-names keep `reports/ANSWER_PAGE.md`; a later page with the same date and title replaces the file
-at that path, and each run still reads its own pinned revision. Because this is
+names keep `reports/ANSWER_PAGE.md`. A later page with the same date and title gets the first
+eight characters of its run ID after the slug, so it never replaces the earlier file; a retry
+reuses the path its own evidence names. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
 approval from the draft reader resumes and completes it. The menu's Decisions badge, the Decisions
 list and the project line's "need you" count the same items: runs with something to approve, not a
@@ -221,7 +222,13 @@ the frontmatter and the date line itself, rebuilding a missing or oversized list
 title and the opening answer. It then checks the pieces a model can leave out: the answer's
 length, two question headings, an FAQ with two questions, three listed sources, two inline
 citations and paragraphs under 150 words. The evidence records `structure: answer-seo-v1`, so
-pages drafted under an earlier pin keep the original checks. Delivery merges the page's
+pages drafted under an earlier pin keep the original checks. Answer page 1.4.0 adds the
+`answer-page/20-repair-failed-checks` skill (`ANSWER_REPAIR_V1`): when the researched draft
+misses any of these checks, Tin keeps it and sends the page, the exact failed checks and the
+saved research back to the model once, without web search, then checks again. The repair is its
+own receipted, metered step (`{run_id}:answer_page:repair`, usage step `answer_page_repair`), so
+a retry never buys it twice; the run fails only if the repaired page still misses a check.
+Evidence records the repair's response and the checks it fixed. Delivery merges the page's
 frontmatter with the configured header instead of writing two.
 
 `project.weekly_brief` summarizes the previous seven days of durable project runs, artifacts,
@@ -280,7 +287,7 @@ acquire `project.task` steering, pause/resume, or task-transcript semantics.
 `research.deep_dive` uses this executor to test a bounded project question top-down against current,
 source-backed evidence and publishes `reports/RESEARCH_DEEP_DIVE.md`. It remains a report workflow
 and therefore does not pause for review. `content.public_article` turns durable project evidence
-into `reports/PUBLIC_ARTICLE.md`, applies a separate fact-preserving final edit, and enters the
+into `content/articles/<date>-<id>.md` (for example `2026-09-29-1a2b3c4d.md`), applies a separate fact-preserving final edit, and enters the
 normal human-review queue because it is public-facing content. Neither procedure publishes,
 contacts anyone, or acquires the steering and arbitrary-diff semantics of `project.task`.
 

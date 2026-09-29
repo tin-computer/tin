@@ -11,6 +11,14 @@ This is an explicit continuation on the content card. Repository adaptation uses
 so the normal spending confirmation applies. Approval of an older draft is still only
 approval of its content; it does not silently acquire a publishing action.
 
+Approved **answer pages and public articles** go further: with a repository selected and
+Codex API execution on, their approval card has one **Publish** button. Publish adapts the
+page into the site's own format and then follows the founder's saved delivery setting. The
+card's footer says which, with the cost preview: "Tin adapts it to your site and commits it
+to main · about $5" or "Tin adapts it to your site and opens a pull request · about $5".
+Without adaptation (no repository, or no Codex API execution) the card keeps Publish now
+and Open a pull request, which use the exact Markdown publisher below.
+
 ## Implementation
 
 - `content.deliver` is an ordinary immutable Organic traffic catalog definition on the
@@ -130,6 +138,53 @@ minutes per run and within a 20-second bound:
   only when a made-up slug under it does not also answer 200. Without one, the card says
   before approval that approving commits a Markdown file only.
 
-`Publish now` still uses the exact Markdown publisher for answer pages and public articles;
-this section only makes its result visible. Routing those drafts through repository
-adaptation needs `content.deliver` to accept non-plan sources.
+For an adapted answer page or public article, the page's delivery view is its
+adaptation's: the PR, its `Public URL:` line (so the page URL's source is
+`delivery_route`), and a merge when Tin made one. Before approval, `note` says that Tin
+adapts the page and then opens a pull request or commits it to main; the card line stays
+the one `Proposed URL` line, since no file path exists until the adaptation picks one.
+
+## Adapting approved answer pages and public articles
+
+- **Sources.** `content.deliver` 1.2.0 also accepts an approved `content.answer_page` or
+  `content.public_article` run (`approved_document.py`). Admission checks the same project,
+  a succeeded and approved run, its publication receipt (`{run}:answer_page_commit` or
+  `{run}:procedure_canonical_commit`) matching the run's revision and path, a path in the
+  workflow's own folder, and pins the bytes by SHA-256. A public article must also carry
+  its review command, whose token binds the exact approved version. The page's own
+  frontmatter is split off: `article` is the copy the patch must keep byte-for-byte (the
+  same exact-copy rule as articles), and `page_metadata` carries `meta_title` and
+  `meta_description` for the site's own title and description fields. Answer pages are
+  read up to 150 KB and public articles up to 300 KB; the PR limit is 400 KB.
+- **Structured sites.** When no route renders the target folder but the site already
+  depends on a Markdown renderer (react-markdown, marked, markdown-it, remark, an MDX
+  loader), the adaptation may add one minimal route that renders `.md` files from one
+  folder with that renderer and the site's layout, once, within the five-file limit, and
+  then place the page there as a `.md` file. Without a renderer it stops with a
+  prerequisite message instead of committing a page the site will not show.
+- **Trigger.** A repository pick at approval (HTTP approve, the decision apply, MCP
+  `approve_workflow_run`) records `adapter: "repository"` in the choice receipt when Codex
+  API execution is on. The existing `deliver_content_draft` activity then starts one
+  `content.deliver` run through the ordinary run service, as the approver, under the start
+  key `approval-delivery:{run}`. Its start receipt uses the Markdown publisher's key under
+  another operation, so one approval can never run both. Workflow commands are unchanged,
+  so replay fixtures stay valid.
+- **Delivery setting.** The adaptation always opens a PR. When the founder's setting
+  commits to main (`github_commit`), Tin merges that PR after the run succeeds, but only
+  when all of these hold: the run was started by the approval; the patch is the approved
+  page as one Markdown file, which is the change the Markdown publisher already commits to
+  main; the PR's branch still holds exactly that file at the head Tin read; and GitHub
+  reports it `clean` (no conflicts, no failing or pending checks, no required review)
+  within about three and a half minutes. Tin then asks GitHub to merge that head only.
+  A PR that adds a route, a component or an index is site code the founder has not
+  reviewed, so it stays open, as does one that conflicts or waits on checks or a review.
+  The merge receipt (`content-delivery:{run}:merge`) and Activity say why; a later merge
+  by the founder is found by the page URL check as before.
+- **Billing.** The adaptation is an ordinary Codex procedure session charged on actual
+  usage. The approval response and the publish preview
+  (`GET /api/projects/{id}/content-drafts/{run}/publish-preview`, MCP `get_run`
+  `delivery_preview`) carry its configured cost preview. When admission is refused (too
+  few credits, a spending limit, a changed connection), the page's delivery is recorded as
+  failed with the reason and a pointer to retrying delivery or Prepare PR. Retrying the
+  page's delivery tries the same start again; once the adaptation exists, it retries that
+  run's saved patch instead.

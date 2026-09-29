@@ -3082,7 +3082,7 @@ function renderDocument() {
             label: "Discard revision",
             onActivate: (button) => discardCampaignRevision(run.id, button),
           }
-        : route.source !== "retained" && run?.status === "needs_input" && repositoryDeliveryAvailable(run) && !supportsArticleFeedback(run)
+        : route.source !== "retained" && run?.status === "needs_input" && repositoryDeliveryAvailable(run) && !supportsArticleFeedback(run) && !publishPreview(run)
         ? {
             // Answer pages have no feedback controls, so the reader bar carries the PR option itself.
             label: "Open a pull request",
@@ -3097,8 +3097,8 @@ function renderDocument() {
             }
           : route.source !== "retained" && run?.status === "needs_input"
           ? {
-              label: repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
-              onActivate: (button) => approveRun(run.id, button, repositoryDeliveryAvailable(run) ? { delivery: "github_commit" } : {}),
+              label: publishPreview(run) ? "Publish" : repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
+              onActivate: async (button) => approveRun(run.id, button, await publishDelivery(run)),
             }
           : null,
     });
@@ -4169,7 +4169,7 @@ async function toggleProjectWorkflow(projectWorkflowId, action, button) {
   }
 }
 
-async function approveRun(runId, button, { delivery = null, remember = false } = {}) {
+async function approveRun(runId, button, { delivery = null, remember = false, adapted = false } = {}) {
   const context = currentProjectContext();
   const run = state.runs.find((item) => item.id === runId);
   const revisionReview = isCampaignRevisionReview(run);
@@ -4192,7 +4192,7 @@ async function approveRun(runId, button, { delivery = null, remember = false } =
     render();
     showToast(revisionReview
       ? "Revision approved. Remaining deliveries resumed."
-      : diagramReview ? "Diagram approved." : deliveryToast(delivery || (run?.content_delivery ? "github_pr" : null), "Draft approved."));
+      : diagramReview ? "Diagram approved." : deliveryToast(delivery || (run?.content_delivery ? "github_pr" : null), "Draft approved.", adapted));
     schedulePolling();
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
@@ -4234,10 +4234,11 @@ function mountArticleFeedback(host, runId, reader = false) {
   const context = currentProjectContext();
   const run = state.runs.find(item => item.id === runId);
   const repositoryDelivery = repositoryDeliveryAvailable(run);
+  const adapted = publishPreview(run);
   return window.TinWorkflowReview.mount(host, {
-    approvalLabel: repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label,
-    deliveryOptions: reader && repositoryDelivery ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
-    onApprove: (button, delivery = repositoryDelivery ? "github_commit" : null) => approveRun(runId, button, delivery ? { delivery } : {}),
+    approvalLabel: adapted ? "Publish" : repositoryDelivery ? "Publish now" : run?.content_delivery?.approval_label,
+    deliveryOptions: reader && repositoryDelivery && !adapted ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
+    onApprove: async (button, delivery = null) => approveRun(runId, button, delivery ? { delivery } : await publishDelivery(run, repositoryDelivery ? "github_commit" : null)),
     api, projectId: context.projectId, runId, reader, toast: showToast,
     loadRenderer: loadComparisonRenderer,
     openRun: id => openDocument(id, "decisions"),
@@ -4286,6 +4287,45 @@ function isProposal(decision) {
   return decision.kind === "review" && ["style.capture", "brand.capture"].includes(decision.workflow_key);
 }
 
+// Answer pages and public articles that Tin adapts to the site (a metered content.deliver run)
+// get one Publish button. The server says whether adaptation applies and, from the saved
+// delivery setting and the cost preview, the footer line: what Publish does and about what it
+// costs. Everything about that card lives here so its wording and layout stay easy to change.
+const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page"]);
+const publishPreviews = new Map();
+
+function publishPreview(run) {
+  if (!run || run.status !== "needs_input" || !ADAPTED_PAGE_WORKFLOWS.has(workflowForRun(run)?.key || run.workflow_name) || !repositoryDeliveryAvailable(run)) return null;
+  const context = currentProjectContext();
+  const key = `${context.projectId}:${run.id}`;
+  if (!publishPreviews.has(key)) {
+    const request = api(`/api/projects/${encodeURIComponent(context.projectId)}/content-drafts/${encodeURIComponent(run.id)}/publish-preview`)
+      .catch(() => ({ adapt: false }))
+      .then((preview) => {
+        publishPreviews.set(key, preview);
+        if (isCurrentProjectContext(context) && (state.view === "decisions" || state.documentRoute?.runId === run.id)) render();
+        return preview;
+      });
+    publishPreviews.set(key, { loading: true, request });
+  }
+  const preview = publishPreviews.get(key);
+  return preview.loading || preview.adapt ? preview : null;
+}
+
+// The approval body for a page's Publish: the saved setting when Tin adapts it, else today's pick.
+async function publishDelivery(run, fallback = "github_commit") {
+  const pending = publishPreview(run);
+  const preview = pending?.loading ? await pending.request : pending;
+  if (preview?.adapt) return { delivery: preview.mode, adapted: true };
+  return repositoryDeliveryAvailable(run) && fallback ? { delivery: fallback } : {};
+}
+
+function publishButtonHtml(decisionId, preview, blocked) {
+  const waiting = preview.loading ? " disabled" : blocked;
+  return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+      <button class="decision-approval" type="button" data-apply-decision="${escapeHtml(decisionId)}" data-delivery="${escapeHtml(preview.mode || "")}" data-adapted="true"${waiting}>Publish</button>`;
+}
+
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
   const revision = decision.revision;
@@ -4297,6 +4337,8 @@ function decisionApprovalHtml(decision, run) {
     return `${notNow}
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
   }
+  const adapted = publishPreview(run);
+  if (adapted) return publishButtonHtml(decision.id, adapted, blocked);
   if (repositoryDeliveryAvailable(run)) {
     return `${blocked ? "" : '<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>'}
       ${notNow}
@@ -4536,7 +4578,7 @@ async function applyDecision(decision, button) {
     state.decisions = state.decisions.filter((item) => item.id !== decision.id);
     state.decisionId = state.decisions[0]?.id || null;
     render();
-    showToast(deliveryToast(delivery, "Decision applied."));
+    showToast(deliveryToast(delivery, "Decision applied.", button.dataset.adapted === "true"));
     schedulePolling({ immediate: true });
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
@@ -4572,7 +4614,8 @@ async function discardProposal(decision, button) {
   }
 }
 
-function deliveryToast(delivery, fallback) {
+function deliveryToast(delivery, fallback, adapted = false) {
+  if (adapted) return "Approved. Tin is adapting the page to your site.";
   if (delivery === "github_commit") return "Draft approved. Publishing it to the repository now.";
   if (delivery === "github_pr") return "Draft approved. GitHub PR delivery will follow; nothing is merged.";
   if (delivery === "none") return "Draft kept in Tin. Nothing was published.";

@@ -6,7 +6,8 @@ import { chromium } from "playwright";
 test("system approval keeps repository adaptation instead of direct Markdown publishing", async () => {
   const app = await fs.readFile("src/tin_lite/static/app.js", "utf8");
   const helpers = ["repositoryDeliveryAvailable", "isProposal", "decisionApprovalHtml"].map(name => app.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}`, "m"))[0]).join("\n");
-  const render = new Function("isContentDraftReview", "connectedRepository", "escapeHtml", `${helpers}\nreturn decisionApprovalHtml;`)(() => true, () => "owner/site", text => text);
+  // Without adaptation (publishPreview() is null), a draft keeps its Markdown choices.
+  const render = new Function("isContentDraftReview", "connectedRepository", "escapeHtml", "publishPreview", `${helpers}\nreturn decisionApprovalHtml;`)(() => true, () => "owner/site", text => text, () => null);
   assert.match(render({id: "draft"}, {}), /Publish now/);
   const system = render({id: "draft"}, {content_delivery: {system_run_id: "parent", approval_label: "Approve & open PR"}});
   assert.match(system, /Approve & open PR/);

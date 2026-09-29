@@ -14,6 +14,9 @@ MAX_WEB_SOURCES = 30
 # their four searches and the original page checks.
 SEARCH_STRUCTURE_MARKER = "ANSWER_SEO_V1"
 SEARCH_STRUCTURE = "answer-seo-v1"
+# A pinned suite carrying this marker gets one repair call, without web search, when the
+# paid draft misses a page check. Older pins fail the run as before.
+REPAIR_MARKER = "ANSWER_REPAIR_V1"
 MAX_SEARCH_CALLS = 4
 MAX_STRUCTURED_SEARCH_CALLS = 12
 MAX_META_TITLE = 60
@@ -91,7 +94,67 @@ class AnswerPageDrafter:
             )
             result["structure"] = SEARCH_STRUCTURE
         result["model"] = self._responses.model
+        if REPAIR_MARKER in self._skill_suite:
+            # The paid research is kept; the activity asks for one repair of these checks.
+            problems = answer_page_problems(result["markdown"].encode(), structured=structured)
+            if problems:
+                result["failed_checks"] = problems
+            return result
         validate_answer_page(result["markdown"].encode(), structured=structured)
+        return result
+
+    async def repair(self, *, draft: dict[str, Any], today: str | None = None) -> dict[str, Any]:
+        """Send the draft and its exact failed checks back once, with no web search.
+
+        The research (queries, sources, citations) is the draft's own; the repaired page
+        replaces only the Markdown. The result keeps `failed_checks` when checks still fail.
+        """
+        failed = draft.get("failed_checks")
+        if not isinstance(failed, list) or not failed:
+            raise ValueError("answer-page repair needs the draft's failed checks")
+        structured = draft.get("structure") == SEARCH_STRUCTURE
+        reference: dict[str, Any] = {
+            "repair": {
+                "failed_checks": failed,
+                "page": draft["markdown"],
+                "research": {
+                    "queries": draft.get("queries", []),
+                    "sources": draft.get("sources", []),
+                    "citations": draft.get("citations", []),
+                },
+            }
+        }
+        if structured:
+            reference["today"] = today or datetime.now(UTC).date().isoformat()
+        response = await self._responses.create(
+            {
+                "instructions": self._skill_suite,
+                "input": json.dumps(reference, separators=(",", ":")),
+                "store": False,
+                "text": {"verbosity": "medium"},
+            }
+        )
+        repaired = _normalize_response(response, require_search=False)
+        markdown = repaired["markdown"]
+        if markdown.lstrip().startswith("<!-- tin-answer-plan-v1"):
+            # The saved plan from the research call stands; a repeated one is not copy.
+            try:
+                _, markdown = extract_argument_plan(markdown.lstrip())
+            except AnswerPageProtocolError:
+                pass
+        if structured:
+            markdown = normalize_search_metadata(markdown, today=reference["today"])
+        result = {key: value for key, value in draft.items() if key != "failed_checks"}
+        result["markdown"] = markdown
+        result["repair"] = {
+            "response_id": repaired["response_id"],
+            "model": self._responses.model,
+            "failed_checks": failed,
+            "usage": repaired["usage"],
+        }
+        problems = answer_page_problems(markdown.encode(), structured=structured)
+        if problems:
+            result["failed_checks"] = problems
         return result
 
     @staticmethod
@@ -124,6 +187,7 @@ class AnswerPageDrafter:
                         else {}
                     ),
                     **({"structure": draft["structure"]} if "structure" in draft else {}),
+                    **({"repair": draft["repair"]} if "repair" in draft else {}),
                 },
                 ensure_ascii=False,
                 separators=(",", ":"),
@@ -227,19 +291,36 @@ def _clip(text: str, limit: int) -> str:
 
 
 def validate_answer_page(content: bytes, *, structured: bool = False) -> None:
+    problems = answer_page_problems(content, structured=structured)
+    if problems:
+        raise ValueError(problems[0])
+
+
+def answer_page_problems(content: bytes, *, structured: bool = False) -> list[str]:
+    """Every page check the content misses, in the order validation reports them."""
     if not content or len(content) > MAX_ANSWER_PAGE_BYTES:
-        raise ValueError(f"answer page must contain between 1 and {MAX_ANSWER_PAGE_BYTES} bytes")
-    text = content.decode("utf-8")
+        return [f"answer page must contain between 1 and {MAX_ANSWER_PAGE_BYTES} bytes"]
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        return ["answer page must be UTF-8 text"]
+    problems: list[str] = []
     if structured:
-        text = _validate_search_metadata(text)
+        try:
+            text = _validate_search_metadata(text)
+        except ValueError as exc:
+            problems.append(str(exc))
+            match = re.match(r"\A\s*---[ \t]*\n.*?\n---[ \t]*\n+", text, re.S)
+            text = text[match.end() :] if match else text
     if not text.startswith("# "):
-        raise ValueError("answer page must begin with a Markdown title")
+        problems.append("answer page must begin with a Markdown title")
     if "\n## Sources\n" not in text:
-        raise ValueError("answer page must contain a Sources section")
+        problems.append("answer page must contain a Sources section")
     if len(re.findall(r"^## ", text, flags=re.MULTILINE)) < 3:
-        raise ValueError("answer page must contain at least three sections")
+        problems.append("answer page must contain at least three sections")
     if structured:
-        _validate_search_structure(text)
+        problems.extend(_search_structure_problems(text))
+    return problems
 
 
 def _validate_search_metadata(text: str) -> str:
@@ -256,12 +337,13 @@ def _validate_search_metadata(text: str) -> str:
     return text[match.end() :]
 
 
-def _validate_search_structure(text: str) -> None:
+def _search_structure_problems(text: str) -> list[str]:
     """Catch the missing pieces of a search-structured page, not matters of taste."""
+    problems: list[str] = []
     sections = re.split(r"(?m)^## ", text)
     lead, body = sections[0], sections[1:]
     if not re.search(r"(?m)^Last updated: \d{4}-\d{2}-\d{2}$", lead):
-        raise ValueError("answer page must show a 'Last updated: YYYY-MM-DD' line under its title")
+        problems.append("answer page must show a 'Last updated: YYYY-MM-DD' line under its title")
     lead_paragraphs = [
         block
         for block in _prose_blocks(lead)
@@ -270,33 +352,33 @@ def _validate_search_structure(text: str) -> None:
     words = len(lead_paragraphs[0].split()) if lead_paragraphs else 0
     low, high = ANSWER_WORDS_RANGE
     if not low <= words <= high:
-        raise ValueError(
+        problems.append(
             f"answer page must open with a direct answer of about 40-60 words (found {words})"
         )
     headings = [section.split("\n", 1)[0].strip() for section in body]
-    if headings[-1] != "Sources":
-        raise ValueError("answer page must end with its Sources section")
+    if not headings or headings[-1] != "Sources":
+        problems.append("answer page must end with its Sources section")
     faq = [
         section
         for section in body
         if re.match(r"(FAQ|Frequently asked questions)\s*$", section.split("\n", 1)[0].strip())
     ]
     if not faq or len(re.findall(r"(?m)^### .+\?\s*$", faq[0])) < 2:
-        raise ValueError("answer page must include an FAQ section with at least two questions")
+        problems.append("answer page must include an FAQ section with at least two questions")
     questions = [heading for heading in headings if heading.endswith("?")]
     if len(questions) < 2:
-        raise ValueError("answer page must phrase at least two section headings as questions")
-    cited = set(re.findall(r"\]\((https?://[^)\s]+)\)", body[-1]))
+        problems.append("answer page must phrase at least two section headings as questions")
+    cited = set(re.findall(r"\]\((https?://[^)\s]+)\)", body[-1])) if body else set()
     if len(cited) < MIN_CITED_SOURCES:
-        raise ValueError(f"answer page must list at least {MIN_CITED_SOURCES} sources")
+        problems.append(f"answer page must list at least {MIN_CITED_SOURCES} sources")
     inline = re.findall(r"\]\((https?://[^)\s]+)\)", "## ".join([lead, *body[:-1]]))
     if len(inline) < MIN_INLINE_CITATIONS:
-        raise ValueError("answer page must cite its sources inline, next to the claims")
-    for block in _prose_blocks(text):
-        if len(block.split()) > MAX_PARAGRAPH_WORDS:
-            raise ValueError(
-                f"answer page paragraphs must stay under {MAX_PARAGRAPH_WORDS} words; split them"
-            )
+        problems.append("answer page must cite its sources inline, next to the claims")
+    if any(len(block.split()) > MAX_PARAGRAPH_WORDS for block in _prose_blocks(text)):
+        problems.append(
+            f"answer page paragraphs must stay under {MAX_PARAGRAPH_WORDS} words; split them"
+        )
+    return problems
 
 
 def _prose_blocks(text: str) -> list[str]:
@@ -334,7 +416,7 @@ def validate_answer_page_artifacts(
         raise ValueError("answer-page evidence has no web search")
 
 
-def _normalize_response(response: dict[str, Any]) -> dict[str, Any]:
+def _normalize_response(response: dict[str, Any], *, require_search: bool = True) -> dict[str, Any]:
     output = response.get("output")
     if not isinstance(output, list):
         raise AnswerPageProtocolError("answer-page response has no output list")
@@ -376,7 +458,7 @@ def _normalize_response(response: dict[str, Any]) -> dict[str, Any]:
     markdown = "\n".join(fragments).strip()
     if not markdown:
         raise AnswerPageProtocolError("answer-page response returned no Markdown")
-    if search_calls < 1:
+    if require_search and search_calls < 1:
         raise AnswerPageProtocolError("answer-page response did not search the web")
     usage = response.get("usage")
     return {

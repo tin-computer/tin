@@ -3389,7 +3389,9 @@ async def get_run(
     return RunView.model_validate(run).model_copy(
         update={
             "content_delivery": delivery,
-            "page_url": await page_url_service(runtime).view(run, delivery),
+            "page_url": await page_url_service(
+                runtime, getattr(request.app.state, "settings", None)
+            ).view(run, delivery),
             "selected_sources": (
                 await selected_run_sources(
                     database=runtime.database,
@@ -3417,7 +3419,8 @@ async def get_run_page_url(
 
     runtime = request.app.state.runtime
     delivery = await delivery_service(runtime).status(run)
-    return {"page_url": await page_url_service(runtime).view(run, delivery, check=check)}
+    page = page_url_service(runtime, getattr(request.app.state, "settings", None))
+    return {"page_url": await page.view(run, delivery, check=check)}
 
 
 @router.get("/api/workflows/runs/{run_id}/usage")
@@ -3966,7 +3969,7 @@ async def approve_run(
             )
         except ReviewConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return RunView.model_validate(updated)
+        return await _approval_view(updated, request, user, payload)
     if run.workflow_name == EMAIL_CAMPAIGN_WORKFLOW_NAME and run.status == RunStatus.NEEDS_INPUT:
         revision = await request.app.state.runtime.database.get_pending_email_campaign_revision(
             run_id=run_id
@@ -4010,7 +4013,7 @@ async def approve_run(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="human review signal was not accepted",
         ) from exc
-    return RunView.model_validate(run)
+    return await _approval_view(run, request, user, payload)
 
 
 @router.post(
@@ -4222,7 +4225,7 @@ async def _choose_content_delivery(
     run: WorkflowRun, payload: WorkflowReviewApproval, request: Request, user: AuthContext
 ) -> None:
     from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
-    from tin_lite.content_delivery_api import delivery_service
+    from tin_lite.content_delivery_api import adapt_on_approval, delivery_service
     from tin_lite.project_files import ProjectFileError
 
     if run.workflow_id not in CHOICE_WORKFLOW_IDS:
@@ -4236,9 +4239,41 @@ async def _choose_content_delivery(
             mode=payload.delivery,
             remember=payload.remember,
             actor=user.clerk_user_id,
+            # An answer page or public article is adapted to the site (a metered run).
+            adapt=adapt_on_approval(getattr(request.app.state, "settings", None), run),
         )
     except (LookupError, ValueError, ProjectFileError, IntegrationError) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+async def _approval_view(
+    run: WorkflowRun,
+    request: Request,
+    user: AuthContext,
+    payload: WorkflowReviewApproval | None,
+) -> RunView:
+    """The approved run and, when the approval picked a delivery, that delivery; for a page
+    Tin adapts to the site, with the adaptation's configured cost preview."""
+    from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
+    from tin_lite.content_delivery_api import delivery_cost, delivery_service
+
+    view = RunView.model_validate(run)
+    if payload is None or payload.delivery is None or run.workflow_id not in CHOICE_WORKFLOW_IDS:
+        return view
+    runtime = request.app.state.runtime
+    delivery = await delivery_service(runtime).status(run)
+    if delivery and delivery.get("adapter"):
+        delivery = {
+            **delivery,
+            "cost_preview": await delivery_cost(
+                runtime=runtime,
+                settings=getattr(request.app.state, "settings", None),
+                run=run,
+                actor=user.clerk_user_id,
+                repository=delivery["repository"],
+            ),
+        }
+    return view.model_copy(update={"content_delivery": delivery})
 
 
 def _integration_view(
