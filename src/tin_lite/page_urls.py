@@ -209,7 +209,9 @@ def present(record, delivery=None, *, now=None):
     pull_request = safe_pull_request((delivery or {}).get("pull_request"))
     commit = (delivery or {}).get("commit") if isinstance(delivery, dict) else None
     commit = commit if isinstance(commit, dict) and commit.get("commit") else None
-    published = bool(commit) or bool(check.get("merged"))
+    # Tin merged an adapted page's pull request because the founder's setting commits to main.
+    merged_by_tin = bool((delivery or {}).get("merged"))
+    published = bool(commit) or bool(check.get("merged")) or merged_by_tin
     live = bool(check.get("live")) and check.get("url") == url
     site = base["host"]
     branch = (commit or {}).get("branch") or "its default branch"
@@ -243,7 +245,7 @@ def present(record, delivery=None, *, now=None):
             "checkable": False,
         }
     if published:
-        since = _minutes_since(check.get("merged_at"), now)
+        since = _minutes_since(check.get("merged_at") or (delivery or {}).get("merged_at"), now)
         waited = since is not None and since > DEPLOY_WINDOW.total_seconds() / 60
         where = f"Committed to {repository} {branch}" if commit else f"Merged into {repository}"
         if waited and check.get("checked_at"):
@@ -272,8 +274,20 @@ def present(record, delivery=None, *, now=None):
         note = "Delivery needs attention. Nothing is on your site yet."
     elif pull_request:
         number = f" #{pull_request['number']}" if pull_request["number"] else ""
+        left_open = ((delivery or {}).get("merge") or {}).get("reason")
         note = (
             f"Pull request{number} is open. The page appears after it merges and your site deploys."
+            if not left_open
+            else f"Pull request{number} is open. {left_open} "
+            "The page appears after you merge it and your site deploys."
+        )
+    elif (delivery or {}).get("adapter"):
+        note = "Tin is adapting the page to your site. Nothing is on your site yet."
+    elif (approval or {}).get("adapt") and delivery is None:
+        note = (
+            "After you approve, Tin adapts the page to your site and commits it to main."
+            if approval.get("mode") == "github_commit"
+            else "After you approve, Tin adapts the page to your site and opens a pull request."
         )
     elif (delivery or {}).get("system_run_id") or (delivery or {}).get("path") == (
         "Repository-adapted article"
@@ -337,9 +351,11 @@ async def fetch_page(url, *, client=None, resolver=None):
 
 
 class PageUrls:
-    def __init__(self, *, database, storage=None, integrations=None, fetch=None):
+    def __init__(self, *, database, storage=None, integrations=None, fetch=None, settings=None):
         self.db, self.storage, self.integrations = database, storage, integrations
         self.fetch = fetch or fetch_page
+        # Only to tell whether approval adapts a page to the site (Codex API execution).
+        self.settings = settings
 
     async def _load(self, run_ids):
         rows = await self.db.pool.fetch(
@@ -423,6 +439,7 @@ class PageUrls:
         from tin_lite.content_delivery import (
             ContentDelivery,
             DeliverySettings,
+            adaptable,
             destination,
             document_destination,
         )
@@ -430,6 +447,24 @@ class PageUrls:
         service = ContentDelivery(
             database=self.db, storage=self.storage, integrations=self.integrations
         )
+        if self.settings is not None and adaptable(self.settings, run):
+            # Publish adapts the page into the site's own folder; no file path is known yet.
+            connection = await self.db.get_integration_connection(
+                project_id=run.project_id, provider_key="infra.github"
+            )
+            repository = (
+                connection.configuration.get("selected_repository")
+                if connection and connection.status == "connected"
+                else None
+            )
+            if not repository:
+                return None
+            return {
+                "repository": repository,
+                "path": None,
+                "adapt": True,
+                "mode": await service.saved_mode(run),
+            }
         try:
             program_id, selected = await service.program_for(run)
             configured = await service.settings(project_id=run.project_id, program_id=program_id)
@@ -548,6 +583,9 @@ class PageUrls:
                     record = {**record, "folder": folder}
                     view = present(record, delivery, now=now)
                 pull_request = view.get("pull_request")
+                if (delivery or {}).get("merged") and not check.get("merged"):
+                    # Tin merged it and recorded when; GitHub need not be asked again.
+                    check.update(merged=True, merged_at=delivery.get("merged_at") or stamp)
                 if not check.get("merged") and pull_request and pull_request["number"]:
                     state = await self.integrations.github_pull_request_state(
                         project_id=run.project_id,

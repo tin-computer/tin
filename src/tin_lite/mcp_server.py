@@ -26,11 +26,12 @@ from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
-from tin_lite.content_delivery import DeliverySettings
+from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
     delivery_service,
     page_url_service,
+    publish_preview,
     retry_delivery,
 )
 from tin_lite.content_plan import ContentPlan
@@ -2499,7 +2500,17 @@ def create_mcp_app(
             "review_summary": review_summary,
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
-            "page_url": await page_url_service(runtime()).view(run, delivery, check=True),
+            "page_url": await page_url_service(runtime(), settings).view(run, delivery, check=True),
+            # Before approval: what Publish does for a page Tin adapts to the site.
+            **(
+                {
+                    "delivery_preview": await publish_preview(
+                        runtime=runtime(), settings=settings, run=run, actor=clerk_user_id
+                    )
+                }
+                if run.status is RunStatus.NEEDS_INPUT and run.workflow_id in ADAPTED_WORKFLOW_IDS
+                else {}
+            ),
             "progress": {
                 "step": getattr(run, "progress_step", None),
                 "current": getattr(run, "progress_current", None),
@@ -3138,6 +3149,35 @@ def create_mcp_app(
             "result": "Revision accepted; queued for execution.",
         }
 
+    async def _adaptation_words(
+        run: Any, chosen: dict[str, Any], actor: str
+    ) -> tuple[list[str], dict[str, Any] | None]:
+        """What the founder hears when approval starts a metered adaptation of the page."""
+        from tin_lite.content_delivery import about_usd, chosen_mode
+        from tin_lite.content_delivery_api import delivery_cost
+
+        cost = await delivery_cost(
+            runtime=runtime(),
+            settings=settings,
+            run=run,
+            actor=actor,
+            repository=chosen["settings"]["repository"],
+        )
+        about = about_usd(cost["estimated_usd"]) if cost else None
+        words = [
+            "Approved. Tin is adapting the page to the site's own format in a separate run"
+            + (f", about {about}, charged on actual usage." if about else ".")
+        ]
+        if chosen_mode(chosen) == "github_commit":
+            words.append(
+                "Tin merges its pull request into main when the pull request adds only the page "
+                "and GitHub reports it clean; otherwise the pull request stays open and get_run "
+                "says why."
+            )
+        else:
+            words.append("It opens a pull request; merge it when you like.")
+        return words, cost
+
     @server.tool()
     async def approve_workflow_run(
         run_id: str,
@@ -3152,6 +3192,14 @@ def create_mcp_app(
         default branch now, none keeps it in Tin; `remember` makes it the program's default.
         Without `delivery` the program's setting applies. Tell the founder the result's
         `relay` in your words.
+
+        An answer page or public article with a GitHub repository is not committed as-is:
+        approving with github_pr or github_commit starts a separately metered adaptation
+        (content.deliver, charged on actual usage; `delivery_cost` is its configured
+        preview) that fits the page into the site's own format and opens a pull request.
+        With github_commit, Tin then merges that pull request itself when it adds only the
+        page and GitHub reports it clean; otherwise it stays open and get_run says why.
+        get_run.delivery_preview shows what Publish does before you approve.
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
         and supply its review_token. Approval applies both declared destinations atomically;
@@ -3172,15 +3220,23 @@ def create_mcp_app(
         ):
             raise ToolError(f"conflict: {conflict}")
         delivery_words = None
+        delivery_cost_view: dict[str, Any] | None = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
             from tin_lite.project_files import ProjectFileError
 
             if run.workflow_id not in CHOICE_WORKFLOW_IDS:
                 raise ToolError("invalid: this run does not publish to a repository")
+            from tin_lite.content_delivery_api import adapt_on_approval
+
             try:
-                await delivery_service(runtime()).choose(
-                    run=run, mode=delivery, remember=remember, actor=clerk_user_id
+                chosen = await delivery_service(runtime()).choose(
+                    run=run,
+                    mode=delivery,
+                    remember=remember,
+                    actor=clerk_user_id,
+                    adapt=adapt_on_approval(settings, run),
+                    trigger_source="mcp",
                 )
             except (ValueError, LookupError, ProjectFileError, IntegrationError) as exc:
                 raise ToolError(f"invalid: {exc}") from exc
@@ -3189,6 +3245,10 @@ def create_mcp_app(
                 "github_commit": "Approved. Tin is publishing it to your repository now.",
                 "none": "Approved. The draft stays in Tin under Files.",
             }[delivery]
+            if (chosen or {}).get("adapter"):
+                delivery_words, delivery_cost_view = await _adaptation_words(
+                    run, chosen, clerk_user_id
+                )
 
         from tin_lite.reviewed_documents import document_spec
 
@@ -3206,6 +3266,7 @@ def create_mcp_app(
                 "project_id": str(approved.project_id),
                 "status": approved.status.value,
                 "review_decision": approved.review_decision,
+                **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
                 **_founder_words(relay=delivery_words),
             }
         if run.executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -3266,6 +3327,7 @@ def create_mcp_app(
             "workflow": run.workflow_name,
             "status": run.status.value,
             "review_decision": "approval_signaled",
+            **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
             **_founder_words(
                 relay=delivery_words
                 or (
@@ -3527,8 +3589,9 @@ def create_mcp_app(
             draft_preparation = {
                 "preparation": {
                     **await discover(runtime().database, parsed_project_id),
-                    "instruction": "Choose an approved article by title from preparation.articles "
-                    "in this response. If empty, ask the user to review an existing draft in "
+                    "instruction": "Choose an approved article, answer page or public article "
+                    "by title from preparation.articles in this response. If empty, ask the "
+                    "user to review an existing draft in "
                     "Decisions first; do not generate another article just to deliver it. "
                     "Use get_run to check the selected approval, and get_integration(infra.github) "
                     "to confirm the website repository; never infer it from the product name. "

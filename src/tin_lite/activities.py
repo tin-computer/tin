@@ -4221,14 +4221,24 @@ class TinActivities:
     @activity.defn(name="deliver_content_draft")
     async def deliver_content_draft(self, run_id_text: str) -> None:
         from tin_lite import content_repository_delivery
-        from tin_lite.content_delivery import ContentDelivery
+        from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
         if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
-            # Normal successful procedures already delivered their PR. Only the
-            # member-requested retry operation reconciles a terminal failed attempt.
             if run.status == RunStatus.SUCCEEDED:
+                # The procedure already opened its PR. When the page's approval asked to
+                # commit to main, Tin merges a page-only PR once GitHub calls it clean.
+                await self._await_with_heartbeats(
+                    content_repository_delivery.publish_after_pull_request(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "content_delivery_merge"},
+                )
                 return
+            # Only the member-requested retry operation reconciles a terminal failed attempt.
             await self._await_with_heartbeats(
                 content_repository_delivery.recover_delivery(
                     database=self._db,
@@ -4239,10 +4249,33 @@ class TinActivities:
                 details={"stage": "content_delivery_recovery"},
             )
             return
+        delivery = ContentDelivery(
+            database=self._db, storage=self._storage, integrations=self._integrations
+        )
+        runtime = SimpleNamespace(
+            database=self._db,
+            storage=self._storage,
+            integrations=self._integrations,
+            temporal=self._temporal,
+        )
+
+        async def start_adaptation(source_run, intent):
+            return await content_repository_delivery.start_approved_adaptation(
+                runtime=runtime, settings=self._settings, run=source_run, intent=intent
+            )
+
+        # An adapted page starts its one content.deliver run; any other approved document
+        # goes to the Markdown publisher. Each path returns at once for the other's intent.
+        try:
+            await self._await_with_heartbeats(
+                delivery.adapt(UUID(run_id_text), start=start_adaptation),
+                details={"stage": "content_adaptation"},
+            )
+        except AdaptationRefused as exc:
+            # Recorded on the page's delivery; only the founder's retry can change it.
+            raise ApplicationError(str(exc), type="AdaptationRefused", non_retryable=True) from exc
         await self._await_with_heartbeats(
-            ContentDelivery(
-                database=self._db, storage=self._storage, integrations=self._integrations
-            ).deliver(UUID(run_id_text)),
+            delivery.deliver(UUID(run_id_text)),
             details={"stage": "content_delivery"},
         )
 

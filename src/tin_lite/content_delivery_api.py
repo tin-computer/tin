@@ -32,14 +32,85 @@ def delivery_service(runtime):
     )
 
 
-def page_url_service(runtime):
+def page_url_service(runtime, settings=None):
     from tin_lite.page_urls import PageUrls
 
     return PageUrls(
         database=runtime.database,
         storage=getattr(runtime, "storage", None),
         integrations=getattr(runtime, "integrations", None),
+        settings=settings,
     )
+
+
+def adapt_on_approval(settings, run):
+    """Whether an approval's repository pick for this run starts content.deliver."""
+    from tin_lite.content_delivery import adaptable
+
+    return adaptable(settings, run)
+
+
+async def delivery_cost(*, runtime, settings, run, actor, repository):
+    """The configured cost preview of adapting this page, or None where billing is off."""
+    from tin_lite.billing import BillingService
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.content_repository_delivery import WORKFLOW_ID
+
+    try:
+        preview = await BillingService(database=runtime.database, settings=settings).quote(
+            runtime=runtime,
+            project_id=run.project_id,
+            actor=actor,
+            workflow_id=WORKFLOW_ID,
+            inputs={"source_run_id": str(run.id), "expected_repository": repository},
+            preview_only=True,
+        )
+    except (BillingError, LookupError, ValueError):
+        return None
+    if not preview.get("enabled"):
+        return None
+    return {
+        "estimated_usd": preview["estimated_usd"],
+        "maximum_usd": preview["maximum_usd"],
+        "notice": preview.get("notice"),
+    }
+
+
+async def publish_preview(*, runtime, settings, run, actor):
+    """What Publish does for a page Tin adapts to the site, before the founder presses it.
+
+    `adapt` is False where approval keeps today's choices: no selected repository, no
+    Codex API execution, or a run that is not an answer page or public article. `mode` is
+    the delivery the founder saved (commit to main, else a pull request); `footer` is the
+    card's one line, with the configured cost preview when billing is on.
+    """
+    from tin_lite.content_delivery import about_usd, publish_sentence
+
+    connection = await runtime.database.get_integration_connection(
+        project_id=run.project_id, provider_key="infra.github"
+    )
+    repository = (
+        connection.configuration.get("selected_repository")
+        if connection and connection.status == "connected"
+        else None
+    )
+    if not repository or not adapt_on_approval(settings, run):
+        return {"adapt": False}
+    mode = await delivery_service(runtime).saved_mode(run)
+    cost = await delivery_cost(
+        runtime=runtime, settings=settings, run=run, actor=actor, repository=repository
+    )
+    sentence = publish_sentence(mode)
+    about = about_usd(cost["estimated_usd"]) if cost else None
+    return {
+        "adapt": True,
+        "label": "Publish",
+        "mode": mode,
+        "repository": repository,
+        "sentence": sentence,
+        "cost": cost,
+        "footer": f"{sentence} · about {about}" if about else sentence,
+    }
 
 
 async def retry_delivery(*, runtime, settings, project_id, run_id):
@@ -49,20 +120,24 @@ async def retry_delivery(*, runtime, settings, project_id, run_id):
         raise LookupError("Draft not found.")
     from tin_lite import content_repository_delivery
 
-    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
-        status = await content_repository_delivery.retry_status(runtime.database, run)
-    else:
+    if run.workflow_id != content_repository_delivery.WORKFLOW_ID:
         status = await service.status(run)
         if not status or run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
             raise ValueError("This run has no approved GitHub delivery to retry.")
+        if status.get("adapter") and status.get("run_id") and status["status"] != "completed":
+            # The approval's adaptation exists: retrying means delivering its saved patch.
+            # With no adaptation yet (a refused start), the page's own delivery retries it.
+            run = await runtime.database.get_run(UUID(status["run_id"]))
+    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+        status = await content_repository_delivery.retry_status(runtime.database, run)
     if status["status"] == "completed":
         return status
     # One durable operation per draft. An ambiguous HTTP retry attaches to it.
     try:
         await runtime.temporal.start_workflow(
             WORKFLOW,
-            str(run_id),
-            id=f"content-delivery:{run_id}",
+            str(run.id),
+            id=f"content-delivery:{run.id}",
             task_queue=settings.task_queue,
             id_reuse_policy=WorkflowIDReusePolicy.ALLOW_DUPLICATE_FAILED_ONLY,
         )
@@ -128,6 +203,21 @@ async def status(project_id: UUID, run_id: UUID, request: Request, user: AuthCon
     if not run or run.project_id != project_id:
         raise HTTPException(status_code=404, detail="draft not found")
     return {"delivery": await service.status(run)}
+
+
+@router.get("/content-drafts/{run_id}/publish-preview")
+async def preview(project_id: UUID, run_id: UUID, request: Request, user: AuthContext = USER):
+    """The approval card's Publish line for a page Tin adapts to the site."""
+    service = await authorized(request, project_id, user)
+    run = await service.db.get_run(run_id)
+    if not run or run.project_id != project_id:
+        raise HTTPException(status_code=404, detail="draft not found")
+    return await publish_preview(
+        runtime=request.app.state.runtime,
+        settings=request.app.state.settings,
+        run=run,
+        actor=user.clerk_user_id,
+    )
 
 
 @router.post("/content-drafts/{run_id}/delivery/retry", status_code=202)
