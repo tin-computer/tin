@@ -25,6 +25,8 @@ It runs the remaining review and publication normally. Original observation date
 run provenance stay in the evidence; the retry does not charge for cached reads. Unconfirmed
 reads remain unknown, and reads that were never attempted can run. Starting a fresh run,
 changing the job, or retrying before collection finished still performs new research.
+Retrying the traffic system passes the previous failed keyword child to this same recovery
+path; it does not require a separately saved keyword workflow.
 
 ## Verification
 
