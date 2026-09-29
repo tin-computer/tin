@@ -465,6 +465,8 @@ def report_lines(
                 {
                     "missing": "No robots.txt (HTTP 4xx): every crawler may fetch every page.",
                     "not_collected": "robots.txt was not collected for this run.",
+                    "refused": "The site refused Tin's reader for robots.txt, so its rules "
+                    "and AI crawler stance are unknown.",
                 }.get(robots.get("status"), "robots.txt could not be read."),
                 "",
             ]

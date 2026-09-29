@@ -309,7 +309,7 @@ def _robots_findings(view: SiteView, host: str, important: dict[str, str]) -> li
                 issue="robots.txt does not point crawlers to a sitemap",
                 impact="low",
                 evidence=[
-                    "robots.txt returned 404."
+                    f"robots.txt returned HTTP {robots.get('status_code', 404)}."
                     if status == "missing"
                     else "robots.txt has no Sitemap: line."
                 ],
@@ -385,6 +385,8 @@ def _sitemap_findings(view: SiteView, host: str) -> list[dict]:
     read = [row for row in files if row.get("status") == "observed"]
     if not view.site_collected:
         return findings
+    if any(row.get("status") == "refused" for row in files) and not read:
+        return findings  # The site refused Tin's reader; the sitemap is unknown, not missing.
     if not read:
         findings.append(
             site_finding(
@@ -410,7 +412,7 @@ def _sitemap_findings(view: SiteView, host: str) -> list[dict]:
             )
         )
         return findings
-    unread = [row for row in files if row.get("status") != "observed"]
+    unread = [row for row in files if row.get("status") not in {"observed", "refused"}]
     if unread:
         findings.append(
             site_finding(
@@ -1050,6 +1052,7 @@ def site_findings(view: SiteView, *, home: str, pagespeed: dict) -> list[dict]:
 def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> list[dict]:
     """Which site checks ran on evidence and which are unknown, stated in the report."""
     observed = view.observed()
+    refused = sum(f.get("fetch") == "refused" for f in view.facts.values())
     structured = [f for f in observed if f.get("json_ld_blocks") or f.get("microdata")]
     speed = [row for row in speed_rows(pagespeed) if row["status"] == "observed"]
     robots_status = view.robots.get("status")
@@ -1060,6 +1063,7 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
             "note": {
                 "observed": "robots.txt read.",
                 "missing": "No robots.txt (HTTP 4xx): crawlers may fetch every page.",
+                "refused": "The site refused Tin's reader for robots.txt; its rules are unknown.",
             }.get(robots_status, "robots.txt could not be read."),
         },
         {
@@ -1073,9 +1077,15 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
         },
         {
             "check": "page_html",
-            "status": "observed" if observed else "unknown",
+            "status": "partial" if observed and refused else "observed" if observed else "unknown",
             "note": f"Static HTML read for {count(len(observed), 'page')} (noindex, canonical, "
-            "H1, lang, hreflang). JavaScript was not run.",
+            "H1, lang, hreflang). JavaScript was not run."
+            + (
+                f" The site refused Tin's reader for {count(refused, 'page')} (HTTP 401, 403, "
+                "429 or a bot challenge); their checks are unknown."
+                if refused
+                else ""
+            ),
         },
         {
             "check": "structured_data",

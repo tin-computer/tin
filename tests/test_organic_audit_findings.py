@@ -264,7 +264,9 @@ def test_robots_failures_block_and_ai_search_crawler_findings():
     missing = view(site_files={**files(), "robots": {"status": "missing", "status_code": 404}})
     found = checks(missing)
     assert "robots.unavailable" not in found
-    assert found["robots.sitemap_reference_missing"]["evidence"] == ["robots.txt returned 404."]
+    assert found["robots.sitemap_reference_missing"]["evidence"] == [
+        "robots.txt returned HTTP 404."
+    ]
 
 
 def test_sitemap_lists_only_indexable_canonical_urls():
@@ -306,6 +308,29 @@ def test_sitemap_urls_past_the_stored_list_count_as_not_inspected():
     assert summary["status"] == "partial"
     assert (summary["sitemap_pages"], summary["inspected_sitemap_pages"]) == (5, 2)
     assert summary["skipped_sitemap_pages"] == 3 and summary["skipped"] == []
+
+
+def test_refused_reads_raise_no_findings_and_are_named_as_unknown():
+    refused = {
+        **files(urls=["/", "/a"]),
+        "robots": {"status": "refused", "status_code": 403},
+    }
+    refused["sitemaps"]["files"] = [
+        {"url": f"{BASE}/sitemap.xml", "status": "refused", "status_code": 403}
+    ]
+    refused["sitemaps"]["urls"] = []
+    site_view = view(
+        site_files=refused,
+        pages=[facts("/"), {"url": f"{BASE}/a", "fetch": "refused", "status_code": 403}],
+    )
+    found = checks(site_view)
+    assert not {"sitemap.missing", "robots.unavailable", "sitemap.non_indexable_urls"} & set(found)
+    rows = {r["check"]: r for r in site_check_coverage(site_view, pagespeed={}, search={})}
+    assert rows["robots_txt"]["status"] == "unknown"
+    assert "refused Tin's reader" in rows["robots_txt"]["note"]
+    assert rows["page_html"]["status"] == "partial"
+    assert "refused Tin's reader for 1 page" in rows["page_html"]["note"]
+    assert coverage(site_view, None, page_cap=10)["inspected_pages"] == 1
 
 
 def test_sitemap_missing_uniform_lastmod_and_unreadable_files():

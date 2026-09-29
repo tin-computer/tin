@@ -275,7 +275,10 @@ addresses are public, the connection pinned to the vetted address, redirects rec
 never followed, at most 2 MB per page, four pages at a time, and robots.txt honored for
 the `Tin-Organic-Audit` user agent. It keeps only extracted facts: status, `X-Robots-Tag`,
 `<meta name="robots">`, canonical, hreflang alternates, `<html lang>`, H1 count, title and
-the presence and types of JSON-LD or microdata. JavaScript is never run.
+the presence and types of JSON-LD or microdata. JavaScript is never run. Answers that look
+like bot protection (HTTP 401, 403 or 429, or a 503 challenge page) are recorded as refused:
+the page's checks are unknown, not errors, and a refused robots.txt or sitemap is unknown,
+not missing.
 
 ### Search Console
 

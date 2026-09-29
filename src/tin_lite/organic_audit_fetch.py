@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
+import re
 import socket
 import time
 import zlib
@@ -35,6 +36,21 @@ SITE_FILES_SECONDS = 60
 MAX_ROBOTS_BYTES = 500_000
 MAX_SITEMAP_BYTES = 10_000_000
 PAGESPEED_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
+# Bot protection answers a reader it does not trust with these, or with a challenge page.
+# That says nothing about the page itself, so the page's facts stay unknown.
+REFUSAL_CODES = frozenset({401, 403, 429})
+CHALLENGE = re.compile(
+    rb"(?i)just a moment|cf-chl|captcha|access denied|px-captcha|datadome|attention required"
+)
+
+
+def refused(response: dict) -> bool:
+    code = response.get("status_code")
+    return code in REFUSAL_CODES or (
+        code == 503 and bool(CHALLENGE.search(response.get("body", b"")[:8000]))
+    )
+
+
 MAX_PAGESPEED_BYTES = 12_000_000
 
 
@@ -175,6 +191,8 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
         text = response["body"].decode(response.get("charset") or "utf-8", "replace")
         robots.update(status="observed", **parse_robots(text))
         robots["truncated"] = response["truncated"]
+    elif refused(response):
+        robots.update(status="refused", status_code=response["status_code"])
     elif 400 <= response["status_code"] < 500:
         robots.update(status="missing", status_code=response["status_code"])
     elif response["status_code"] in {301, 302, 303, 307, 308}:
@@ -202,7 +220,10 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
         if response["status"] != "observed":
             entry["status"] = response["status"]
         elif response["status_code"] != 200:
-            entry.update(status="http_error", status_code=response["status_code"])
+            entry.update(
+                status="refused" if refused(response) else "http_error",
+                status_code=response["status_code"],
+            )
         else:
             body = _decompress(response["body"], MAX_SITEMAP_BYTES)
             if body is None or response["truncated"]:
@@ -250,6 +271,8 @@ def _page_record(url: str, response: dict, reader: SiteReader) -> dict:
             fetch="redirect",
             location=target[:2000] if reader.in_scope(target) else "(outside the audited site)",
         )
+    elif refused(response):
+        record["fetch"] = "refused"
     elif code >= 400:
         record["fetch"] = "http_error"
     elif "html" not in (response.get("content_type") or "").lower():

@@ -330,3 +330,39 @@ def test_pagespeed_summary_prefers_field_data_and_never_invents_inp():
     }
     assert summary["lab"]["lcp_ms"] == 2000.5 and summary["lab"]["cls"] is None
     assert pagespeed_summary({})["field"]["inp_ms"] is None
+
+
+@pytest.mark.asyncio
+async def test_bot_protection_refusals_are_unknown_not_errors():
+    site = SyntheticSite()
+    site.routes["https://example.com/robots.txt"] = (403, {}, b"Forbidden")
+    site.routes["https://example.com/sitemap.xml"] = (429, {}, b"Too many requests")
+    site.routes["https://example.com/a"] = (403, {"content-type": "text/html"}, b"Access denied")
+    site.routes["https://example.com/b"] = (
+        503,
+        {"content-type": "text/html"},
+        b"<html><title>Just a moment...</title></html>",
+    )
+    site.routes["https://example.com/c"] = (503, {"content-type": "text/html"}, b"Down")
+    async with site.reader(("example.com",)) as reader:
+        files = await read_site_files(reader, "https://example.com/", AUDIT_POLICY)
+        pages = await read_pages(
+            reader,
+            ["https://example.com/a", "https://example.com/b", "https://example.com/c"],
+            robots=files["robots"],
+            policy=AUDIT_POLICY,
+            seconds=30,
+        )
+    assert files["robots"] == {
+        "url": "https://example.com/robots.txt",
+        "status": "refused",
+        "status_code": 403,
+    }
+    assert files["sitemaps"]["files"][0]["status"] == "refused"
+    # Unknown robots rules do not stop Tin from reading the pages the owner asked about.
+    assert robots_allows(files["robots"], "googlebot", "https://example.com/a") is None
+    assert [pages[f"https://example.com/{p}"]["fetch"] for p in "abc"] == [
+        "refused",
+        "refused",
+        "http_error",
+    ]
