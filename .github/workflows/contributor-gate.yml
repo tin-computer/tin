@@ -4,6 +4,8 @@ name: contributor-gate
 # project (docs/contributing-workflows.md). pull_request_target runs the base branch's copy
 # of this workflow and script with a write token, so it must never check out, build or run
 # the pull request's code: the script only reads the pull request through the API.
+# Maintainer access is checked for the PR author using repository metadata; this does not
+# need an organization-reading token or change the team's separate merge permissions.
 on:
   pull_request_target:
     types: [opened, reopened]

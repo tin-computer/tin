@@ -162,6 +162,25 @@ async function listFiles(github, repo, pull_number) {
   return github.paginate(github.rest.pulls.listFiles, { ...repo, pull_number, per_page: 100 });
 }
 
+async function hasWriteAccess(github, repo, author) {
+  try {
+    // Check the author, never the person who opened/reopened or reran the job. The event's
+    // author_association alone does not reliably identify our maintainers. Repository
+    // permissions include team grants and need only the existing token's metadata:read.
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+      ...repo, username: author.login,
+    });
+    if (data.user?.id !== author.id || !["admin", "write", "read", "none"].includes(data.permission)) {
+      throw new Error("GitHub returned an unexpected author permission response");
+    }
+    // GitHub maps the maintain role to the legacy write permission.
+    return data.permission === "admin" || data.permission === "write";
+  } catch (error) {
+    if (error.status === 404) return false;
+    throw error;
+  }
+}
+
 async function otherOpenWorkflowPullRequest(github, repo, pr) {
   const open = await github.paginate(github.rest.pulls.list, { ...repo, state: "open", per_page: 100 });
   for (const other of open) {
@@ -202,6 +221,17 @@ export async function gate({ github, context, core, fetch = globalThis.fetch, en
   if (!isWorkflowPullRequest(files)) {
     core.info("No workflow package changes; not gated.");
     return "skipped";
+  }
+  try {
+    if (await hasWriteAccess(github, repo, pr.user)) {
+      core.info(`PR author ${pr.user.login} has repository write access or higher; not gated.`);
+      return "skipped";
+    }
+  } catch (error) {
+    // An unavailable permission check is not evidence that this is an outside contributor.
+    core.warning(`Author permission check unavailable: ${error.message}`);
+    await github.rest.issues.addLabels({ ...repo, issue_number: pr.number, labels: ["gate-error"] });
+    return "error";
   }
   // A maintainer adds gate-exempt and reopens for packages that can't run privately yet.
   const exempt = (pr.labels || []).some((label) => label.name === "gate-exempt");

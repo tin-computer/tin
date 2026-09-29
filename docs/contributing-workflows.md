@@ -9,6 +9,15 @@ one. So workflow pull requests from outside the maintainer team go through an au
 This applies to changes under `workflow_packages/` and `workflow_evals/`. Bug fixes, docs and
 integrations follow [CONTRIBUTING](../CONTRIBUTING.md) as before.
 
+Members of `@tin-computer/tin-lite-maintainers` can open internal workflow and backend
+pull requests without these outside-contributor requirements. The gate keeps its existing
+owner, organization-member, collaborator and bot exemptions. If the PR event doesn't
+identify the author as trusted, it checks the author's current repository access: write,
+maintain or admin access also exempts the PR. The maintainer team's repository grant supplies
+that access; no extra token or list of usernames is needed. This checks the **author**,
+not whoever reopens the PR or reruns the check. A failed permission lookup leaves the PR
+open with `gate-error` for review. CI and [merge permissions](repository-policy.md) still apply.
+
 ## Before you write anything
 
 1. Check the [catalog](workflows.md) and the open **and closed** workflow pull requests. If a
