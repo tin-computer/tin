@@ -19,6 +19,9 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
+# The provider's own wait for the style model, just inside the step's 180-second budget. Without
+# it the client stops at its 90-second default, before a 6,000-token guide can finish.
+MODEL_TIMEOUT_SECONDS = 165
 
 
 class StyleCaptureActivities:
@@ -147,6 +150,7 @@ class StyleCaptureActivities:
                                 output_schema_name="writing_style",
                                 max_output_tokens=style.POLICY["max_output_tokens"],
                             ),
+                            timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
                 # Receipt precedes semantic validation; a retry cannot buy a repair call.
                 await self.db.complete_effect(

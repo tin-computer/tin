@@ -10,6 +10,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
 from tin_lite.site_health import (
+    MODEL_TIMEOUT_SECONDS,
     SITE_HEALTH_MODEL_ROUTE,
     LivePageEvidence,
     SiteHealthImprover,
@@ -25,9 +26,11 @@ class FakeRouter:
     def __init__(self, parsed: dict) -> None:
         self.parsed = parsed
         self.calls = []
+        self.timeouts = []
 
-    async def generate(self, route_key, request):
+    async def generate(self, route_key, request, *, timeout_seconds=None):
         self.calls.append((route_key, request))
+        self.timeouts.append(timeout_seconds)
         return ModelResult(
             provider=ProviderName.OPENAI,
             model="gpt-6-luna",
@@ -131,6 +134,7 @@ async def test_improver_accepts_only_changed_existing_files_within_budget() -> N
     assert result.files[0].content == "<h1>Healthy</h1>"
     assert result.request_id == "resp_site_health"
     assert router.calls[0][0] == SITE_HEALTH_MODEL_ROUTE.key
+    assert router.timeouts == [MODEL_TIMEOUT_SECONDS] and MODEL_TIMEOUT_SECONDS > 90
     request = router.calls[0][1]
     assert request.output_schema is not None
     assert request.max_output_tokens == 16_000

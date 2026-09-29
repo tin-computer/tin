@@ -32,7 +32,11 @@ from tin_lite.integrations import (
 )
 from tin_lite.model_providers import ModelProviderError, ModelResult, ModelUsage, ProviderName
 from tin_lite.organic_audit import canonical_json, digest
-from tin_lite.paid_ads_launch_activities import PLACEHOLDER, PaidAdsLaunchActivities
+from tin_lite.paid_ads_launch_activities import (
+    MODEL_TIMEOUT_SECONDS,
+    PLACEHOLDER,
+    PaidAdsLaunchActivities,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures" / "paid_ads"
 CUSTOMER = "1234567890"
@@ -325,9 +329,11 @@ def step_of(schema_name: str) -> str:
 
 
 def router_for(model):
-    async def generate(route, request):
+    async def generate(route, request, *, timeout_seconds=None):
         step = step_of(request.output_schema_name)
         assert route == paid_ads_launch.route_for(step).key
+        # The client waits as long as the step's budget, not its 90-second default.
+        assert timeout_seconds == MODEL_TIMEOUT_SECONDS
         try:
             parsed = await model(
                 step, request.system, request.messages[0].content, request.output_schema, 0, ""

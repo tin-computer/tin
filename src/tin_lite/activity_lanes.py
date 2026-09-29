@@ -77,6 +77,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "keyword_collect",
         "keyword_failure",
         "keyword_inspect",
+        "keyword_inspect_batch",
         "keyword_prepare",
         "keyword_project",
         "keyword_publish",

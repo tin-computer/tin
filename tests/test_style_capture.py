@@ -37,7 +37,7 @@ from tin_lite.style_capture import (
     read_sources,
     render_guide,
 )
-from tin_lite.style_capture_activities import StyleCaptureActivities
+from tin_lite.style_capture_activities import MODEL_TIMEOUT_SECONDS, StyleCaptureActivities
 from tin_lite.style_samples import extract_sample
 from tin_lite.workflow_inputs import WorkflowInputError
 from tin_lite.writing_style import STYLE_PATH, style_capture_preparation
@@ -315,6 +315,8 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     assert done.status.value == "succeeded" and done.artifact_path == STYLE_PATH
     assert done.retained_output is None and done.review_decision == "approved"
     assert f.router.generate.await_count == 1 and f.storage.stage_native_output.await_count == 1
+    # The client waits for the whole guide, not its 90-second default.
+    assert f.router.generate.await_args.kwargs["timeout_seconds"] == MODEL_TIMEOUT_SECONDS > 90
     result = await read_run_output(storage=f.storage, run=done, repo_id=f.project.state_repo_id)
     assert b"provisional" in result.content and done.expected_head_sha.encode() in result.content
     assert f.storage.repo.writes == 2  # the proposal and the saved guide
