@@ -234,7 +234,9 @@ reader, and filters runs, needs-you moments, and founder edits without inventing
 that do not yet exist.
 
 `project.task` is the escape hatch for concrete one-off work, not a second chat mode and not a row
-per ad-hoc workflow. One task may be active per project. Temporal owns its durable lifecycle while
+per ad-hoc workflow. One task may work, ask a question or be paused per project at a time; a task
+whose work is finished and only waits for review does not block the next one, and waking it
+waits until no other task is working. Temporal owns its durable lifecycle while
 Codex app-server runs one turn at a time in a fenced E2B workspace with web search enabled through
 the existing proxy. Its transcript and controls live on `/api/tasks/{run_id}`; Luna Chat stays
 available and separate. Pausing saves a branch checkpoint and kills the sandbox. Read-only tasks
