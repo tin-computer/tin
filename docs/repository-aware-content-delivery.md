@@ -173,7 +173,8 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
   commits to main (`github_commit`), Tin merges that PR after the run succeeds, but only
   when all of these hold: the run was started by the approval; the patch is the approved
   page as one Markdown file, which is the change the Markdown publisher already commits to
-  main; the PR's branch still holds exactly that file at the head Tin read; and GitHub
+  main; the PR still targets the pinned default branch; its branch still holds exactly
+  that file at the head Tin read; and GitHub
   reports it `clean` (no conflicts, no failing or pending checks, no required review)
   within about three and a half minutes. Tin then asks GitHub to merge that head only.
   A PR that adds a route, a component or an index is site code the founder has not
