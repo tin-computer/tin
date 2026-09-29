@@ -4,10 +4,9 @@ This folder accepts deterministic Python, Python with managed model steps, and C
 procedures. They use the same versioned package format as project-owned workflows.
 CI validates every package without executing its Python, prompts or skills.
 
-[`example.approved_evidence`](example.approved_evidence/workflow.json) demonstrates selecting
-an approved post batch by run ID and reading its exact saved text from `ctx["evidence"]`.
-It is a qualification example, not a registered product workflow. Both its public package and
-private copy use the [approved-source contract](../docs/approved-project-evidence.md).
+[`example.project_files`](example.project_files/workflow.json) reads `BRAND.md` directly,
+with ordinary caller-supplied notes as a fallback when that file is missing. There are no
+source-run inputs or revision controls. See [project file reads](../docs/code-project-files.md).
 
 Start with code when you know the steps. Add model calls where judgment is useful. Use a
 procedure when an agent needs to choose the steps. [Adding a workflow](../docs/adding-a-workflow.md)

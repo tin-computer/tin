@@ -17,7 +17,9 @@ from test_private_workflows import ACTOR, app, structured
 from test_procedure_publication import publication_db as publication_db
 from test_workflow_code import KEY, PATH, activate_code, setup
 
+from tin_lite import code_schedules
 from tin_lite.billing_contracts import NANOS_PER_DOLLAR, ProjectSpendingPolicy
+from tin_lite.code_project_files import saved_source as saved_project_files
 from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.workflow_code import example_files
 
@@ -108,6 +110,8 @@ async def test_mcp_saved_code_schedules_at_zero_credits_and_preserves_accepted_i
     run = await f.db.get_run(UUID(first["run_id"]))
     assert run.trigger_source == "schedule" and run.started_by_clerk_user_id == ACTOR
     assert run.input == {"minimum_cents": 1000}
+    first_files = await saved_project_files(f.db, run, f.project)
+    assert first_files["revision"] == f.storage.repo.head
     assert (await f.db.get_project_workflow(UUID(configured["id"]))).next_run_at > datetime.now(UTC)
     updated = structured(
         await server.call_tool(
@@ -121,6 +125,7 @@ async def test_mcp_saved_code_schedules_at_zero_credits_and_preserves_accepted_i
         )
     )
     assert await common.dispatch_scheduled_workflow(payload) == first
+    assert await saved_project_files(f.db, run, f.project) == first_files
     assert await common.dispatch_scheduled_workflow(occurrence(updated)) == {}  # overlap
     await ActivityEnvironment().run(code.execute, first["run_id"])
     await ActivityEnvironment().run(code.publish, first["run_id"])
@@ -129,6 +134,7 @@ async def test_mcp_saved_code_schedules_at_zero_credits_and_preserves_accepted_i
     next_run = await f.db.get_run(UUID(second["run_id"]))
     assert next_run.input == {"minimum_cents": 2000}
     assert next_run.definition_commit_sha == run.definition_commit_sha
+    assert (await saved_project_files(f.db, next_run, f.project))["revision"] == f.storage.repo.head
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
     assert await f.db.pool.fetchval("SELECT balance_nanos FROM billing_accounts") == 0
     result = structured(
@@ -181,6 +187,57 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
     )
     assert resumed["status"] == "active" and handle.unpause.await_count == 1
     assert (await common.dispatch_scheduled_workflow(occurrence(configured)))["run_id"]
+
+
+async def test_schedule_without_project_revision_does_not_admit_a_run(billed, monkeypatch):
+    f = billed
+    _, common, _, configured, _ = await prepared(f, monkeypatch)
+
+    async def unavailable(_repo, _branch):
+        return None
+
+    monkeypatch.setattr(f.storage, "head_sha", unavailable)
+    assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
+    assert not await f.db.pool.fetchval("SELECT id FROM workflow_runs")
+    assert not await f.db.pool.fetchval("SELECT run_id FROM billing_run_budgets")
+    saved = await f.db.get_project_workflow(UUID(configured["id"]))
+    assert saved.status == "paused" and "canonical revision" in saved.last_error
+
+
+async def test_concurrent_occurrence_acceptance_wins_over_later_source_error(billed, monkeypatch):
+    f = billed
+    _, common, _, configured, _ = await prepared(f, monkeypatch)
+    payload = occurrence(configured)
+    selected = await f.db.get_project_workflow(UUID(configured["id"]))
+    workflow = await f.db.get_workflow(selected.workflow_id)
+    original = code_schedules.select_project_files
+    accepted_run = None
+
+    async def accept_then_fail(*, database, storage, project_id):
+        nonlocal accepted_run
+        source = await original(database=database, storage=storage, project_id=project_id)
+        accepted_run, created = await f.db.create_run(
+            project_id=selected.project_id,
+            workflow_id=selected.workflow_id,
+            started_by_clerk_user_id=selected.created_by_clerk_user_id,
+            start_idempotency_key=f"schedule:{payload['occurrence_id']}",
+            input_payload=selected.inputs,
+            project_workflow_id=selected.id,
+            definition_commit_sha=selected.definition_commit_sha,
+            pinned_definition=workflow.definition,
+            trigger_source="schedule",
+            scheduled_for=datetime.fromisoformat(payload["scheduled_for"]),
+            schedule_settings_revision=selected.settings_revision,
+            code_project_files_source=source,
+        )
+        assert created
+        raise ValueError("later dispatcher lost its source read")
+
+    monkeypatch.setattr(code_schedules, "select_project_files", accept_then_fail)
+    recovered = await common.dispatch_scheduled_workflow(payload)
+    assert recovered["run_id"] == str(accepted_run.id)
+    assert (await f.db.get_project_workflow(selected.id)).status == "active"
+    assert await saved_project_files(f.db, accepted_run, f.project)
 
 
 async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritative(

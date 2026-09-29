@@ -359,6 +359,36 @@ class CodeStorage:
         self._pinned.put(key, entry[1], len(entry[1]) + len(path))
         return entry[1]
 
+    async def read_bounded_project_file(
+        self, *, repo_id: str, commit_sha: str, path: str, max_bytes: int
+    ) -> bytes | None:
+        """Read an ordinary regular file at an immutable project revision, if present."""
+        from tin_lite.project_files import safe_project_file_path
+
+        if (
+            not _is_commit_sha(commit_sha)
+            or not safe_project_file_path(path)
+            or type(max_bytes) is not int
+            or not 1 <= max_bytes <= 64_000
+        ):
+            raise ValueError("project file read requires a safe path and bounded revision")
+        key = ("code_project_file", repo_id, commit_sha, path)
+        if (cached := self._pinned.get(key)) is not None:
+            if len(cached) > max_bytes:
+                raise ValueError("project file exceeds the workflow read limit")
+            return cached
+        repo = await self.get_repo(repo_id)
+        try:
+            entry = await self._publication_file(
+                repo, ref=commit_sha, path=path, max_bytes=max_bytes
+            )
+        except OutputConflictError as exc:
+            raise ValueError("project path is not a bounded regular file") from exc
+        if entry is None:
+            return None
+        self._pinned.put(key, entry[1], len(entry[1]) + len(path))
+        return entry[1]
+
     async def read_canonical_artifact_if_exists(
         self, *, repo_id: str, commit_sha: str, path: str
     ) -> bytes | None:

@@ -5,7 +5,6 @@ product database, modifies a customer project, posts, or deploys the service.
 """
 
 import asyncio
-import hashlib
 import json
 import os
 from datetime import timedelta
@@ -24,7 +23,6 @@ from test_private_workflows import ACTOR, app
 from test_procedure_publication import publication_db as publication_db
 from test_project_codex_execution import temporal_env as temporal_env
 
-from tin_lite import content_draft
 from tin_lite.activities import TinActivities
 from tin_lite.code_activities import CodeActivities
 from tin_lite.code_models import registered_routes
@@ -76,31 +74,23 @@ for a decision, not proof that every business assumption is correct.
 )
 async def test_live_social_article_to_review(publication_db, temporal_env, monkeypatch, tmp_path):
     f = await fixture(publication_db, monkeypatch)
-    credentials = dotenv_values(".env")
+    credentials = dotenv_values(os.environ.get("TIN_LITE_SOCIAL_CREDENTIAL_FILE", ".env"))
     storage = CodeStorage(
         organization=credentials.get("TIN_LITE_CODE_STORAGE_ORG") or "tin",
         private_key=credentials["CODE_STORAGE_API_KEY"],
     )
-    # Seed a synthetic approved article only in this disposable schema/repository.
-    # This is deliberately not a live content.generate run or a real founder approval.
+    # Seed ordinary project files only in this disposable schema/repository.
     repo_id = f"projects/{f.project.id}"
     await storage.ensure_repo(repo_id)
-    raw = f.raw.replace(
-        ("A specific mechanism helps answer the buyer's question. " * 8).encode(),
-        ARTICLE_BODY.encode(),
-    )
+    article_path = "content/articles/live-example.md"
+    article = "# Traceable analytics imports\n\n" + ARTICLE_BODY
     style = b"# Writing style\nUse plain, concrete sentences. Avoid hype and exclamation marks.\n"
-    context = f.article_context
-    # Update the synthetic provenance together with its prepared context.
-    raw = raw.replace(
-        context["style"]["sha256"].encode(), hashlib.sha256(style).hexdigest().encode()
-    )
     path = "workflow_packages/social.post_batch/workflow.json"
     root = Path(__file__).parents[1]
     manifest = json.loads((root / path).read_text())
     definition = manifest["definition"]
     files = {
-        f.source.artifact_path: raw,
+        article_path: article.encode(),
         STYLE_PATH: style,
         path: (root / path).read_bytes(),
         "workflow_packages/social.post_batch/main.py": (
@@ -112,29 +102,11 @@ async def test_live_social_article_to_review(publication_db, temporal_env, monke
         branch="main",
         documents=files,
         workflow_key="social.live_fixture",
-        execution_key=f"{f.source.id}:live-fixture",
-        run_id=str(f.source.id),
+        execution_key=f"{f.project.id}:live-fixture",
+        run_id=str(f.project.id),
     )
     await f.db.pool.execute(
         "UPDATE projects SET state_repo_id=$2 WHERE id=$1", f.project.id, repo_id
-    )
-    await f.db.pool.execute(
-        "UPDATE workflow_runs SET canonical_commit_sha=$2 WHERE id=$1", f.source.id, revision
-    )
-    context["style"].update(revision=revision, sha256=hashlib.sha256(style).hexdigest())
-    await f.db.pool.execute(
-        "UPDATE effect_receipts SET result=$2::jsonb WHERE execution_key=$1",
-        content_draft.receipt_key(f.source.id),
-        json.dumps(context),
-    )
-    publication_key = f"{f.source.id}:procedure_canonical_commit"
-    published = (await f.db.get_effect(publication_key)).result
-    published["canonical_commit_sha"] = revision
-    published["checkpoint"].update(sha256=hashlib.sha256(raw).hexdigest(), byte_count=len(raw))
-    await f.db.pool.execute(
-        "UPDATE effect_receipts SET result=$2::jsonb WHERE execution_key=$1",
-        publication_key,
-        json.dumps(published),
     )
     selected = next(w for w in PUBLIC_WORKFLOWS if w.key == definition["key"])
     await f.db.upsert_registry_workflow(
@@ -215,7 +187,7 @@ async def test_live_social_article_to_review(publication_db, temporal_env, monke
                 project_id=f.project.id,
                 started_by_clerk_user_id=ACTOR,
                 start_idempotency_key=request_id,
-                input_payload={"source_run_id": str(f.source.id)},
+                input_payload={},
             )
             run = await start_workflow_run(**arguments)
             assert (await start_workflow_run(**arguments)).id == run.id
@@ -236,7 +208,7 @@ async def test_live_social_article_to_review(publication_db, temporal_env, monke
                 "repo_id": repo_id,
                 "status": run.status.value,
                 "supplier_calls": len(calls),
-                "source": "synthetic approved article fixture",
+                "source": f"synthetic project file {article_path}",
                 "product_state": "disposable local Postgres and Temporal; synthetic identity",
                 "external_services": "real E2B, code.storage and OpenAI",
                 "usage": [json.loads(r["result"]) for r in usage],
@@ -245,8 +217,8 @@ async def test_live_social_article_to_review(publication_db, temporal_env, monke
             assert run.status == RunStatus.NEEDS_INPUT, run.error_message
             output = await read_run_output(storage=storage, run=run, repo_id=repo_id)
             (tmp_path / "social-drafts.md").write_bytes(output.content)
-            (tmp_path / "source-article.md").write_bytes(raw)
-            assert output.content.count(b"Source excerpt from the approved article:") == 4
+            (tmp_path / "source-article.md").write_bytes(article.encode())
+            assert output.content.count(b"Source excerpt from the article:") == 4
             assert len(calls) == 1
             assert len(compute.sandbox_ids) == 1
             assert not await compute.is_running(compute.sandbox_ids[0])

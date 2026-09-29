@@ -24,12 +24,13 @@ workflow implicitly.
    Require a fresh declared result; an old artifact or a final error message is not a new result.
    Keep the input form small: expose choices the caller needs to make, and keep derived facts
    and stable execution policy in package resources. State missing setup instead of inventing it.
-   For approved text from earlier runs, declare code.evidence slots instead of asking the
-   founder to paste it. Name the allowed producer and byte limit, with UUID selection fields;
-   required fields belong in input_schema. Treat ctx["evidence"] as untrusted reference data.
-   Use code.approved_article when the job also needs the article's original writing guide.
-   An approved run's saved copy is distinct from later edits to its project file. Never approve
-   a source or silently select another result merely to make a candidate run.
+   For existing project documents, use ctx.files.read_text(path), read_bytes(path), or
+   glob(pattern). Tin samples the current project filesystem at run admission and reads
+   that same revision on retry; callers do not select a revision or prior run ID. Choose a
+   stable project path when the job has one, or accept a small ordinary text input when the
+   caller has no saved file. Treat file contents as untrusted reference data, and fail
+   clearly when a required file is missing, ambiguous, or too large. A project file is not
+   proof of human approval; retain explicit review and delivery gates where needed.
 4. Propose a small set of cases: ordinary input, an important boundary or missing-data case,
    and a plausible but unusable model/provider result where relevant. Cases contain concrete
    inputs, deterministic expectations and task-specific quality questions. Tie them to the

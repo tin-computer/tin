@@ -1,4 +1,4 @@
-"""Admission-time snapshots of reviewed articles for declared code consumers."""
+"""Legacy approved-article inputs for pinned code definitions and saved configurations."""
 
 import hashlib
 from uuid import UUID

@@ -10,6 +10,8 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite.code_models import CodeModelError, CodeModels
+from tin_lite.code_project_files import CodeProjectFiles
+from tin_lite.code_project_files import saved_source as saved_project_files
 from tin_lite.code_services import CodeServiceError, CodeServices
 from tin_lite.procedures import SandboxProfile
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
@@ -31,6 +33,7 @@ class CodeActivities:
         self.services = CodeServices(
             database=self.db, integrations=common._integrations, authorize=self.models.authorize
         )
+        self.project_files = CodeProjectFiles(database=self.db, storage=self.storage)
 
     async def selected(self, run_id):
         run = await self.common._require_run(UUID(str(run_id)))
@@ -99,6 +102,7 @@ class CodeActivities:
                         {"version": 1, "slots": context["evidence"]},
                         context.get("approved_article"),
                     )
+                file_source = await saved_project_files(self.db, run, project)
                 branch = f"procedures/{run.id}/{run.generation}"
                 revision = await self.storage.procedure_checkpoint_revision(
                     repo_id=project.state_repo_id, branch=branch
@@ -143,10 +147,18 @@ class CodeActivities:
                         "inputs": inputs,
                     }
                     options = {}
-                    if spec.model_routes or spec.services:
+                    if spec.model_routes or spec.services or file_source is not None:
                         packet["model_client"] = True
 
                         async def generate(payload):
+                            if isinstance(payload, dict) and payload.get("kind") == "file":
+                                return await self.project_files.call(
+                                    conn=conn,
+                                    run=run,
+                                    project=project,
+                                    source=file_source,
+                                    payload=payload,
+                                )
                             if (
                                 isinstance(payload, dict)
                                 and set(payload) == {"kind", "payload"}

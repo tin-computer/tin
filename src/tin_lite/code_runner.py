@@ -7,6 +7,7 @@ No customer output or exception is a controller command or product log.
 from __future__ import annotations
 
 import asyncio
+import base64
 import importlib.machinery
 import importlib.util
 import inspect
@@ -66,13 +67,33 @@ class Models:
             client.sendall(raw)
             response = json.loads(client.makefile("rb").readline(MAX_RPC + 1))
         if response.get("error"):
+            if request.get("kind") == "file":
+                if response["error"] == "file_not_found":
+                    raise FileNotFoundError(request["path"])
+                raise ValueError(response["error"].replace("_", " "))
             error = ServiceError if request.get("kind") == "service" else ValueError
             raise error(response["error"])
         return response["result"]
 
 
+class Files(Models):
+    """Read a pinned project snapshot through Tin's protected, read-only bridge."""
+
+    def read_text(self, path):
+        encoded = self._call({"kind": "file", "operation": "read_text", "path": path})
+        return base64.b64decode(encoded, validate=True).decode("utf-8")
+
+    def read_bytes(self, path):
+        encoded = self._call({"kind": "file", "operation": "read_bytes", "path": path})
+        return base64.b64decode(encoded, validate=True)
+
+    def glob(self, pattern):
+        return self._call({"kind": "file", "operation": "glob", "path": pattern})
+
+
 class Context(dict):
     models = Models()
+    files = Files()
 
     class Services(Models):
         async def call(self, *, service, step, operation, arguments=None):
@@ -125,7 +146,8 @@ def managed_process(command, timeout):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         ) as process:
-            calls = 0
+            service_calls = 0
+            file_calls = 0
             try:
                 while process.poll() is None:
                     if time.monotonic() >= deadline:
@@ -137,10 +159,15 @@ def managed_process(command, timeout):
                     with client:
                         client.settimeout(min(2, max(0.01, deadline - time.monotonic())))
                         raw = client.makefile("rb").readline(MAX_RPC + 1)
-                        calls += 1
-                        if len(raw) > MAX_RPC or not raw.endswith(b"\n") or calls > 32:
-                            raise ValueError("invalid model request envelope")
+                        if len(raw) > MAX_RPC or not raw.endswith(b"\n"):
+                            raise ValueError("invalid code bridge request envelope")
                         request = json.loads(raw)
+                        if isinstance(request, dict) and request.get("kind") == "file":
+                            file_calls += 1
+                        else:
+                            service_calls += 1
+                        if file_calls > 64 or service_calls > 32:
+                            raise ValueError("code bridge call limit exceeded")
                         (CONTROL / "request.json").write_text(json.dumps(request), encoding="utf-8")
                         print("TIN_MODEL_REQUEST", flush=True)
                         reply = CONTROL / "response.json"

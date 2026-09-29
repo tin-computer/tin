@@ -1812,17 +1812,6 @@ function bindWorkflowResultControls(root) {
       form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
     });
     bindWorkflowFieldValidation(form);
-    if (form.dataset.workflowField?.startsWith("input:")) {
-      const configured = state.projectWorkflows.find((item) => item.id === form.dataset.projectWorkflowId);
-      const workflow = state.workflows.find((item) => item.id === configured?.workflow_id);
-      if (workflow?.definition?.executor === "workflow.code") {
-        const context = currentProjectContext();
-        window.TinCodeSetup.bindSources(form, {
-          workflow, configured, projectId: context.projectId, fetch: authorizedFetch,
-          isCurrent: () => isCurrentProjectContext(context),
-        });
-      }
-    }
   });
   root.querySelectorAll(".workflow-config-form, .system-config-form").forEach((form) => {
     const workflow = state.workflows.find((item) => item.id === form.dataset.workflowId);
@@ -3876,7 +3865,6 @@ function readWorkflowInputs(form, schema) {
     if (name === "project_id") continue;
     const field = form.elements[`input:${name}`];
     if (!field) continue;
-    if (field.dataset.approvedSourcePicker && !field.value) continue;
     inputs[name] = readWorkflowInputValue(field, definition);
   }
   return inputs;
@@ -3932,11 +3920,7 @@ async function saveProjectWorkflowField(event) {
     const inputName = fieldName.slice("input:".length);
     const definition = configured.input_schema.properties?.[inputName];
     if (!definition) return;
-    if (form.elements.value.dataset.approvedSourcePicker && !form.elements.value.value) {
-      delete inputs[inputName];
-    } else {
-      inputs[inputName] = readWorkflowInputValue(form.elements.value, definition);
-    }
+    inputs[inputName] = readWorkflowInputValue(form.elements.value, definition);
   }
   try {
     const saved = await api(

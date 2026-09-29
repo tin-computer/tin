@@ -141,7 +141,15 @@ class SyntheticCompute:
         return "synthetic-code-sandbox"
 
     async def run_code_and_kill(self, *, packet, **kwargs):
-        assert set(packet) == {"files", "entrypoint", "timeout_seconds", "context", "inputs"}
+        assert set(packet) == {
+            "files",
+            "entrypoint",
+            "timeout_seconds",
+            "context",
+            "inputs",
+            "model_client",
+        }
+        assert packet["model_client"] is True
         self.calls += 1
         self.alive = False
         return json.dumps(self.result).encode()

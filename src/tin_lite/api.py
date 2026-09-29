@@ -113,12 +113,7 @@ from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
-from tin_lite.workflow_source_inputs import (
-    discover_slots,
-    selected_run_sources,
-    source_readiness,
-    source_readiness_for_workflows,
-)
+from tin_lite.workflow_source_inputs import selected_run_sources
 
 
 class _RunSafeRoute(APIRoute):
@@ -2101,15 +2096,6 @@ async def list_workflows(
         if project_id is not None
         else {}
     )
-    if project_id is not None:
-        readiness = await source_readiness_for_workflows(
-            database=request.app.state.runtime.database,
-            storage=getattr(request.app.state.runtime, "storage", None),
-            settings=request.app.state.settings,
-            project_id=project_id,
-            workflows=visible,
-            readiness=readiness,
-        )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return [
         _workflow_view(item, request.app.state.settings).model_copy(
@@ -2476,58 +2462,6 @@ async def get_project_file_document(
         revision=revision,
         size_bytes=len(content),
     )
-
-
-@router.get("/api/projects/{project_id}/workflow-sources/{workflow_id}")
-async def list_workflow_sources(
-    project_id: UUID,
-    workflow_id: UUID,
-    request: Request,
-    project_workflow_id: UUID | None = None,
-    user: AuthContext = AUTHENTICATED_USER,
-) -> dict:
-    """Discover source runs using the selected definition and admission proof."""
-    await _require_project_access(project_id, request, user)
-    runtime = request.app.state.runtime
-    database = runtime.database
-    workflow = await database.get_workflow(workflow_id)
-    if workflow is None or workflow.project_id not in (None, project_id):
-        raise HTTPException(status_code=404, detail="workflow not found")
-    configured = None
-    if project_workflow_id is not None:
-        configured = await database.get_project_workflow(project_workflow_id)
-        if (
-            configured is None
-            or configured.project_id != project_id
-            or configured.workflow_id != workflow_id
-        ):
-            raise HTTPException(status_code=404, detail="project workflow not found")
-    from tin_lite.workflow_definitions import resolve_execution_contract
-
-    try:
-        selected = await resolve_execution_contract(
-            storage=getattr(runtime, "storage", None),
-            workflow=workflow,
-            project_id=project_id,
-            revision=configured.definition_commit_sha if configured else None,
-            input_schema=configured.input_schema if configured else None,
-        )
-    except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if selected.executor != "workflow.code":
-        return {"definition_revision": selected.current_commit_sha, "slots": []}
-    try:
-        slots = await discover_slots(
-            database=database,
-            storage=runtime.storage,
-            settings=request.app.state.settings,
-            project_id=project_id,
-            definition=selected.definition,
-            inputs=configured.inputs if configured else None,
-        )
-    except (LookupError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return {"definition_revision": selected.current_commit_sha, "slots": slots}
 
 
 @router.get(
@@ -3183,18 +3117,6 @@ async def get_workflow(
             project_id=project_id,
             workflows=[workflow],
         )
-        if workflow.executor == "workflow.code":
-            try:
-                slots = await discover_slots(
-                    database=request.app.state.runtime.database,
-                    storage=getattr(request.app.state.runtime, "storage", None),
-                    settings=request.app.state.settings,
-                    project_id=project_id,
-                    definition=workflow.definition,
-                )
-            except (LookupError, ValueError) as exc:
-                raise HTTPException(status_code=409, detail=str(exc)) from exc
-            readiness[workflow.id] = source_readiness(readiness[workflow.id], slots)
         view = view.model_copy(update={"readiness": readiness[workflow.id]})
     response.headers["X-Tin-Read-Source"] = "postgres"
     return view

@@ -3,14 +3,14 @@
 Implemented and deployed September 15, 2026, within the existing private-project rollout.
 This implements only Slice A of `project-connections-and-private-workflow-funding-plan.md`.
 
-This page records the code-only foundation. The deployed executor also has later
+This page records the original code-only foundation. Current file access is documented
+separately below. The deployed executor also has later
 [managed model steps](code-model-workflows.md), [API connections](project-api-connections.md),
 and [eligible schedules](code-workflow-schedules.md). Slice A's limits and acceptance below
 do not claim coverage of those later capabilities; see [current feature status](feature-status.md).
 
-On-demand code workflows can also declare [approved text inputs](approved-project-evidence.md).
-The selected contents arrive as bounded context, with their exact source revisions; this does
-not grant an unrestricted project filesystem reader.
+Code workflows can read [current project files](code-project-files.md) through `ctx.files`.
+Tin pins the latest project revision at launch for stable retries; users choose no revision.
 
 Private describes project ownership and access. `workflow.code` is a separately registered
 Temporal executor for ordinary Python functions. Existing reusable `codex.procedure` packages,
@@ -64,7 +64,7 @@ closed JSON-Schema subset. `ctx` contains the stable run ID and creation timesta
 reads start in the package directory; local helper modules and fixture files must be declared.
 
 The supported dependency surface is Python's standard library. No package installation, model
-route, integration capability, project-file client, arbitrary network service, recursive start,
+route, integration capability, arbitrary network service, recursive start,
 or private schedule is exposed in Slice A. Unknown fields fail validation. Managed project
 memory and workflow-package destinations are protected. No prompt or skill file is required.
 

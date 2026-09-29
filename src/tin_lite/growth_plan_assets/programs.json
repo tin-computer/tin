@@ -602,7 +602,7 @@
     "content.release_announce": "Announce a new release",
     "growth.score_quiz": "Draft an embeddable score quiz",
     "product.analytics_brief": "Product analytics brief",
-    "social.post_batch": "Repurpose an approved article for social"
+    "social.post_batch": "Repurpose an article for social"
   },
   "workflow_scope": {
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
@@ -648,6 +648,6 @@
     "content.release_announce": "Drafts posts for X, LinkedIn, Reddit and Hacker News plus a newsletter email from one release's changelog, announcing only listed changes; never posts, sends or adds claims or links beyond the changelog and release link.",
     "growth.score_quiz": "Drafts a self-contained scored quiz widget (a lead magnet) with a call to action to the founder's signup link; never deploys it, adds other links, or runs model-written code.",
     "product.analytics_brief": "A recurring PostHog brief (needs the PostHog connection, read-only OAuth to one project): ordered activation, event trends, traffic, error signals and one supported breakdown with reproducible queries; read-only reporting, no product changes.",
-    "social.post_batch": "Turn one approved content.generate article into two X and two LinkedIn drafts, using its pinned writing guide when available. Requires source_run_id from this project. Saves one reviewable document with source excerpts and suggested order; manual only, no posting or scheduling."
+    "social.post_batch": "Turn a project article into two X and two LinkedIn drafts using the current writing guide when available. Reads article_path, or the sole article found in the usual project folders; optional article_text supplies a fallback when no file can be selected. New runs read current files and retries keep their original revision. Saves one reviewable document with source excerpts and suggested order; no posting or scheduling."
   }
 }

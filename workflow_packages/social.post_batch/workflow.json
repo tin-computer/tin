@@ -2,36 +2,42 @@
   "package_format": "tin-workflow-package-v1",
   "definition": {
     "key": "social.post_batch",
-    "title": "Repurpose an approved article for social",
-    "description": "Draft two X posts and two LinkedIn posts from one approved Tin article, with exact source excerpts for review. Nothing is posted or scheduled.",
-    "version": "1.0.0",
+    "title": "Repurpose an article for social",
+    "description": "Draft two X posts and two LinkedIn posts from a project article or supplied text, with exact source excerpts for review. Nothing is posted or scheduled.",
+    "version": "2.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,
-      "summary": "Check each social draft against the approved article before posting it yourself."
+      "summary": "Check each social draft against its article before posting it yourself."
     },
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "project_id": {"type": "string", "format": "uuid"},
-        "source_run_id": {
+        "article_path": {
           "type": "string",
-          "format": "uuid",
-          "title": "Approved article run",
-          "description": "A successfully completed and approved content.generate article in this project."
+          "maxLength": 512,
+          "title": "Article file",
+          "description": "A relative project-file path. If omitted, a single matching article is used automatically."
+        },
+        "article_text": {
+          "type": "string",
+          "maxLength": 20000,
+          "title": "Article text",
+          "description": "Optional text to use when no article file is available or several files match.",
+          "x-tin-ui": {"control": "textarea"}
         }
       },
-      "required": ["project_id", "source_run_id"]
+      "required": ["project_id"]
     },
     "code": {
       "runtime": "python3.12.8-stdlib-v1",
       "entrypoint": "main.py",
       "files": ["main.py"],
       "timeout_seconds": 60,
-      "approved_article": {"input": "source_run_id"},
       "model_routes": {
         "draft": {
           "provider": "openai",

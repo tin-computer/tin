@@ -1,0 +1,94 @@
+# Read project files in a code workflow
+
+The project repository holds the files workflows share: brand guidance, writing style,
+research, plans and earlier results. A public or private `workflow.code` package reads them
+through `ctx.files`. It does not need an evidence declaration, a producer workflow, an
+approved source run, or a user-selected revision.
+
+```python
+def run(ctx, inputs):
+    try:
+        brand = ctx.files.read_text("BRAND.md")
+    except FileNotFoundError:
+        brand = inputs.get("brand_notes", "")
+    if not brand.strip():
+        raise ValueError("Add BRAND.md or supply brand notes")
+    return {"path": "reports/BRAND_REFERENCE.md", "content": brand}
+```
+
+`brand_notes` is an ordinary optional string in this example's input schema. Both MCP and
+the dashboard can supply it. A file takes precedence here; another workflow can choose its
+own clear rule. Only a missing file triggers fallback: an unsafe path, invalid text or an
+oversized file must not silently become a different source.
+
+See the complete [example package](../workflow_packages/example.project_files/workflow.json).
+Like other examples, it is unregistered; a private copy uses ordinary validation and activation.
+
+![The social workflow uses ordinary file and optional text inputs](images/project-files-inputs.png)
+
+The screenshot uses synthetic project data.
+
+## File interface
+
+These methods are synchronous, like ordinary Python file reads:
+
+| Method | Result |
+| --- | --- |
+| `ctx.files.read_text("BRAND.md")` | The complete UTF-8 text, or `FileNotFoundError` if absent. |
+| `ctx.files.read_bytes("data/sample.bin")` | The complete bytes, with the same path and size checks. |
+| `ctx.files.glob("reports/*.md")` | Matching project-relative paths in stable order. |
+
+Paths are relative to the owning project's code.storage repository. These methods do not
+read the connected GitHub repository or another project's files. Package resources remain
+available through ordinary Python reads in the package directory; `code.files` still lists
+the executable package's own resources, not its project data dependencies.
+
+Each read is limited to 64,000 bytes. Globbing returns at most 100 matches and refuses a
+larger result rather than silently dropping paths. A code execution permits at most 64 file
+requests, separately from its model and service limits. Paths must be safe regular files;
+symlinks, parent traversal and protected credential paths are rejected. Binary reads are
+supported within the same bound; they do not increase the workflow's text-output or model
+request limits. No storage credentials enter the sandbox.
+
+Read and validate inputs before making a paid model request. A known required path may use
+the existing artifact prerequisite to explain missing setup before launch. File reads are
+lazy, so a missing path found during execution can still consume sandbox time. There is no
+extra manifest or approval step for an ordinary file.
+
+## Latest files for new runs, stable files for retries
+
+At admission, Tin reads the project's canonical HEAD and records that revision in an
+existing effect receipt, in the transaction that creates the run. The code cannot choose a
+different revision. Every file read in that run uses the recorded revision; subsequent
+edits do not change an execution in progress or its retry.
+
+A new run, including a scheduled occurrence, records the current HEAD again.
+Reusing a start request ID returns the original run and its original files. This data
+revision is separate from the workflow's executable package revision and from the
+concurrency guard used to publish its output.
+
+The receipt stores only project, repository and revision metadata. File contents remain in
+code.storage and travel through Tin's protected read channel when requested; they are not
+copied into a new evidence database or Temporal history.
+
+## Existing workflows and approval
+
+Pinned definitions using `code.evidence` or `code.approved_article` still load their original
+inputs and receipts. This compatibility code keeps saved configurations and historical runs
+usable. The generic source picker and its discovery API have been removed, and the authoring
+guide now teaches file reads. Update an old private package to `ctx.files` when revising it;
+editing a package alone does not replace an already saved definition.
+
+Reading a file does not prove that someone approved its current contents. A workflow that
+publishes, sends or applies reviewed changes must keep that action's approval contract.
+For example, `content.deliver` still selects an exact approved article before creating a
+GitHub PR. Those delivery checks do not restrict ordinary project-file reading.
+
+## Verification
+
+Focused tests cover admission, repeat starts, edits between runs, missing-file fallback,
+Unicode and binary reads, bounds, unsafe paths and legacy execution. Browser tests cover
+ordinary schema inputs without source selection. The opt-in
+`tests/test_code_project_files_live.py` uses real E2B and code.storage with synthetic files
+and disposable local product state; it makes no model calls. Live checks require explicit
+provider authorization and are separate from normal contributor CI.

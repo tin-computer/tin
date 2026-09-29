@@ -2,7 +2,7 @@
 
 Only a supported run's primary, single text artifact is accepted. The published
 checkpoint and the immutable canonical bytes are the source, never the current
-file at the same path. Candidate discovery calls the same proof as admission.
+file at the same path. This contract remains for historical pinned definitions.
 """
 
 from __future__ import annotations
@@ -13,19 +13,13 @@ from uuid import UUID
 from tin_lite.domain import RunStatus
 from tin_lite.procedures import PROJECT_ARTIFACT_RESULT, load_pinned_codex_procedure
 from tin_lite.publication import OutputCheckpoint
-from tin_lite.workflow_code import evidence_specs, output_path_allowed, validate_code_definition
+from tin_lite.workflow_code import output_path_allowed, validate_code_definition
 from tin_lite.workflow_packages import load_workflow_source
 from tin_lite.workflow_review_store import digest
 
 TEXT_MEDIA_TYPES = frozenset({"text/markdown", "text/plain", "text/csv", "application/json"})
 MAX_TOTAL_BYTES = 128_000
 MAX_SERIALIZED_BYTES = 256_000
-DISCOVERY_SCAN_LIMIT = 200
-DISCOVERY_PAGE_SIZE = 100
-DISCOVERY_LIMIT_MESSAGE = (
-    "Recent approved-source search reached its 200-run limit without a verified choice; "
-    "select an older approved source by run ID."
-)
 
 
 def _json(value):
@@ -190,151 +184,6 @@ async def select_one(*, database, storage, project_id, source_run_id, workflow_k
         "approval_basis": approval_basis,
         "publication_checkpoint": checkpoint.to_dict(),
     }
-
-
-async def discover(database, storage, *, project_id, definition, inputs=None, limit=50):
-    """Return only candidates that pass select_one, without their text."""
-    if type(limit) is not int or not 1 <= limit <= 50:
-        raise ValueError("evidence discovery limit must be 1-50")
-    result = {}
-    inputs = inputs or {}
-    for slot in evidence_specs(definition):
-        candidates = []
-        cursor = None
-        scanned = 0
-        while len(candidates) < limit and scanned < DISCOVERY_SCAN_LIMIT:
-            batch = min(DISCOVERY_PAGE_SIZE, DISCOVERY_SCAN_LIMIT - scanned)
-            rows = await database.pool.fetch(
-                "SELECT r.id, r.created_at FROM workflow_runs r "
-                "JOIN workflows w ON w.id=r.workflow_id "
-                "WHERE r.project_id=$1 AND w.key=$2 AND r.status='succeeded' "
-                "AND r.review_required AND r.review_decision='approved' "
-                "AND r.executor IN ('workflow.code','codex.procedure') "
-                "AND ($4::timestamptz IS NULL OR (r.created_at, r.id)<($4, $5::uuid)) "
-                "ORDER BY r.created_at DESC, r.id DESC LIMIT $3",
-                project_id,
-                slot.workflow_key,
-                batch,
-                *(cursor or (None, None)),
-            )
-            scanned += len(rows)
-            for row in rows:
-                try:
-                    source = await select_one(
-                        database=database,
-                        storage=storage,
-                        project_id=project_id,
-                        source_run_id=row["id"],
-                        workflow_key=slot.workflow_key,
-                        max_bytes=slot.max_bytes,
-                    )
-                except (ValueError, LookupError, UnicodeError):
-                    continue
-                candidates.append(candidate_metadata(source))
-                if len(candidates) >= limit:
-                    break
-            if len(rows) < batch:
-                break
-            cursor = (rows[-1]["created_at"], rows[-1]["id"])
-        selected = inputs.get(slot.input)
-        if selected is not None and str(selected) not in {item["run_id"] for item in candidates}:
-            try:
-                source = await select_one(
-                    database=database,
-                    storage=storage,
-                    project_id=project_id,
-                    source_run_id=selected,
-                    workflow_key=slot.workflow_key,
-                    max_bytes=slot.max_bytes,
-                )
-            except (ValueError, LookupError, UnicodeError):
-                pass
-            else:
-                candidates.append(candidate_metadata(source))
-        if scanned >= DISCOVERY_SCAN_LIMIT and not candidates:
-            raise ValueError(DISCOVERY_LIMIT_MESSAGE)
-        result[slot.name] = candidates
-    return result
-
-
-async def discover_articles(database, storage, *, project_id, source_run_id=None, limit=50):
-    """Proof-filtered version of the existing article list for picker presentation."""
-    from tin_lite import approved_article
-
-    if type(limit) is not int or not 1 <= limit <= 50:
-        raise ValueError("article discovery limit must be 1-50")
-    from tin_lite.content_delivery import DRAFT_WORKFLOW_ID
-
-    result = []
-    cursor = None
-    scanned = 0
-    while len(result) < limit and scanned < DISCOVERY_SCAN_LIMIT:
-        batch = min(DISCOVERY_PAGE_SIZE, DISCOVERY_SCAN_LIMIT - scanned)
-        rows = await database.pool.fetch(
-            "SELECT r.id, r.created_at FROM workflow_runs r "
-            "WHERE r.project_id=$1 AND r.workflow_id=$2 "
-            "AND r.status='succeeded' AND r.review_decision='approved' "
-            "AND ($4::timestamptz IS NULL OR (r.created_at, r.id)<($4, $5::uuid)) "
-            "ORDER BY r.created_at DESC, r.id DESC LIMIT $3",
-            project_id,
-            DRAFT_WORKFLOW_ID,
-            batch,
-            *(cursor or (None, None)),
-        )
-        scanned += len(rows)
-        for row in rows:
-            try:
-                source = await approved_article.select(
-                    database=database,
-                    storage=storage,
-                    project_id=project_id,
-                    source_run_id=row["id"],
-                    include_style=True,
-                )
-            except (ValueError, LookupError, UnicodeError):
-                continue
-            run = await database.get_run(UUID(source["source_run_id"]))
-            result.append(
-                {
-                    "run_id": source["source_run_id"],
-                    "title": source["title"],
-                    "workflow_key": "content.generate",
-                    "artifact_path": source["source_path"],
-                    "revision": source["source_revision"],
-                    "created_at": run.created_at.isoformat(),
-                }
-            )
-            if len(result) >= limit:
-                break
-        if len(rows) < batch:
-            break
-        cursor = (rows[-1]["created_at"], rows[-1]["id"])
-    if source_run_id is not None and str(source_run_id) not in {row["run_id"] for row in result}:
-        try:
-            source = await approved_article.select(
-                database=database,
-                storage=storage,
-                project_id=project_id,
-                source_run_id=source_run_id,
-                include_style=True,
-            )
-        except (ValueError, LookupError, UnicodeError):
-            pass
-        else:
-            run = await database.get_run(UUID(source["source_run_id"]))
-            result.append(
-                {
-                    "run_id": source["source_run_id"],
-                    "title": source["title"],
-                    "workflow_key": "content.generate",
-                    "artifact_path": source["source_path"],
-                    "revision": source["source_revision"],
-                    "created_at": run.created_at.isoformat(),
-                }
-            )
-    if scanned >= DISCOVERY_SCAN_LIMIT and not result:
-        raise ValueError(DISCOVERY_LIMIT_MESSAGE)
-    return result
 
 
 def candidate_metadata(source):
