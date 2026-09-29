@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision, release} = {}) {
+async function serve({draft: revision, release, adapted} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -50,6 +50,20 @@ async function serve({draft: revision, release} = {}) {
         ? {title: "Review: Release announcements for Tin", output_title: "Release announcements for Tin", explanation: "What shipped: Public workflow packages anyone can contribute."}
         : {title: "Review: Announce a new release", output_title: null, explanation: "Announce a new release is ready for your review."})});
   }
+  if (adapted !== undefined) {
+    // An answer page Tin adapts to the site; the server's publish preview drives the card.
+    const draft = {id: "d7af0000-0000-4000-8000-000000000005", project_id: project.id, workflow_id: "answer-page", workflow_name: "content.answer_page",
+      status: "needs_input", review_required: true, artifact_path: "content/answers/2026-09-28-coding-agent-tools.md", canonical_commit_sha: "b".repeat(40), created_at: minutesAgo(30),
+      page_url: {url: "https://example.com/which-tools-work-with-coding-agents", state: "proposed", label: "Proposed URL", source: "title_slug", final: false, checkable: false,
+        note: "After you approve, Tin adapts the page to your site and commits it to main."}};
+    runs.push(draft);
+    Object.assign(integrations[0], {connection_id: "github-1", status: "connected", project_id: project.id, configuration: {selected_repository: "example/site"}});
+    decisions.splice(0, decisions.length, {id: "adapted-decision", run_id: draft.id, project_id: project.id, workflow_key: "content.answer_page",
+      workflow_title: "Draft an answer page", kind: "review", title: "Review: Which tools work with coding agents?", output_title: "Which tools work with coding agents?",
+      explanation: "Most marketing tools reach coding agents through an MCP server or a command-line tool.",
+      consequence: "", items: [{file: draft.artifact_path, revision: draft.canonical_commit_sha, title: "Which tools work with coding agents?"}],
+      created_at: draft.created_at, version_saved_at: draft.created_at});
+  }
   if (revision !== undefined) {
     // An answer page draft saved two days ago, with GitHub ready to publish it.
     const draft = {id: "d7af0000-0000-4000-8000-000000000003", project_id: project.id, workflow_id: "answer-page", workflow_name: "content.answer_page",
@@ -84,6 +98,7 @@ async function serve({draft: revision, release} = {}) {
       return send({});
     }
     if (url.pathname === "/api/projects") return send([project]);
+    if (url.pathname.endsWith("/publish-preview")) return send(adapted ?? {adapt: false});
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send([{id: "saved", workflow_key: "research.deep_dive", status: "active"}]);
     if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(runs);
     if (url.pathname.endsWith("/decisions")) return send(decisions);
@@ -243,4 +258,51 @@ test("a release announcement card says what the draft is in one sentence, withou
       await context.close();
     } finally { await browser.close(); server.close(); }
   }
+});
+
+test("a page Tin adapts to the site has one Publish button and says what it does", async () => {
+  const cases = [
+    ["github_commit", "Tin adapts it to your site and commits it to main · about $5"],
+    ["github_pr", "Tin adapts it to your site and opens a pull request · about $5"],
+  ];
+  for (const [mode, footer] of cases) {
+    const sentence = footer.split(" · ")[0];
+    const {server, writes, base} = await serve({adapted: {adapt: true, label: "Publish", mode, repository: "example/site", sentence,
+      cost: {estimated_usd: "5.00", maximum_usd: "5.00"}, footer}});
+    const browser = await chromium.launch({headless: true});
+    try {
+      const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+      const card = page.locator(".decision-detail-card");
+      await card.getByText(footer, {exact: true}).waitFor();
+      // One primary button and Not now; the generic Markdown choices and the remember box are gone.
+      assert.deepEqual(await card.locator("footer button").allTextContents(), ["Not now", "Publish"]);
+      assert.equal(await card.getByRole("button", {name: "Publish", exact: true}).isDisabled(), false);
+      assert.equal(await card.locator("[data-decision-remember]").count(), 0);
+      // The body stays one sentence and the single proposed-URL line.
+      assert.equal(await card.locator(".decision-summary").innerText(), "Most marketing tools reach coding agents through an MCP server or a command-line tool.");
+      assert.equal((await card.locator(".page-url-line").textContent()).replace(/\s+/g, " ").trim(), "Proposed URL https://example.com/which-tools-work-with-coding-agents");
+      assert.equal((await card.locator("footer > span").innerText()).trim(), footer);
+      await card.getByRole("button", {name: "Publish", exact: true}).click();
+      await page.getByText("Approved. Tin is adapting the page to your site.", {exact: true}).waitFor();
+      const [approval] = writes.filter(item => item.path.includes("/apply"));
+      assert.equal(approval.path, "/api/decisions/adapted-decision/apply");
+      assert.deepEqual({action: approval.body.action, delivery: approval.body.delivery, remember: approval.body.remember}, {action: "approve", delivery: mode, remember: false});
+      assert.deepEqual(errors, []);
+      await context.close();
+    } finally { await browser.close(); server.close(); }
+  }
+});
+
+test("without adaptation the page keeps its Publish now and pull request choices", async () => {
+  const {server, base} = await serve({adapted: {adapt: false}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    const card = page.locator(".decision-detail-card");
+    await card.getByRole("button", {name: "Publish now", exact: true}).waitFor();
+    assert.deepEqual(await card.locator("footer button").allTextContents(), ["Not now", "Open a pull request", "Publish now"]);
+    assert.equal(await card.getByRole("button", {name: "Publish", exact: true}).count(), 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
 });
