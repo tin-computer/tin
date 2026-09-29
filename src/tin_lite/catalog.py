@@ -517,11 +517,13 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
         title="Prepare article PR",
-        description="Adapt an approved Tin article to the connected website repository's "
-        "existing format and components. Preserve its copy, leave a reviewable GitHub PR "
-        "unmerged, and keep the Markdown original in Tin.",
+        description="Adapt an approved article, answer page or public article to the "
+        "connected website repository's own format, adding a Markdown route once when the "
+        "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
+        "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
+        "to main and the PR adds nothing but the page.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -532,7 +534,8 @@ BUILTIN_WORKFLOWS = (
                 "source_run_id": {
                     "type": "string",
                     "format": "uuid",
-                    "title": "Approved article run",
+                    "title": "Approved page run",
+                    "description": "An approved planned article, answer page or public article.",
                 },
                 "retry_run_id": {
                     "type": "string",
@@ -582,7 +585,8 @@ BUILTIN_WORKFLOWS = (
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
                 max_files=5,
-                max_bytes=180_000,
+                # A 300 KB public article, its frontmatter and a small route still fit.
+                max_bytes=400_000,
             ),
         ),
     ),
