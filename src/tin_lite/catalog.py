@@ -727,13 +727,14 @@ BUILTIN_WORKFLOWS = (
         key=technical_fix.KEY,
         title="Fix an audited technical issue",
         description=(
-            "Recheck one missing-title or missing-description finding and propose a verified PR. "
-            "Supports exact static HTML and bounded Python-wheel HTML templates. "
-            "Lists unsupported pages separately. "
+            "Recheck one audit finding on the live site and propose a PR that fixes it: a "
+            "missing title or description, robots.txt, the sitemap, noindex, canonical, lang "
+            "or H1. Files the site serves as they are get checked from the diff. Next.js "
+            "source gets a bounded change, and Tin checks the live page after you deploy. "
             "If no safe repair is available, explain why "
             "without a PR. Never merges or deploys; GitHub may run its configured PR checks."
         ),
-        version_label="0.4.1",
+        version_label="0.5.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -761,11 +762,13 @@ BUILTIN_WORKFLOWS = (
         ),
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / technical_fix.KEY,
-            entry_skill="audit-title-repair",
+            entry_skill="audit-site-repair",
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-                verification_commands=(technical_fix.CHECK_COMMAND,),
-                repair_policy=technical_fix.POLICY,
+                verification_commands=tuple(
+                    technical_fix.policy_commands(technical_fix.SITE_POLICY)
+                ),
+                repair_policy=technical_fix.SITE_POLICY,
             ),
         ),
     ),

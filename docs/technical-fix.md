@@ -1,9 +1,10 @@
 # Technical repair from an organic audit
 
-`organic.technical_fix` takes one evidenced technical finding, verifies its current
-website and repository sources, and proposes a checked, unmerged GitHub PR. It does
-not merge or deploy the repair. The current policy is `html-metadata-v3`; older runs
-and saved configurations retain their pinned policy.
+`organic.technical_fix` takes one evidenced audit finding, reads the live site again,
+finds the repository files behind it, and proposes an unmerged GitHub PR. It does not
+merge or deploy the repair. The current policy is `site-fix-v4`; older runs and saved
+configurations retain their pinned policy (`missing-html-title-v1` through
+`html-metadata-v3`).
 
 ## Select a finding
 
@@ -38,6 +39,65 @@ Buyer-answer coverage recommendations mean the site was absent from sampled answ
 citations. They do not establish a code defect or missing content. Inspect existing
 answers first; `content.plan` can use the audit and matching keyword research if
 content work is warranted. The repair preview does not start that workflow.
+
+## site-fix-v4
+
+Under `site-fix-v4` the audit's own site findings (robots.txt, sitemaps, page tags) are
+repair candidates too, alongside a missing title or description. One table,
+`SITE_FIXES` in `src/tin_lite/technical_site_rules.py`, maps each audit check to the one
+change Tin may make:
+
+| Audit check | Change |
+| --- | --- |
+| `metadata.title_missing`, `metadata.description_missing` | Add the title or meta description |
+| `robots.sitemap_reference_missing` | Add a `Sitemap:` line (or a new allow-all robots.txt naming it) |
+| `robots.ai_search_crawlers_blocked` | Let OAI-SearchBot, ChatGPT-User and PerplexityBot crawl; every other crawler's rules stay the same |
+| `sitemap.non_indexable_urls`, `sitemap.ad_landing_urls` | Remove those pages' `<url>` entries |
+| `sitemap.missing_search_pages` | Add `<url>` entries for pages with search impressions |
+| `indexation.utility_pages_indexable`, `indexation.ad_landing_pages_indexable` | Add `<meta name="robots" content="noindex">` |
+| `indexation.canonical_elsewhere` | Point the canonical at the page itself |
+| `indexation.multiple_canonicals` | Keep one existing canonical tag |
+| `onpage.lang_missing` | Add `lang` to `<html>` |
+| `onpage.h1_missing` | Add one H1 |
+
+Preparation reads robots.txt, the sitemaps it names (or `/sitemap.xml`) and up to three
+affected pages from the audited host, pinned to public IPs. When the problem is already
+gone the run ends with `already_resolved`. One repair covers up to three pages or ten
+sitemap URLs and says how many more remain. The crawl's five-page limit doesn't apply.
+
+**Static mode.** When a repository file matches what the site serves byte for byte, that
+file is the source. Codex edits it, and the worker checks the diff: before and after
+may differ only in the change above (only Sitemap lines added, only the listed `<url>`
+entries gone, only the one tag added). No sandbox verifier runs, so the sandbox image
+is unchanged. At delivery Tin reads the live file again; if its bytes changed, the PR
+is not sent.
+
+**Framework mode.** When nothing matches and the repository is a Next.js app, Tin names
+the files that build the part in question: `app/robots.ts`, `app/sitemap.ts`,
+`next-sitemap.config.*`, the root layout or `pages/_document`, or the page and layouts on
+the affected route. Codex may change only those files, up to three files and about sixty
+lines, and may create only `app/robots.ts` when the site has no robots.txt. Tin can't
+build the site, so the PR body must say so in a fixed sentence, which the worker checks.
+At delivery Tin confirms the live site still shows the problem.
+
+Other stacks without a byte-for-byte match end with `unsupported_source`. An open PR
+touching the same files ends with `open_pr_overlap`. Neither allocates repair compute.
+
+**After merge.** The PR is not a deployed repair. Once GitHub reports it merged, Tin reads
+the same files or pages again and records `fixed`, `waiting_for_deploy`, or, more than a
+day after the merge, `still_broken`. It checks at most every ten minutes while someone
+reads the run: MCP `get_run` returns it as `live_check`, and
+`GET /api/projects/{project_id}/technical-fixes/runs/{run_id}/live?check=true` does the
+same. It stops a fortnight after the merge. A PR closed without merging reads
+`closed_unmerged`.
+
+The traffic system's technical step takes the most urgent eligible finding under
+`site-fix-v4` (critical, then high impact, then quick win), where older policies take the
+first.
+
+## Earlier policies
+
+The rest of this page describes the metadata-only policies that pinned runs keep.
 
 ## Current repair coverage
 

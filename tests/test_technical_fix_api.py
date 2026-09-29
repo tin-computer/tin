@@ -205,7 +205,8 @@ def test_technical_fix_is_an_explicit_codex_catalog_template():
 
     template = next(row for row in BUILTIN_WORKFLOWS if row.key == "organic.technical_fix")
     assert template.executor == "codex.procedure"
-    assert template.definition["procedure"]["output"]["repair_policy"] == "html-metadata-v3"
+    assert template.definition["procedure"]["output"]["repair_policy"] == "site-fix-v4"
+    assert template.definition["procedure"]["entry_skill"] == "audit-site-repair"
 
 
 async def test_new_controls_enforce_membership_before_any_stop(surface_fixture):

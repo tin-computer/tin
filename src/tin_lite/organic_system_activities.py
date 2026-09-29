@@ -23,7 +23,7 @@ from tin_lite.organic_system import (
 )
 from tin_lite.run_reports import publish_run_report
 from tin_lite.schedules import WorkflowSchedule
-from tin_lite.technical_fix_sources import TechnicalFixSources
+from tin_lite.technical_fix_sources import TechnicalFixSources, finding_rank
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError
@@ -204,6 +204,10 @@ class OrganicSystemActivities:
             candidates = [row for row in source["findings"] if row["source_eligible"]]
             if not candidates:
                 return None, "no_eligible_findings"
+            if policy == technical_fix.SITE_POLICY:
+                # site-fix-v4 repairs many finding types, so take the most urgent one.
+                # Older pinned policies keep taking the first eligible finding.
+                candidates.sort(key=lambda row: finding_rank(row["finding"]))
             return {
                 "audit_run_id": children["audit"]["run_id"],
                 "audit_revision": source["source"]["audit_revision"],

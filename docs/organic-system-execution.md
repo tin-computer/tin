@@ -66,6 +66,12 @@ Manual-only Tin-owned template on the existing `codex.procedure` executor. Input
 - `expected_repository` and `repository_serves_site=true`.
 - Optional bounded `context`; project identity remains bound outside editable inputs.
 
+New runs pin `site-fix-v4`, which repairs robots.txt, sitemap and page-tag findings as
+well as a missing title or description, and checks the live site after the PR merges; see
+[Technical repair](technical-fix.md#site-fix-v4). The parent picks the most urgent
+eligible finding. The rest of this section describes the metadata policies that older
+pinned runs keep.
+
 The first supported finding is `metadata.title_missing`, with a completed technical
 crawl and at most five affected URLs. Partial AI observations do not invalidate a
 complete technical crawl.
