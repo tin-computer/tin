@@ -7,7 +7,7 @@ from uuid import UUID
 from temporalio.exceptions import WorkflowAlreadyStartedError
 
 from tin_lite import content_draft, content_plan, organic_system, technical_fix
-from tin_lite.domain import RunStatus, Workflow, WorkflowRun
+from tin_lite.domain import PREREQUISITE_WAIT_MEMO, RunStatus, Workflow, WorkflowRun
 from tin_lite.executor_gates import (
     google_ads_gate,
     keyword_plan_gate,
@@ -32,7 +32,12 @@ from tin_lite.runtime import RuntimeServices
 from tin_lite.settings import Settings
 from tin_lite.workflow_definitions import resolve_execution_contract
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
-from tin_lite.workflow_prerequisites import PrerequisiteError, evaluate_prerequisites
+from tin_lite.workflow_prerequisites import (
+    PrerequisiteError,
+    can_wait_for_prerequisites,
+    evaluate_prerequisites,
+    prerequisite_wait_run_ids,
+)
 from tin_lite.workflows import registered_workflow_implementations
 
 logger = logging.getLogger(__name__)
@@ -176,6 +181,8 @@ async def start_workflow_run(
             project_id=project_id,
             workflow=workflow,
             normalized_inputs=normalized_inputs,
+            # A parent-dispatched child starts without the wait memo, so it cannot wait.
+            can_wait=can_wait_for_prerequisites(workflow) and not _prepare_only,
         )
         if evaluation.blocking:
             raise PrerequisiteError.from_evaluation(
@@ -498,6 +505,10 @@ async def start_workflow_run(
         from temporalio.common import WorkflowIDReusePolicy
 
         temporal_options["id_reuse_policy"] = WorkflowIDReusePolicy.REJECT_DUPLICATE
+    awaited = prerequisite_wait_run_ids(run.prerequisite_evidence)
+    if awaited:
+        # The workflow reads this memo to hold the run until these prerequisite runs finish.
+        temporal_options["memo"] = {PREREQUISITE_WAIT_MEMO: awaited}
     try:
         await runtime.temporal.start_workflow(
             implementation.run,

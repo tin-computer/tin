@@ -856,6 +856,17 @@ def _join_names(needs: list[dict[str, Any]]) -> str:
     return ", ".join(names[:-1]) + " or " + names[-1]
 
 
+def _prerequisite_facts(run: Any) -> dict[str, Any]:
+    """What a start or run view says about prerequisites: waits, advisories, plain notes."""
+    evidence = getattr(run, "prerequisite_evidence", None)
+    evidence = evidence if isinstance(evidence, dict) else {}
+    return {
+        "advisories": evidence.get("advisories", []),
+        **({"waiting": evidence["waiting"]} if evidence.get("waiting") else {}),
+        "prerequisite_notes": list(evidence.get("notes") or []),
+    }
+
+
 def _founder_words(
     *, quote: str | None = None, relay: list[str] | str | None = None
 ) -> dict[str, Any]:
@@ -2388,7 +2399,7 @@ def create_mcp_app(
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
             "status": run.status.value,
-            "advisories": (run.prerequisite_evidence or {}).get("advisories", []),
+            **_prerequisite_facts(run),
         }
 
     @server.tool()
@@ -2648,6 +2659,7 @@ def create_mcp_app(
                 else {}
             ),
             "prerequisite_evidence": getattr(run, "prerequisite_evidence", None),
+            "prerequisite_notes": _prerequisite_facts(run)["prerequisite_notes"],
             **(
                 {"system": await _organic_system_facts(run)}
                 if run.executor == "organic.traffic_system"
@@ -2890,6 +2902,8 @@ def create_mcp_app(
         outside inputs. instruction and title are only for project.task;
         omit them for other workflows. Reuse request_id (UUID) when retrying the same start.
         Funds are checked automatically; no billing quote or extra spending approval is required.
+        prerequisite_notes says in plain words what the run lacks or waits for; `waiting` lists
+        prerequisite runs still in progress that this run waits for (up to 30 minutes).
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -2978,7 +2992,7 @@ def create_mcp_app(
             "workflow": run.workflow_name,
             "status": run.status.value,
             "already_started": replayed,
-            "advisories": (run.prerequisite_evidence or {}).get("advisories", []),
+            **_prerequisite_facts(run),
             **({"assumed": assumed} if assumed else {}),
             **({"meanwhile": meanwhile} if meanwhile else {}),
             **_founder_words(
@@ -3005,7 +3019,10 @@ def create_mcp_app(
                         + " now, so the first setup can use them.",
                     ]
                     if workflow.executor == GROWTH_ONBOARDING_KEY
-                    else f"Tin started {workflow.title}. I will tell you when the result lands."
+                    else [
+                        f"Tin started {workflow.title}. I will tell you when the result lands.",
+                        *_prerequisite_facts(run)["prerequisite_notes"],
+                    ]
                 )
             ),
         }

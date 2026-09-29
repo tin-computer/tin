@@ -26,6 +26,8 @@ from tin_lite.domain import (
     PAID_ADS_ASSESSMENT_WORKFLOW_NAME,
     PAID_ADS_LAUNCH_WORKFLOW_NAME,
     PAID_ADS_MONITOR_WORKFLOW_NAME,
+    PREREQUISITE_WAIT_MEMO,
+    PREREQUISITE_WAIT_MINUTES,
     PROJECT_MEMORY_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
     SCAN_REPORT_WORKFLOW_NAME,
@@ -36,6 +38,7 @@ from tin_lite.domain import (
 )
 
 FAILURE_REASON_LIMIT = 600
+PREREQUISITE_POLL_INTERVAL = timedelta(seconds=30)
 
 
 def failure_reason(exc: BaseException) -> str:
@@ -59,6 +62,29 @@ def failure_reason(exc: BaseException) -> str:
     return f"{label}: {text or 'workflow failed'}"[:FAILURE_REASON_LIMIT]
 
 
+async def wait_for_prerequisites(run_id: str) -> None:
+    """Hold a new run, with no compute, until the prerequisite runs it waits for have ended.
+
+    Admission sets the memo only when a prerequisite's upstream run was still in progress, so
+    earlier histories and ordinary runs never reach the patch or its activity. The activity
+    polls durable run state; after the runs finish or the wait reaches its limit it re-checks
+    the prerequisites, pins what it found, and fails a run whose required prerequisite is
+    still missing before any work starts.
+    """
+    if not workflow.memo_value(PREREQUISITE_WAIT_MEMO, default=None):
+        return
+    if not workflow.patched("prerequisite-wait-v1"):
+        return
+    deadline = workflow.now() + timedelta(minutes=PREREQUISITE_WAIT_MINUTES)
+    while await workflow.execute_activity(
+        "prerequisite_wait",
+        {"run_id": run_id, "final": workflow.now() >= deadline},
+        start_to_close_timeout=timedelta(minutes=1),
+        retry_policy=RetryPolicy(maximum_attempts=5),
+    ):
+        await workflow.sleep(PREREQUISITE_POLL_INTERVAL)
+
+
 @workflow.defn(name="tin.scheduled_dispatch")
 class ScheduledDispatchWorkflow:
     @workflow.run
@@ -76,11 +102,15 @@ class ScheduledDispatchWorkflow:
         # Older completed histories always contain run_id, so this remains replay-compatible.
         if "run_id" not in dispatched:
             return
+        # Only runs admitted behind a running prerequisite carry a memo; histories recorded
+        # before it keep starting their child exactly as they did.
+        awaited = dispatched.get("prerequisite_wait")
         await workflow.execute_child_workflow(
             str(dispatched["executor"]),
             str(dispatched["run_id"]),
             id=str(dispatched["temporal_workflow_id"]),
             task_queue=workflow.info().task_queue,
+            **({"memo": {PREREQUISITE_WAIT_MEMO: awaited}} if awaited else {}),
         )
 
 
@@ -377,6 +407,7 @@ class AnswerPageWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            await wait_for_prerequisites(run_id)
             await workflow.execute_activity(
                 "draft_answer_page",
                 run_id,
@@ -648,6 +679,7 @@ class CodexProcedureWorkflow:
     async def run(self, run_id: str) -> str | None:
         delivery_enabled = workflow.patched("reviewed-content-delivery-v1")
         try:
+            await wait_for_prerequisites(run_id)
             if workflow.patched("codex-procedure-trusted-preparation-v1"):
                 handled = await workflow.execute_activity(
                     "prepare_codex_procedure",

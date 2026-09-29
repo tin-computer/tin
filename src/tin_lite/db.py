@@ -3621,6 +3621,50 @@ class Database:
         )
         return [(row["workflow_key"], _run(row)) for row in rows]
 
+    async def list_active_prerequisite_runs(
+        self, *, project_id: UUID, workflow_keys: Sequence[str], limit: int = 50
+    ) -> list[tuple[str, WorkflowRun]]:
+        """Pending or running runs of the named workflows, newest first, keyed by workflow."""
+        if not workflow_keys:
+            return []
+        rows = await self.pool.fetch(
+            """
+            SELECT run.*, workflow.key AS workflow_key
+            FROM workflow_runs AS run
+            JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            WHERE run.project_id = $1
+              AND workflow.key = ANY($2::text[])
+              AND (workflow.project_id IS NULL OR workflow.project_id = $1)
+              AND run.status IN ('pending', 'running')
+            ORDER BY run.created_at DESC, run.id DESC
+            LIMIT $3
+            """,
+            project_id,
+            list(workflow_keys),
+            limit,
+        )
+        return [(row["workflow_key"], _run(row)) for row in rows]
+
+    async def record_prerequisite_wait(
+        self, *, run_id: UUID, evidence: dict[str, Any], summary: str | None
+    ) -> bool:
+        """Pin what a run found after waiting for its prerequisites, while it is still active."""
+        updated = await self.pool.fetchval(
+            """
+            UPDATE workflow_runs
+            SET prerequisite_evidence = $2::jsonb,
+                progress_summary = COALESCE($3, progress_summary),
+                progress_updated_at = CASE WHEN $3 IS NULL THEN progress_updated_at
+                                           ELSE now() END
+            WHERE id = $1 AND status IN ('pending', 'running')
+            RETURNING true
+            """,
+            run_id,
+            json.dumps(evidence),
+            summary[:240] if summary else None,
+        )
+        return bool(updated)
+
     async def create_email_campaign(
         self,
         *,

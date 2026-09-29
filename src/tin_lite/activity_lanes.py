@@ -127,6 +127,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "paid_ads_monitor_read",
         "prepare_codex_procedure",
         "prepare_email_campaign",
+        "prerequisite_wait",
         "project_answer_page_failure",
         "project_answer_page_result",
         "project_codex_procedure_failure",
