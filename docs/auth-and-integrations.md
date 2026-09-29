@@ -56,9 +56,9 @@ provider as a special workflow:
    requires it. Provider tokens never enter ordinary workflow state.
    In the dashboard, Connect links a service to the project that is open. For GitHub, Search
    Console and PostHog, one dialog asks which repository, property or PostHog project to link
-   as soon as the provider's sign-in returns, and "Finish setup" and "Configure" open the same
-   dialog. Until one is chosen the row shows "Finish setup" and workflows that need it stay
-   blocked.
+   as soon as the provider's sign-in returns, and "Set up" and "Configure" open the same
+   dialog; its confirm button reads "Link". Until one is chosen the row shows "Set up" and
+   workflows that need it stay blocked.
 2. A provider adapter owns authorization, token refresh, revocation, health checks, and provider API
    translation. LinkedIn-specific behavior stops at that adapter.
    GitHub uses OAuth-on-install only to verify that the current GitHub user can access the returned
