@@ -26,7 +26,7 @@ Tin ships 33 built-in workflows. Every workflow also takes a `project_id`; requi
 | Improve site health<br>`site.health_improve` | Inspect one public site against its selected GitHub repository, make one bounded mechanical improvement, and open a pull request for review. When no safe change is justified, save a no-change report without opening a PR. | **`site_url`**, `focus`, `change_budget`, `context` | Unmerged GitHub PR, receipt `reports/site-health/{run_id}.md` |
 | Audit AI visibility<br>`visibility.audit` | Measure whether Luna finds and recommends a chosen target across five target-blind buyer questions, then publish AI_VISIBILITY.md. | **`target`** | — |
 | Draft an answer page (human review)<br>`content.answer_page` | Create a public-facing Markdown content draft from the latest AI visibility findings; not for general advice or internal business questions. | — | — |
-| Draft a public article (human review)<br>`content.public_article` | Turn durable project evidence and original thinking into a rigorous, reviewable public article. | **`brief`**, `audience`, `goal`, `length`, `source_policy`, `voice_notes` | `content/articles/{run_id}.md` |
+| Draft a public article (human review)<br>`content.public_article` | Turn durable project evidence and original thinking into a rigorous, reviewable public article. | **`brief`**, `audience`, `goal`, `length`, `source_policy`, `voice_notes` | `content/articles/{run_folder}.md` |
 
 ## Cold outreach system
 

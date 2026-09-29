@@ -6,7 +6,9 @@ import re
 import yaml
 
 VALIDATOR = "public-article.v2"
-PATH_TEMPLATE = "content/articles/{run_id}.md"
+# Named by the run's date and the start of its ID; runs pinned before 1.5.0 used the full ID.
+PATH_TEMPLATE = "content/articles/{run_folder}.md"
+PATH_TEMPLATES = frozenset({"content/articles/{run_id}.md", PATH_TEMPLATE})
 REVISION_INSTRUCTION = """
 REVISION MODE: Revise the exact saved copy in the following source packet, keeping good
 material the feedback does not ask to change. This is the same piece, not the next brief.

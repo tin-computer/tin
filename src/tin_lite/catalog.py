@@ -7,6 +7,7 @@ from typing import Any
 from uuid import UUID
 
 from tin_lite import (
+    article_review,
     awesome_submit,
     content_draft,
     content_plan,
@@ -1378,7 +1379,7 @@ BUILTIN_WORKFLOWS = (
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / PUBLIC_ARTICLE_WORKFLOW_NAME,
             entry_skill="public-article",
-            output_path_template="content/articles/{run_id}.md",
+            output_path_template=article_review.PATH_TEMPLATE,
             output_validator="public-article.v2",
             output_max_bytes=300_000,
             project_skills=(
