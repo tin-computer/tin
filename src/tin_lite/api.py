@@ -3411,10 +3411,14 @@ async def get_run(
         update={
             "content_delivery": delivery,
             "page_url": await page_url_service(runtime).view(run, delivery),
-            "selected_sources": await selected_run_sources(
-                database=runtime.database,
-                settings=request.app.state.settings,
-                run=run,
+            "selected_sources": (
+                await selected_run_sources(
+                    database=runtime.database,
+                    settings=request.app.state.settings,
+                    run=run,
+                )
+                if run.executor == "workflow.code"
+                else {}
             ),
         }
     )
