@@ -4,6 +4,7 @@ from tin_lite.billing_contracts import usd
 from tin_lite.code_models import model_terms
 from tin_lite.integrations import IntegrationError, parse_integration_requirements
 from tin_lite.private_workflows import require_private_execution
+from tin_lite.provider_costs import provider_costs
 from tin_lite.workflow_code import approved_article_input, evidence_specs, validate_code_definition
 from tin_lite.workflow_costs import configured_terms
 from tin_lite.workflow_definitions import resolve_execution_contract
@@ -94,12 +95,22 @@ async def code_readiness(
         if spec.model_routes
         else None
     )
+    external_costs = provider_costs(workflow.definition, spec.services)
     estimate = {
         "estimated_usd": usd(terms["maximum_nanos"]) if terms else "0.00",
         "approval_required": False,
         "basis": "conservative_configured_bound" if terms else "included_bounded_compute",
         "policy_id": terms["estimate"]["id"] if terms else "bounded-code-v1",
-        "external_provider_cost": "unknown" if spec.services else "not_applicable",
+        "external_provider_cost": (
+            "not_applicable"
+            if not external_costs
+            else "unknown"
+            if any(item["status"] == "unknown" for item in external_costs)
+            else "free"
+            if all(item["status"] == "free" for item in external_costs)
+            else "estimated"
+        ),
+        "external_providers": external_costs,
     }
     if spec.model_routes:
         if not getattr(settings, "luna_api_key", None):

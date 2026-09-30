@@ -210,9 +210,9 @@ async def test_mcp_reads_the_waiting_question_and_answers_it_like_the_web(task_d
     run = await seed_task(task_db)
     message = {"run_id": str(run.id), "message": ANSWER}
 
-    with pytest.raises(ToolError, match="project not found"):
+    with pytest.raises(ToolError, match="not_found: run not found"):
         await call(h, "get_run", run_id=str(run.id))
-    with pytest.raises(ToolError, match="project not found"):
+    with pytest.raises(ToolError, match="not_found: run not found"):
         await call(h, "send_project_task_message", **message)
     async with web(h) as client:
         assert (await client.post(f"/api/tasks/{run.id}/messages", json=message)).status_code == 404
