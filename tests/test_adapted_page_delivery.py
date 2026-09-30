@@ -528,7 +528,14 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
 # After the PR: merge only a page-only PR that GitHub calls clean.
 
 
-async def adapted_pull_request(f, *, mode="github_commit", extra_files=(), route=None):
+async def adapted_pull_request(
+    f, *, mode="github_commit", extra_files=(), route=None, chosen_route=None
+):
+    if chosen_route:
+        # The founder's saved choice, as save_page_route writes it.
+        from tin_lite.page_routes import PATH
+
+        f.storage.repo.edit({PATH: canonical_json({"routes": {"answer_page": chosen_route}})})
     run = await answer_page(f)
     await f.delivery.choose(run=run, mode=mode, actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
@@ -756,11 +763,14 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     f = await fixture(publication_db, monkeypatch)
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
+    ask = preview.pop("ask_the_founder")
+    assert ask["question"] == "Where on the site should Tin publish answer pages?"
     assert preview == {
         "adapt": True,
         "label": "Publish",
         "mode": "github_pr",
         "repository": "owner/site",
+        "route": None,
         "sentence": "Tin adapts it to your site and opens a pull request",
         "cost": None,
         "footer": "Tin adapts it to your site and opens a pull request",
@@ -771,7 +781,11 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
         AsyncMock(return_value="github_commit"),
     )
     committed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    assert committed["footer"] == "Tin adapts it to your site and commits it to main"
+    # With no chosen route, a commit-to-main setting still leaves the first pull request open.
+    assert committed["footer"] == (
+        "Tin adapts it to your site and opens a pull request, "
+        "since you have not chosen where these pages live yet"
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
@@ -803,16 +817,14 @@ async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypat
     assert json.dumps(found)  # Plain data for MCP preparation.
 
 
-def test_publish_says_pull_request_when_the_site_has_no_route_for_the_page():
+def test_publish_says_pull_request_until_the_founder_chooses_a_route():
     from tin_lite.content_delivery import publish_sentence
 
-    # Tin merges only a page-only pull request, so the first page on a site without a route
-    # stays a pull request even when the saved setting is commit to main.
+    # Until the founder chooses where these pages live, a commit-to-main setting still leaves
+    # the first pull request open; a pull-request setting reads the same either way.
     assert publish_sentence("github_commit") == "Tin adapts it to your site and commits it to main"
     assert publish_sentence("github_commit", route_missing=True) == (
         "Tin adapts it to your site and opens a pull request, "
-        "since your site first needs a route for these pages"
+        "since you have not chosen where these pages live yet"
     )
-    assert publish_sentence("github_pr", route_missing=True) == publish_sentence(
-        "github_commit", route_missing=True
-    )
+    assert publish_sentence("github_pr", route_missing=True) == publish_sentence("github_pr")

@@ -272,6 +272,7 @@ async def select_source(*, database, storage, integrations, project_id, inputs, 
         pinned["approval"] = {
             "mode": chosen_mode(intent),
             "requested_by": intent.get("chosen_by"),
+            **({"route": intent["route"]} if intent.get("route") else {}),
         }
     return pinned
 
@@ -448,11 +449,13 @@ async def start_approved_adaptation(*, runtime, settings, run, intent):
     The ordinary run service does the rest: source pinning, one metered procedure session
     charged on its actual usage, and an idempotent Temporal start under one start key.
     """
+    from tin_lite.page_routes import direction
     from tin_lite.run_service import start_workflow_run
 
     workflow = await runtime.database.get_workflow(WORKFLOW_ID)
     if workflow is None:
         raise LookupError("Page adaptation is not installed on this Tin.")
+    route = intent.get("route")
     return await start_workflow_run(
         runtime=runtime,
         settings=settings,
@@ -463,7 +466,7 @@ async def start_approved_adaptation(*, runtime, settings, run, intent):
         input_payload={
             "source_run_id": str(run.id),
             "expected_repository": intent["settings"]["repository"],
-            "direction": "",
+            "direction": direction(route) if route else "",
         },
         trigger_source=intent.get("trigger_source") or "manual",
         _approval_delivery=True,
@@ -498,11 +501,27 @@ async def saved_manifest(database, storage, run):
     return validate_procedure_pull_request(checkpoint, spec=spec)
 
 
+def merge_rule(manifest, proof, route):
+    """Which rule lets Tin merge this patch under a commit-to-main setting, else None.
+
+    `page_only`: the approved page alone, the change the Markdown publisher commits today.
+    `chosen_route`: the page plus the site code that serves it, when the founder chose where
+    these pages live and the PR puts the page at that route. The copy proof, the five-file
+    limit and the dependency ban still hold; any other site change stays a PR.
+    """
+    from tin_lite.page_routes import matches
+
+    if page_only(manifest, proof):
+        return "page_only"
+    if route and matches(route, proof.get("public_route")):
+        return "chosen_route"
+    return None
+
+
 def page_only(manifest, proof):
     """True when the patch adds nothing but the approved page as one Markdown file.
 
-    That is the same change the Markdown publisher commits to main today. A route, a
-    component or an index is site code the founder has not reviewed; it stays a PR.
+    That is the same change the Markdown publisher commits to main today.
     """
     files = manifest.get("files") or []
     return (
@@ -547,16 +566,23 @@ async def publish_after_pull_request(
             proof = validate_copy(manifest, source)
             number = published["pull_request_number"]
             base = {"pull_request": published["external_url"], "number": number}
-            if not page_only(manifest, proof):
+            route = (source.get("approval") or {}).get("route")
+            rule = merge_rule(manifest, proof, route)
+            if rule is None:
                 result = {
                     **base,
                     "status": "left_open",
-                    "reason": "It changes site files besides the page, so it waits for "
-                    "your review.",
+                    "reason": (
+                        f"It changes site files besides the page and does not put the page at "
+                        f"your chosen route {route}, so it waits for your review."
+                        if route
+                        else "It changes site files besides the page, so it waits for your review."
+                    ),
                 }
             else:
                 result = {
                     **base,
+                    "merge_rule": rule,
                     **await _merge_when_clean(
                         integrations=integrations,
                         run=run,
