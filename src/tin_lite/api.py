@@ -620,7 +620,11 @@ class RetainedOutputView(BaseModel):
     media_type: str
     byte_count: int
     reason: Literal[
-        "publication_pending", "reconciliation_pending", "output_conflict", "execution_interrupted"
+        "publication_pending",
+        "reconciliation_pending",
+        "output_conflict",
+        "execution_interrupted",
+        "not_published",
     ]
 
 
@@ -889,7 +893,9 @@ class DecisionView(BaseModel):
 class DecisionApply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    action: Literal["approve"]
+    # "decline" discards what is waiting: the run ends as declined and nothing it proposed is
+    # used. A one-off task is stopped instead, without applying its changes.
+    action: Literal["approve", "decline"]
     feedback: str | None = Field(default=None, max_length=8000)
     review_token: str | None = Field(default=None, max_length=64)
     # Content drafts only: where this approved document goes, and whether to keep the pick.
@@ -2775,10 +2781,20 @@ async def list_project_decisions(
     response: Response,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> list[DecisionView]:
-    await _require_project_access(project_id, request, user)
-    decisions = await request.app.state.runtime.database.list_pending_decisions(
-        project_id=project_id
-    )
+    project = await _require_project_access(project_id, request, user)
+    runtime = request.app.state.runtime
+    if getattr(runtime, "storage", None) is not None:
+        # Decisions saved before outputs carried their heading get it once, a few at a time;
+        # the listing itself still reads Postgres only.
+        from tin_lite.decision_backfill import backfill_decision_text
+
+        try:
+            await backfill_decision_text(
+                database=runtime.database, storage=runtime.storage, project=project
+            )
+        except Exception:
+            logger.warning("Older decisions were not named yet", extra={"project_id": project_id})
+    decisions = await runtime.database.list_pending_decisions(project_id=project_id)
     response.headers["X-Tin-Read-Source"] = "postgres"
     return [DecisionView.model_validate(item) for item in decisions]
 
@@ -2804,6 +2820,25 @@ async def apply_decision(
             status_code=status.HTTP_409_CONFLICT,
             detail="Use Request changes to revise the draft. Approval does not apply feedback.",
         )
+    if payload.action == "decline":
+        from tin_lite.proposal_decline import decline_proposal
+
+        if decision["kind"] != "review":
+            raise HTTPException(
+                status_code=409,
+                detail="Only a decision with something to approve can be discarded.",
+            )
+        if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
+            return await stop_project_task(decision["run_id"], request, user)
+        try:
+            declined = await decline_proposal(
+                database=database, run_id=decision["run_id"], actor=user.clerk_user_id
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="decision not found") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return RunView.model_validate(declined)
     if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
         result = await approve_project_task(decision["run_id"], request, user)
     else:
@@ -4329,6 +4364,9 @@ async def get_artifact_document(
         markdown=document.markdown,
         html=document.html,
         filename=PurePosixPath(output.path).name,
+        # The reader shows the project path with each folder linked, as Files does.
+        path=output.path,
+        revision=output.revision,
         source_url=f"/api/workflows/runs/{run.id}/artifact"
         + ("?source=retained" if source == "retained" else ""),
         timestamp=run.finished_at or run.created_at,

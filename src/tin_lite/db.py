@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
 
@@ -53,8 +53,39 @@ from tin_lite.usage_capture import borrowed_connection, effect_connection
 logger = logging.getLogger(__name__)
 _warned_unknown_workflow_system_ids: set[str] = set()
 
-# One cheap, Postgres-only eligibility predicate for Decisions and its count.
-# Applying decisions stay visible until their uncertain outcome is settled.
+# One cheap, Postgres-only eligibility predicate for Decisions and its count: a run with
+# something to approve. A task asking a question waits on an answer, not a decision, and a
+# reviewed task that changed nothing has nothing to approve. While a task revising a run's
+# saved output waits or applies, only the newer version shows: the older one stays out of
+# Decisions and every count until that task is resolved.
+_DECISION_RUN_SQL = """
+    run.status = 'needs_input'
+    AND (run.review_required OR (
+        run.executor = 'project.task' AND run.task_phase = 'review'
+        AND run.task_has_changes IS NOT FALSE
+    ))
+    AND NOT EXISTS (
+        SELECT 1 FROM workflow_runs AS newer
+        WHERE newer.project_id = run.project_id
+          AND newer.executor = 'project.task'
+          AND newer.id <> run.id
+          AND run.artifact_path IS NOT NULL
+          AND newer.task_diff->'files'
+              @> jsonb_build_array(jsonb_build_object('path', run.artifact_path))
+          AND (
+              (newer.status = 'needs_input' AND newer.task_phase = 'review')
+              OR (newer.status = 'running' AND newer.task_phase = 'applying')
+          )
+    )
+"""
+
+# Decisions saved before outputs carried their heading and first sentence: the review line
+# only restated the workflow ("X is ready for your review."), or the title was generic.
+_GENERIC_REVIEW_TEXT_SQL = """
+    (decision.title = 'Review workflow output'
+     OR decision.explanation ~ '^[^.]*\\mis ready for your review\\.')
+"""
+
 # A one-off task that revises a run's saved output file: still waiting for approval, or
 # applied after that output was saved. Approving the run would otherwise use the older copy.
 _OUTPUT_REVISION_SQL = """
@@ -82,6 +113,7 @@ _OUTPUT_REVISION_SQL = """
     LIMIT 1
 """
 
+# Applying decisions stay visible until their uncertain outcome is settled.
 _PENDING_OUTPUT_CONFLICT_SQL = """
     run.executor IN ('codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
@@ -1801,11 +1833,10 @@ class Database:
                       AND created_at >= date_trunc('month', now() AT TIME ZONE projects.timezone)
                           AT TIME ZONE projects.timezone)::integer
                        AS runs_this_month,
+                   -- The same items Decisions lists, so every count agrees.
                    (SELECT count(*) FROM workflow_runs AS run
                     WHERE run.project_id = projects.id AND (
-                        (run.status = 'needs_input'
-                         AND (run.review_required OR run.executor = 'project.task'))
-                        OR ({_PENDING_OUTPUT_CONFLICT_SQL})
+                        ({_DECISION_RUN_SQL}) OR ({_PENDING_OUTPUT_CONFLICT_SQL})
                     ))::integer
                        AS waiting_count,
                    (SELECT count(*) FROM activity_events
@@ -3324,11 +3355,13 @@ class Database:
                    workflow.key AS workflow_key,
                    workflow.title AS workflow_title,
                    COALESCE(decision.kind, 'review') AS kind,
-                   -- Older reviews saved one generic title; name what they produced instead.
-                   CASE WHEN COALESCE(decision.title, 'Review workflow output')
-                           <>'Review workflow output'
+                   -- A review saved with a generic title, or one naming only the workflow, is
+                   -- named by what it produced, so repeat runs don't share a title.
+                   CASE WHEN decision.title IS NOT NULL
+                           AND decision.title NOT IN (
+                               'Review workflow output', 'Review: ' || workflow.title)
                        THEN decision.title
-                       ELSE 'Review: ' || COALESCE(output.title, workflow.title) END AS title,
+                       ELSE 'Review: ' || output.named END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -3367,11 +3400,13 @@ class Database:
                    NULL::jsonb AS output_resolution,
                    COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
                    ({_OUTPUT_REVISION_SQL}) AS revision,
-                   output.title AS output_title
+                   output.named AS output_title
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            JOIN projects AS project ON project.id = run.project_id
             -- What the run produced, in its own words: the document's heading, the planned
-            -- article's brief, or the task's title.
+            -- article's brief, or the task's title. Without one, the workflow and the day it
+            -- was saved ("Social post batch · Sep 29").
             LEFT JOIN LATERAL (
                 SELECT COALESCE(
                     NULLIF(run.artifact_title, ''),
@@ -3384,8 +3419,12 @@ class Database:
                           AND receipt.status='completed'
                     ) END,
                     CASE WHEN run.executor = 'project.task'
-                        THEN NULLIF(run.task_title, '') END
-                ) AS title
+                        THEN NULLIF(run.task_title, '') END,
+                    workflow.title || ' · ' || to_char(
+                        COALESCE(run.review_requested_at, run.created_at)
+                            AT TIME ZONE project.timezone,
+                        'Mon FMDD')
+                ) AS named
             ) AS output ON true
             LEFT JOIN LATERAL (
                 SELECT pending.*
@@ -3394,13 +3433,7 @@ class Database:
                 ORDER BY pending.created_at DESC, pending.id DESC
                 LIMIT 1
             ) AS decision ON true
-            WHERE run.project_id = $1
-              AND run.status = 'needs_input'
-              -- A task asking a question waits on an answer, not a decision.
-              AND (run.review_required OR (
-                  run.executor = 'project.task' AND run.task_phase = 'review'
-                  AND run.task_has_changes IS NOT FALSE
-              ))
+            WHERE run.project_id = $1 AND ({_DECISION_RUN_SQL})
             UNION ALL
             SELECT run.id, run.id, run.project_id, workflow.key, workflow.title,
                    'output_conflict',
@@ -3451,6 +3484,171 @@ class Database:
             run_id,
         )
         return _json_object(value, field="output revision") if value is not None else None
+
+    async def decisions_without_output_text(
+        self, *, project_id: UUID, limit: int
+    ) -> list[dict[str, Any]]:
+        """Pending reviews saved before outputs carried their heading and first sentence.
+
+        Only Markdown outputs at the revision the decision pins; the oldest first.
+        """
+        rows = await self.pool.fetch(
+            f"""
+            SELECT decision.id AS decision_id, run.id AS run_id,
+                   run.artifact_path AS path, run.canonical_commit_sha AS revision,
+                   decision.explanation, workflow.title AS workflow_title
+            FROM run_decisions AS decision
+            JOIN workflow_runs AS run ON run.id = decision.run_id
+            JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            WHERE decision.project_id = $1 AND decision.status = 'pending'
+              AND decision.kind = 'review'
+              AND run.status = 'needs_input' AND run.review_required
+              AND run.review_decision IS NULL
+              AND lower(run.artifact_path) ~ '\\.(md|markdown)$'
+              AND decision.items->0->>'file' = run.artifact_path
+              AND decision.items->0->>'revision' = run.canonical_commit_sha
+              AND {_GENERIC_REVIEW_TEXT_SQL}
+            ORDER BY decision.created_at, decision.id
+            LIMIT $2
+            """,  # noqa: S608 — static SQL predicate, no caller text
+            project_id,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def store_decision_output_text(
+        self,
+        *,
+        decision_id: UUID,
+        run_id: UUID,
+        revision: str,
+        previous_explanation: str,
+        workflow_title: str,
+        title: str | None,
+        explanation: str,
+    ) -> bool:
+        """Store an older review's heading and card line, once, if nothing changed meanwhile."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            stored = await conn.fetchval(
+                """
+                UPDATE run_decisions
+                SET explanation = $3,
+                    title = CASE WHEN title IN ('Review workflow output', 'Review: ' || $4)
+                        THEN left('Review: ' || COALESCE($5::text, $4), 160) ELSE title END
+                WHERE id = $1 AND run_id = $2 AND status = 'pending' AND explanation = $6
+                RETURNING true
+                """,
+                decision_id,
+                run_id,
+                explanation[:2000],
+                workflow_title,
+                title,
+                previous_explanation,
+            )
+            if stored and title:
+                await conn.execute(
+                    """
+                    UPDATE workflow_runs SET artifact_title = $2
+                    WHERE id = $1 AND artifact_title IS NULL AND canonical_commit_sha = $3
+                    """,
+                    run_id,
+                    title[:160],
+                    revision,
+                )
+        return bool(stored)
+
+    async def decline_review(
+        self, *, run_id: UUID, clerk_user_id: str, summary: str
+    ) -> WorkflowRun:
+        """Turn down a waiting proposal: the run ends as declined and nothing it proposed is used.
+
+        One decision per run, like an approval. The accepted command ends the waiting durable
+        run through the review dispatcher, which retries until Temporal accepts it.
+        """
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if row is None:
+                raise LookupError(f"run {run_id} does not exist")
+            if row["review_decision"] == "declined":
+                return _run(row)
+            if (
+                not row["review_required"]
+                or row["review_decision"] is not None
+                or row["status"] != RunStatus.NEEDS_INPUT.value
+            ):
+                raise RuntimeError("This proposal is no longer waiting for a decision.")
+            if await conn.fetchval(
+                "SELECT true FROM workflow_review_commands WHERE source_run_id = $1", run_id
+            ):
+                raise RuntimeError("This proposal already has a review decision.")
+            artifact = {
+                "run_id": str(run_id),
+                "path": row["artifact_path"],
+                "revision": row["canonical_commit_sha"],
+            }
+            token = hashlib.sha256(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            await conn.execute(
+                """
+                INSERT INTO workflow_review_commands (
+                    id, project_id, request_id, actor_clerk_user_id, source_run_id, root_run_id,
+                    artifact_run_id, coordinator_run_id, action, request_digest, review_token,
+                    artifact
+                )
+                VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 'decline', $6, $6, $7::jsonb)
+                """,
+                uuid4(),
+                row["project_id"],
+                uuid5(NAMESPACE_URL, f"tin:decline:{run_id}"),
+                clerk_user_id,
+                run_id,
+                token,
+                json.dumps(artifact),
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', review_decision = 'declined', reviewed_at = now(),
+                    reviewed_by_clerk_user_id = $2, finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    progress_summary = 'Discarded. The current guide is unchanged.',
+                    progress_updated_at = now()
+                WHERE id = $1
+                RETURNING *
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"declined"}'::jsonb,
+                    applied_at = now(), applied_by_clerk_user_id = $2
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="human_review_declined",
+                details={
+                    "kind": "your_edits",
+                    "decision": "declined",
+                    "actor_clerk_user_id": clerk_user_id,
+                },
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{run_id}:human_review_declined",
+            )
+            await self._track_run(run_id, "run_review_recorded", conn=conn, decision="declined")
+        assert row is not None
+        return _run(row)
 
     async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
         row = await self.pool.fetchrow(

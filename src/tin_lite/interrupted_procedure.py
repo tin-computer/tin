@@ -1,9 +1,14 @@
 """Retain bounded, incomplete text separately from publishable procedure checkpoints."""
 
 import hashlib
+from dataclasses import replace
 
 from tin_lite.domain import StaleGenerationError
-from tin_lite.procedures import MEMORY_SECTION_VALIDATOR, validate_procedure_artifact
+from tin_lite.procedures import (
+    ANALYTICS_BRIEF_VALIDATOR,
+    MEMORY_SECTION_VALIDATOR,
+    validate_procedure_artifact,
+)
 from tin_lite.publication import OutputCheckpoint, PublicationPendingError
 
 OPERATION = "procedure_interrupted_output"
@@ -14,11 +19,19 @@ def eligible(spec):
         spec.result_kind == "project.artifact"
         and spec.sandbox.profile in {"default", "isolated"}
         and spec.output_media_type == "text/markdown"
-        and spec.output_validator in {None, MEMORY_SECTION_VALIDATOR}
+        and spec.output_validator in {None, MEMORY_SECTION_VALIDATOR, ANALYTICS_BRIEF_VALIDATOR}
         and not spec.identity.enabled
         and spec.companion_path is None
         and 0 < spec.output_max_bytes <= 1_000_000
     )
+
+
+def _partial(spec):
+    # A partial analytics brief has no finished evidence block yet and is never published,
+    # so only its size and encoding are checked.
+    if spec.output_validator == ANALYTICS_BRIEF_VALIDATOR:
+        return replace(spec, output_validator=None)
+    return spec
 
 
 async def retain(*, db, conn, storage, run, project, spec, base, content=None):
@@ -33,7 +46,7 @@ async def retain(*, db, conn, storage, run, project, spec, base, content=None):
         await _lease(db, conn, run)
         intent = existing.result if existing else None
         if content is not None:
-            validate_procedure_artifact(content, spec=spec, base=base)
+            validate_procedure_artifact(content, spec=_partial(spec), base=base)
             if content == base:
                 return
             candidate = {
@@ -93,7 +106,7 @@ async def retain(*, db, conn, storage, run, project, spec, base, content=None):
             repo_id=project.state_repo_id, revision=revision, path=spec.output_path
         )
         checkpoint.validate_content(saved)
-        validate_procedure_artifact(saved, spec=spec, base=base)
+        validate_procedure_artifact(saved, spec=_partial(spec), base=base)
         # Serialize projection with stop/replacement. No canonical file is written.
         async with conn.transaction():
             await conn.fetchval("SELECT id FROM workflow_runs WHERE id=$1 FOR UPDATE", run.id)

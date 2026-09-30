@@ -142,9 +142,11 @@ test("agent connections remain available through OAuth and repository selection 
       await page.screenshot({path: path.join(process.env.TIN_LOCK_SCREENSHOTS, "onboarding-connections-mobile.png"), fullPage: true});
       await page.setViewportSize({width: 1440, height: 900});
     }
+    // Connect links GitHub to this project without asking which one; the sign-in returns
+    // straight to the repository question.
     await page.locator('[data-integration-connect="infra.github"]').click();
-    await page.locator('[data-confirm-integration-project]').click();
     await page.getByText("example/site", {exact: true}).waitFor();
+    assert.equal(await page.locator("#integration-project-title").textContent(), "Choose the repository for QA’s project");
     assert.match(await page.locator(".connect-footer").innerText(), /0 of 2 connected/);
     await page.locator('[data-confirm-integration-project]').click();
     await page.waitForFunction(() => document.querySelector(".connect-footer")?.textContent.includes("1 of 2 connected"));

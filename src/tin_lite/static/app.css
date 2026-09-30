@@ -88,6 +88,7 @@
   --hot-hover: #d94100;
   --hot-pressed: #bd3900;
   --bermellon-text: #be3a00;
+  --ember-text: #ec4b1a;
   --setup-text: #b73500;
   --danger: #be2132;
   --on-accent: #fffdf6;
@@ -187,6 +188,7 @@ html[data-theme="dark"] {
   --hot-hover: #e8552a;
   --hot-pressed: #c53a10;
   --bermellon-text: #ec4b1a;
+  --ember-text: #ec4b1a;
   --setup-text: #ec4b1a;
   --danger: #d9515e;
   --on-accent: #14170a;
@@ -2261,6 +2263,39 @@ html[data-theme="dark"] .markdown-logo::before {
 .button-secondary:hover {
   background: var(--paper-well);
   border-color: rgb(var(--ink-rgb) / 35%);
+}
+
+/* One "Open" everywhere a row opens what it describes: a small bordered button, not a text link
+   with an arrow. The container selectors outrank the plain-text button resets of each row. */
+.open-button,
+:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  min-height: 26px;
+  padding: 4px 11px;
+  background: var(--paper-card);
+  border: 1px solid rgb(var(--ink-rgb) / 25%);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.open-button:hover,
+:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
+  background: var(--paper-well);
+  border-color: rgb(var(--ink-rgb) / 35%);
+  text-decoration: none;
 }
 
 .button-quiet {
@@ -4556,15 +4591,6 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 14px;
 }
 
-.decision-detail-card > header button {
-  padding: 0;
-  background: transparent;
-  color: var(--accent-text);
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
 .decision-workflow-mark {
   display: grid;
   width: 30px;
@@ -4681,10 +4707,6 @@ p.page-url-line[hidden],
   border-top: 1px solid var(--card-hairline);
 }
 
-.decision-detail-card > footer.is-actions-only {
-  justify-content: flex-end;
-}
-
 .decision-detail-card > footer .decision-remember {
   display: inline-flex;
   align-items: center;
@@ -4732,6 +4754,60 @@ p.page-url-line[hidden],
   border-radius: 4px;
   font-size: 12.5px;
   line-height: 16px;
+}
+
+/* The footer holds controls only: the "future drafts" box on the left, the buttons on the right.
+   When the card is too narrow, the buttons wrap to a second row on the right. */
+.decision-detail-card > footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 10px;
+}
+
+.decision-detail-card > footer .button-quiet {
+  padding-inline: 2px;
+}
+
+/* A quiet way to turn down what is waiting, just before the approval. */
+.decision-detail-card > footer .decision-discard {
+  align-self: center;
+  padding: 7px 0;
+  background: transparent;
+  color: var(--bermellon-text);
+  font-size: 12.5px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.decision-detail-card > footer .decision-discard:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+/* While a newer revision waits, every approval looks blocked, not only the primary one. */
+.decision-detail-card > footer .button-secondary[data-blocked],
+.decision-detail-card > footer .button-secondary[data-blocked]:hover {
+  background: transparent;
+  border-color: rgb(var(--ink-rgb) / 12%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+}
+
+.decision-detail-card > footer .decision-approval[data-blocked] {
+  background: rgb(var(--ink-rgb) / 8%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.decision-detail-body p.decision-note {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.decision-detail-body p.decision-note a {
+  color: var(--accent-deep);
 }
 
 .side-stack {

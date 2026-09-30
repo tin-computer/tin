@@ -25,7 +25,7 @@ For a self-host, configure `TIN_LITE_X_OAUTH_CLIENT_ID` and
 state and PKCE verifier. Configure OAuth 2.0 with the read, write, media and offline
 scopes required by the features you enable.
 
-Deploy the web service and worker together, apply `051_x_connection.sql`, and sync the
+Deploy the web service and worker together, apply `052_x_connection.sql`, and sync the
 catalog so the connection tables and workflow definitions recognize X. The migration
 extends the existing integration provider constraints; it adds no tables.
 
