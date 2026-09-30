@@ -768,6 +768,22 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
         error = type(exc).__name__
         raise
     finally:
+        _record_tool_call(ctx, tool, arguments, project_id, user_id, token, started, result, error)
+
+
+def _record_tool_call(
+    ctx: Any,
+    tool: str,
+    arguments: Any,
+    project_id: Any,
+    user_id: str | None,
+    token: Any,
+    started: float,
+    result: Any,
+    error: str | None,
+) -> None:
+    """Queue the call's metadata; a failure here never replaces the tool's own outcome."""
+    try:
         _, args_size = clip(arguments)
         if result is not None:
             received, is_error = _result_view(result)
@@ -790,6 +806,8 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
                 **_client_info(ctx),
             },
         )
+    except Exception:  # analytics must never change what the client receives
+        logger.exception("MCP tool call analytics failed for %s", tool)
 
 
 _is_personal_project = is_personal_project
