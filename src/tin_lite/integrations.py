@@ -1146,16 +1146,7 @@ class IntegrationService:
             installation_id = await self._github_resolve_user_installation(
                 user_token, attempt=attempt
             )
-        access_response = await self._client.get(
-            f"https://api.github.com/user/installations/{installation_id}/repositories",
-            headers=self._github_headers(user_token),
-            params={"per_page": 1},
-        )
-        if access_response.status_code in {401, 403, 404}:
-            raise IntegrationAuthorizationError(
-                "The signed-in GitHub user cannot access that installation"
-            )
-        _provider_json(access_response, provider="GitHub")
+        user_repositories = await self._github_user_repositories(user_token, installation_id)
         response = await self._client.get(
             f"https://api.github.com/app/installations/{installation_id}",
             headers=self._github_headers(await self._github_jwt()),
@@ -1184,6 +1175,7 @@ class IntegrationService:
             ),
             configuration={
                 "selected_repository": None,
+                "user_repositories": user_repositories,
                 "permissions": {
                     "contents": "write",
                     "pull_requests": "write",
@@ -1283,8 +1275,51 @@ class IntegrationService:
         )
         return options
 
+    async def _github_user_repositories(self, user_token: str, installation_id: int) -> list[str]:
+        """The installation's repositories the signed-in person may push to, by their own token.
+
+        Tin reads and changes the selected repository with the installation's token, which
+        reaches every repository the app was installed on. Only repositories the connecting
+        person could change themselves are offered, so connecting never widens their access.
+        """
+        names: list[str] = []
+        for page in range(1, GITHUB_REPOSITORY_PAGE_LIMIT + 1):
+            response = await self._client.get(
+                f"https://api.github.com/user/installations/{installation_id}/repositories",
+                headers=self._github_headers(user_token),
+                params={"per_page": 100, "page": page},
+            )
+            if response.status_code in {401, 403, 404}:
+                raise IntegrationAuthorizationError(
+                    "The signed-in GitHub user cannot access that installation"
+                )
+            payload = _provider_json(response, provider="GitHub")
+            for item in payload.get("repositories", []):
+                if not isinstance(item, dict) or not item.get("full_name"):
+                    continue
+                access = item.get("permissions")
+                if isinstance(access, dict) and any(
+                    access.get(level) is True for level in ("push", "maintain", "admin")
+                ):
+                    names.append(str(item["full_name"]))
+            if not _github_has_next_page(response):
+                break
+        return sorted(set(names), key=str.casefold)
+
     async def github_repositories(self, *, project_id: UUID) -> list[ProviderOption]:
         connection = await self._connection(project_id, GITHUB_PROVIDER)
+        allowed = connection.configuration.get("user_repositories")
+        selected = connection.configuration.get("selected_repository")
+        if not isinstance(allowed, list):
+            # Connected before Tin recorded the person's own access: keep the repository
+            # already chosen, and ask for a reconnect before offering any other.
+            if not isinstance(selected, str) or not selected:
+                raise IntegrationAuthorizationError(
+                    "Reconnect GitHub to choose a repository; Tin now offers only the "
+                    "repositories you can push to"
+                )
+            allowed = [selected]
+        permitted = {name.casefold() for name in allowed if isinstance(name, str)}
         installation_id = _installation_id(connection)
         token = await self._github_installation_token(installation_id)
         execution_key = f"integration:{uuid4()}"
@@ -1314,6 +1349,7 @@ class IntegrationService:
                     break
             else:
                 truncated = True
+            options = [option for option in options if option.id.casefold() in permitted]
             options.sort(key=lambda option: option.label.casefold())
         except IntegrationError:
             await self._database.record_integration_call(
