@@ -1,0 +1,157 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.traffic_snapshot",
+    "title": "Take a weekly traffic snapshot",
+    "description": "Each week, read Search Console and PostHog into one data file per landing page: clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth, and the latest audit's findings on each page. Page decisions and the growth report read this file instead of querying again. Numbers only, no judgments; a failed read stays empty, never zero.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "prerequisites": [
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit names the site's host and pins its findings to the pages they affect."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "signup_event": {
+          "type": "string",
+          "maxLength": 128,
+          "title": "Signup event",
+          "description": "The PostHog event a new account sends, such as signed_up. Leave empty to skip signups."
+        },
+        "activation_event": {
+          "type": "string",
+          "maxLength": 128,
+          "title": "Activation event",
+          "description": "The PostHog event that means a new account got value. Leave empty to skip activation."
+        },
+        "activation_window_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 7,
+          "title": "Days after signup that count as activation"
+        },
+        "website_hosts": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "title": "Website hosts",
+          "description": "Leave empty to use the audited host, or the top host in Search Console."
+        },
+        "brand_terms": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "title": "Brand terms (regular expressions)",
+          "description": "Searches that name the product. Leave empty to derive them from the host."
+        },
+        "exclude_email_domains": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "title": "Team email domains to exclude"
+        },
+        "internal_flag_property": {
+          "type": "string",
+          "maxLength": 71,
+          "title": "Internal-user flag property",
+          "description": "A PostHog property that is true for team members; person properties start with person:."
+        },
+        "always_include": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "title": "Paths to always list in detail, such as /pricing"
+        },
+        "impressions_reliable_from": {
+          "type": "string",
+          "maxLength": 10,
+          "title": "Impressions reliable from (YYYY-MM-DD)",
+          "description": "Only when the Search Console property changed: earlier impressions are left out of weekly and monthly rows."
+        },
+        "audit_run_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Organic audit run",
+          "description": "Leave empty to use the newest audit the snapshot has not seen yet."
+        }
+      },
+      "required": [
+        "project_id"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": [
+          "search_analytics.read"
+        ],
+        "required": true
+      },
+      {
+        "provider_key": "analytics.posthog",
+        "capabilities": [
+          "query.read"
+        ],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "channels.py"
+      ],
+      "timeout_seconds": 60,
+      "services": {
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 5,
+          "max_response_bytes": 64000
+        },
+        "posthog": {
+          "provider_key": "analytics.posthog",
+          "max_calls": 3,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "analytics/traffic-snapshot.json",
+        "media_type": "application/json",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

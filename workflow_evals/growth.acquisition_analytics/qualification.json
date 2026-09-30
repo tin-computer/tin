@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use synthetic PostHog and Search Console responses for fernwick.example, served by step ID; tests/test_acquisition_analytics.py supplies them offline. They are not live evidence.",
+    "Without inputs, the signup and activation events, hosts, brand terms and team exclusions come from analytics/traffic-snapshot.json."
+  ],
+  "cost_drivers": [
+    "No model calls and no Tin credits. Up to four PostHog and three Search Console reads, each capped at 64000 bytes."
+  ],
+  "effects": [
+    "Replaces analytics/GROWTH_ANALYTICS.md. No send, post, spend, edit or provider change."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Search signups 10 vs 0, Direct 8 vs 6, ChatGPT 2 vs 1; min_count 5; one excluded email domain and an internal flag.",
+      "inputs": {
+        "brand_terms": ["fernwick", "fernwik"],
+        "signup_event": "signed_up",
+        "activation_event": "first_invoice_sent",
+        "paid_event": "subscription_started",
+        "website_hosts": ["fernwick.example"],
+        "content_paths": ["/blog/"],
+        "min_count": 5,
+        "exclude_email_domains": ["fernwick.example"],
+        "internal_flag_property": "person:is_internal",
+        "impressions_reliable_from": "2026-04-28"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Ranked by activated signups",
+          "Direct is a measurement gap, not a channel",
+          "| ChatGPT | 6 vs 3 |",
+          "Holm correction",
+          "impressions unreliable before 2026-04-28",
+          "## Stored numbers"
+        ],
+        "excludes": ["team visits count"]
+      }
+    },
+    {
+      "id": "thin",
+      "description": "PostHog returns no signups and few sessions; min_count 100 and no project files, so nothing is called a change.",
+      "inputs": {"min_count": 100},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["too little data", "Visibility audit: no audit found", "no signup event is set"],
+        "excludes": ["change (up)", "change (down)"]
+      }
+    },
+    {
+      "id": "no_cross_source_sums",
+      "description": "118 PostHog signups, 9 of them from paid sessions. The wrong result adds ad-platform conversions to site signups.",
+      "inputs": {"signup_event": "signed_up", "paid_event": "subscription_started"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["118 people signed up this week", "never added to site-side counts"],
+        "excludes": ["127 people"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "sources",
+      "question": "Does every number carry its window, n and source, and does no figure add counts across platforms?"
+    },
+    {
+      "id": "tests",
+      "question": "Are changes called only above min_count with the exact binomial test and Holm correction, and is Direct reported as a measurement gap?"
+    },
+    {
+      "id": "decisions",
+      "question": "Does each decision rest on a rule that fired, with its evidence and the workflow that acts on it?"
+    }
+  ]
+}
