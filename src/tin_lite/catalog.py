@@ -541,9 +541,10 @@ BUILTIN_WORKFLOWS = (
         "connected website repository's own format, adding a Markdown route once when the "
         "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
         "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
-        "to main and the PR adds nothing but the page.",
+        "to main and the PR adds nothing but the page, or the page at the route you chose "
+        "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={

@@ -131,6 +131,12 @@ class HistoryRepo:
         }
 
     async def get_file_stream(self, *, ref, path, **kwargs):
+        if path not in self.trees[ref]:
+            # Like code.storage: a file the revision does not contain is a 404.
+            request = httpx.Request("GET", f"https://storage.test/{ref}/{path}")
+            raise httpx.HTTPStatusError(
+                "not found", request=request, response=httpx.Response(404, request=request)
+            )
         content = self.trees[ref][path][1]
 
         class Response:

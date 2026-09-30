@@ -1188,10 +1188,10 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """Save the program's future delivery, using the user's chosen GitHub destination.
 
-        settings: mode=draft_only|github_pr, repository=owner/repo,
+        settings: mode=draft_only|github_pr|github_commit, repository=owner/repo,
         path_pattern=content/blog/{slug}.md, frontmatter={}, item_paths={item_id:path}.
-        Updates require an explicit file mapping. Approval of newly configured drafts
-        opens an unmerged PR; it never merges/publishes. Share this consequence with
+        Updates require an explicit file mapping. With github_pr, approval opens an
+        unmerged PR; with github_commit it commits to main. Share this consequence with
         the user. Do not infer a repository from the product's name. Settings and
         revision are tool metadata, not choices to burden the user with.
         """
@@ -1213,6 +1213,50 @@ def create_mcp_app(
             )
         except (LookupError, ValueError, IntegrationError, RuntimeError) as exc:
             raise ToolError(str(exc)) from exc
+
+    @server.tool()
+    async def save_page_route(
+        project_id: str,
+        page_type: Literal["answer_page", "article"],
+        route: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Save where the founder wants answer pages or articles to live on their site.
+
+        Ask the founder first, as get_run's ask_the_founder describes, and save only the route
+        they confirm: a site path ending in {slug}, such as /answers/{slug}. Later approvals
+        tell the adaptation to publish at that route, adding a minimal route once if the site
+        has none. With delivery set to commit to main, Tin merges a pull request that adds the
+        page at this route when GitHub reports it clean. Reuse request_id when retrying.
+        """
+        from tin_lite.page_routes import PageRouteService
+        from tin_lite.project_files import ProjectFileError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="save_page_route")
+        try:
+            saved = await PageRouteService(
+                database=runtime().database, storage=runtime().storage
+            ).save(
+                project_id=project,
+                kind=page_type,
+                route=route,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+                actor=token.subject,
+                client_id=token.client_id,
+            )
+        except (LookupError, ValueError, ProjectFileError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+        return {
+            "routes": saved["routes"],
+            "revision": saved.get("revision"),
+            **_founder_words(
+                relay=[
+                    f"Saved: Tin publishes {page_type.replace('_', ' ')}s at {route} from now on."
+                ]
+            ),
+        }
 
     @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
@@ -3415,14 +3459,25 @@ def create_mcp_app(
             "Approved. Tin is adapting the page to the site's own format in a separate run"
             + (f", up to {about}, charged on actual usage." if about else ".")
         ]
+        route = chosen.get("route")
         if chosen_mode(chosen) == "github_commit":
             words.append(
-                "Tin merges its pull request into main when the pull request adds only the page "
-                "and GitHub reports it clean; otherwise the pull request stays open and get_run "
+                "Tin merges its pull request into main when it adds only the page, or the page "
+                f"at your chosen route {route}, and GitHub reports it clean; otherwise the pull "
+                "request stays open and get_run says why."
+                if route
+                else "Tin merges its pull request into main when it adds only the page and "
+                "GitHub reports it clean; otherwise the pull request stays open and get_run "
                 "says why."
             )
         else:
             words.append("It opens a pull request; merge it when you like.")
+        if not route:
+            words.append(
+                "No one has chosen where these pages live on the site yet, so this adaptation "
+                "picks a route itself. Ask the founder now, with ask_the_founder, so later "
+                "pages use the route they choose."
+            )
         return words, cost
 
     @server.tool()
@@ -3467,6 +3522,7 @@ def create_mcp_app(
             raise ToolError(f"conflict: {conflict}")
         delivery_words = None
         delivery_cost_view: dict[str, Any] | None = None
+        route_question: dict[str, Any] | None = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
             from tin_lite.project_files import ProjectFileError
@@ -3495,6 +3551,10 @@ def create_mcp_app(
                 delivery_words, delivery_cost_view = await _adaptation_words(
                     run, chosen, clerk_user_id
                 )
+                if not chosen.get("route"):
+                    from tin_lite.page_routes import ask_the_founder, page_type
+
+                    route_question = ask_the_founder(page_type(run), None)
 
         from tin_lite.reviewed_documents import document_spec
 
@@ -3517,6 +3577,7 @@ def create_mcp_app(
                 "status": approved.status.value,
                 "review_decision": approved.review_decision,
                 **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
+                **({"ask_the_founder": route_question} if route_question else {}),
                 **_founder_words(relay=delivery_words),
             }
         if run.executor == PROJECT_TASK_WORKFLOW_NAME:
