@@ -485,6 +485,12 @@ constraint), and v10 discards the whole panel. Under v11:
 Cannibalization now treats translations of one page (`/de/pricing` and `/pricing`) as one
 page and needs 10 impressions for a search before two pages count as competing.
 
+A page that is marked noindex but still gets search traffic
+(`indexation.noindex_with_search_traffic`) is a question under v11, not a critical
+failure: a noindex set on the page itself is often deliberate, for example on event
+pages, so the finding asks whether those pages are meant to stay out of search and the
+technical fix asks the founder. v10 still reports it as critical.
+
 ### One AI measure
 
 The organic audit now grades answers on the AI visibility audit's ladder: found (named, or

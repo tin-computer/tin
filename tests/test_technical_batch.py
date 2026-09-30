@@ -497,7 +497,10 @@ async def test_the_system_passes_the_whole_audit_under_v5(monkeypatch):
 
 
 def batch_source(robots=ROBOTS):
-    source = site_source(files=audit_files(robots=robots, urls=["/", "/login"]))
+    # Title length and the other page basics are audit policy v11 checks.
+    source = site_source(
+        policy="organic-audit-v11", files=audit_files(robots=robots, urls=["/", "/login"])
+    )
     source.service.supported_checks = technical_fix.supported_checks(technical_fix.BATCH_POLICY)
     source.service.batch_mode = True
     return source

@@ -725,6 +725,8 @@ V11_PAGE_FACTS = frozenset(
         "analytics",
         "not_found_text",
         "h1_texts",
+        "unnamed_controls",
+        "unlabeled_fields",
     }
 )
 

@@ -772,7 +772,7 @@ def _indexation_findings(view: SiteView, host: str) -> list[dict]:
         and not is_ad_landing_url(f["url"])
         and view.search.get(url_key(f["url"]), {}).get("impressions")
     ]
-    if hidden:
+    if hidden and view.angles:
         findings.append(
             site_finding(
                 host=host,
@@ -793,6 +793,28 @@ def _indexation_findings(view: SiteView, host: str) -> list[dict]:
                 priority="quick_win",
                 evidence_kind="page_fetch",
                 urls=[f["url"] for f in hidden],
+                evidence_refs=["site.pages", "search_console.value.pages"],
+            )
+        )
+    elif hidden:
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="indexation.noindex_with_search_traffic",
+                category="site",
+                area="crawlability_indexation",
+                issue="Pages that still get search traffic are marked noindex",
+                impact="high",
+                evidence=[
+                    f"{_path(f['url'])}: noindex; {view.search_note(url_key(f['url']))}"
+                    for f in hidden[:8]
+                ],
+                fix="Remove noindex from pages you want in search results; keep it only on "
+                "pages that should disappear.",
+                priority="critical",
+                evidence_kind="page_fetch",
+                urls=[f["url"] for f in hidden],
+                status="fail",
                 evidence_refs=["site.pages", "search_console.value.pages"],
             )
         )

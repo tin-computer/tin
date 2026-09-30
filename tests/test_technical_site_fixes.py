@@ -219,7 +219,7 @@ def test_framework_changes_stay_inside_the_named_files_and_small():
 # --- Sources ---------------------------------------------------------------------------------
 
 
-def site_source(**changes):
+def site_source(*, policy="organic-audit-v10", **changes):
     site = {
         "files": files(robots=ROBOTS, urls=["/", "/login"]),
         "plan": None,
@@ -228,7 +228,7 @@ def site_source(**changes):
         "pagespeed": {"status": "not_configured", "results": []},
         **changes,
     }
-    return source_fixture(policy="organic-audit-v10", site=site, checks={})
+    return source_fixture(policy=policy, site=site, checks={})
 
 
 async def test_site_findings_are_repair_candidates_only_under_site_fix_v4():

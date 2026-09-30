@@ -110,6 +110,37 @@ def test_a_v10_run_keeps_v10_findings_and_coverage():
     }
 
 
+def test_a_v10_run_keeps_noindex_with_traffic_critical_and_skips_accessibility():
+    from test_organic_audit_findings import checks, files, row
+    from test_organic_audit_findings import facts as page_facts
+    from test_organic_audit_findings import view as findings_view
+
+    pages = [
+        page_facts("/guide", robots=["noindex"]),
+        page_facts("/signup", unnamed_controls=2, unlabeled_fields=1),
+    ]
+    search = [row("/guide", 3, 90, 6)]
+    current = checks(findings_view(pages=pages, search=search))
+    pinned = checks(
+        SiteView(
+            host=HOST,
+            hosts=(HOST,),
+            site={"files": files(), "pages": pages},
+            crawl_pages=[],
+            search_pages=search,
+            search_queries=[],
+            angles=False,
+        )
+    )
+    # v11 asks whether the noindex is deliberate; v10 still calls it critical.
+    assert current["indexation.noindex_with_search_traffic"]["priority"] == "quick_win"
+    hidden = pinned["indexation.noindex_with_search_traffic"]
+    assert (hidden["priority"], hidden["status"]) == ("critical", "fail")
+    assert "onpage.accessible_name_missing" in current
+    assert not {"onpage.accessible_name_missing", "onpage.form_label_missing"} & set(pinned)
+    assert {"unnamed_controls", "unlabeled_fields"} <= V11_PAGE_FACTS
+
+
 @pytest.mark.asyncio
 async def test_a_v10_run_reads_no_new_site_files_and_saves_v10_page_facts():
     site = SyntheticSite()
