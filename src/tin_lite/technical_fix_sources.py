@@ -25,8 +25,10 @@ from tin_lite.organic_audit import (
     public_site,
     technical_findings,
 )
+from tin_lite.organic_audit_format import TECHNICAL_FORMAT
 from tin_lite.organic_audit_scope import audit_hosts
 from tin_lite.technical_metadata_rules import SUPPORTED_CHECKS
+from tin_lite.technical_site_rules import SITE_FIXES
 
 MAX_AFFECTED_PAGES = 5
 CONTENT_FINDING_MESSAGE = (
@@ -41,6 +43,19 @@ SITE_FINDING_MESSAGE = (
     "crawl. The pinned repair policy does not cover it yet; use its fix and evidence to plan "
     "the change."
 )
+# How urgent a finding is, for choosing one among several eligible findings.
+PRIORITY_ORDER = {"critical": 0, "high_impact": 1, "quick_win": 2, "long_term": 3}
+IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def finding_rank(finding: dict) -> tuple[int, int]:
+    """Lower is more urgent. Crawl findings take the audit report's tier for their check;
+    findings without any priority sort last."""
+    priority = finding.get("priority") or TECHNICAL_FORMAT.get(finding.get("check_id"), ("", ""))[1]
+    return (
+        PRIORITY_ORDER.get(priority, len(PRIORITY_ORDER)),
+        IMPACT_ORDER.get(finding.get("impact") or finding.get("severity"), len(IMPACT_ORDER)),
+    )
 
 
 class TechnicalFixError(ValueError):
@@ -174,8 +189,25 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
         coverage
     ):
         raise _invalid_source()
-    # Content, site and search findings are recognized only to explain their exclusion.
-    # They never gain the recomputed crawl evidence or eligibility of a technical finding.
+    # Site and search findings are published by Tin and sealed by the publication digest.
+    # They are selectable only under a policy that repairs them (see TechnicalFixSources).
+    hosts = audit_hosts(scope)
+    site_rows = [row for row in findings if row["category"] in {"site", "search"}]
+    for row in site_rows:
+        urls = row.get("urls", [])
+        if (
+            not isinstance(urls, list)
+            or len(urls) > 10
+            or any(
+                not isinstance(url, str) or not in_scope_url(url, host, aliases=hosts)
+                for url in urls
+            )
+            or type(row.get("affected_count", 0)) is not int
+            or row.get("affected_count", 0) < 0
+        ):
+            raise _invalid_source()
+    # Content findings are recognized only to explain their exclusion. They never gain
+    # the recomputed crawl evidence or eligibility of a technical finding.
     excluded = [
         {
             "finding": {key: row[key] for key in ("id", "check_id", "category")},
@@ -189,13 +221,29 @@ def _validate_inventory(*, evidence, inventory, run, project_id):
         for row in findings
         if row["category"] != "technical"
     ]
-    return scope, crawl, expected, coverage, excluded
+    content_rows = [row for row in findings if row["category"] == "content"]
+    return scope, crawl, expected, coverage, excluded, site_rows, content_rows
 
 
 class TechnicalFixSources:
-    def __init__(self, *, database, storage, integrations=None, supported_checks=SUPPORTED_CHECKS):
+    def __init__(
+        self,
+        *,
+        database,
+        storage,
+        integrations=None,
+        supported_checks=SUPPORTED_CHECKS,
+        batch=False,
+    ):
         self.supported_checks = supported_checks
+        # site-fix-v5 sees every finding, to fix it, ask about it or say why it stays out.
+        self.batch_mode = batch
         self.db, self.storage, self.integrations = database, storage, integrations
+
+    @property
+    def site_fixes(self) -> bool:
+        """True under site-fix-v4, which repairs site findings and part of a finding."""
+        return bool((set(SITE_FIXES) - SUPPORTED_CHECKS) & set(self.supported_checks))
 
     async def list_sources(self, *, project_id: UUID, offset: int = 0):
         if type(offset) is not int or not 0 <= offset <= 10_000:
@@ -268,8 +316,10 @@ class TechnicalFixSources:
                 )
                 for name in ("evidence.json", "findings.json")
             )
-            scope, crawl, findings, coverage, excluded = _validate_inventory(
-                evidence=evidence, inventory=inventory, run=run, project_id=project_id
+            scope, crawl, findings, coverage, excluded, site_rows, content_rows = (
+                _validate_inventory(
+                    evidence=evidence, inventory=inventory, run=run, project_id=project_id
+                )
             )
         except (KeyError, TypeError, ValueError, AttributeError, RecursionError) as exc:
             raise _invalid_source() from exc
@@ -292,17 +342,55 @@ class TechnicalFixSources:
                 reason = "check_not_supported"
             elif crawl["status"] != "completed":
                 reason = "crawl_incomplete"
-            elif len(affected) > MAX_AFFECTED_PAGES:
+            elif len(affected) > MAX_AFFECTED_PAGES and not self.site_fixes:
                 reason = "affected_page_limit"
             selections.append(
                 {
                     "finding": finding,
                     "affected_urls": affected,
+                    "affected_count": len(affected),
                     "source_eligible": reason is None,
                     "ineligible_reason": reason,
                 }
             )
-        available = any(row["source_eligible"] for row in selections)
+        if self.batch_mode:
+            # Every finding reaches the plan; content findings only to be listed as copy.
+            excluded = [item for item in excluded if item["finding"]["category"] == "content"]
+            for row in [*site_rows, *content_rows]:
+                content = row["category"] == "content"
+                selections.append(
+                    {
+                        "finding": row,
+                        "affected_urls": list(row.get("urls", [])),
+                        "affected_count": row.get("affected_count", len(row.get("urls", []))),
+                        "source_eligible": not content,
+                        "ineligible_reason": "content_finding" if content else None,
+                    }
+                )
+        elif self.site_fixes:
+            for row in site_rows:
+                if row["check_id"] not in self.supported_checks:
+                    continue
+                excluded = [item for item in excluded if item["finding"]["id"] != row["id"]]
+                selections.append(
+                    {
+                        "finding": row,
+                        "affected_urls": list(row.get("urls", [])),
+                        "affected_count": row.get("affected_count", len(row.get("urls", []))),
+                        "source_eligible": True,
+                        "ineligible_reason": None,
+                    }
+                )
+        repairable = [r for r in selections if r["finding"]["category"] != "content"]
+        if self.batch_mode:
+            from tin_lite.technical_repair_plan import classify
+
+            available = any(
+                row["source_eligible"] and classify(row["finding"]["check_id"]) == "fix"
+                for row in selections
+            )
+        else:
+            available = any(row["source_eligible"] for row in selections)
         return {
             "source": {
                 "audit_run_id": str(run.id),
@@ -326,15 +414,22 @@ class TechnicalFixSources:
                 "reason": None
                 if available
                 else "no_technical_findings"
-                if not selections
+                if not repairable
                 else "no_eligible_findings",
             },
             "execution_available": True,
             "limitations": [
                 "Saved crawl observations, not a live verification of the website.",
                 "Unobserved checks are unknown, not passes.",
-                "Supported missing-metadata findings affecting at most five pages are eligible. "
-                "Execution still requires a verified source/build profile and no overlapping PR.",
+                (
+                    "Supported site, sitemap, robots.txt and page-tag findings are eligible; a "
+                    "repair covers up to three pages or ten sitemap URLs and lists the rest. "
+                    "Execution still requires a matched source and no overlapping PR."
+                    if self.site_fixes
+                    else "Supported missing-metadata findings affecting at most five pages are "
+                    "eligible. Execution still requires a verified source/build profile and no "
+                    "overlapping PR."
+                ),
                 "Execution requires fresh verification and an exact source match. "
                 "This preview makes no changes.",
             ],
@@ -416,4 +511,95 @@ class TechnicalFixSources:
                 "The repository binding is a preview, not an execution or write authorization.",
                 "A run must pin its own binding and verify the affected routes before editing.",
             ],
+        }
+
+    async def batch(
+        self,
+        *,
+        project_id: UUID,
+        audit_run_id: UUID,
+        audit_revision: str,
+        expected_repository: str,
+        repository_serves_site: bool,
+        finding_ids: list[str] | None = None,
+        decisions: list[str] | None = None,
+        bind: bool = True,
+    ):
+        """site-fix-v5's preview: every finding of one audit, sorted into repairs, judgment
+        calls, copy and manual steps. `decisions` are `finding_id=choice` answers.
+
+        `bind` False previews without touching GitHub (the plan alone)."""
+        from tin_lite import technical_repair_plan as repair_plan
+
+        if not re.fullmatch(r"[0-9a-f]{40}", audit_revision):
+            raise TechnicalFixError(
+                "invalid_selection", "Choose an exact audit revision.", status_code=422
+            )
+        source = await self.inspect(project_id=project_id, audit_run_id=audit_run_id)
+        if source["source"]["audit_revision"] != audit_revision:
+            raise TechnicalFixError("source_changed", "The selected audit revision does not match.")
+        selections = source["findings"]
+        if finding_ids:
+            wanted = set(finding_ids)
+            unknown = wanted - {row["finding"]["id"] for row in selections}
+            if unknown:
+                raise TechnicalFixError(
+                    "finding_not_found",
+                    f"Not in this audit: {', '.join(sorted(unknown))}.",
+                    status_code=404,
+                )
+            selections = [row for row in selections if row["finding"]["id"] in wanted]
+        try:
+            answers = repair_plan.parse_decisions(decisions)
+            planned = repair_plan.build_plan(selections, answers)
+        except ValueError as exc:
+            raise TechnicalFixError("invalid_decision", str(exc), status_code=422) from exc
+        result = {
+            "source": source["source"],
+            "target": source["target"],
+            "crawl_status": source["crawl_status"],
+            "plan": planned,
+            "decisions_needed": planned["decisions_needed"],
+            "ask": repair_plan.ASK if planned["decisions_needed"] else None,
+            "summary": {
+                "fixable": len(planned["repairs"]),
+                "decisions_needed": len(planned["decisions_needed"]),
+                **{key: len(rows) for key, rows in planned["left_out"].items() if rows},
+            },
+            "caps": {
+                "findings": repair_plan.MAX_FINDINGS,
+                "files": repair_plan.MAX_FILES,
+                "changed_lines": repair_plan.MAX_CHANGED_LINES,
+            },
+            "limitations": [
+                "Saved audit observations; a run re-reads the live site before changing anything.",
+                "Copy findings go to the content workflows, and manual steps are listed with "
+                "where they live.",
+                "Changes Tin can't build are checked on the live site after they merge.",
+            ],
+        }
+        if not bind or not planned["repairs"]:
+            # Nothing to execute: the preview needs no repository binding.
+            return {**result, "execution_available": False}
+        if repository_serves_site is not True:
+            raise TechnicalFixError(
+                "repository_confirmation_required",
+                "Confirm that the selected repository serves the audited site.",
+            )
+        if self.integrations is None:
+            raise TechnicalFixError(
+                "github_unavailable", "GitHub preparation is unavailable.", status_code=503
+            )
+        try:
+            binding = await self.integrations.github_repository_binding(
+                project_id=project_id, expected_repository=expected_repository
+            )
+        except IntegrationError as exc:
+            raise TechnicalFixError("github_binding_failed", str(exc)) from exc
+        return {
+            **result,
+            "repository_binding": asdict(binding),
+            "repository_mapping": "member_asserted_not_verified",
+            "live_verification": "not_performed",
+            "execution_available": bool(planned["repairs"]),
         }

@@ -83,8 +83,26 @@ def test_current_and_historical_policy_contracts():
     current = deepcopy(
         next(row.definition for row in BUILTIN_WORKFLOWS if row.key == technical_fix.KEY)
     )
+    assert validate_codex_procedure_definition(current).repair_policy == technical_fix.BATCH_POLICY
+    assert current["procedure"]["verification"]["commands"] == []
+    assert current["procedure"]["output"]["max_files"] == 20
     assert spec().repair_policy == technical_fix.POLICY
+    # Earlier policies keep their three-file limit; only the batch policy may go to twenty.
+    site = deepcopy(current)
+    site["procedure"]["output"]["repair_policy"] = technical_fix.SITE_POLICY
+    with pytest.raises(ValueError):
+        validate_codex_procedure_definition(site)
+    site["procedure"]["output"]["max_files"] = 3
+    assert validate_codex_procedure_definition(site).repair_policy == technical_fix.SITE_POLICY
+    current["procedure"]["output"]["max_files"] = 3
+    metadata = deepcopy(current)
+    metadata["procedure"]["output"]["repair_policy"] = technical_fix.POLICY
+    with pytest.raises(ValueError):
+        validate_codex_procedure_definition(metadata)  # v3 still needs its sandbox verifier.
+    metadata["procedure"]["verification"]["commands"] = [technical_fix.CHECK_COMMAND]
+    assert validate_codex_procedure_definition(metadata).repair_policy == technical_fix.POLICY
     previous = deepcopy(current)
+    previous["procedure"]["verification"]["commands"] = [technical_fix.CHECK_COMMAND]
     previous["procedure"]["output"]["repair_policy"] = technical_fix.WHOLE_FINDING_POLICY
     assert (
         validate_codex_procedure_definition(previous).repair_policy

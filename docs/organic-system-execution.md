@@ -52,7 +52,8 @@ children. It pins all child definitions from the parent's atomic registry revisi
 Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
-2. After the audit, inspect at most one eligible technical finding if requested.
+2. After the audit, if requested, propose one technical fix. Under `site-fix-v5` that PR
+   covers every fixable finding of the audit; earlier policies take one finding.
 3. After both research runs succeed, create one manual `content.plan` configuration in
    My system, using these exact research run IDs, then run it.
 4. Publish `reports/organic-system/{run_id}/RESULT.md`, linking the exact child artifacts
@@ -71,9 +72,18 @@ an explicit skipped step, without allocating repair compute or manufacturing a d
 
 Manual-only Tin-owned template on the existing `codex.procedure` executor. Inputs:
 
-- `audit_run_id`, `audit_revision`, and `finding_id` from the verified source picker/API.
+- `audit_run_id` and `audit_revision` from the verified source picker/API.
+- `finding_ids` (optional, empty means every fixable finding) and `decisions`
+  (`finding_id=choice` answers to the judgment calls `preflight_technical_fix` returns).
 - `expected_repository` and `repository_serves_site=true`.
 - Optional bounded `context`; project identity remains bound outside editable inputs.
+
+New runs pin `site-fix-v5`: one PR fixes every fixable finding of the audit, grouped by
+kind of change, and the live check reports each finding after the merge; see
+[Technical repair](technical-fix.md#site-fix-v5-everything-the-audit-found). The parent
+passes the whole audit with no decisions, so judgment calls are listed for a later run.
+`site-fix-v4` runs take one finding (`finding_id`), and the rest of this section describes
+the metadata policies that older pinned runs keep.
 
 The first supported finding is `metadata.title_missing`, with a completed technical
 crawl and at most five affected URLs. Partial AI observations do not invalidate a
