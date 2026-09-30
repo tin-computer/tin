@@ -159,6 +159,7 @@ class XPosts:
             "path": path,
             "revision": revision,
             "draft": validate_draft(raw),
+            "sha256": digest(raw),
             "feedback_run_id": str(source_id) if source_id else None,
         }
 
@@ -187,7 +188,12 @@ class XPosts:
                 }
             ],
         )
-        return {"path": path, "revision": result.revision, "draft": value}
+        return {
+            "path": path,
+            "revision": result.revision,
+            "draft": value,
+            "sha256": digest(content.encode()),
+        }
 
     async def snapshot(self, project_id, actor, path, post_id):
         view = await self.read(project_id, actor, path)

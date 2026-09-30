@@ -25,6 +25,7 @@
       picking: false, files: [], feedback: "", feedbackOpen: false, feedbackRequest: null, feedbackRun: null, feedbackSource: null, review: null, ...kept};
     state.close = () => {
       sessions.set(key, {draft: state.draft && copy(state.draft), revision: state.revision,
+        savedSha: state.savedSha, feedbackSource: state.feedbackSource,
         dirty: state.dirty, selected: state.selected, saveRequest: state.saveRequest,
         feedback: state.feedback, feedbackRequest: state.feedbackRequest, feedbackRun: state.feedbackRun});
       clearTimeout(state.feedbackTimer);
@@ -56,6 +57,7 @@
       if (result?.draft?.schema_version !== "tin.social.x_draft.v1" || !Array.isArray(result.draft.posts)) throw new Error("This file is not an X draft. Open it in Files.");
       state.revision = result.revision;
       state.draft = copy(result.draft);
+      state.savedSha = result.sha256;
       state.feedbackSource = result.feedback_run_id || null;
       state.selected = Math.min(state.selected, state.draft.posts.length - 1);
       state.dirty = false; state.preview = null; state.previewPost = null; state.saveRequest = null;
@@ -70,6 +72,12 @@
     try {
       const review = await state.context.api(`/api/workflows/runs/${state.feedbackSource}/review?${new URLSearchParams({post_id: postId})}`);
       if (state.closed || state.draft.posts[state.selected].id !== postId) return;
+      if (review.artifact?.sha256 && review.artifact.sha256 !== state.savedSha) {
+        state.review = null;
+        state.message = "This draft changed in Files. Reload the saved draft before giving feedback.";
+        render(state);
+        return;
+      }
       state.review = review;
       state.feedbackRun = review.pending_run_id || null;
       render(state);
@@ -132,6 +140,7 @@
       if (state.closed) return false;
       state.revision = result.revision;
       state.draft = copy(result.draft);
+      state.savedSha = result.sha256;
       state.selected = Math.min(state.selected, state.draft.posts.length - 1);
       state.dirty = false; state.saveRequest = null;
       state.message = "Draft saved to Files.";

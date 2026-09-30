@@ -622,9 +622,11 @@
     "social.x_style": "Learn my X writing style",
     "social.x_publish": "Publish an approved X post",
     "social.x_compose": "Compose X posts directly",
-    "social.x_draft": "Draft for X"
+    "social.x_draft": "Draft for X",
+    "social.x_revise": "Revise X writing"
   },
   "workflow_scope": {
+    "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
     "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",

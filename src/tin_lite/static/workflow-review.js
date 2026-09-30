@@ -14,6 +14,7 @@
     const {api, projectId, runId, reader, openRun, onRevised, toast} = context;
     let disposed = false, comparisonCleanup = null;
     const key = keyFor(projectId, runId);
+    reviews.delete(key);
     const draft = drafts.get(key) || {feedback: "", open: false, request: null};
     drafts.set(key, draft);
     const approval = [...host.querySelectorAll(reader ? ".markdown-context-action:not(.is-secondary)" : "[data-apply-decision]")];
@@ -184,6 +185,13 @@
     }
     api(`/api/workflows/runs/${runId}/review`).then(value => {
       if (disposed || !host.isConnected) return;
+      // X guide revisions keep their original approval gate. Never pair a cached
+      // document with a token for newer text, including edits made through Files.
+      if (reader && value.x_feedback && context.documentSha !== value.artifact?.sha256) {
+        region.textContent = "Loading the updated guide…";
+        context.reloadDocument?.();
+        return;
+      }
       review = value; reviews.set(key, review);
       if (review.status === "failed" && !draft.feedback) draft.feedback = review.feedback || "";
       redraw();

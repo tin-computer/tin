@@ -265,6 +265,29 @@ async def test_guide_revision_keeps_original_gate_and_approval_pins_revised_copy
     assert (await f.db.get_run(original.id)).status.value == "succeeded"
 
 
+async def test_guide_review_document_reads_latest_file_and_binds_its_content(publication_db):
+    from tin_lite.x_posts import digest
+
+    f = await setup(publication_db, guide=True)
+    old_revision = f.source.canonical_commit_sha
+    guide = current(f, f.source.artifact_path) + b"\nPrefer short openings.\n"
+    revision = f.storage.repo.edit({f.source.artifact_path: guide})
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        response = await client.get(f"/api/workflows/runs/{f.source.id}/review/document")
+        assert response.status_code == 200, response.text
+        document = response.json()
+        view = (await client.get(f"/api/workflows/runs/{f.source.id}/review")).json()
+        assert document["markdown"] == guide.decode()
+        assert document["revision"] == revision != old_revision
+        assert document["sha256"] == view["artifact"]["sha256"] == digest(guide)
+        assert "Prefer short openings." in document["html"]
+        f.storage.repo.edit({"unrelated.md": b"Another edit"})
+        later = (await client.get(f"/api/workflows/runs/{f.source.id}/review")).json()
+        assert later["review_token"] == view["review_token"]
+
+
 @pytest.mark.parametrize("path", [PATH, x_style.GUIDE_PATH])
 async def test_concurrent_edits_are_not_overwritten(publication_db, path):
     f = await setup(publication_db)

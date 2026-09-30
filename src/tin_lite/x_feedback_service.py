@@ -137,6 +137,7 @@ class XFeedback:
                 "run_id": str(run.id),
                 "path": snapshot["path"],
                 "revision": snapshot["revision"],
+                "sha256": snapshot["sha256"],
             },
             "review_token": token,
             "post_id": snapshot["post_id"],

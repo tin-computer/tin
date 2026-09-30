@@ -1117,6 +1117,7 @@ class MarkdownDocumentView(BaseModel):
     revision: str | None = None
     size_bytes: int | None = None
     related_documents: list[dict[str, str]] = Field(default_factory=list)
+    sha256: str | None = None
 
 
 class ProjectFileView(BaseModel):
@@ -4155,9 +4156,20 @@ async def read_previous_review_copy(
     response: Response,
     user: AuthContext = AUTHENTICATED_USER,
 ):
-    """Read a revision's previous copy without calling it that revision's own output."""
+    """Read the current X guide, or an article revision's previous saved copy."""
     try:
         service = _workflow_reviews(request)
+        candidate = await service.db.get_run(run_id)
+        if candidate and candidate.executor == "social.x_style":
+            from tin_lite.x_feedback_service import XFeedback
+
+            feedback = XFeedback(service.runtime, service.settings)
+            run = await feedback.source(run_id, user.clerk_user_id)
+            snapshot, _, _ = await feedback.snapshot(run)
+            document = await get_project_file_document(
+                run.project_id, request, response, snapshot["path"], snapshot["revision"], user
+            )
+            return document.model_copy(update={"sha256": snapshot["sha256"]})
         run, _ = await service.source(run_id, user.clerk_user_id)
         artifact_run, _ = await service.artifact(run)
     except LookupError as exc:
