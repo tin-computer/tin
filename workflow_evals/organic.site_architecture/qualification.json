@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases need fictional project states, a synthetic repository checkout and deterministic Search Console fakes; they are not measured model output or live integration evidence.",
+    "tests/test_site_architecture.py checks offline that the documented redirects.json block is what the technical fix reads."
+  ],
+  "cost_drivers": [
+    "Codex input grows with the repository's routes and navigation, the audit, the snapshot and the previous report; output grows with URL and redirect rows, capped at 64000 bytes.",
+    "A plan calls Search Console up to five times; a follow-up fewer. Provider processing is unmeasured."
+  ],
+  "effects": [
+    "Replaces reports/organic/site-architecture/SITE_ARCHITECTURE.md. Reads the repository without changing it. The technical fix later asks about each row in its redirects.json block; nothing here edits a page, redirect or PR."
+  ],
+  "cases": [
+    {
+      "id": "url_change",
+      "description": "A Next.js repository with /features/* moving to /product/*, an existing /old-pricing redirect and eight clicked URLs. The plan retargets /old-pricing straight at /plans and asks about /features/whiteboard as a 410.",
+      "inputs": {
+        "mode": "plan",
+        "planned_change": "url_change",
+        "new_paths": "/pricing -> /plans\n/features -> /product\n/features/invoicing -> /product/invoicing\n/features/reminders -> /product/reminders\n/features/reports -> /product/reports"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "/old-pricing",
+          "/product/{slug}",
+          "410",
+          "<!-- redirects.json:start -->",
+          "\"schema\": \"site_architecture.redirects/1\"",
+          "<!-- baseline.json:start -->",
+          "Redirects for the technical fix"
+        ],
+        "excludes": ["Approval status", "apply by hand"]
+      }
+    },
+    {
+      "id": "deep_pricing",
+      "description": "No planned change; the repository's header omits /pricing and the only link to it sits four clicks from home. The gate passes on click depth from the repository link graph.",
+      "inputs": {"mode": "plan"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["repository link graph", "/pricing", "Navigation"],
+        "excludes": ["Status: stopped"]
+      }
+    },
+    {
+      "id": "thin_data_stop",
+      "description": "About 60 routes, two integration pages, no audit, snapshot or Page decisions and no trigger: a clean stop with explicit unknowns.",
+      "inputs": {"mode": "plan", "planned_change": "none"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped", "What was checked", "Run again when", "not assessed"],
+        "excludes": ["<!-- redirects.json:start -->", "orphan count: 0"]
+      }
+    },
+    {
+      "id": "follow_up_without_date",
+      "description": "A previous plan with a baseline but no applied_on input: the follow-up stops and asks for the date before any comparison.",
+      "inputs": {"mode": "follow_up"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped", "applied_on"],
+        "excludes": ["Search Console before and after", "redirect passed"]
+      }
+    },
+    {
+      "id": "truncated_gsc",
+      "description": "Search Console page and date rows come back truncated during a URL change; the plan states incomplete coverage instead of false zeros.",
+      "inputs": {"mode": "plan", "planned_change": "url_change", "new_paths": "/pricing -> /plans"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["/plans", "unknown", "truncated"],
+        "excludes": ["redirect passed"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "repository",
+      "question": "Do routes, navigation links and click depth cite the repository path:line they come from, with client-only links marked not assessed?"
+    },
+    {
+      "id": "redirects",
+      "question": "Is every moved must-keep URL represented once, with no chain, no source that is also a target and no unrelated home redirect, and does the redirects.json block match the table?"
+    },
+    {
+      "id": "evidence",
+      "question": "Does every number name its window and source, with unknown kept apart from zero, and does the gate pass or stop only on supported evidence?"
+    }
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.site_architecture",
+    "title": "Plan the site's page tree and redirects",
+    "description": "Read your connected repository's routes and navigation, work out how many clicks each page sits from the home page, and weigh that against a year of Search Console clicks and the traffic snapshot's visits. Get a page tree, URL and navigation rules, and, when URLs must change, the exact redirects: the next technical fix asks about each one and adds the ones you agree to in one pull request. Weekly follow-ups after a change compare clicks with the saved baseline. Plans only; changes nothing itself.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "prerequisites": [
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit's crawl supplies orphans, click depth on the live site, cannibalization and the sitemap."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "content/efficacy.md",
+        "producer": "organic.content_efficacy",
+        "reason": "Page decisions name the merges and retirements the tree has to absorb."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "analytics/traffic-snapshot.json",
+        "producer": "organic.traffic_snapshot",
+        "reason": "The snapshot's visits per landing page keep a page with visits but no search clicks from being moved without a redirect."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map points at the routes, layouts and navigation components in the repository."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "mode": {
+          "type": "string",
+          "enum": ["plan", "follow_up"],
+          "default": "plan",
+          "title": "Plan, or follow up after a change"
+        },
+        "planned_change": {
+          "type": "string",
+          "enum": ["none", "redesign", "url_change", "platform_move", "domain_move"],
+          "default": "none",
+          "title": "Change you are planning"
+        },
+        "new_paths": {
+          "type": "string",
+          "maxLength": 8000,
+          "default": "",
+          "title": "New routes, one old -> new path or new route per line"
+        },
+        "new_origin": {
+          "type": "string",
+          "maxLength": 255,
+          "default": "",
+          "title": "New HTTPS origin, for a domain move only"
+        },
+        "applied_on": {
+          "type": "string",
+          "maxLength": 10,
+          "default": "",
+          "title": "Date the change went live (YYYY-MM-DD), for a follow-up"
+        },
+        "key_pages": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {"type": "string", "minLength": 1, "maxLength": 300},
+          "title": "Key pages (optional)",
+          "description": "Leave empty to use home, pricing, signup and the most clicked feature pages."
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {"provider_key": "infra.github", "capabilities": ["contents.read"], "required": true},
+      {"provider_key": "analytics.gsc", "capabilities": ["search_analytics.read"], "required": true}
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/site-architecture/SKILL.md",
+        "skills/site-architecture/MEASUREMENT.md"
+      ],
+      "entry_skill": "site-architecture",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"]
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
+      "services": {
+        "gsc": {"provider_key": "analytics.gsc", "max_calls": 5, "max_response_bytes": 64000}
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/organic/site-architecture/SITE_ARCHITECTURE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
