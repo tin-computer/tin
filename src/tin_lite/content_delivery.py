@@ -288,6 +288,61 @@ def summary_line(raw):
     return None
 
 
+_COUNT_WORDS = ("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine")
+_ANNOUNCED_KINDS = {
+    "breaking": ("breaking change", "breaking changes"),
+    "feature": ("feature", "features"),
+    "features": ("feature", "features"),
+    "improvement": ("improvement", "improvements"),
+    "improvements": ("improvement", "improvements"),
+    "fix": ("fix", "fixes"),
+    "fixes": ("fix", "fixes"),
+}
+
+
+def _spoken_list(items):
+    return items[0] if len(items) == 1 else f"{', '.join(items[:-1])} and {items[-1]}"
+
+
+def release_line(raw):
+    """What a release announcement draft announces and which drafts it holds, or None.
+
+    Only a document whose first section is "What shipped", listed as counted groups
+    ("### Features (6)"), qualifies; its later sections are the channel drafts.
+    """
+    try:
+        text = raw.decode("utf-8")
+    except (AttributeError, UnicodeDecodeError):
+        return None
+    sections = re.split(r"(?m)^## +", text)[1:]
+    if not sections or sections[0].splitlines()[0].strip().casefold() != "what shipped":
+        return None
+    counts = []
+    for name, number in re.findall(r"(?m)^### +([A-Za-z ]+?) +\((\d+)\) *$", sections[0]):
+        kind = _ANNOUNCED_KINDS.get(name.strip().casefold())
+        if kind is None or int(number) < 1:
+            return None
+        amount = int(number)
+        spoken = _COUNT_WORDS[amount] if amount < len(_COUNT_WORDS) else str(amount)
+        counts.append(f"{spoken} {kind[0] if amount == 1 else kind[1]}")
+    if not counts:
+        return None
+    channels = []
+    for section in sections[1:]:
+        heading = " ".join(section.splitlines()[0].split())
+        if heading.casefold().startswith("newsletter"):
+            heading = "your newsletter"
+        if heading and heading not in channels:
+            channels.append(heading)
+    drafts = f", with drafts for {_spoken_list(channels)}" if channels else ""
+    return f"Announces {_spoken_list(counts)}{drafts}."[:240]
+
+
+def review_line(raw):
+    """The one sentence a decision card shows for a saved document, or None."""
+    return release_line(raw) or summary_line(raw)
+
+
 def new_page_header(settings, title, date, slug, page_metadata=None):
     values = {"title": title, "date": date, "slug": slug}
     metadata = {

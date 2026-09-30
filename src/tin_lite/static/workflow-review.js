@@ -54,8 +54,9 @@
     let review;
     const redraw = () => {
       if (disposed || !host.isConnected) return;
-      requestButton.hidden = !review.can_request_changes;
-      requestButton.textContent = draft.open ? "Close feedback" : review.status === "failed" ? "Retry revision" : review.artifact?.assessment ? "Give feedback" : "Request changes";
+      // Feedback is given on the draft page; a Decisions card only approves or discards.
+      requestButton.hidden = !reader || !review.can_request_changes;
+      requestButton.textContent = draft.open ? "Close feedback" : review.status === "failed" ? "Retry" : review.artifact?.assessment ? "Give feedback" : "Request changes";
       requestButton.setAttribute("aria-expanded", String(draft.open));
       approval.forEach((button, i) => {button.hidden = draft.open || !review.can_approve; button.disabled = originalDisabled[i];});
       region.innerHTML = "";

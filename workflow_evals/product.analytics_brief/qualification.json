@@ -40,6 +40,7 @@
           "first_export",
           "Desktop",
           "/start",
+          "Referral",
           "Fisher",
           "Holm"
         ],
@@ -73,6 +74,7 @@
           "first_export",
           "Desktop",
           "/start",
+          "Referral",
           "Fisher",
           "Holm",
           "205",
@@ -198,13 +200,45 @@
       }
     },
     {
-      "id": "unsupported_exclusions",
-      "description": "An email-domain pattern is outside the exact-scalar compiler; no aggregate requests.",
+      "id": "team_exclusions",
+      "description": "ordinary_web with the structured team exclusions. Both compile into every query as suffix and truthy rules; the report names the fields and operators, never the domain.",
       "inputs": {
         "reporting_days": 7,
         "as_of_utc": "2026-01-12",
         "event_mapping": "Browser identities use distinct_id; sessions use $session_id. Visited the site=$pageview, Started signup=signup_started, Completed signup=signup_completed, Exported once=first_export. Website properties: $pathname, $referring_domain and $device_type. These are synthetic documented events.",
-        "exclusions": "Exclude every colleague with an email in example.test."
+        "exclusions": "",
+        "exclude_email_domains": [
+          "example.test"
+        ],
+        "internal_flag_property": "is_internal"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status: complete",
+          "## Activation funnel",
+          "## Traffic sources and landing paths",
+          "person:email",
+          "suffix",
+          "is_internal",
+          "truthy"
+        ],
+        "excludes": [
+          "example.test",
+          "Status: incomplete",
+          "Recommendations",
+          "qualified: true"
+        ]
+      }
+    },
+    {
+      "id": "unsupported_exclusions",
+      "description": "A contains-pattern is outside the eq, suffix and truthy exclusion rules; no aggregate requests.",
+      "inputs": {
+        "reporting_days": 7,
+        "as_of_utc": "2026-01-12",
+        "event_mapping": "Browser identities use distinct_id; sessions use $session_id. Visited the site=$pageview, Started signup=signup_started, Completed signup=signup_completed, Exported once=first_export. Website properties: $pathname, $referring_domain and $device_type. These are synthetic documented events.",
+        "exclusions": "Exclude every account whose name contains test."
       },
       "expected_status": "succeeded",
       "expect": {
@@ -251,6 +285,43 @@
           "qualified: true"
         ]
       }
+    },
+    {
+      "id": "signup_identity",
+      "description": "The identified fixture in tests/fixtures/product_analytics/provider_edges.json: anonymous pageviews, then a server sign-up under the identified distinct ID with the same person_id and no $session_id. person_id with window:24 gives 5 -> 2 current and 2 -> 1 prior; distinct_id with $session_id cannot join them and must be reported as an unjoinable identity, never 0%.",
+      "inputs": {
+        "reporting_days": 7,
+        "as_of_utc": "2026-01-12",
+        "event_mapping": "Visited the site=$pageview, Signed up=signup_completed. The backend records signup_completed after identify(), so it carries the identified distinct ID and no $session_id. Website properties: $pathname and $referring_domain. These are synthetic documented events.",
+        "exclusions": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status: complete",
+          "## Activation funnel",
+          "person_id",
+          "window:24",
+          "Signed up",
+          "Direct"
+        ],
+        "excludes": [
+          "Status: incomplete",
+          "Recommendations",
+          "qualified: true"
+        ]
+      }
+    },
+    {
+      "id": "zero_inventory",
+      "description": "A connected PostHog project with no events in the 90-day lookback. The brief measured nothing: the run fails with that reason and keeps the diagnostic as a saved result, not a file.",
+      "inputs": {
+        "reporting_days": 7,
+        "as_of_utc": "2026-01-12",
+        "event_mapping": "",
+        "exclusions": ""
+      },
+      "expected_status": "failed"
     }
   ],
   "rubric": [

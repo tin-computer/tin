@@ -31,13 +31,26 @@ funnel count. These are offline response/quality tests, not permission to alter 
 real provider's response. Normal output assertions require `Status: complete`;
 headings or successful artifact delivery alone cannot pass.
 
+`team_exclusions` exercises the structured `exclude_email_domains` and
+`internal_flag_property` inputs; the report may name the fields and operators, never the
+domain. `unsupported_exclusions` uses a contains-pattern, which no rule supports.
+`signup_identity` uses the `identified` events in `provider_edges.json`: anonymous
+pageviews, then a server sign-up under the identified distinct ID with the same person_id
+and no `$session_id`. `zero_inventory` expects a failed run: Tin's analytics-brief.v1 check
+refuses to publish a brief that measured nothing and keeps its diagnostic on the run.
+
 Provider SQL probes can substitute an inline fabricated `fixture` CTE for `events`
 and execute through an authorized read-only connection, without ingestion. Such a
 probe must itself pass Tin's HogQL guard (one SELECT, final LIMIT <= 1000, no UNION
 or OFFSET, at most 8000 bytes); build fixture rows with arrayJoin, not UNION ALL.
 The coverage and dimensions queries were restructured for that guard and their
 recorded responses await live requalification. Their
-sanitized columns/results can be retained as regression fixtures. Query compilation
+sanitized columns/results can be retained as regression fixtures. The reusable-v2
+builders (2026-09-29) changed the coverage, funnel, traffic and dimensions text and added
+the `input_exclusions`, `channels`, `identified` and `identified_sessions` cases. Those
+responses were produced by running the exact generated SQL on embedded ClickHouse (chdb)
+over the listed events; where a query's columns did not change they matched the recorded
+PostHog rows. They still need one live pass through PostHog HogQL. Query compilation
 and numerical provider compatibility are distinct from a full agent report and
 from scheduled execution after deployment.
 
