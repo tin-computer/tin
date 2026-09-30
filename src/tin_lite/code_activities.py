@@ -32,7 +32,10 @@ class CodeActivities:
         self.db, self.storage, self.sandboxes = common._db, common._storage, common._sandboxes
         self.models = CodeModels(database=self.db, router=model_router, settings=common._settings)
         self.services = CodeServices(
-            database=self.db, integrations=common._integrations, authorize=self.models.authorize
+            database=self.db,
+            integrations=common._integrations,
+            authorize=self.models.authorize,
+            settings=common._settings,
         )
         self.project_files = CodeProjectFiles(database=self.db, storage=self.storage)
 

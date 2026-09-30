@@ -1,0 +1,263 @@
+{
+ "cost": 0.0102,
+ "result": [
+  {
+   "se_type": "google",
+   "location_code": 2840,
+   "language_code": "en",
+   "items_count": 2,
+   "items": [
+    {
+     "se_type": "google",
+     "keyword": "project management software",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.62,
+      "competition_level": "MEDIUM",
+      "cpc": 12.53,
+      "search_volume": 90500,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      },
+      "monthly_searches": [
+       {
+        "year": 2026,
+        "month": 8,
+        "search_volume": 91300
+       },
+       {
+        "year": 2026,
+        "month": 7,
+        "search_volume": 91200
+       },
+       {
+        "year": 2026,
+        "month": 6,
+        "search_volume": 91100
+       },
+       {
+        "year": 2026,
+        "month": 5,
+        "search_volume": 91000
+       },
+       {
+        "year": 2026,
+        "month": 4,
+        "search_volume": 90900
+       },
+       {
+        "year": 2026,
+        "month": 3,
+        "search_volume": 90800
+       },
+       {
+        "year": 2026,
+        "month": 2,
+        "search_volume": 90700
+       },
+       {
+        "year": 2026,
+        "month": 1,
+        "search_volume": 90600
+       },
+       {
+        "year": 2025,
+        "month": 12,
+        "search_volume": 90380
+       },
+       {
+        "year": 2025,
+        "month": 11,
+        "search_volume": 90390
+       },
+       {
+        "year": 2025,
+        "month": 10,
+        "search_volume": 90400
+       },
+       {
+        "year": 2025,
+        "month": 9,
+        "search_volume": 90410
+       },
+       {
+        "year": 2025,
+        "month": 8,
+        "search_volume": 90420
+       },
+       {
+        "year": 2025,
+        "month": 7,
+        "search_volume": 90430
+       },
+       {
+        "year": 2025,
+        "month": 6,
+        "search_volume": 90440
+       },
+       {
+        "year": 2025,
+        "month": 5,
+        "search_volume": 90450
+       }
+      ]
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 78,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "kanban board",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.31,
+      "competition_level": "MEDIUM",
+      "cpc": 3.1,
+      "search_volume": 22200,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      },
+      "monthly_searches": [
+       {
+        "year": 2026,
+        "month": 8,
+        "search_volume": 23000
+       },
+       {
+        "year": 2026,
+        "month": 7,
+        "search_volume": 22900
+       },
+       {
+        "year": 2026,
+        "month": 6,
+        "search_volume": 22800
+       },
+       {
+        "year": 2026,
+        "month": 5,
+        "search_volume": 22700
+       },
+       {
+        "year": 2026,
+        "month": 4,
+        "search_volume": 22600
+       },
+       {
+        "year": 2026,
+        "month": 3,
+        "search_volume": 22500
+       },
+       {
+        "year": 2026,
+        "month": 2,
+        "search_volume": 22400
+       },
+       {
+        "year": 2026,
+        "month": 1,
+        "search_volume": 22300
+       },
+       {
+        "year": 2025,
+        "month": 12,
+        "search_volume": 22080
+       },
+       {
+        "year": 2025,
+        "month": 11,
+        "search_volume": 22090
+       },
+       {
+        "year": 2025,
+        "month": 10,
+        "search_volume": 22100
+       },
+       {
+        "year": 2025,
+        "month": 9,
+        "search_volume": 22110
+       },
+       {
+        "year": 2025,
+        "month": 8,
+        "search_volume": 22120
+       },
+       {
+        "year": 2025,
+        "month": 7,
+        "search_volume": 22130
+       },
+       {
+        "year": 2025,
+        "month": 6,
+        "search_volume": 22140
+       },
+       {
+        "year": 2025,
+        "month": 5,
+        "search_volume": 22150
+       }
+      ]
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 41,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    }
+   ]
+  }
+ ]
+}

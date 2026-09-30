@@ -106,8 +106,20 @@ class CodeSpec:
     evidence: tuple[EvidenceSlot, ...] = ()
 
     @property
+    def paid_services(self) -> tuple[ServiceBinding, ...]:
+        """Bindings to services Tin buys per call (managed_services.CALL_CEILING_USD)."""
+        from tin_lite.managed_services import paid
+
+        return tuple(service for service in self.services if paid(service.provider_key))
+
+    @property
+    def metered(self) -> bool:
+        """Model steps or paid managed reads: the run is funded per operation from credits."""
+        return bool(self.model_routes or self.paid_services)
+
+    @property
     def policy(self):
-        return MODEL_POLICY if self.model_routes else POLICY
+        return MODEL_POLICY if self.metered else POLICY
 
 
 def validate_code_definition(definition) -> CodeSpec:

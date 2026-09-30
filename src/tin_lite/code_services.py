@@ -8,8 +8,8 @@ from datetime import UTC, datetime
 
 import httpx
 
-from tin_lite import posthog_connection, stripe_connection
-from tin_lite.billing_contracts import digest
+from tin_lite import managed_services, posthog_connection, stripe_connection
+from tin_lite.billing_contracts import BillingError, digest
 from tin_lite.connection_records import ServiceArgumentError
 from tin_lite.integrations import (
     POSTHOG_PROVIDER,
@@ -58,6 +58,8 @@ OPERATIONS = {
         (POSTHOG_PROVIDER, name): (op.capability, op.arguments)
         for name, op in posthog_connection.OPERATIONS.items()
     },
+    # Services Tin holds the key for; see managed_services.py.
+    **{key: (op.capability, op.arguments) for key, op in managed_services.OPERATIONS.items()},
 }
 
 
@@ -75,7 +77,10 @@ ARGUMENT_CHECKS = {
     POSTHOG_PROVIDER: posthog_connection.check_arguments,
     "analytics.gsc": _check_google_arguments,
     "workspace.google": _check_google_arguments,
+    **{provider: managed_services.check_arguments for provider in managed_services.DEFINITIONS},
 }
+# Tin's own wait for any one provider call; managed Google reads stop a few seconds sooner.
+CALL_SECONDS = 25
 
 
 class CodeServiceError(ValueError):
@@ -90,6 +95,11 @@ class CodeServiceError(ValueError):
         self.fatal = fatal
 
 
+SPENDING_STOPPED = (
+    "Tin credits or project spending limits do not allow this paid read; no request was made."
+)
+
+
 def _too_large(service):
     # The bound is the author's own declared value; naming it lets them size the next request.
     return CodeServiceError(
@@ -100,9 +110,21 @@ def _too_large(service):
 
 
 class CodeServices:
-    def __init__(self, *, database, integrations, authorize, client=None, resolver=None):
+    def __init__(
+        self,
+        *,
+        database,
+        integrations,
+        authorize,
+        client=None,
+        resolver=None,
+        settings=None,
+        managed=None,
+    ):
         self.db, self.integrations, self.authorize = database, integrations, authorize
         self.client, self.resolver = client, resolver
+        # Tin-held provider keys come from the switchboard's settings, never the package.
+        self.managed = managed or managed_services.ManagedServices(settings)
 
     async def call(self, *, conn, run, workflow, spec, payload):
         try:
@@ -120,6 +142,8 @@ class CodeServices:
                 raise ValueError
             service = next(s for s in spec.services if s.name == payload["service"])
             custom = bool(CUSTOM_KEY.fullmatch(service.provider_key))
+            managed = managed_services.is_managed(service.provider_key)
+            paid = managed and managed_services.paid(service.provider_key)
             args = payload["arguments"]
             if custom:
                 if payload["operation"] != "http.request":
@@ -159,35 +183,49 @@ class CodeServices:
             from tin_lite.code_models import CodeModelError
 
             try:
-                await self.authorize(conn=conn, run=run, workflow=workflow, require_budget=False)
-            except CodeModelError:
+                # A paid read needs the run's reserved credit budget, as a model call does.
+                await self.authorize(conn=conn, run=run, workflow=workflow, require_budget=paid)
+            except CodeModelError as exc:
+                if exc.code == "model_spending_stopped":
+                    raise CodeServiceError(
+                        "This run has no authorized spending for a paid read; no request was made."
+                    ) from None
                 raise CodeServiceError(
                     "The run no longer has permission to use services.", fatal=True
                 ) from None
-            requirement = IntegrationRequirement(service.provider_key, service.capabilities)
-            try:
-                await self.integrations.ensure_requirements(
-                    project_id=run.project_id, requirements=(requirement,)
+            connection = None
+            if managed:
+                if not managed_services.configured(self.managed.settings, service.provider_key):
+                    raise CodeServiceError(managed_services.not_configured(service.provider_key))
+                # No founder account to pin: Tin's own key serves every project the same way.
+                binding = digest({"managed": service.provider_key})
+            else:
+                requirement = IntegrationRequirement(service.provider_key, service.capabilities)
+                try:
+                    await self.integrations.ensure_requirements(
+                        project_id=run.project_id, requirements=(requirement,)
+                    )
+                    connection = await self.db.get_integration_connection(
+                        project_id=run.project_id, provider_key=service.provider_key
+                    )
+                    if connection is None:
+                        raise IntegrationError("connection removed")
+                except IntegrationError:
+                    raise CodeServiceError(
+                        "The declared project connection is unavailable or permission was removed."
+                    ) from None
+                # Pin selected account/origin/permissions for this run; keys may still rotate.
+                binding = digest(
+                    {
+                        "id": str(connection.id),
+                        "account": connection.external_account_id,
+                        "configuration": {
+                            k: v
+                            for k, v in connection.configuration.items()
+                            if k != "access_verified"
+                        },
+                    }
                 )
-                connection = await self.db.get_integration_connection(
-                    project_id=run.project_id, provider_key=service.provider_key
-                )
-                if connection is None:
-                    raise IntegrationError("connection removed")
-            except IntegrationError:
-                raise CodeServiceError(
-                    "The declared project connection is unavailable or permission was removed."
-                ) from None
-            # Pin selected account/origin/permissions for this run, while allowing key rotation.
-            binding = digest(
-                {
-                    "id": str(connection.id),
-                    "account": connection.external_account_id,
-                    "configuration": {
-                        k: v for k, v in connection.configuration.items() if k != "access_verified"
-                    },
-                }
-            )
             prior = await conn.fetchval(
                 """SELECT result->>'binding' FROM effect_receipts WHERE operation=$1
                    AND execution_key LIKE $2 AND result->>'service'=$3 LIMIT 1""",
@@ -250,12 +288,16 @@ class CodeServices:
             await self.db.save_effect_progress(conn, execution_key=key, result=record)
             # Customer-provider usage is separate from Tin purchases. These observations
             # deliberately do not enter billing.begin_operation or settle customer credits.
-            usage_key = f"usage:{key}"
+            # A free managed read is Tin's own tool call at a published price of $0. A paid
+            # one is observed by its adapter instead, which reserves and settles its cost.
+            usage_key = None if paid else f"usage:{key}"
             usage = {
                 "version": 1,
                 "run_id": str(run.id),
-                "provider": service.provider_key,
-                "category": "connected_api",
+                "provider": managed_services.USAGE_PROVIDER.get(
+                    service.provider_key, service.provider_key
+                ),
+                "category": "tool" if managed else "connected_api",
                 "endpoint": payload["operation"],
                 "step": step,
                 "attempted_at": datetime.now(UTC).isoformat(),
@@ -263,10 +305,19 @@ class CodeServices:
                 "usage": None,
                 "reported_cost_usd": None,
             }
-            await self.db.start_effect(conn, execution_key=usage_key, operation="external_usage_v1")
-            await self.db.save_effect_progress(conn, execution_key=usage_key, result=usage)
+            received = {
+                **usage,
+                "outcome": "response_received",
+                "usage": {"requests": 1},
+                **({"reported_cost_usd": "0"} if managed else {}),
+            }
+            if usage_key:
+                await self.db.start_effect(
+                    conn, execution_key=usage_key, operation="external_usage_v1"
+                )
+                await self.db.save_effect_progress(conn, execution_key=usage_key, result=usage)
             try:
-                async with asyncio.timeout(25):
+                async with asyncio.timeout(CALL_SECONDS):
                     response = (
                         await request_api(
                             connection,
@@ -278,6 +329,8 @@ class CodeServices:
                             resolver=self.resolver,
                         )
                         if custom
+                        else await self._managed(conn, run, service, payload, key)
+                        if managed
                         else await self.adapter(
                             service.provider_key,
                             payload["operation"],
@@ -300,23 +353,28 @@ class CodeServices:
                     await self.db.complete_effect(
                         conn, execution_key=key, result={**record, "error": "response_too_large"}
                     )
-                    await self.db.complete_effect(
-                        conn,
-                        execution_key=usage_key,
-                        result={**usage, "outcome": "response_received", "usage": {"requests": 1}},
-                    )
+                    if usage_key:
+                        await self.db.complete_effect(
+                            conn, execution_key=usage_key, result=received
+                        )
                 raise _too_large(service) from None
+            except BillingError:
+                # Credits or project limits refused the reservation before anything was sent.
+                async with conn.transaction():
+                    await self.db.complete_effect(
+                        conn, execution_key=key, result={**record, "error": "spending_stopped"}
+                    )
+                raise CodeServiceError(SPENDING_STOPPED) from None
             except ServiceCallRefused as exc:
                 # The provider answered and refused (rate limit, missing permission, revoked
                 # key): settle the step with Tin's own message so a new step may try again.
                 refused = {**record, "error": exc.code, "message": str(exc)[:500]}
                 async with conn.transaction():
                     await self.db.complete_effect(conn, execution_key=key, result=refused)
-                    await self.db.complete_effect(
-                        conn,
-                        execution_key=usage_key,
-                        result={**usage, "outcome": "response_received", "usage": {"requests": 1}},
-                    )
+                    if usage_key:
+                        await self.db.complete_effect(
+                            conn, execution_key=usage_key, result=received
+                        )
                     # A rejected credential needs attention whatever body the API sent with it.
                     if isinstance(exc, InvalidAPIResponse) and exc.status in {401, 403}:
                         await self._authentication_failed(conn, run, connection, secret_revision)
@@ -340,11 +398,8 @@ class CodeServices:
                 await self.db.complete_effect(
                     conn, execution_key=key, result={**record, "response": response}
                 )
-                await self.db.complete_effect(
-                    conn,
-                    execution_key=usage_key,
-                    result={**usage, "outcome": "response_received", "usage": {"requests": 1}},
-                )
+                if usage_key:
+                    await self.db.complete_effect(conn, execution_key=usage_key, result=received)
                 await project_completed_steps(conn, run.id)
                 if custom and response["status"] in {401, 403}:
                     await self._authentication_failed(conn, run, connection, secret_revision)
@@ -378,6 +433,23 @@ class CodeServices:
             connection.configuration["secret_name"],
             secret_revision,
         )
+
+    async def _managed(self, conn, run, service, payload, key):
+        from tin_lite.usage_capture import external_usage_scope
+
+        # A paid read's observation reserves this ceiling before dispatch and settles the
+        # reported cost through service_pricing, as native DataForSEO calls do.
+        ceiling = managed_services.CALL_CEILING_USD.get(service.provider_key)
+        with external_usage_scope(
+            self.db, conn, run.id, f"service:{payload['step']}", maximum_usd=ceiling
+        ):
+            return await self.managed.call(
+                service.provider_key,
+                payload["operation"],
+                payload["arguments"],
+                execution_key=key,
+                max_response_bytes=service.max_response_bytes,
+            )
 
     async def adapter(self, provider, operation, args, run, connection, key, *, max_response_bytes):
         service = self.integrations

@@ -145,7 +145,7 @@ async def check_package(files, definition_path, qualification: Qualification):
     executor = definition["executor"]
     code = validate_code_definition(definition) if executor == "workflow.code" else None
     terms = model_terms(definition) if code else api_terms(definition)
-    model_free = bool(code is not None and not code.model_routes)
+    model_free = bool(code is not None and not code.metered)
     report = {
         "format": "tin-workflow-qualification-v1",
         "workflow": definition["key"],
