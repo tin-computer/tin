@@ -4399,7 +4399,8 @@ function sameText(left, right) {
   return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
 }
 
-const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page"]);
+// A page refresh delivers the same way: exact replacements in a pull request or a commit.
+const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page", "content.refresh"]);
 
 function connectedRepository() {
   const github = state.integrations.find((item) => item.key === "infra.github");

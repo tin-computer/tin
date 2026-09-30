@@ -536,6 +536,14 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
             "repository delivery follows approval and opens an unmerged PR"
         ),
     },
+    "content.refresh": {
+        "first": "about fifteen minutes after an organic audit",
+        "lands": "Decisions, as the page's current and proposed text",
+        "watch": (
+            "approval changes exactly those lines in your site, as a PR or a commit; "
+            "a refreshed page waits six weeks before its next refresh"
+        ),
+    },
     "content.deliver": {
         "first": "after an approved source article and repository are selected",
         "lands": "your GitHub repository, as an unmerged pull request",

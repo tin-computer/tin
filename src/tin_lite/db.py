@@ -6847,6 +6847,7 @@ class Database:
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
+            "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
         }[workflow_key]
         if final_status == "failed":
             event = "organic_system_incomplete"
@@ -6864,7 +6865,20 @@ class Database:
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
                   AND status NOT IN ('failed', 'stopped', 'superseded')
-                  AND (NOT review_required OR review_decision = 'approved')
+                  AND (NOT review_required OR review_decision = 'approved' OR (
+                    -- A page refresh with no page due ends before compute: nothing exists
+                    -- to review, and its saved preparation says so.
+                    workflow_id = '00000000-0000-4000-8000-000000000044'
+                    AND review_requested_at IS NULL AND review_decision IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM effect_receipts preparation
+                      WHERE preparation.execution_key = workflow_runs.id::text
+                        || ':content_refresh_prepare'
+                        AND preparation.operation = 'content_refresh_prepare'
+                        AND preparation.status = 'completed'
+                        AND preparation.result->'page' = 'null'::jsonb
+                    )
+                  ))
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
                 """,
@@ -6873,7 +6887,9 @@ class Database:
                 artifact_path,
                 artifact_ref,
                 summary,
-                "codex.procedure" if workflow_key == "organic.technical_fix" else workflow_key,
+                "codex.procedure"
+                if workflow_key in {"organic.technical_fix", "content.refresh"}
+                else workflow_key,
                 final_status,
             )
             if projected is None:

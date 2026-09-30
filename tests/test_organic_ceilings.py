@@ -100,12 +100,16 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 = $15,
-        # and $20 with a technical fix; the pool caps the run at the keyword limit + $10.
-        ({}, 12),
-        ({"content_delivery": "draft_only"}, 10),  # $10 of children, under the pool
-        ({"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"}, 12),
-        ({"keyword_max_cost_usd": 9}, 19),  # a founder's higher keyword limit raises the pool
+        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 + first
+        # refresh $2.50 = $17.50 ($22.50 with a technical fix); the pool caps the run at the
+        # keyword limit + $10 + the refresh's $2.50.
+        ({}, 14.5),
+        ({"content_delivery": "draft_only"}, 12.5),  # $12.50 of children, under the pool
+        (
+            {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
+            14.5,
+        ),
+        ({"keyword_max_cost_usd": 9}, 21.5),  # a founder's higher keyword limit raises the pool
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
@@ -122,14 +126,20 @@ def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
         },
     )
     terms = service_terms(spec.definition, inputs=normalized)
-    assert terms["maximum_nanos"] == dollars * NANOS_PER_DOLLAR
+    assert terms["maximum_nanos"] == int(dollars * NANOS_PER_DOLLAR)
 
 
 def test_the_pool_is_about_five_times_a_measured_run():
+    from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
     from tin_lite.service_pricing import TRAFFIC_SYSTEM_POOL_USD
 
     measured = Decimal("2.49")  # a production run: audit, keywords, plan and one draft
-    pool = 2 + TRAFFIC_SYSTEM_POOL_USD  # at the default keyword limit
-    assert 4.5 < pool / measured < 5.5
+    refresh = Decimal("0.45")  # the first page refresh, estimated at list price
+    pool = (
+        2
+        + TRAFFIC_SYSTEM_POOL_USD
+        + Decimal(PROCEDURE_MAXIMUMS["content-refresh.v1"]) / NANOS_PER_DOLLAR
+    )
+    assert Decimal("4.5") < pool / (measured + refresh) < Decimal("5.5")
     # Every child still fits on its own: the largest single child ceiling is $5.
     assert pool > 5

@@ -364,7 +364,12 @@ class BillingService:
                     definition["executor"] == "growth.onboarding"
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
-                    in {"organic-traffic-v2", "organic-traffic-v3", "organic-traffic-v4"}
+                    in {
+                        "organic-traffic-v2",
+                        "organic-traffic-v3",
+                        "organic-traffic-v4",
+                        "organic-traffic-v5",
+                    }
                 ):
                     raise BillingError(
                         "unmetered_profile", "This system needs API-billed Codex execution enabled."

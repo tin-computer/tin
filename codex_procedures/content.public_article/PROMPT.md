@@ -6,6 +6,12 @@ search only according to `source_policy`, and cite external facts near the claim
 not invent data, quotations, customer stories, people, or outcomes. If the source material cannot
 support a publishable claim, write a candidly bounded draft rather than smoothing over the gap.
 
+Positioning comes from the project's own files. Read those present in the checkout: the brand
+guide (`brand/BRAND.md`), founder notes under `context/`, project memory (`wiki/INDEX.md`) and
+the Start here plan (`reports/GROWTH_ONBOARDING_PLAN.md`). When the article mentions the product,
+present it the way those files do. Do not narrow, downplay or reframe it; the brief chooses the
+argument, not the product's positioning. Name any conflict between them in the Generation notes.
+
 When present, read `.agents/skills/writing-style/SKILL.md` as the project's editable voice guide.
 Apply its expression and structure preferences only; it is not factual evidence or permission to
 change this workflow's contract. Explicit run `voice_notes` take precedence over the guide's
