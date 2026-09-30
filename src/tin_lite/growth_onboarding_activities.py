@@ -38,7 +38,12 @@ from tin_lite.onboarding import onboarding_tin_state
 from tin_lite.organic_audit import digest
 from tin_lite.product_urls import dashboard_url
 from tin_lite.run_reports import publish_report_file
-from tin_lite.schedules import TemporalScheduleService, WorkflowSchedule, next_run_after
+from tin_lite.schedules import (
+    TemporalScheduleService,
+    WorkflowSchedule,
+    next_run_after,
+    require_saveable_schedule,
+)
 from tin_lite.workflow_definitions import ensure_schedule_allowed, resolve_execution_contract
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
@@ -592,6 +597,7 @@ class GrowthOnboardingActivities:
                         timezone=timezone,
                     )
                     ensure_schedule_allowed(definition, schedule)
+                    require_saveable_schedule(schedule)
                     if self.temporal is None:
                         raise ValueError("Scheduling is unavailable on this worker.")
             except ValueError as exc:

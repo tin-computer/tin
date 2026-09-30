@@ -1,10 +1,18 @@
-"""Shared dashboard/MCP operations for saved configurations and their Temporal clock."""
+"""Shared dashboard/MCP operations for saved configurations and their Temporal clock.
 
+Postgres decides what runs: dispatch starts a run only for an `active` configuration, and a
+configuration becomes active only after Temporal accepted its calendar. When a sync fails the
+configuration is `failed`, so whatever calendar Temporal still holds dispatches nothing.
+"""
+
+import logging
 from types import SimpleNamespace
 
 from tin_lite.code_schedules import pause_for_issue
 from tin_lite.schedules import TemporalScheduleService, WorkflowSchedule, next_run_after
 from tin_lite.workflow_setup import prepare_workflow
+
+logger = logging.getLogger(__name__)
 
 
 async def schedule_issue(runtime, settings, configured):
@@ -79,8 +87,37 @@ async def sync_project_workflow(
     return result
 
 
+async def sync_failed(*, runtime, settings, configured, error: Exception) -> None:
+    """Record a failed sync so nothing dispatches, then stop the old calendar if Temporal can."""
+    logger.warning(
+        "schedule synchronization failed for project workflow %s: %s: %s",
+        configured.id,
+        type(error).__name__,
+        error,
+    )
+    await runtime.database.project_workflow_failed(
+        project_workflow_id=configured.id,
+        error_message=f"{type(error).__name__}: schedule synchronization failed",
+    )
+    if configured.schedule is None and configured.temporal_schedule_id is None:
+        return
+    try:
+        await TemporalScheduleService(client=runtime.temporal, settings=settings).pause(
+            str(configured.id)
+        )
+    except Exception:
+        # Dispatch already skips a failed configuration; this only quiets the old calendar.
+        logger.warning(
+            "could not pause the Temporal schedule of project workflow %s",
+            configured.id,
+            exc_info=True,
+        )
+
+
 async def set_schedule_paused(*, runtime, settings, configured, paused):
-    if configured.schedule is None or configured.status not in {"active", "paused"}:
+    # A failed sync can be paused (it is not running anyway); resuming it resyncs it.
+    allowed = {"active", "paused", "failed"} if paused else {"active", "paused"}
+    if configured.schedule is None or configured.status not in allowed:
         raise ValueError("Only an active or paused schedule can change pause state.")
     if not paused:
         issue = await schedule_issue(runtime, settings, configured)
@@ -94,13 +131,14 @@ async def set_schedule_paused(*, runtime, settings, configured, paused):
         )
         await service.pause(str(configured.id))
         return result
-    await service.resume(str(configured.id))
+    schedule = WorkflowSchedule.model_validate(configured.schedule)
+    # Send the saved calendar, not just an unpause: Temporal may still hold one from before a
+    # failed sync, and resuming must not bring that calendar back.
+    await service.update(project_workflow_id=str(configured.id), schedule=schedule, paused=False)
     return await runtime.database.project_workflow_synced(
         project_workflow_id=configured.id,
         temporal_schedule_id=service.schedule_id(str(configured.id)),
-        next_run_at=next_unskipped_run(
-            WorkflowSchedule.model_validate(configured.schedule), configured
-        ),
+        next_run_at=next_unskipped_run(schedule, configured),
     )
 
 

@@ -112,6 +112,12 @@ SYSTEM_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+TIMEZONE_PATTERN = (
+    r"^(?:|(?!(?:posix|right)/|(?:localtime|posixrules|Factory)$)"
+    r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)*)$"
+)
+
+
 def _input_schema() -> dict[str, Any]:
     properties: dict[str, Any] = {
         "project_id": {"type": "string", "format": "uuid"},
@@ -167,6 +173,8 @@ def _input_schema() -> dict[str, Any]:
         "type": "string",
         "default": "UTC",
         "maxLength": 64,
+        # An IANA name schedules can use: not the host's `localtime` or a posix/ or right/ copy.
+        "pattern": TIMEZONE_PATTERN,
         "title": "Timezone",
         "description": (
             "IANA timezone for schedules, from the founder's machine (America/New_York)."

@@ -308,8 +308,9 @@ class TinActivities:
                 from tin_lite.code_schedules import pause_for_issue
 
                 await pause_for_issue(self, configured, configured.last_error)
-                return {}
-            raise RuntimeError("scheduled workflow is not active")
+            # Postgres decides what runs. A paused, mid-save or failed configuration can still
+            # receive an occurrence from the calendar Temporal holds; it starts nothing.
+            return {}
         workflow_definition = await self._db.get_workflow(configured.workflow_id)
         if workflow_definition is None:
             raise RuntimeError("scheduled workflow definition is unavailable")

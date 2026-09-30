@@ -175,6 +175,7 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
     )
     assert handle.pause.await_count == 2
     await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id=ACTOR)
+    sent = handle.update.await_count
     resumed = structured(
         await server.call_tool(
             "set_project_workflow_paused",
@@ -185,7 +186,8 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
             },
         )
     )
-    assert resumed["status"] == "active" and handle.unpause.await_count == 1
+    assert resumed["status"] == "active" and handle.update.await_count == sent + 1
+    assert resent_unpaused(handle)
     assert (await common.dispatch_scheduled_workflow(occurrence(configured)))["run_id"]
 
 
@@ -266,7 +268,7 @@ async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritati
     )
     await server.call_tool("set_project_workflow_paused", {**selected, "paused": False})
     run = await common.dispatch_scheduled_workflow(occurrence(configured))
-    assert run["run_id"] and handle.unpause.await_count == 1
+    assert run["run_id"] and resent_unpaused(handle)
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 1
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
     # Fresh admission catches insufficient available funds even when a positive balance
@@ -321,6 +323,12 @@ async def test_ended_and_old_occurrences_do_not_create_backlog(billed, monkeypat
     )
     assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+
+
+def resent_unpaused(handle):
+    """Resume sends the saved calendar unpaused, not a bare unpause of Temporal's copy."""
+    update = handle.update.await_args
+    return update is not None and update.args[0](None).schedule.state.paused is False
 
 
 def test_next_projection_matches_temporal_for_missing_and_repeated_local_times():

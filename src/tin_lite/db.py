@@ -2061,7 +2061,10 @@ class Database:
                     -- A skip names one occurrence of the old calendar; a new one disarms it.
                     skip_scheduled_for = CASE WHEN schedule IS DISTINCT FROM $5::jsonb
                         THEN NULL ELSE skip_scheduled_for END,
-                    status = 'provisioning', last_error = NULL,
+                    -- A pause stands through a settings save, including one that landed
+                    -- after the editor read the row; the sync reads it from this row.
+                    status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'provisioning' END,
+                    last_error = NULL,
                     settings_revision = settings_revision + 1, updated_at = now()
                 WHERE id = $1 AND project_id = $2 AND status <> 'archived'
                   AND settings_revision = $6
@@ -2150,7 +2153,7 @@ class Database:
         await self.pool.execute(
             """
             UPDATE project_workflows
-            SET status = 'failed', last_error = $2, updated_at = now()
+            SET status = 'failed', last_error = $2, next_run_at = NULL, updated_at = now()
             WHERE id = $1 AND status <> 'archived'
             """,
             project_workflow_id,
@@ -2166,7 +2169,7 @@ class Database:
             SET status = $3, next_run_at = CASE WHEN $3 = 'paused' THEN NULL ELSE next_run_at END,
                 last_error = NULL, updated_at = now()
             WHERE id = $1 AND project_id = $2 AND schedule IS NOT NULL
-              AND status IN ('active', 'paused')
+              AND (status IN ('active', 'paused') OR ($3 = 'paused' AND status = 'failed'))
             RETURNING id
             """,
             project_workflow_id,
