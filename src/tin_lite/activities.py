@@ -3770,7 +3770,16 @@ class TinActivities:
                             expected_base_sha=str(manifest["head_sha"]),
                             run_id=run_id,
                             **({"expected_binding": expected_binding} if expected_binding else {}),
-                            **({"allow_unrelated_base_advance": True} if copy_proof else {}),
+                            **(
+                                {
+                                    "allow_unrelated_base_advance": True,
+                                    # Only the page itself blocks: a sitemap or index that
+                                    # another open PR also edits is not the same change.
+                                    "blocking_paths": frozenset({copy_proof["article_path"]}),
+                                }
+                                if copy_proof
+                                else {}
+                            ),
                         )
                     artifact_path = procedure_receipt_path(spec=procedure, run_id=run_id)
                     if technical is not None:

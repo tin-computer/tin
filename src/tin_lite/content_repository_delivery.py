@@ -298,26 +298,32 @@ async def guard_source(conn, *, project_id, inputs, source):
         OPERATION,
         str(source["binding"]["repository_id"]),
     )
-    if duplicate and inputs.get("retry_run_id") == str(duplicate):
-        prior = await conn.fetchrow("SELECT status FROM workflow_runs WHERE id=$1", duplicate)
-        external = await conn.fetchrow(
-            "SELECT status FROM integration_call_receipts WHERE execution_key=$1",
-            f"{duplicate}:procedure_pull_request",
-        )
-        checkpoint = await conn.fetchval(
-            "SELECT true FROM effect_receipts WHERE execution_key=$1 AND status='completed'",
-            f"{duplicate}:procedure_artifact_persist",
-        )
-        if prior["status"] != "failed" or external or checkpoint:
-            raise ValueError("Reconcile the previous delivery before purchasing a new adaptation.")
-        return
-    if inputs.get("retry_run_id"):
+    retry = inputs.get("retry_run_id")
+    if retry and retry != str(duplicate):
         raise ValueError("Choose the latest failed adaptation for this article and repository.")
-    if duplicate:
+    if not duplicate:
+        return
+    prior = await conn.fetchrow("SELECT status FROM workflow_runs WHERE id=$1", duplicate)
+    # GitHub refused the earlier PR before writing anything (for example another open PR
+    # changed a shared file), or never got the request: nothing was delivered, so a fresh
+    # adaptation may replace it. A PR that opened, or a request with an unknown outcome,
+    # still has to be reconciled first. A saved patch alone no longer blocks; Retry delivery
+    # stays the free way to send it.
+    delivered = await conn.fetchval(
+        "SELECT status IN ('started', 'completed') FROM integration_call_receipts "
+        "WHERE execution_key=$1",
+        f"{duplicate}:procedure_pull_request",
+    )
+    if prior["status"] == "failed" and not delivered:
+        return
+    if prior["status"] in {"pending", "running", "needs_input"}:
         raise ValueError(
-            f"This article already has a delivery attempt. Open run {duplicate}; "
-            "retry its saved delivery rather than drafting or paying again."
+            f"This article's delivery run {duplicate} is still working; wait for it to finish."
         )
+    raise ValueError(
+        f"This article already has a delivery. Open run {duplicate} for its pull request"
+        + (" and reconcile it before paying for a new adaptation." if retry else ".")
+    )
 
 
 async def saved_source(database, run_id):
@@ -413,6 +419,7 @@ async def recover_delivery(*, database, storage, integrations, run):
                 expected_base_sha=binding.head_sha,
                 expected_binding=binding,
                 allow_unrelated_base_advance=True,
+                blocking_paths=frozenset({proof["article_path"]}),
             )
             result = {**asdict(result), **proof}
             async with conn.transaction():

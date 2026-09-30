@@ -42,8 +42,12 @@ and Open a pull request, which use the exact Markdown publisher below.
 - The switchboard checks exact source preservation before accepting a patch and again
   before delivery. The immutable checkpoint survives sandbox teardown. The existing
   GitHub gateway checks the destination, overlaps and retry identity, and opens an
-  unmerged PR. Unrelated base advances use the existing bounded content-delivery exception;
-  changed destination paths are not silently rebased.
+  unmerged PR. For article delivery only the page file counts as a blocking path: another
+  open PR, or a later commit on the default branch, that edits a shared file such as the
+  sitemap or an index does not block the article (GitHub shows a conflict if the same lines
+  clash). An open PR or a later commit that changes the page file itself still refuses the
+  PR, and changed page paths are not silently rebased. Other procedures keep every file as a
+  blocking path.
 - Every repository procedure (article delivery, site health, technical fixes, code maps)
   reads a snapshot of up to 20,000 eligible files / 100 MB, each file at most 2 MB. The
   gateway downloads the pinned commit as one tarball and checks every file against its blob
@@ -77,12 +81,14 @@ the original GitHub execution key. No model runs and no new article is generated
 The confirmed result is separately receipted and shown on the content card/Activity;
 the failed adaptation's historical status is not rewritten as success.
 
-An attempt with no accepted patch may be explicitly retried as a **new metered
-adaptation**, using “Try adaptation again” on the content card or `retry_run_id`
-through MCP (internal attempt context, not a revision selector). A saved
-patch or any prior provider delivery receipt prevents that fresh purchase until the
-existing effect is reconciled. Changed destination content requires fresh review;
-this slice does not silently throw away an earlier checkpoint or redirect its PR.
+A failed attempt whose PR never opened may be replaced by a **new metered adaptation**:
+Prepare PR, “Retry” on the content card or `retry_run_id` through MCP (internal attempt
+context, not a revision selector). "Never opened" means GitHub refused the request before
+writing anything (for example because another open PR changed a shared file, as delivery
+refused before September 29) or never received it. A saved patch alone no longer blocks this;
+Retry delivery stays the free way to send it. A PR that opened, or a PR request whose outcome
+is unknown, still has to be reconciled first, and a delivery run that is still working must
+finish. A refusal is never replayed: each retry and each Prepare PR checks again.
 
 The older automatic `.md` delivery contract remains intact for pinned runs/settings.
 An article already enrolled in that contract must use its existing delivery action;
