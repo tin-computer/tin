@@ -61,6 +61,12 @@ wins over the same weekly proposal. Neither file asks the founder to mark rows a
 The preview reports `planned_changes` (the revision read, the count and which workflows).
 Deleting a page (404 or 410) stays with the founder.
 
+Some pages are protected: `/sign-in`, `/sign-up` and `/auth-complete`, which a site shares
+with its login provider, and any path in the run's `protected_paths` input. A planned change
+to or from one of them is still a judgment call, but Tin's suggestion is `ask`: the coding
+agent asks the founder instead of applying it. The repository has no other notion of
+protected paths, so this list is it.
+
 ### One run, one pull request
 
 - The run re-reads the live site: robots.txt, the sitemaps it names, and up to 40 pages.

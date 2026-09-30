@@ -300,6 +300,7 @@ class TechnicalFixExecution:
                 repository_serves_site=run.input["repository_serves_site"],
                 finding_ids=run.input.get("finding_ids") or [],
                 decisions=run.input.get("decisions") or [],
+                protected_paths=run.input.get("protected_paths") or [],
             )
             return {**result, "input_sha256": digest(run.input)}
 

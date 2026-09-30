@@ -32,6 +32,7 @@ class BatchPreview(BaseModel):
     expected_repository: str = Field(min_length=3, max_length=140)
     repository_serves_site: StrictBool
     decisions: list[str] = Field(default_factory=list, max_length=30)
+    protected_paths: list[str] = Field(default_factory=list, max_length=20)
 
 
 async def service(request, project_id, user):

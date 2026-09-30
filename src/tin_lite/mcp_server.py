@@ -1423,6 +1423,7 @@ def create_mcp_app(
         repository_serves_site: StrictBool,
         finding_id: str = "",
         decisions: list[str] | None = None,
+        protected_paths: list[str] | None = None,
     ) -> dict[str, Any]:
         """Read-only repair preview. No run, paid compute, branch or PR is created.
 
@@ -1430,7 +1431,9 @@ def create_mcp_app(
         in one PR. The preview sorts them: plan.repairs (in the PR), decisions_needed (judgment
         calls), and plan.left_out (copy for the content workflows, manual steps, already fine).
         decisions_needed also holds URL changes Page decisions or a site architecture plan
-        proposed (planned.redirect, planned.noindex); answer them the same way.
+        proposed (planned.redirect, planned.noindex); answer them the same way. For one on a
+        protected page (/sign-in, /sign-up, /auth-complete, or a path in protected_paths)
+        Tin's suggestion is "ask": ask the founder. Pass the same protected_paths to the run.
         Answer each decisions_needed item yourself from the codebase and what you know about
         the product; ask the founder only the ones you're unsure of. Pass the answers as
         decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
@@ -1448,6 +1451,7 @@ def create_mcp_app(
                     repository_serves_site=repository_serves_site,
                     finding_ids=[finding_id] if finding_id else [],
                     decisions=decisions or [],
+                    protected_paths=protected_paths or [],
                 )
             except TechnicalFixError as exc:
                 raise ToolError(f"{exc.code}: {exc}") from exc

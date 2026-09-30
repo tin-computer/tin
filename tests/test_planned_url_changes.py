@@ -119,6 +119,36 @@ def test_each_change_is_a_judgment_call_then_a_repair():
     assert [r["id"] for r in answered["left_out"]["decided_keep"]] == [noindex["id"]]
 
 
+def test_protected_pages_are_asked_about_never_suggested():
+    """An approved noindex on /sign-in once touched sign-in pages another app shares."""
+    changes = [
+        {"from": "/sign-in", "to": None, "kind": "noindex", "reason": "utility"},
+        {"from": "/sign-up/team", "to": None, "kind": "noindex", "reason": "utility"},
+        {"from": "/partners/acme", "to": "/partners", "kind": "301", "reason": "merge"},
+        {"from": "/login-help", "to": "/auth-complete", "kind": "301", "reason": "merge"},
+        {"from": "/blog/a", "to": "/blog/b", "kind": "301", "reason": "merge"},
+    ]
+    found = planned.read_changes(
+        files(efficacy(changes=changes)), TODAY, protected_paths=["/partners"]
+    )
+    assert [c["protected"] for c in found] == [True, True, True, True, False]
+    waiting = plan.build_plan(planned.as_selections(found, "t.example"), {})
+    suggestions = {d["finding"]["urls"][0]: d["suggestion"] for d in waiting["decisions_needed"]}
+    assert suggestions == {
+        "https://t.example/sign-in": "ask",
+        "https://t.example/sign-up/team": "ask",
+        "https://t.example/partners/acme": "ask",
+        "https://t.example/login-help": "ask",
+        "https://t.example/blog/a": "apply",
+    }
+    asked = next(d for d in waiting["decisions_needed"] if d["suggestion"] == "ask")
+    assert "Ask the founder" in asked["why"]
+    # Without the extra path, /partners is an ordinary page again; the auth defaults stay.
+    plain = planned.read_changes(files(efficacy(changes=changes)), TODAY)
+    assert [c["protected"] for c in plain] == [True, True, False, True, False]
+    assert planned.protected("/sign-inside", ()) is False
+
+
 async def test_the_technical_fix_preview_asks_about_planned_changes():
     source = batch_source()
     host = source.run.input["site_url"].split("/")[2]
@@ -140,6 +170,13 @@ async def test_the_technical_fix_preview_asks_about_planned_changes():
     preview = await source.service.batch(**args)
     asked = {d["finding"]["check_id"]: d for d in preview["decisions_needed"]}
     assert {"planned.redirect", "planned.noindex"} <= set(asked)
+    assert asked["planned.noindex"]["suggestion"] == "ask"  # /sign-in is protected
+    guarded = await source.service.batch(**args, protected_paths=["/compare"])
+    assert {
+        d["suggestion"]
+        for d in guarded["decisions_needed"]
+        if d["finding"]["check_id"].startswith("planned.")
+    } == {"ask"}
     assert asked["planned.redirect"]["finding"]["urls"] == [
         f"https://{host}/compare/x-alternatives"
     ]

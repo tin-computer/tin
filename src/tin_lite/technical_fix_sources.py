@@ -473,7 +473,9 @@ class TechnicalFixSources:
             ],
         }
 
-    async def planned_changes(self, *, project_id: UUID, host: str | None) -> dict:
+    async def planned_changes(
+        self, *, project_id: UUID, host: str | None, protected_paths: list[str] | None = None
+    ) -> dict:
         """URL changes Page decisions and Site architecture proposed, at the project's head.
 
         They join the audit's findings as judgment calls; see planned_url_changes."""
@@ -495,7 +497,7 @@ class TechnicalFixSources:
             }
         except (LookupError, ValueError, AttributeError):
             return empty
-        changes = planned.read_changes(files, datetime.now(UTC).date())
+        changes = planned.read_changes(files, datetime.now(UTC).date(), protected_paths)
         return {
             "revision": revision,
             "changes": changes,
@@ -513,9 +515,12 @@ class TechnicalFixSources:
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         bind: bool = True,
+        protected_paths: list[str] | None = None,
     ):
         """site-fix-v5's preview: every finding of one audit, sorted into repairs, judgment
         calls, copy and manual steps. `decisions` are `finding_id=choice` answers.
+        `protected_paths` adds to the sign-in and sign-up paths a planned URL change may not
+        be suggested for (planned_url_changes.PROTECTED_PATHS).
 
         `bind` False previews without touching GitHub (the plan alone)."""
         from tin_lite import technical_repair_plan as repair_plan
@@ -527,7 +532,9 @@ class TechnicalFixSources:
         source = await self.inspect(project_id=project_id, audit_run_id=audit_run_id)
         if source["source"]["audit_revision"] != audit_revision:
             raise TechnicalFixError("source_changed", "The selected audit revision does not match.")
-        planned = await self.planned_changes(project_id=project_id, host=source["target"]["host"])
+        planned = await self.planned_changes(
+            project_id=project_id, host=source["target"]["host"], protected_paths=protected_paths
+        )
         selections = [*source["findings"], *planned["selections"]]
         if finding_ids:
             wanted = set(finding_ids)

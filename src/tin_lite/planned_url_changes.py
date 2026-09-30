@@ -14,6 +14,12 @@ answers it, asking the founder when unsure, and the answered ones go into the sa
 request as the audit's repairs. Refresh rows become candidates for content.refresh, whose
 drafts the founder reviews in Decisions.
 
+Some paths are protected: the sign-in, sign-up and auth-return pages the site shares with
+its login provider (an approved noindex on /sign-in once touched pages another app shares),
+plus any path the technical fix's `protected_paths` input names. The repository has no
+notion of protected paths, so this list is it. A change to a protected path stays a judgment
+call, but Tin's suggestion is to ask the founder, never to apply.
+
 Pure parsing here; the callers read the files at a pinned project revision.
 """
 
@@ -36,6 +42,8 @@ MAX_AGE_DAYS = {EFFICACY_SOURCE: 14, ARCHITECTURE_SOURCE: 60}
 MAX_FILE_BYTES = 200_000
 MAX_CHANGES = 20
 PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,300}")
+# Auth pages a site shares with its login provider; a change to them is always the founder's.
+PROTECTED_PATHS = ("/sign-in", "/sign-up", "/auth-complete")
 REFRESH_CHECKS = {
     "low_ctr": "search.low_ctr",
     "near_page_one": "search.near_page_one",
@@ -83,12 +91,30 @@ def _path(value) -> str | None:
     return value if PATH.fullmatch(value) and ".." not in value else None
 
 
-def read_changes(files: dict[str, str | bytes | None], today: date) -> list[dict]:
-    """Every current URL change: {source, kind: redirect|noindex, from, to, reason, confirmed}.
+def protected(path: str | None, extra: list[str] | tuple[str, ...] = ()) -> bool:
+    """Whether a site path is, or sits under, a protected path."""
+    if not path:
+        return False
+    page = path.split("?")[0].rstrip("/") or "/"
+    for root in (*PROTECTED_PATHS, *(p for p in extra if isinstance(p, str))):
+        root = root.split("?")[0].rstrip("/") or "/"
+        if root != "/" and (page == root or page.startswith(root + "/")):
+            return True
+    return False
+
+
+def read_changes(
+    files: dict[str, str | bytes | None], today: date, protected_paths: list[str] | None = None
+) -> list[dict]:
+    """Every current URL change:
+    {source, kind: redirect|noindex, from, to, reason, confirmed, protected}.
 
     `files` maps EFFICACY_PATH and ARCHITECTURE_PATH to their text (None when absent).
-    Invalid, stale or oversized files contribute nothing; they never raise.
+    Invalid, stale or oversized files contribute nothing; they never raise. `protected` is
+    true when either end of the change is a protected path (PROTECTED_PATHS plus
+    `protected_paths`).
     """
+    extra = [p for p in protected_paths or [] if isinstance(p, str) and PATH.fullmatch(p)]
     changes: list[dict] = []
     seen: set[tuple[str, str]] = set()
 
@@ -107,6 +133,7 @@ def read_changes(files: dict[str, str | bytes | None], today: date) -> list[dict
                 "to": new if kind == "redirect" else None,
                 "reason": str(reason or "")[:300],
                 "confirmed": bool(confirmed),
+                "protected": protected(old, extra) or protected(new, extra),
             }
         )
 
@@ -163,6 +190,9 @@ def as_selections(changes: list[dict], host: str) -> list[dict]:
             issue = f"{workflow} proposes keeping {change['from']} out of search (noindex)."
             planned = {"source": change["source"]}
             check = "planned.noindex"
+        if change.get("protected"):
+            planned["protected"] = True
+            issue += " It is a protected page, such as a shared sign-in page."
         finding = {
             "id": finding_id(change),
             "check_id": check,

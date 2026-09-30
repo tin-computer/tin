@@ -21,7 +21,7 @@ Pure data and functions, shared by the preview, preparation, delivery and the li
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
 from tin_lite.organic_audit_search import page_topic
@@ -642,11 +642,23 @@ def _merge_decision(finding: dict) -> Decision:
     )
 
 
+# A planned change to a protected page (a shared sign-in page, or a path the run lists):
+# the question stays, but Tin's suggestion is to ask the founder rather than apply.
+PROTECTED_WHY = (
+    "This is a protected page, such as a sign-in page the site shares with its login "
+    "provider or a path listed in protected_paths. Ask the founder before changing it; "
+    "leave it out if they don't answer."
+)
+
+
 def decision_for(finding: dict) -> Decision | None:
     if finding.get("check_id") == "search.cannibalization":
         return _merge_decision(finding)
     repair = REPAIRS.get(finding.get("check_id"))
-    return repair.decision if repair else None
+    decision = repair.decision if repair else None
+    if decision and (finding.get("planned") or {}).get("protected"):
+        return replace(decision, suggestion="ask", why=PROTECTED_WHY)
+    return decision
 
 
 def parse_decisions(items: list[str] | None) -> dict[str, str]:
