@@ -621,7 +621,8 @@
     "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read",
     "social.x_style": "Learn my X writing style",
     "social.x_publish": "Publish an approved X post",
-    "social.x_compose": "Draft a post for X"
+    "social.x_compose": "Compose X posts directly",
+    "social.x_draft": "Draft for X"
   },
   "workflow_scope": {
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
@@ -675,6 +676,7 @@
     "growth.framework_starter": "For a product developers integrate (a published SDK, public API, webhooks or embed in the connected repository): opens one unmerged PR adding a small runnable starter for one framework (Next.js, FastAPI, Vite React or Express) under the repository's examples directory, calling only what the repository defines and keeping secrets server-side; says no for products with nothing to integrate and never repeats a framework; never merges, deploys, publishes a package or creates a repository.",
     "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
     "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone.",
+    "social.x_draft": "Draft one X post or a small set from current project files and direction. Reuse a matching X guide; otherwise capture from supplied samples or a connected public account and continue after guide approval. With no voice source, draft from project context and state the limitation. No automatic posting, schedules or generated media.",
     "social.x_style": "Sample up to 50 of the connected account’s own public X posts, favoring recent writing, or read supplied samples. Propose an X writing guide for review before adopting it in project Files. Does not draft or publish posts.",
     "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
     "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation."

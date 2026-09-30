@@ -2550,6 +2550,9 @@ async def sync_builtin_workflows(
         validate_prerequisite_graph(prerequisites)
     except ValueError as exc:
         raise RuntimeError(f"built-in workflow prerequisites are invalid: {exc}") from exc
+    for parent, children in PARENT_CHILD_KEYS.items():
+        if parent in prepared and (missing := set(children) - prepared.keys()):
+            raise RuntimeError(f"workflow {parent} needs selected children: {sorted(missing)}")
     for system in WORKFLOW_SYSTEMS:
         await database.upsert_workflow_system(
             system_id=system.id,

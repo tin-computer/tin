@@ -2,9 +2,12 @@
 
 import json
 import runpy
+import shutil
 import sys
 from copy import deepcopy
 from datetime import datetime
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import jsonschema
@@ -30,14 +33,17 @@ POST = {
 
 
 def package():
-    sys.path.insert(0, str(ROOT))
-    previous = sys.dont_write_bytecode
-    sys.dont_write_bytecode = True
-    try:
-        module = SimpleNamespace(**runpy.run_path(str(ROOT / "main.py")))
-    finally:
-        sys.dont_write_bytecode = previous
-        sys.path.pop(0)
+    # Execute the reviewed package in a disposable copy. Imports must never leave
+    # bytecode in the source catalog while another pytest worker validates it.
+    with TemporaryDirectory() as directory:
+        root = Path(directory)
+        for name in ("main.py", "x_text.py"):
+            shutil.copyfile(ROOT / name, root / name)
+        sys.path.insert(0, directory)
+        try:
+            module = SimpleNamespace(**runpy.run_path(str(root / "main.py")))
+        finally:
+            sys.path.pop(0)
     definition = json.loads((ROOT / "workflow.json").read_text())["definition"]
     return module, definition
 
