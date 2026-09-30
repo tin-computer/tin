@@ -83,7 +83,9 @@ def queries():
         ("asana alternative", 100),
         ("loopwell login", 400),
     ]
-    return gsc([{"keys": [q], "clicks": 1, "impressions": n} for q, n in rows])
+    return gsc(
+        [{"keys": [q, "https://loopwell.example/"], "clicks": 1, "impressions": n} for q, n in rows]
+    )
 
 
 def family(fid, text=None):
@@ -173,6 +175,38 @@ async def test_code_picks_families_and_weights_and_one_call_writes_the_prompts(m
     assert "check_panel passed." in content and "Status: ready" in content
     assert "the families come from Search Console alone" in content
     assert load(KEY, monkeypatch).check_panel(block, "loopwell.example", ["Asana"]) == []
+
+
+async def test_brand_and_comparison_searches_never_outweigh_the_core_category(monkeypatch):
+    """Most of a real site's impressions came from its own name and its /alternatives pages."""
+    skewed = [
+        ("loopwell", "/", 90_000),
+        ("loopwell pricing", "/pricing", 20_000),
+        ("asana alternatives", "/alternatives/asana", 40_000),
+        ("best status report tools", "/compare/status-tools", 30_000),
+        ("asana vs trello", "/blog/asana-vs-trello", 15_000),
+        ("project status report template", "/templates/status", 20_000),
+        ("task handoff checklist", "/blog/handoffs", 30),
+        ("weekly review meeting agenda", "/blog/reviews", 20),
+        ("team deadline tracker", "/", 10),
+    ]
+    rows = gsc(
+        [
+            {"keys": [q, f"https://loopwell.example{p}"], "clicks": 1, "impressions": n}
+            for q, p, n in skewed
+        ]
+    )
+    content, ctx = await run_panel(monkeypatch, G1_queries=rows)
+    block = block_of(content)
+    weights = {f["id"]: f["weight"] for f in block["families"]}
+    assert weights["F1"] == 0.40 and max(weights.values()) == 0.40
+    assert all(0.12 <= weights[f] < 0.40 for f in ("F2", "F3", "F4"))
+    impressions = {f["id"]: f["impressions"] for f in block["families"]}
+    assert impressions["F2"] == 20_000  # brand, alternatives and "x vs y" searches are out
+    sent = json.dumps(ctx.models.calls[0]["data"]["candidate_groups"])
+    assert "loopwell" not in sent and "alternatives" not in sent and "asana vs" not in sent
+    assert "85000 impressions on comparison and alternatives pages were left out" in content
+    assert "Asana" in block["sources"]["competitors"]
 
 
 async def test_a_forcing_prompt_gets_one_corrective_call(monkeypatch):

@@ -3,7 +3,7 @@
   "definition": {
     "key": "organic.prompt_panel",
     "title": "Choose the buyer questions AI visibility is measured on",
-    "description": "Write 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. Code picks the families from your positioning and your own Search Console searches and sets their weights; one model call writes the prompts, and code checks every rule before publishing. The organic audit asks the newest panel on its next run, so AI visibility is measured on the same questions every time. No review step: a panel that fails the checks is not published.",
+    "description": "Write 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. Code picks the families from your positioning and your own Search Console searches, leaving out searches for your name and comparison searches, and sets their weights; one model call writes the prompts, and code checks every rule before publishing. The organic audit asks the newest panel on its next run, so AI visibility is measured on the same questions every time. No review step: a panel that fails the checks is not published.",
     "version": "1.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",

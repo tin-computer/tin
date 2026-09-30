@@ -6,7 +6,9 @@ their strongest head word into up to four candidate families with their impressi
 model call names the category the positioning sells in (the core family, F1), says whether a
 candidate group is that same category, and writes 8 prompts per family plus 4 branded ones.
 Code then keeps F1 and the three adjacent families with the most impressions, sets the weights
-(F1 0.40; each adjacent 0.12-0.36 by impressions), adds competitor flags and runs check_panel.
+(F1 0.40; each adjacent 0.12-0.36 by the square root of its impressions), adds competitor
+flags and runs check_panel. Branded searches, comparison searches and searches that land on
+comparison or alternatives pages never set a weight.
 When the check lists failures, one corrective call gets them; a panel that still fails fails
 the run, so the organic audit never asks a panel the check rejected.
 
@@ -40,6 +42,9 @@ STOP = set(
 COMPETITOR = re.compile(
     r"^(?P<a>[a-z0-9][a-z0-9 .+-]{1,40}?) (?:alternative|alternatives|competitors?|vs\.?|versus)"
     r"(?: (?P<b>[a-z0-9][a-z0-9 .+-]{1,40}))?$"
+)
+COMPARISON_PAGE = re.compile(
+    r"/(?:alternatives?|compare|comparisons?|vs)(?:/|$|\?)|-vs-|-alternatives?\b"
 )
 TOPICS = ("pricing", "reviews", "integrations", "versus")
 CANDIDATES = ("C1", "C2", "C3", "C4")
@@ -218,8 +223,19 @@ def branded_query(text, terms):
 
 
 def groups_from(queries, terms):
-    """Up to four candidate families: the head word with the most impressions, then the next."""
-    rows = [q for q in queries if q["impressions"] > 0 and not branded_query(q["query"], terms)]
+    """Up to four candidate families: the head word with the most impressions, then the next.
+
+    Branded searches (the product's name, aliases or domain) and comparison searches ("x vs
+    y", "x alternative") stay out: they measure the brand and its rivals, not the jobs buyers
+    arrive with.
+    """
+    rows = [
+        q
+        for q in queries
+        if q["impressions"] > 0
+        and not branded_query(q["query"], terms)
+        and not COMPETITOR.match(q["query"])
+    ]
     words = {q["query"]: set(re.findall(r"[a-z][a-z0-9+#-]{2,}", q["query"])) - STOP for q in rows}
     left, groups = list(rows), []
     for index in range(4):
@@ -471,7 +487,7 @@ async def run(ctx, inputs):
     # Search Console: the buyers' own words, 90 days to three days ago.
     end = now.date() - dt.timedelta(days=3)
     window = [str(end - dt.timedelta(days=89)), str(end)]
-    queries, searched = [], False
+    queries, searched, searched_names = [], False, []
     try:
         response = await ctx.services.call(
             service="gsc",
@@ -480,7 +496,7 @@ async def run(ctx, inputs):
             arguments={
                 "start_date": window[0],
                 "end_date": window[1],
-                "dimensions": ["query"],
+                "dimensions": ["query", "page"],
                 "row_limit": 500,
                 "start_row": 0,
                 "dimension_filters": [],
@@ -489,20 +505,38 @@ async def run(ctx, inputs):
         rows = response.get("rows") if isinstance(response, dict) else None
         if not isinstance(rows, list) or (rows and not isinstance(rows[0], dict)):
             raise ValueError("Search Console returned rows Tin cannot read")
+        by_query, compared = {}, 0
         for row in rows:
-            text = " ".join(str((row.get("keys") or [""])[0]).lower().split())
-            if text:
-                queries.append({"query": text, "impressions": int(row.get("impressions") or 0)})
+            keys = row.get("keys") or ["", ""]
+            text = " ".join(str(keys[0]).lower().split())
+            shown = int(row.get("impressions") or 0)
+            if not text:
+                continue
+            searched_names.append(text)
+            # Searches that land on comparison and alternatives pages are the competitor's
+            # buyers, not this product's jobs; they never set a family's weight.
+            if COMPARISON_PAGE.search(str(keys[1] if len(keys) > 1 else "").lower()):
+                compared += shown
+                continue
+            by_query[text] = by_query.get(text, 0) + shown
+        queries = [{"query": q, "impressions": n} for q, n in by_query.items()]
         searched = True
+        if compared:
+            notes.append(
+                f"{compared} impressions on comparison and alternatives pages were left out of "
+                "the weights."
+            )
         if response.get("truncated") or response.get("next_start_row") or len(rows) >= 500:
-            notes.append("Search Console returned its first 500 queries; the rest were not read.")
+            notes.append("Search Console returned its first 500 rows; the rest were not read.")
     except ValueError as exc:
         if str(exc).startswith("The service request differs from its declared contract"):
             raise
         notes.append(f"Search Console was not read ({str(exc)[:100]}); weights are split evenly.")
     groups, dropped, usable = groups_from(queries, terms)
     given = [str(c).strip() for c in inputs.get("competitor_names") or []]
-    competitors = unique(given + competitors_in(queries, terms))
+    competitors = unique(
+        given + competitors_in([{"query": q} for q in dict.fromkeys(searched_names)], terms)
+    )
 
     positioning = {
         "brand/BRAND.md (Brand direction)": section(

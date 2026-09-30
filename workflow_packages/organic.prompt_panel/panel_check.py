@@ -45,18 +45,21 @@ def family_weights(impressions):
 
     `impressions` maps each adjacent family ID to the Search Console impressions of the queries
     assigned to it, or None when unknown. The core family always weighs 0.40. Each adjacent
-    family gets a 0.12 base plus its share of 0.24 by impressions, so it weighs 0.12-0.36 and
-    never outweighs the core; with any count unknown the three split 0.60 evenly.
+    family gets a 0.12 base plus its share of 0.24, so it weighs 0.12-0.36 and never
+    outweighs the core. The share follows the square root of impressions, so one family with
+    most of the site's search traffic cannot crowd out the rest; positioning keeps the lead.
+    With any count unknown the three split 0.60 evenly.
     """
     ids = sorted(impressions)
     counts = [impressions[k] for k in ids]
     if not all(isinstance(v, int | float) and v >= 0 for v in counts) or not sum(counts):
         return {"F1": CORE_WEIGHT, **{k: round((1 - CORE_WEIGHT) / len(ids), 4) for k in ids}}
-    total = sum(counts)
+    roots = {k: impressions[k] ** 0.5 for k in ids}
+    total = sum(roots.values())
     spread = 1 - CORE_WEIGHT - ADJACENT_BASE * len(ids)
     return {
         "F1": CORE_WEIGHT,
-        **{k: round(ADJACENT_BASE + spread * impressions[k] / total, 4) for k in ids},
+        **{k: round(ADJACENT_BASE + spread * roots[k] / total, 4) for k in ids},
     }
 
 
