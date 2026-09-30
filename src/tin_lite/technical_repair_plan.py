@@ -118,8 +118,10 @@ REPAIRS: dict[str, Repair] = {
             "engines index them?",
             "index",
             "keep_noindex",
-            "index",
-            "They already get impressions, so the noindex is usually left over from a template.",
+            "keep_noindex",
+            "A noindex set on the page itself is usually deliberate, for example on event or "
+            "campaign pages. Suggest removing it only when the code shows it comes from a shared "
+            "template the page was never meant to inherit.",
             yes_label="Remove noindex so they can be indexed",
             no_label="Keep them out of search",
         ),

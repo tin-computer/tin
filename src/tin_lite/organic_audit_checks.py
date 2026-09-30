@@ -768,18 +768,20 @@ def _indexation_findings(view: SiteView, host: str) -> list[dict]:
                 check_id="indexation.noindex_with_search_traffic",
                 category="site",
                 area="crawlability_indexation",
-                issue="Pages that still get search traffic are marked noindex",
-                impact="high",
+                # A noindex is often deliberate (events, campaigns), so this is a question for
+                # the founder, not a failure: the technical fix asks it as a judgment call.
+                issue="Pages marked noindex still get search traffic: are they meant to stay "
+                "out of search?",
+                impact="medium",
                 evidence=[
                     f"{_path(f['url'])}: noindex; {view.search_note(url_key(f['url']))}"
                     for f in hidden[:8]
                 ],
-                fix="Remove noindex from pages you want in search results; keep it only on "
-                "pages that should disappear.",
-                priority="critical",
+                fix="Ask the founder. If these pages should stay out of search, nothing changes; "
+                "if they should be found, remove the noindex from them.",
+                priority="quick_win",
                 evidence_kind="page_fetch",
                 urls=[f["url"] for f in hidden],
-                status="fail",
                 evidence_refs=["site.pages", "search_console.value.pages"],
             )
         )
