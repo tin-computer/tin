@@ -43,13 +43,15 @@ def draft(panel=None):
     return response(json.dumps(panel or panel_fixture()), search=False)
 
 
-def review(accepted=True):
-    return response(
-        json.dumps(
-            {"accepted": accepted, "explanation": "The public research supports these buyer jobs."}
-        ),
-        search=False,
-    )
+def review(accepted=True, *, rejected=(), legacy=False):
+    """A panel review: v11's per-question shape, or the whole-panel verdict older pins use."""
+    value = {"accepted": accepted, "explanation": "The public research supports these buyer jobs."}
+    if not legacy:
+        value["rejected_questions"] = [
+            {"number": number, "reason": "It could describe a different buying category."}
+            for number in rejected
+        ]
+    return response(json.dumps(value), search=False)
 
 
 def interpretation(text="1–4: The buyer seeks software to coordinate team work."):
@@ -276,7 +278,7 @@ async def test_exact_v2_definition_keeps_single_call_panel_and_old_payload():
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
-        create=AsyncMock(side_effect=[response(json.dumps(panel_fixture())), review()])
+        create=AsyncMock(side_effect=[response(json.dumps(panel_fixture())), review(legacy=True)])
     )
     assert await activities.organic_prepare_panel(run_id) == 8
     request = activities.responses.create.await_args_list[0].args[0]
@@ -296,7 +298,7 @@ async def test_exact_v3_definition_keeps_original_three_step_prompts():
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
-        create=AsyncMock(side_effect=[research(), draft(), review()])
+        create=AsyncMock(side_effect=[research(), draft(), review(legacy=True)])
     )
     assert await activities.organic_prepare_panel(run_id) == 8
     requests = [call.args[0] for call in activities.responses.create.await_args_list]
@@ -370,7 +372,7 @@ async def test_exact_prior_definition_keeps_its_original_reviewer_and_evidence_b
     storage.read_canonical_artifact.return_value = canonical_json(definition)
     await activities.organic_prepare(run_id)
     activities.responses = SimpleNamespace(
-        create=AsyncMock(side_effect=[research(), draft(), review()])
+        create=AsyncMock(side_effect=[research(), draft(), review(legacy=True)])
     )
     assert await activities.organic_prepare_panel(run_id) == 8
     request = activities.responses.create.await_args_list[-1].args[0]

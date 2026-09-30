@@ -14,7 +14,7 @@ from tin_lite.organic_audit_ai import (
     AnswerGrade,
     BuyerPanel,
     ContentReview,
-    PanelValidation,
+    PanelReview,
     payload,
 )
 from tin_lite.service_pricing import (
@@ -42,7 +42,8 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
         ("answer", questions * policy["repetitions"] + policy["brand_checks"], None, True),
         ("panel", policy["max_panel_attempts"], BuyerPanel, False),
         ("interpret", policy["max_panel_attempts"] * questions, None, False),
-        ("validate", policy["max_panel_attempts"], PanelValidation, False),
+        # v11 reviews each question: the schema names rejected questions and why.
+        ("validate", policy["max_panel_attempts"], PanelReview, False),
         ("judge_graded", questions * policy["repetitions"], AnswerGrade, False),
         # One answer per question without web search, and its grade. Its input is the
         # question (at most 400 characters); the grade reads an answer of at most 32 KB.

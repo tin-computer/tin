@@ -92,6 +92,7 @@ def analyze(
         crawl_pages=crawl.get("pages", []),
         search_pages=pages,
         search_queries=queries,
+        angles=bool(policy.get("site_angles")),
     )
     cover = coverage(view, site.get("plan"), page_cap=scope.get("page_cap"))
     titles = {}
@@ -457,7 +458,7 @@ def report_lines(
                         else ""
                     )
                     + f"{' (own group)' if row['group'] == 'named' else ''} |"
-                    for row in crawler_stances(robots)
+                    for row in crawler_stances(robots, angles=analysis["view"].angles)
                 ),
                 "",
             ]
