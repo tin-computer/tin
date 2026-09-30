@@ -50,3 +50,30 @@ async def test_the_first_save_is_marked_and_a_retried_save_sends_nothing(
     }
     assert two["properties"]["project_workflow_id"] == str(second.id)
     assert two["properties"]["first_for_project"] is False
+
+
+async def test_the_event_properties_survive_the_analytics_allowlist(publication_db, monkeypatch):
+    f = await project_fixture(publication_db)
+    client = analytics.Analytics("synthetic", "https://unused.invalid")
+    monkeypatch.setattr(client, "_ensure_flusher", lambda: None)
+    monkeypatch.setattr(analytics, "_current", client)
+    key = next(iter(f.workflows))
+    saved = await save(
+        f,
+        key,
+        request_id=uuid4(),
+        schedule={
+            "cadence": "weekly",
+            "weekdays": ["monday"],
+            "local_time": "09:00",
+            "timezone": "UTC",
+        },
+    )
+    (queued,) = [item for item in client._queue if item["event"] == "project_workflow_created"]
+    assert queued["distinct_id"] == ACTOR
+    properties = queued["properties"]
+    assert properties["project_workflow_id"] == str(saved.id)
+    assert properties["workflow"] == key
+    assert properties["scheduled"] is True
+    assert properties["cadence"] == "weekly"
+    assert properties["first_for_project"] is True
