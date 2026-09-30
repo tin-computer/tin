@@ -1973,6 +1973,14 @@ class Database:
                 request_id,
             )
             assert row is not None
+            # A retried request finds the row an earlier attempt saved; only a new row counts.
+            created = row["id"] == project_workflow_id
+            first_for_project = created and (
+                await conn.fetchval(
+                    "SELECT count(*) FROM project_workflows WHERE project_id = $1", project_id
+                )
+                == 1
+            )
             if (
                 row["workflow_id"] != workflow_id
                 or row["definition_commit_sha"] != definition_commit_sha
@@ -2010,6 +2018,21 @@ class Database:
                 ),
                 f"{name} saved to Your workflows.",
                 f"project-workflow:{row['id']}:settings:{row['settings_revision']}",
+            )
+        if created:
+            # Activation: a project saving its first workflow. Sent after the commit, from the
+            # one place every save goes through (dashboard, MCP, Start here, the systems).
+            analytics.capture(
+                "project_workflow_created",
+                distinct_id=created_by_clerk_user_id,
+                project_id=project_id,
+                properties={
+                    "project_workflow_id": str(row["id"]),
+                    "workflow": row["workflow_key"],
+                    "scheduled": schedule is not None,
+                    "cadence": (schedule or {}).get("cadence"),
+                    "first_for_project": first_for_project,
+                },
             )
         return _project_workflow(row)
 
