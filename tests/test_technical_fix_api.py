@@ -230,7 +230,7 @@ async def test_new_controls_enforce_membership_before_any_stop(surface_fixture):
     for root in roots:
         assert (await f.client.post(f"{root}/runs/{f.run.id}/stop")).status_code == 404
     for name in ("stop_organic_system", "stop_technical_fix"):
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await f.server.call_tool(name, {"run_id": str(f.run.id)})
     f.db.stop_technical_fix.assert_not_awaited()
     f.runtime.temporal.get_workflow_handle.assert_not_called()

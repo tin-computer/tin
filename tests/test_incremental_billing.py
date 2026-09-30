@@ -255,7 +255,7 @@ async def test_cost_preview_accepts_the_same_project_id_start_workflow_strips(bi
             )
 
 
-async def test_parallel_projects_cannot_spend_same_wallet(billed):
+async def test_parallel_projects_cannot_spend_same_wallet(billed, monkeypatch):
     f = billed
     await fund(f, 1000)
     sibling = await f.db.create_workspace_project(
@@ -276,8 +276,22 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed):
             expected_revision=0,
         ),
     )
+    ten = {**KEYWORDS, "max_cost_usd": 10}
+    unstarted = await direct(f, "organic.keyword_plan", ten)
+    # Admission holds the first run's $10 estimate against the sibling's start.
+    with pytest.raises(BillingError, match="set aside for runs in progress") as error:
+        await direct(f, "organic.keyword_plan", ten, project_id=sibling.id)
+    assert error.value.code == "insufficient_funds"
+    await finish(f, unstarted)
+    assert await f.billing.settle(unstarted.id) == 0
+    # With calibrated estimates below the maximum, both start and every paid call
+    # still contends for the same credits under the wallet lock.
+    import tin_lite.workflow_costs as workflow_costs
+
+    real = workflow_costs._estimate
+    monkeypatch.setattr(workflow_costs, "_estimate", lambda *key: (real(*key)[0], key[-1] // 2))
     runs = [
-        await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 10}, project_id=p)
+        await direct(f, "organic.keyword_plan", ten, project_id=p)
         for p in (f.project.id, sibling.id)
     ]
     results = await asyncio.gather(
@@ -416,3 +430,55 @@ async def test_terminal_unknown_bill_keeps_money_liability_but_not_execution_cap
         == "pending"
     )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 0
+
+
+async def limits(f, *, monthly_usd, revision, per_run_usd=10, concurrency=5):
+    await f.billing.update_policy(
+        f.project.id,
+        ACTOR,
+        ProjectSpendingPolicy(
+            per_run_nanos=per_run_usd * 1_000_000_000,
+            monthly_nanos=monthly_usd * 1_000_000_000,
+            concurrency=concurrency,
+            expected_revision=revision,
+        ),
+    )
+
+
+async def test_admission_counts_unstarted_per_call_runs_at_their_estimates(billed):
+    """A run admitted before its first paid call still occupies the month and the wallet.
+
+    Per-call funding reserves nothing at admission. Counting such runs at their committed
+    amount (zero) admitted parallel starts past the monthly limit and the balance; each
+    then failed at a paid call in the middle of its work.
+    """
+    f = billed
+    await fund(f, 1000)
+    await limits(f, monthly_usd=10, revision=1)
+    six = {**KEYWORDS, "max_cost_usd": 6}
+    first = await direct(f, "organic.keyword_plan", six)
+    assert (await f.billing.overview(f.project.id, ACTOR))["reserved_usd"] == "0.00"
+    with pytest.raises(BillingError, match=r"\(\$6\.00 already committed\)") as error:
+        await direct(f, "organic.keyword_plan", six)
+    assert error.value.code == "project_limit"
+    # With paid work committed, the larger of its estimate and its commitment counts.
+    await operation(f, first, "first-call", 5_000_000_000)
+    await observe(f, "first-call", 5_000_000_000)
+    with pytest.raises(BillingError, match=r"\(\$6\.00 already committed\)"):
+        await direct(f, "organic.keyword_plan", six)
+    # A settled run counts at its charge, as before.
+    await finish(f, first)
+    assert await f.billing.settle(first.id) == 5_000_000_000
+    with pytest.raises(BillingError, match=r"\(\$5\.00 already committed\)"):
+        await direct(f, "organic.keyword_plan", six)
+    await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 5})
+
+    # The shared wallet: the unstarted $5 run holds its estimate against new starts,
+    # though nothing is reserved or shown as held.
+    await limits(f, monthly_usd=100, revision=2)
+    view = await f.billing.overview(f.project.id, ACTOR)
+    assert view["available_usd"] == "5.00" and view["reserved_usd"] == "0.00"
+    with pytest.raises(BillingError, match=r"Available credits: \$0\.00") as error:
+        await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 3})
+    assert error.value.code == "insufficient_funds"
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 2

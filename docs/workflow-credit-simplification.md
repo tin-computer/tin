@@ -26,6 +26,11 @@ balance and project limits. It charges verified usage, not the estimate.
    observation replace it with actual cost and immediately free the difference.
    Unsettled actual usage stays unavailable so another run cannot spend it. Round
    the internal root liability upward to cents, then round the final charge once.
+   Admission of a new run counts every unsettled per-call run that can still buy work
+   at the larger of its estimate and its committed liability, against both the monthly
+   limit and the credits, so parallel starts cannot all pass before their first paid
+   call. Nothing extra is reserved or shown as a hold; paid calls of runs already
+   admitted are checked against actual commitments only.
 4. **Limits and recovery.** Check available funds and current run/month/schedule limits
    at every call, including parent children and parallel projects sharing a wallet.
    Decline before buying a call if funding is insufficient; retain existing receipts

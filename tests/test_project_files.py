@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -31,6 +32,11 @@ async def test_project_files_are_membership_gated_and_pinned_to_canonical_state(
             assert branch == project.canonical_branch
             return ["README.md", "reports/SCAN.md", "reports/evidence.json"], revision
 
+        async def canonical_file_modified_dates(self, *, repo_id, revision):
+            assert repo_id == project.state_repo_id
+            assert revision == "c" * 40
+            return {"reports/SCAN.md": datetime(2026, 9, 20, 12, tzinfo=UTC)}
+
         async def read_canonical_artifact(self, *, repo_id, commit_sha, path):
             assert repo_id == project.state_repo_id
             assert commit_sha == revision
@@ -52,6 +58,9 @@ async def test_project_files_are_membership_gated_and_pinned_to_canonical_state(
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         listing = await client.get(f"/api/projects/{project.id}/files")
+        dated = await client.get(
+            f"/api/projects/{project.id}/files", params={"include_modified": "true"}
+        )
         raw = await client.get(
             f"/api/projects/{project.id}/files/raw",
             params={"path": "reports/SCAN.md", "revision": revision},
@@ -81,6 +90,9 @@ async def test_project_files_are_membership_gated_and_pinned_to_canonical_state(
         ],
     }
     assert raw.status_code == 200
+    assert dated.status_code == 200
+    assert dated.json()["files"][1]["modified_at"] == "2026-09-20T12:00:00Z"
+    assert "modified_at" not in dated.json()["files"][0]
     assert raw.content == markdown
     assert raw.headers["X-Tin-File-Source"] == "code.storage"
     assert raw.headers["X-Tin-File-Revision"] == revision

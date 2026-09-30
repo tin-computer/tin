@@ -237,7 +237,7 @@ async def test_mcp_discovery_idempotent_start_status_files_and_http_parity(
         )
         token.subject = "user_outsider"
         assert (await client.get(f"/api/workflows/runs/{saved.id}")).status_code == 404
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool("get_run", {"run_id": str(saved.id)})
         with pytest.raises(ToolError, match="project not found"):
             await server.call_tool("start_workflow", args)
@@ -391,7 +391,7 @@ async def test_http_and_mcp_stop_share_membership_and_one_projection(publication
     ) as client:
         url = f"/api/workflows/runs/{run.id}/stop-organic-audit"
         assert (await client.post(url)).status_code == 404
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool("stop_organic_audit", {"run_id": str(run.id)})
         assert (await publication_db.get_run(run.id)).status != RunStatus.STOPPED
         token.subject = "user_auditor"

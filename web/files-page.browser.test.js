@@ -3,6 +3,46 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
 import { fileUrl, openApp, revision, serveApp } from "./app-fixture.js";
+import fs from "node:fs/promises";
+
+test("file modified dates appear in the tree, search and narrow folder list", async () => {
+  const {server, base} = await serveApp();
+  const browser = await chromium.launch({headless:true});
+  try {
+    for (const theme of ["light", "dark"]) {
+      const {page, context, errors} = await openApp(browser, base, {url:"/files", theme, viewport:{width:1440,height:900}});
+      await page.route("**/api/projects/project/files?*", route => {
+        assert.equal(new URL(route.request().url()).searchParams.get("include_modified"), "true");
+        return route.fulfill({json:{revision, files:[
+          {path:"drafts/product-update.md", modified_at:"2026-09-20T12:00:00Z"},
+          {path:"drafts/older-draft.md", modified_at:"2025-08-10T12:00:00Z"},
+          {path:"drafts/no-date.md"},
+        ]}});
+      });
+      await page.reload();
+      assert.equal(await page.locator("html").getAttribute("data-theme"), theme);
+      const row = page.locator('[data-item-path="drafts/product-update.md"]');
+      await row.waitFor();
+      assert.match(await row.innerText(), /Sep 20, 2026/);
+      assert.match(await row.locator('[title^="Last modified"]').getAttribute("title"), /2026/);
+      assert.match(await page.locator('[data-item-path="drafts/no-date.md"]').innerText(), /—/);
+      if (process.env.TIN_FILES_SCREENSHOTS) {
+        await fs.mkdir(process.env.TIN_FILES_SCREENSHOTS, {recursive:true});
+        await page.screenshot({path:`${process.env.TIN_FILES_SCREENSHOTS}/files-dates-${theme}.png`});
+      }
+      await page.locator("#files-search").fill("product-update");
+      assert.match(await page.locator("#files-search-results").innerText(), /Sep 20, 2026/);
+      await page.locator("#files-search").fill("");
+      await page.setViewportSize({width:390,height:844});
+      await page.locator('#files-mobile-drill [data-files-directory="drafts"]').click();
+      assert.match(await page.locator('#files-mobile-drill [data-project-file="drafts/product-update.md"]').innerText(), /Sep 20, 2026/);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      if (process.env.TIN_FILES_SCREENSHOTS) await page.screenshot({path:`${process.env.TIN_FILES_SCREENSHOTS}/files-dates-${theme}-390.png`});
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+  } finally {await browser.close(); server.close();}
+});
 
 const fileKinds = [
   ["reports/answers/page-1.md", ".markdown-return"],

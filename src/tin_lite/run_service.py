@@ -53,8 +53,8 @@ class ContentProgramNotSavedError(WorkflowInputError):
     def __init__(self, inputs: dict[str, Any]) -> None:
         super().__init__(
             "Save the content program to My system before starting it: call "
-            "create_project_workflow with workflow_id 'content.plan' and these inputs, then "
-            "start_project_workflow with the project_workflow_id it returns."
+            "create_project_workflow with workflow_id 'content.plan', these inputs and a weekly "
+            "schedule. Saving the schedule starts its first run."
         )
         self.inputs = inputs
 

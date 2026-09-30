@@ -369,7 +369,9 @@ class _FactsParser(HTMLParser):
         self.h1_texts: list[str] = []
         self.lead: str | None = None
         self.analytics: set[str] = set()
-        self._stack: list[str] = []
+        # HTML never nests tags inside <script>, so a flag answers what a stack of every open
+        # tag did; scanning that stack on each end tag was quadratic on unclosed <li>/<p>/<td>.
+        self._in_script = False
         self._hidden = 0
         self._heading: list[str] | None = None
         self._heading_tag: str | None = None
@@ -476,6 +478,7 @@ class _FactsParser(HTMLParser):
                 self.json_ld_blocks += 1
             else:
                 self.scripts += 1
+                self._in_script = True
                 if values.get("src"):
                     self._scan_analytics(values["src"][:2000])
         elif tag == "img":
@@ -490,7 +493,12 @@ class _FactsParser(HTMLParser):
             self.tables += 1
         elif tag == "a":
             href = values.get("href", "").strip()
-            target = urlsplit(urljoin(self.url, href)) if href else None
+            try:
+                target = urlsplit(urljoin(self.url, href)) if href else None
+            except ValueError:
+                # A malformed link, such as a https://[YOUR-DOMAIN]/ placeholder, is one link;
+                # raising here would drop every fact after it on the page.
+                target = None
             if target and target.scheme in {"http", "https"} and target.hostname:
                 host = target.hostname.lower()
                 if host != self.host and host.removeprefix("www.") != self.host.removeprefix(
@@ -506,15 +514,11 @@ class _FactsParser(HTMLParser):
             self._paragraph_after_h1 = bool(self.h1_texts)
         if "itemscope" in values:
             self.microdata = True
-        if tag not in _VOID_ELEMENTS:
-            self._stack.append(tag)
 
     def handle_endtag(self, tag):
         self._accessibility_end(tag)
-        if tag in self._stack:
-            while self._stack:
-                if self._stack.pop() == tag:
-                    break
+        if tag == "script":
+            self._in_script = False
         if tag in _HIDDEN_TEXT and self._hidden:
             self._hidden -= 1
         if tag == "title" and self._in_title:
@@ -555,7 +559,7 @@ class _FactsParser(HTMLParser):
             self._title_parts.append(data)
         elif self._in_json_ld and sum(map(len, self._json_ld_text)) < 200_000:
             self._json_ld_text.append(data)
-        elif self._stack and self._stack[-1] == "script":
+        elif self._in_script:
             if self._script_chars < 200_000:
                 self._script_text.append(data[:20_000])
                 self._script_chars += min(len(data), 20_000)
@@ -568,10 +572,6 @@ class _FactsParser(HTMLParser):
             if self._paragraph is not None:
                 self._paragraph.append(data)
 
-
-_VOID_ELEMENTS = frozenset(
-    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "wbr"}
-)
 
 # Required and recommended properties Tin checks for common structured data types, from
 # Google's structured data documentation. "any" means at least one of the listed fields.
