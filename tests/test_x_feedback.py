@@ -326,6 +326,8 @@ def test_preferences_need_literal_feedback_evidence_and_matching_guide():
     with pytest.raises(ValueError, match="another account"):
         x_feedback.remember(GUIDE, [RULE], account="67890")
     assert RULE in x_feedback.remember("", [RULE], account="unbound")
+    already_revised = GUIDE + "\n- " + RULE + "\n"
+    assert x_feedback.remember(already_revised, [RULE], account="12345") == already_revised
     assert (
         "'just this post'" in x_feedback.INSTRUCTIONS
         and "Do not learn facts" in x_feedback.INSTRUCTIONS

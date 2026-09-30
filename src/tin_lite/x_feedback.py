@@ -100,7 +100,11 @@ def validate_result(value, *, feedback, guide, account, kind):
             rules.append(rule)
     if kind == "guide" and guide_account(text) != account:
         raise ValueError("The revised guide changed its account")
-    if credential_findings(text) or credential_findings("\n".join(rules)):
+    if (
+        credential_findings(text)
+        or credential_findings(summary)
+        or credential_findings("\n".join(rules))
+    ):
         raise ValueError("The revision contains credential-like data")
     return {"text": text, "summary": summary, "preferences": rules}
 
@@ -116,7 +120,12 @@ def remember(guide, rules, *, account):
         )
     if guide_account(guide) != account:
         raise ValueError("The X guide belongs to another account")
-    addition = "\n".join(f"- {rule}" for rule in rules)
+    # A guide revision may already express the new rule in its returned text.
+    # Do not repeat it when adding the separately reported learned preferences.
+    missing = [rule for rule in rules if rule.casefold() not in guide.casefold()]
+    if not missing:
+        return guide
+    addition = "\n".join(f"- {rule}" for rule in missing)
     section = re.search(r"(?m)^## Explicit preferences\s*\n", guide)
     if section:
         rest = guide[section.end() :]
