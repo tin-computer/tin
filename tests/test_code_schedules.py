@@ -535,3 +535,24 @@ async def test_saving_a_schedule_over_mcp_runs_it_once_now(billed, monkeypatch):
         )
     )
     assert "first_run" not in unscheduled
+    # A schedule the founder starts later waits for that date; nothing runs or bills now.
+    starts_at = (datetime.now(UTC) + timedelta(days=30)).replace(microsecond=0)
+    later = structured(
+        await server.call_tool(
+            "create_project_workflow",
+            {
+                **arguments,
+                "name": "Later fixture report",
+                "request_id": str(uuid4()),
+                "schedule": {**SCHEDULE, "start_at": starts_at.isoformat()},
+            },
+        )
+    )
+    assert later["first_run"] == {"status": "waits_for_start", "starts_at": starts_at.isoformat()}
+    assert "waits for the start date" in " ".join(later["relay"])
+    assert (
+        await f.db.get_run_by_start_key(
+            project_id=f.project.id, start_idempotency_key=f"first-run:{later['id']}"
+        )
+        is None
+    )

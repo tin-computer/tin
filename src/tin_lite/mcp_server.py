@@ -478,6 +478,8 @@ def _project_workflow_message(configured: Any, *, created: bool) -> str:
 def _first_run_message(first_run: dict[str, Any]) -> str:
     if first_run.get("id"):
         return "It is also running once now, so the first result does not wait for the calendar."
+    if first_run.get("status") == "waits_for_start":
+        return "Its first run waits for the start date you chose; nothing runs before then."
     return f"Its first run could not start now: {first_run.get('reason', 'unknown reason')}"
 
 
@@ -2278,13 +2280,18 @@ def create_mcp_app(
             raise ToolError(str(exc)) from exc
         first_run = None
         if configured.schedule is not None:
-            first_run = await _start_first_run(
-                services=services,
-                workflow=workflow,
-                configured=configured,
-                clerk_user_id=clerk_user_id,
-                oauth_client_id=token.client_id,
-            )
+            starts_at = WorkflowSchedule.model_validate(configured.schedule).start_at
+            if starts_at is not None and starts_at > datetime.now(UTC):
+                # The founder chose when the schedule begins; running now would spend early.
+                first_run = {"status": "waits_for_start", "starts_at": starts_at.isoformat()}
+            else:
+                first_run = await _start_first_run(
+                    services=services,
+                    workflow=workflow,
+                    configured=configured,
+                    clerk_user_id=clerk_user_id,
+                    oauth_client_id=token.client_id,
+                )
         message = _project_workflow_message(configured, created=True)
         return {
             **_mcp_project_workflow_view(configured),
