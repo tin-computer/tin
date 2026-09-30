@@ -271,9 +271,10 @@ async def test_explicit_draft_only_does_not_touch_github():
 def test_new_parent_cost_bounds_leave_historical_definition_unchanged():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     historical = {**definition, "organic_system_policy": organic_system.LEGACY_POLICY}
-    # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each.
+    # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each, and the
+    # pool caps the drafting recipe at the keyword limit plus $10 ($22 of children -> $19).
     assert service_terms(historical)["maximum_nanos"] == 12_000_000_000
-    assert service_terms(definition)["maximum_nanos"] == 22_000_000_000
+    assert service_terms(definition)["maximum_nanos"] == 19_000_000_000
     assert (
         service_terms(definition, inputs={"content_delivery": "draft_only"})["maximum_nanos"]
         == 17_000_000_000
