@@ -112,12 +112,6 @@ class TechnicalFixExecution:
         if selection["input_sha256"] != digest(run.input):
             raise ValueError("Technical repair inputs changed after preparation.")
 
-        if policy == contract.SITE_POLICY:
-            prepared = await self.once(
-                run.id, "prepare", lambda: self._resolve_site(run, selection)
-            )
-            return await self._finish_preparation(run, prepared)
-
         async def resolve():
             pages = []
             for index, url in enumerate(selection["selection"]["affected_urls"]):
@@ -213,7 +207,7 @@ class TechnicalFixExecution:
             return True
         return False
 
-    # --- site-fix-v4 -------------------------------------------------------------------
+    # --- served-file reads ---------------------------------------------------------------
 
     async def _read(self, run, key, url, target, kind):
         """One fresh read, receipted. An unreadable file or page is recorded, not raised."""
@@ -273,214 +267,6 @@ class TechnicalFixExecution:
             ] in {"urlset", "index"}:
                 return read["url"]
         return None
-
-    async def _resolve_site(self, run, selection):
-        chosen = selection["selection"]
-        finding = chosen["finding"]
-        kind = site_rules.SITE_FIXES[finding["check_id"]]
-        kind_target = site_rules.target(kind)
-        target = selection["target"]
-        host = target["host"]
-        listed = chosen["affected_urls"][: site_rules.page_limit(kind)]
-        remaining = max(0, int(chosen.get("affected_count") or len(listed)) - len(listed))
-        expected, reason = {}, None
-        reads = []  # (read, needed, page_url or None)
-
-        if kind_target == "robots":
-            robots = await self._read(
-                run, "site:robots", f"https://{host}/robots.txt", target, "robots"
-            )
-            if robots.get("status_code") not in {200, 404}:
-                reason = "site_unreadable"
-            else:
-                state = "observed" if robots["status_code"] == 200 else "missing"
-                need = site_rules.robots_needs(kind, {"status": state, "text": body_of(robots)})
-                if kind == "robots_allow_ai_search":
-                    expected = {"agents": need["agents"]}
-                elif need["needed"]:
-                    sitemap = await self._sitemap_reference(run, target)
-                    if sitemap is None:
-                        reason = "no_sitemap_to_reference"
-                    expected = {"sitemaps": [sitemap] if sitemap else []}
-                reads.append((robots, need["needed"], None))
-        elif kind_target == "sitemap":
-            robots = await self._read(
-                run, "site:robots", f"https://{host}/robots.txt", target, "robots"
-            )
-            files = await self._sitemap_files(run, target, robots)
-            wanted = {url_key(url): url for url in listed}
-            if not files:
-                reason = "site_unreadable"
-            elif kind == "sitemap_remove_urls":
-                present = sorted(
-                    {
-                        loc
-                        for read in files
-                        for loc in site_rules.sitemap_locs(body_of(read))
-                        if url_key(loc) in wanted
-                    }
-                )
-                expected = {"remove": present}
-                for read in files:
-                    needed = site_rules.still_needed(kind, body_of(read), read["url"], expected)
-                    if needed:
-                        reads.append((read, True, None))
-                reads = reads[:3]
-            else:
-                keys = {
-                    url_key(loc) for read in files for loc in site_rules.sitemap_locs(body_of(read))
-                }
-                expected = {"add": [url for key, url in wanted.items() if key not in keys]}
-                reads.append((files[0], bool(expected["add"]), None))
-        else:
-            for index, url in enumerate(listed):
-                read = await self._read(run, f"page:{index}", url, target, "html")
-                if read.get("status_code") != 200:
-                    remaining += 1
-                    continue
-                reads.append((read, site_rules.page_needs(kind, body_of(read), url), url))
-            if not reads:
-                reason = "site_unreadable"
-
-        needed = [(read, page) for read, is_needed, page in reads if is_needed]
-        if reason is None and not needed:
-            reason = "already_resolved"
-        mode, originals, pages, new_paths, overlapping = "static", {}, {}, [], []
-        if reason is None:
-            binding = binding_from(selection)
-            bundle = await self.integrations.github_repository_bundle(
-                project_id=run.project_id,
-                run_id=run.id,
-                execution_key=f"{run.id}:procedure_repository_workspace",
-                expected_binding=binding,
-            )
-            try:
-                files = archive_files(bundle.archive) if getattr(bundle, "complete", True) else None
-            except ValueError:
-                files = None
-            if files is None:
-                reason = "unsupported_source"
-            else:
-                mode, originals, pages, new_paths, unmatched = self._match_sources(
-                    kind, files, needed
-                )
-                remaining += unmatched
-                if mode is None:
-                    reason = "unsupported_source"
-            if reason is None:
-                evidence = await self.integrations.github_open_pull_requests(
-                    project_id=run.project_id,
-                    run_id=run.id,
-                    execution_key=f"{run.id}:procedure_open_pull_requests",
-                    base_branch=binding.default_branch,
-                    expected_binding=binding,
-                )
-                touched = set(originals) | set(new_paths)
-                if touched & set(evidence.changed_paths):
-                    reason = "open_pr_overlap"
-                    document = json.loads(getattr(evidence, "document", b"{}"))
-                    overlapping = [
-                        {"number": pull["number"], "url": pull["url"]}
-                        for pull in document.get("pull_requests", [])
-                        if any(
-                            file["path"] in touched or file.get("previous_path") in touched
-                            for file in pull.get("files", [])
-                        )
-                    ]
-                elif evidence.truncated:
-                    reason = "incomplete_pr_evidence"
-        prepared = {
-            **selection,
-            "policy": contract.SITE_POLICY,
-            "site_fix": {
-                "kind": kind,
-                "target": kind_target,
-                "mode": mode if reason is None else None,
-                "change": site_rules.CHANGES[kind],
-                "expected": expected,
-                "observations": [
-                    {
-                        "url": read["url"],
-                        "status_code": read.get("status_code"),
-                        "sha256": read.get("sha256"),
-                        "observed_at": read.get("observed_at"),
-                        "needed": is_needed,
-                        "page_url": page,
-                    }
-                    for read, is_needed, page in reads
-                ],
-                "pages": pages,
-                "new_paths": new_paths,
-                "remaining": remaining,
-            },
-            "originals": originals if reason is None else {},
-            "pages": [],
-            "unsupported_pages": [],
-            "verification_profile": {},
-            "overlapping_pull_requests": overlapping,
-            "reason": reason,
-        }
-        # Context travels through the existing bounded sandbox environment. Do not
-        # discover an oversized escaped payload after allocating compute.
-        if len(json.dumps(prepared, separators=(",", ":"), default=str).encode()) > 70_000:
-            prepared.update(reason="unsupported_source", originals={})
-            prepared["site_fix"]["mode"] = None
-        return prepared
-
-    def _match_sources(self, kind, files, needed):
-        """Static files the site serves byte for byte, else named Next.js source files.
-
-        Returns (mode, originals, pages, new_paths, unmatched_pages); mode None when neither.
-        """
-        by_digest = {}
-        for path, raw in files.items():
-            if path.endswith(STATIC_SOURCE_EXTENSIONS) and len(raw) <= site_rules.MAX_TEXT_BYTES:
-                by_digest.setdefault(hashlib.sha256(raw).hexdigest(), []).append(path)
-        originals, pages, unmatched = {}, {}, 0
-        for read, page in needed:
-            if read.get("status_code") == 404:
-                continue  # robots.txt the site doesn't serve: created below, not matched.
-            matches = by_digest.get(read.get("sha256"), [])
-            if len(matches) == 1:
-                try:
-                    originals[matches[0]] = files[matches[0]].decode("utf-8")
-                except UnicodeDecodeError:
-                    unmatched += 1
-                    continue
-                if page:
-                    pages[matches[0]] = page
-            else:
-                unmatched += 1
-        kind_target = site_rules.target(kind)
-        missing_robots = kind_target == "robots" and any(
-            read.get("status_code") == 404 for read, _ in needed
-        )
-        if missing_robots and kind == "robots_sitemap_line":
-            if any(path.startswith("public/") for path in files):
-                return "static", {}, {}, ["public/robots.txt"], 0
-            if "index.html" in files:
-                return "static", {}, {}, ["robots.txt"], 0
-        if originals and (kind_target == "html" or unmatched == 0):
-            return "static", originals, pages, [], unmatched if kind_target == "html" else 0
-        if not site_rules.is_nextjs(files.get("package.json", b"").decode("utf-8", "replace")):
-            return None, {}, {}, [], 0
-        urls = [page for _, page in needed if page]
-        candidates = site_rules.framework_candidates(kind, sorted(files), urls)
-        sources, total = {}, 0
-        for path in candidates["existing"]:
-            raw = files[path]
-            if len(raw) > site_rules.MAX_FRAMEWORK_FILE_BYTES:
-                continue
-            if total + len(raw) > site_rules.MAX_FRAMEWORK_ORIGINAL_BYTES:
-                break
-            try:
-                sources[path] = raw.decode("utf-8")
-            except UnicodeDecodeError:
-                continue
-            total += len(raw)
-        if not sources and not candidates["new"]:
-            return None, {}, {}, [], 0
-        return "framework", sources, {}, candidates["new"], 0
 
     # --- site-fix-v5 -------------------------------------------------------------------
 
@@ -684,7 +470,7 @@ class TechnicalFixExecution:
 
     def _strict_files(self, files, repairs, robots, sitemaps, page_reads):
         """Served files the diff can prove: an exact repository copy whose findings are all
-        ones site-fix-v4 already checks from the diff."""
+        ones technical_site_rules checks from the diff."""
         by_digest = {}
         for path, raw in files.items():
             if path.endswith(STATIC_SOURCE_EXTENSIONS) and len(raw) <= site_rules.MAX_TEXT_BYTES:
@@ -782,33 +568,6 @@ class TechnicalFixExecution:
             item["path"] not in strict for item in manifest["files"]
         )
 
-    async def _validate_site_delivery(self, prepared):
-        """Recheck the live site before the PR goes out.
-
-        A static patch needs the exact bytes it was made from; a framework patch needs the
-        problem to still be there, since the live output isn't the file that changed.
-        """
-        fix, target = prepared["site_fix"], prepared["target"]
-        for row in fix["observations"]:
-            if not row["needed"]:
-                continue
-            host = contract.verified_page_host(row["url"], target)
-            if fix["target"] == "html":
-                current = await self.fetch(row["url"], host=host)
-            else:
-                current = await self.fetch_file(row["url"], host=host, kind=fix["target"])
-            if fix["mode"] == "static":
-                if current["sha256"] != row["sha256"]:
-                    raise ValueError("The website changed after preparation. Start a new repair.")
-            elif not site_rules.still_needed(
-                fix["kind"],
-                body_of(current),
-                row["page_url"] or row["url"],
-                fix["expected"],
-                status_code=current["status_code"],
-            ):
-                raise ValueError("The live site no longer shows this problem. Start a new repair.")
-
     async def validate_delivery(self, run, manifest, prepared):
         await self.active(run.id)
         if digest(run.input) != prepared["input_sha256"]:
@@ -818,8 +577,6 @@ class TechnicalFixExecution:
             return
         if prepared.get("batch"):
             return await self._validate_batch_delivery(run, manifest, prepared)
-        if prepared.get("site_fix"):
-            return await self._validate_site_delivery(prepared)
         # Recheck the website at delivery too. Changed or unavailable HTML never
         # becomes authorization to send a stale patch, nor a claim of resolution.
         for page in prepared["pages"]:

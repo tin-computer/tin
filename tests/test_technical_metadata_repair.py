@@ -88,12 +88,6 @@ def test_current_and_historical_policy_contracts():
     assert current["procedure"]["output"]["max_files"] == 20
     assert spec().repair_policy == technical_fix.POLICY
     # Earlier policies keep their three-file limit; only the batch policy may go to twenty.
-    site = deepcopy(current)
-    site["procedure"]["output"]["repair_policy"] = technical_fix.SITE_POLICY
-    with pytest.raises(ValueError):
-        validate_codex_procedure_definition(site)
-    site["procedure"]["output"]["max_files"] = 3
-    assert validate_codex_procedure_definition(site).repair_policy == technical_fix.SITE_POLICY
     current["procedure"]["output"]["max_files"] = 3
     metadata = deepcopy(current)
     metadata["procedure"]["output"]["repair_policy"] = technical_fix.POLICY

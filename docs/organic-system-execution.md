@@ -82,8 +82,8 @@ New runs pin `site-fix-v5`: one PR fixes every fixable finding of the audit, gro
 kind of change, and the live check reports each finding after the merge; see
 [Technical repair](technical-fix.md#site-fix-v5-everything-the-audit-found). The parent
 passes the whole audit with no decisions, so judgment calls are listed for a later run.
-`site-fix-v4` runs take one finding (`finding_id`), and the rest of this section describes
-the metadata policies that older pinned runs keep.
+The rest of this section describes the metadata policies that older pinned runs keep; they
+take one finding (`finding_id`).
 
 The first supported finding is `metadata.title_missing`, with a completed technical
 crawl and at most five affected URLs. Partial AI observations do not invalidate a

@@ -340,9 +340,9 @@ stated as not measured. Earlier finding fields (`id`, `check_id`, `status`, `sev
 
 `findings.json` is schema 3. `evidence_status` keeps its technical-crawl meaning, which
 `organic.technical_fix` recomputes; `coverage_status`, `coverage`, `site_check_coverage`
-and `summary` are new. Technical fix accepts v10 audits. Under `site-fix-v4` the site
-findings it can repair (robots.txt, sitemap, noindex, canonical, lang, H1) are candidates;
-other site and search findings stay excluded with an explanation, as content findings are.
+and `summary` are new. Technical fix accepts v10 audits. Under `site-fix-v5` every finding
+has a place: repaired in the repository, left to the content workflows, a manual step, or
+a judgment call; see [Technical repair](technical-fix.md).
 
 ### Durable execution and compatibility
 

@@ -25,10 +25,8 @@ from tin_lite.organic_audit import (
     public_site,
     technical_findings,
 )
-from tin_lite.organic_audit_format import TECHNICAL_FORMAT
 from tin_lite.organic_audit_scope import audit_hosts
 from tin_lite.technical_metadata_rules import SUPPORTED_CHECKS
-from tin_lite.technical_site_rules import SITE_FIXES
 
 MAX_AFFECTED_PAGES = 5
 CONTENT_FINDING_MESSAGE = (
@@ -43,19 +41,6 @@ SITE_FINDING_MESSAGE = (
     "crawl. The pinned repair policy does not cover it yet; use its fix and evidence to plan "
     "the change."
 )
-# How urgent a finding is, for choosing one among several eligible findings.
-PRIORITY_ORDER = {"critical": 0, "high_impact": 1, "quick_win": 2, "long_term": 3}
-IMPACT_ORDER = {"high": 0, "medium": 1, "low": 2}
-
-
-def finding_rank(finding: dict) -> tuple[int, int]:
-    """Lower is more urgent. Crawl findings take the audit report's tier for their check;
-    findings without any priority sort last."""
-    priority = finding.get("priority") or TECHNICAL_FORMAT.get(finding.get("check_id"), ("", ""))[1]
-    return (
-        PRIORITY_ORDER.get(priority, len(PRIORITY_ORDER)),
-        IMPACT_ORDER.get(finding.get("impact") or finding.get("severity"), len(IMPACT_ORDER)),
-    )
 
 
 class TechnicalFixError(ValueError):
@@ -240,11 +225,6 @@ class TechnicalFixSources:
         self.batch_mode = batch
         self.db, self.storage, self.integrations = database, storage, integrations
 
-    @property
-    def site_fixes(self) -> bool:
-        """True under site-fix-v4, which repairs site findings and part of a finding."""
-        return bool((set(SITE_FIXES) - SUPPORTED_CHECKS) & set(self.supported_checks))
-
     async def list_sources(self, *, project_id: UUID, offset: int = 0):
         if type(offset) is not int or not 0 <= offset <= 10_000:
             raise TechnicalFixError("invalid_offset", "Invalid source offset.", status_code=422)
@@ -342,7 +322,7 @@ class TechnicalFixSources:
                 reason = "check_not_supported"
             elif crawl["status"] != "completed":
                 reason = "crawl_incomplete"
-            elif len(affected) > MAX_AFFECTED_PAGES and not self.site_fixes:
+            elif len(affected) > MAX_AFFECTED_PAGES:
                 reason = "affected_page_limit"
             selections.append(
                 {
@@ -365,20 +345,6 @@ class TechnicalFixSources:
                         "affected_count": row.get("affected_count", len(row.get("urls", []))),
                         "source_eligible": not content,
                         "ineligible_reason": "content_finding" if content else None,
-                    }
-                )
-        elif self.site_fixes:
-            for row in site_rows:
-                if row["check_id"] not in self.supported_checks:
-                    continue
-                excluded = [item for item in excluded if item["finding"]["id"] != row["id"]]
-                selections.append(
-                    {
-                        "finding": row,
-                        "affected_urls": list(row.get("urls", [])),
-                        "affected_count": row.get("affected_count", len(row.get("urls", []))),
-                        "source_eligible": True,
-                        "ineligible_reason": None,
                     }
                 )
         repairable = [r for r in selections if r["finding"]["category"] != "content"]
@@ -421,15 +387,9 @@ class TechnicalFixSources:
             "limitations": [
                 "Saved crawl observations, not a live verification of the website.",
                 "Unobserved checks are unknown, not passes.",
-                (
-                    "Supported site, sitemap, robots.txt and page-tag findings are eligible; a "
-                    "repair covers up to three pages or ten sitemap URLs and lists the rest. "
-                    "Execution still requires a matched source and no overlapping PR."
-                    if self.site_fixes
-                    else "Supported missing-metadata findings affecting at most five pages are "
-                    "eligible. Execution still requires a verified source/build profile and no "
-                    "overlapping PR."
-                ),
+                "Supported missing-metadata findings affecting at most five pages are "
+                "eligible. Execution still requires a verified source/build profile and no "
+                "overlapping PR.",
                 "Execution requires fresh verification and an exact source match. "
                 "This preview makes no changes.",
             ],

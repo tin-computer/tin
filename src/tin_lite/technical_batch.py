@@ -1,14 +1,14 @@
 """site-fix-v5 delivery checks, live predicates and the run report for batch repairs.
 
 A batch pull request can touch any file that serves an audit finding, in any framework, so
-most of it can't be checked from the diff the way site-fix-v4's single static edits were.
+most of it can't be checked from the diff the way a single static edit can.
 What the worker still proves before the PR opens:
 
 - the patch stays inside the run's bounds (files, changed lines, file sizes, text only);
 - it never touches dependencies, lockfiles, CI, deploy settings, secrets or submodules
   (a host's redirect list is the one deploy setting it may edit, and only that list);
 - files the site serves byte for byte (robots.txt, a sitemap, a static page) change only as
-  their findings call for, checked from the diff as in site-fix-v4;
+  their findings call for, checked from the diff (technical_site_rules);
 - anything else carries Tin's sentence that it couldn't build the site.
 
 After the PR merges, Tin re-reads the affected pages and files and records per finding
@@ -233,8 +233,8 @@ def _visible_text(html: str) -> list[str]:
 
 
 def verify_html(before: str, after: str, kinds: list[str], page_url: str) -> None:
-    """One change: site-fix-v4's exact tag check. Several: each finding gone, the visible text
-    unchanged (an added H1 aside), and the diff small."""
+    """One change: the exact tag check in technical_site_rules. Several: each finding gone,
+    the visible text unchanged (an added H1 aside), and the diff small."""
     if len(kinds) == 1:
         return site_rules.verify_html_change(before, after, kinds[0], page_url)
     site_rules._same_page(before, after)

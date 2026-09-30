@@ -3,9 +3,9 @@
 A PR is not a deployed repair. Once GitHub says it merged, Tin reads the same files or pages
 it read before the change and records whether the problem is gone. It looks at most every ten
 minutes while someone reads the run (MCP `get_run`, the run's live-check API), and stops a
-fortnight after the merge. `site-fix-v4` runs check their one finding; `site-fix-v5` runs
-check each finding in the pull request, and name the ones only the next audit can confirm
-(redirect chains, internal links). Older policies have no such record.
+fortnight after the merge. `site-fix-v5` runs check each finding in the pull request, and
+name the ones only the next audit can confirm (redirect chains, internal links). Older
+policies have no such record.
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from datetime import UTC, datetime, timedelta
 from tin_lite import technical_batch as batch_rules
 from tin_lite import technical_fix as contract
 from tin_lite import technical_repair_plan as repair_plan
-from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit_site import url_key
 from tin_lite.technical_fix_execution import body_of
 
@@ -146,9 +145,7 @@ class LiveRecheck:
         if not prepared or prepared.status != "completed":
             return None
         prepared = prepared.result
-        if not ((prepared or {}).get("site_fix") or (prepared or {}).get("batch")) or prepared.get(
-            "reason"
-        ):
+        if not (prepared or {}).get("batch") or prepared.get("reason"):
             return None
         receipt = await self.db.get_integration_call_receipt(f"{run.id}:procedure_pull_request")
         if not receipt or receipt.status != "completed" or not receipt.response_summary:
@@ -192,18 +189,15 @@ class LiveRecheck:
                     elif state["state"] == "closed":
                         record["closed"] = True
                 if record.get("merged"):
-                    if prepared.get("batch"):
-                        record["findings"] = await self._live_batch(prepared)
-                        checkable = [r for r in record["findings"] if r["live"] != "next_audit"]
-                        record["live"] = (
-                            "fixed"
-                            if checkable and all(r["live"] == "fixed" for r in checkable)
-                            else "not_fixed"
-                            if any(r["live"] == "not_fixed" for r in checkable)
-                            else "unknown"
-                        )
-                    else:
-                        record["live"] = await self._live(prepared)
+                    record["findings"] = await self._live_batch(prepared)
+                    checkable = [r for r in record["findings"] if r["live"] != "next_audit"]
+                    record["live"] = (
+                        "fixed"
+                        if checkable and all(r["live"] == "fixed" for r in checkable)
+                        else "not_fixed"
+                        if any(r["live"] == "not_fixed" for r in checkable)
+                        else "unknown"
+                    )
         except Exception as exc:
             # A provider error or timeout keeps what Tin already knew; only the type is logged.
             logger.debug("live check failed for run %s: %s", run.id, type(exc).__name__)
@@ -286,29 +280,6 @@ class LiveRecheck:
                 {"finding_id": entry["finding_id"], "check_id": entry["check_id"], "live": live}
             )
         return rows
-
-    async def _live(self, prepared):
-        """fixed when every file or page that needed the change no longer does."""
-        fix, target = prepared["site_fix"], prepared["target"]
-        rows = [row for row in fix["observations"] if row["needed"]]
-        for row in rows:
-            host = contract.verified_page_host(row["url"], target)
-            try:
-                if fix["target"] == "html":
-                    current = await self.fetch(row["url"], host=host)
-                else:
-                    current = await self.fetch_file(row["url"], host=host, kind=fix["target"])
-            except (ValueError, OSError, TimeoutError, UnicodeError):
-                return "unknown"
-            if site_rules.still_needed(
-                fix["kind"],
-                body_of(current),
-                row["page_url"] or row["url"],
-                fix["expected"],
-                status_code=current["status_code"],
-            ):
-                return "not_fixed"
-        return "fixed" if rows else "unknown"
 
     async def _load(self, run_id):
         row = await self.db.pool.fetchrow(

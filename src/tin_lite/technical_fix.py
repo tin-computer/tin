@@ -1,11 +1,9 @@
 """Versioned technical repair policies; never a merge or a deploy.
 
 `missing-html-title-v1` through `html-metadata-v3` repair a missing title or description in
-matched static or packaged HTML. `site-fix-v4` adds robots.txt, sitemap and page-tag repairs
-for one finding: static files are checked from the diff in the worker, and framework source
-is bounded by the files Tin names and checked on the live site after the founder deploys it.
-`site-fix-v5` repairs every fixable finding of one audit in one pull request, in any
-framework, with judgment calls answered through MCP (technical_repair_plan, technical_batch).
+matched static or packaged HTML. `site-fix-v5` repairs every fixable finding of one audit in
+one pull request, in any framework, with judgment calls answered through MCP
+(technical_repair_plan, technical_batch).
 """
 
 import asyncio
@@ -40,21 +38,19 @@ KEY = "organic.technical_fix"
 LEGACY_POLICY = "missing-html-title-v1"
 WHOLE_FINDING_POLICY = "html-metadata-v2"
 POLICY = "html-metadata-v3"
-SITE_POLICY = "site-fix-v4"
 BATCH_POLICY = repair_plan.POLICY
 # Policies that may repair only part of a finding and list the pages they left alone.
-PARTIAL_POLICIES = frozenset({POLICY, SITE_POLICY, BATCH_POLICY})
+PARTIAL_POLICIES = frozenset({POLICY, BATCH_POLICY})
 LEGACY_CHECK_COMMAND = "python3 /opt/tin-lite/verify-technical-title.py"
 CHECK_COMMAND = (
     "/opt/tin-lite/metadata-venv/bin/python -I /opt/tin-lite/verify-technical-metadata.py"
 )
-# The sandbox command each policy declares. site-fix-v4 declares none: its static repairs
-# are checked from the diff in the worker, and the sandbox image stays as it is.
+# The sandbox command each policy declares. site-fix-v5 declares none: served files are
+# checked from the diff in the worker, and the sandbox image stays as it is.
 POLICY_COMMANDS = {
     LEGACY_POLICY: LEGACY_CHECK_COMMAND,
     WHOLE_FINDING_POLICY: CHECK_COMMAND,
     POLICY: CHECK_COMMAND,
-    SITE_POLICY: None,
     BATCH_POLICY: None,
 }
 # The most files a policy's pull request may change.
@@ -74,8 +70,6 @@ def supported_checks(policy):
         return frozenset({TITLE_CHECK})
     if policy in {WHOLE_FINDING_POLICY, POLICY}:
         return SUPPORTED_CHECKS
-    if policy == SITE_POLICY:
-        return SUPPORTED_CHECKS | frozenset(site_rules.SITE_FIXES)
     if policy == BATCH_POLICY:
         return repair_plan.supported_checks()
     raise ValueError("Unsupported technical repair policy.")
@@ -445,8 +439,6 @@ def validate_manifest(manifest, prepared):
         return
     if prepared.get("batch"):
         return batch_rules.validate(manifest, prepared, None)
-    if prepared.get("site_fix"):
-        return validate_site_manifest(manifest, prepared)
     if manifest.get("outcome") != "patch" or {f["path"] for f in files} != set(
         prepared["originals"]
     ):
@@ -457,116 +449,9 @@ def validate_manifest(manifest, prepared):
         )
 
 
-def validate_site_manifest(manifest, prepared):
-    """A site-fix-v4 patch: exact static changes, or bounded framework source changes."""
-    fix, originals = prepared["site_fix"], prepared["originals"]
-    files = manifest["files"]
-    if manifest.get("outcome") != "patch":
-        raise ValueError("The technical result has no valid outcome.")
-    paths = {item["path"] for item in files}
-    if fix["mode"] == "framework":
-        site_rules.verify_framework_change(files, originals, fix["new_paths"])
-        if site_rules.FRAMEWORK_NOTE not in manifest.get("body", ""):
-            raise ValueError("A framework repair PR must say Tin could not build the site.")
-        return
-    allowed = set(originals) | set(fix["new_paths"])
-    if not paths <= allowed or not set(originals) <= paths or not paths:
-        raise ValueError("The patch must address exactly the selected source files.")
-    for item in files:
-        site_rules.verify_static_change(
-            fix["kind"],
-            originals.get(item["path"]),
-            item["content"],
-            {**fix["expected"], "page_url": fix["pages"].get(item["path"])},
-        )
-
-
-SITE_REASONS = {
-    "already_resolved": "The live site no longer shows this problem. No change proposed.",
-    "unsupported_source": (
-        "No file in the repository matches what the site serves, and Tin doesn't recognize "
-        "the code that builds it. No change proposed."
-    ),
-    "site_unreadable": (
-        "Tin couldn't read the live file or pages this finding is about. No change proposed."
-    ),
-    "no_sitemap_to_reference": (
-        "The site has no readable sitemap for robots.txt to point to. No change proposed."
-    ),
-    "open_pr_overlap": "An existing PR touches the same files. No duplicate proposed.",
-    "incomplete_pr_evidence": "Open-PR evidence is incomplete. No change proposed.",
-    "no_safe_patch": "Codex could not prepare a safe change. The finding remains unresolved.",
-}
-
-
-def site_report(prepared, *, reason=None, pull_request=None):
-    fix = prepared["site_fix"]
-    finding = prepared["selection"]["finding"]
-    lines = ["# Technical fix", "", "## Result", ""]
-    if reason:
-        lines += [SITE_REASONS[reason], ""]
-    else:
-        lines += [f"A pull request that {fix['change']} is ready for review.", ""]
-    if pull_request:
-        lines += [f"Pull request: {pull_request.url}", ""]
-        if fix["mode"] == "framework":
-            lines += [site_rules.FRAMEWORK_NOTE, ""]
-        else:
-            lines += [
-                "Checked before delivery: the changed files differ from what the site serves "
-                f"only in the change this finding calls for ({fix['change']}).",
-                "",
-            ]
-    if reason == "open_pr_overlap":
-        for existing in prepared.get("overlapping_pull_requests", []):
-            lines += [f"Existing overlapping PR #{existing['number']}: {existing['url']}", ""]
-    if fix.get("remaining"):
-        lines += [
-            "## Coverage",
-            "",
-            f"This change covers part of the finding. {fix['remaining']} more affected "
-            f"{'URL is' if fix['remaining'] == 1 else 'URLs are'} left for a later repair.",
-            "",
-        ]
-    source, binding = prepared["source"], prepared["repository_binding"]
-    lines += [
-        f"Audit: `{source['audit_run_id']}` at `{source['audit_revision']}`.",
-        "",
-        f"Finding: `{finding['id']}` (`{finding['check_id']}`).",
-        "",
-        f"Repository: `{binding['repository']}` at `{binding['head_sha']}`.",
-        "",
-        "How the change was chosen: "
-        + (
-            "the site serves these files byte for byte from the repository."
-            if fix["mode"] == "static"
-            else "Tin found the code that builds this part of the site and named the files "
-            "the change may touch."
-        ),
-        "",
-        "## Fresh observations",
-        "",
-    ]
-    for row in fix["observations"]:
-        state = "still needs the fix" if row["needed"] else "already fine"
-        lines.append(
-            f"- {row['url']} — HTTP {row['status_code']}, {state}, observed "
-            f"{row['observed_at']}; SHA-256 `{row['sha256']}`."
-        )
-    lines += [
-        "",
-        "No merge, deployment, content publication or outreach was performed. A PR is not a "
-        "deployed repair. After the PR merges, Tin checks the live site for this one finding.",
-        "",
-    ]
-    return "\n".join(lines).encode()
-
-
 def report(prepared, *, reason=None, pull_request=None):
     if prepared.get("batch"):
         return batch_rules.report(prepared, reason=reason, pull_request=pull_request)
-    if prepared.get("site_fix"):
-        return site_report(prepared, reason=reason, pull_request=pull_request)
     metadata = "title" if selected_check(prepared) == TITLE_CHECK else "meta description"
     labels = {
         "already_resolved": f"The selected pages now have a {metadata}. No change proposed.",
