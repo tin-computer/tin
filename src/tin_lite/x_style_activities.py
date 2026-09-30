@@ -410,6 +410,7 @@ class XStyleActivities:
                     generation=run.generation,
                     path=x_style.GUIDE_PATH,
                     content=content,
+                    executor=x_style.KEY,
                 )
                 checkpoint = OutputCheckpoint.create(
                     run=run,
