@@ -29,6 +29,7 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
       window.mockApi = async (path, options = {}) => {
         const body = options.body && JSON.parse(options.body);
         requests.push({path, method: options.method || "GET", body});
+        if (path.endsWith("/files")) return {files: [{path: "images/first.png"}, {path: "images/second.png"}]};
         if (path.includes("/x/drafts") && !options.method) return {path: "social/x/draft.json", revision, draft: structuredClone(saved)};
         if (path.endsWith("/x/drafts") && options.method === "PUT") {
           if (body.expected_revision !== revision) throw new Error("Project file changed. Reload.");
@@ -47,7 +48,9 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
       TinXPosts.open({projectId: "project-one", runId: "run-one", path: "social/x/draft.json", api: mockApi, rawFetch: mockRawFetch, onPublished: async () => {window.refreshed = true;}});
     }, initial);
     await page.locator(".x-posts-card").first().waitFor();
-    assert.equal(await page.locator(".x-posts-card").count(), 2);
+    assert.equal(await page.locator(".x-posts-card").count(), 1);
+    assert.equal(await page.locator(".x-posts-nav button").count(), 2);
+    assert.equal(await page.locator("dialog").count(), 0);
     if (process.env.TIN_X_SCREENSHOTS) {
       await page.setViewportSize({width: 1120, height: 960});
       await page.screenshot({path: "/tmp/tin-x-workflow-desktop.png", fullPage: true});
@@ -55,6 +58,7 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
       await page.screenshot({path: "/tmp/tin-x-workflow-narrow.png", fullPage: true});
       await page.setViewportSize({width: 760, height: 900});
     }
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
     await page.locator('[data-x-text="0"]').fill("The exact revised post.");
     await page.locator('[data-x-action="preview"][data-post="0"]').click();
     await page.locator("[data-x-exact]").waitFor();
@@ -63,6 +67,7 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
     assert.deepEqual(calls.map(item => item.path.split("/").at(-1)), ["drafts", "preview"]);
     assert.equal(calls[0].body.expected_revision, "a".repeat(40));
     assert.equal(calls[0].body.draft.posts[1].readiness, "needs_asset");
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
     await page.locator('[data-x-text="0"]').fill("Changed after preview.");
     assert.equal(await page.locator("[data-x-exact]").count(), 0);
     assert.equal(await page.locator('[data-x-action="publish"]').count(), 0);
@@ -97,6 +102,7 @@ test("X composer uploads bounded media through project Files and keeps unsaved e
       }});
     }, initial);
     await page.locator(".x-posts-card").first().waitFor();
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
     await page.locator('[data-x-upload="0"]').setInputFiles({name: "demo.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71])});
     await page.getByText(/Media uploaded to Files/).waitFor();
     await page.locator('[data-x-alt="0:0"]').fill("Screenshot of the new flow");
@@ -132,6 +138,7 @@ test("X attachment order invalidates the exact preview and an uncertain publish 
       TinXPosts.open({projectId: "project-one", runId: "run-one", path: "social/x/draft.json", api: async (path, options = {}) => {
         const body = options.body && JSON.parse(options.body);
         calls.push({path, body});
+        if (path.endsWith("/files")) return {files: [{path: "images/first.png"}, {path: "images/second.png"}]};
         if (path.includes("/x/drafts") && !options.method) return {revision, draft: structuredClone(saved)};
         if (path.endsWith("/x/drafts")) {saved = structuredClone(body.draft); revision = "b".repeat(40); return {revision, draft: structuredClone(saved)};}
         if (path.endsWith("/x/preview")) return {preview_token: "token", text: saved.posts[0].text, account: {id: "123", username: "tin"}, attachments: saved.posts[0].attachments.map(item => ({...item, url: `/api/projects/project-one/files/raw?path=${encodeURIComponent(item.path)}&revision=${revision}`}))};
@@ -140,17 +147,21 @@ test("X attachment order invalidates the exact preview and an uncertain publish 
       }, rawFetch: async () => new Response(new Blob(["image"], {type: "image/png"}))});
     }, initial);
     await page.locator(".x-posts-card").first().waitFor();
-    await page.locator('[data-x-path="0"]').fill("images/first.png");
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
+    await page.getByRole("button", {name: "Choose from Files"}).click();
+    await page.locator('[data-x-path="0"]').selectOption("images/first.png");
     await page.locator('[data-x-action="add-path"][data-post="0"]').click();
-    await page.locator('[data-x-path="0"]').fill("images/second.png");
+    await page.getByRole("button", {name: "Choose from Files"}).click();
+    await page.locator('[data-x-path="0"]').selectOption("images/second.png");
     await page.locator('[data-x-action="add-path"][data-post="0"]').click();
     await page.locator('[data-x-action="preview"][data-post="0"]').click();
     await page.locator("[data-x-exact]").waitFor();
-    assert.match(await page.locator("[data-x-exact]").innerText(), /images\/first\.png[\s\S]*images\/second\.png/);
+    assert.match(await page.locator("[data-x-exact]").innerText(), /first\.png[\s\S]*second\.png/);
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
     await page.locator('[data-x-action="up"][data-media="1"]').first().click();
     assert.equal(await page.locator("[data-x-exact]").count(), 0);
     await page.locator('[data-x-action="preview"][data-post="0"]').click();
-    assert.match(await page.locator("[data-x-exact]").innerText(), /images\/second\.png[\s\S]*images\/first\.png/);
+    assert.match(await page.locator("[data-x-exact]").innerText(), /second\.png[\s\S]*first\.png/);
     await page.locator('[data-x-action="publish"]').click();
     await page.getByText(/status may be uncertain/).waitFor();
     assert.equal(await page.evaluate(() => publishes), 1);
@@ -177,9 +188,9 @@ test("late response from a closed project composer cannot replace the new projec
       TinXPosts.open({projectId: "new", runId: "new-run", path: "new.json", api: async () => ({revision: "b".repeat(40), draft: newer}), rawFetch: async () => new Response("")});
       releaseOld({revision: "a".repeat(40), draft});
     }, initial);
-    await page.locator('[data-x-text="0"]').waitFor();
-    assert.equal(await page.locator('[data-x-text="0"]').inputValue(), "New project post");
-    assert.equal(await page.locator(".x-posts-dialog").count(), 1);
+    await page.locator("[data-x-copy]").waitFor();
+    assert.equal(await page.locator("[data-x-copy]").textContent(), "New project post");
+    assert.equal(await page.locator(".x-posts-reader").count(), 1);
   } finally {await browser.close();}
 });
 
@@ -194,23 +205,26 @@ test("missing assets need an explicit resolution and in-flight save locks editab
       window.saved = structuredClone(draft);
       window.releaseSave = null;
       TinXPosts.open({projectId: "project", runId: "run", path: "draft.json", api: async (path, options = {}) => {
+        if (path.endsWith("/files")) return {files: [{path: "images/launch.png"}]};
         if (!options.method) return {revision: "a".repeat(40), draft: structuredClone(saved)};
         if (path.endsWith("/drafts")) return new Promise(resolve => {releaseSave = () => {saved = JSON.parse(options.body).draft; resolve({revision: "b".repeat(40), draft: structuredClone(saved)});};});
         return {preview_token: "token", text: saved.posts[1].text, account: {id: "123", username: "tin"}, attachments: []};
       }, rawFetch: async () => new Response("")});
     }, initial);
-    await page.locator(".x-posts-card").nth(1).waitFor();
-    const second = page.locator(".x-posts-card").nth(1);
-    await second.locator('[data-x-path="1"]').fill("images/launch.png");
+    await page.locator('[data-x-action="select"][data-post="1"]').click();
+    const second = page.locator('.x-posts-card');
+    await page.getByRole("button", {name: "Edit post", exact: true}).click();
+    await page.getByRole("button", {name: "Choose from Files"}).click();
+    await second.locator('[data-x-path="1"]').selectOption("images/launch.png");
     await second.locator('[data-x-action="add-path"]').click();
-    assert.equal(await second.getByText("Screenshot").count(), 1);
+    await page.getByRole("button", {name: "Draft notes", exact: true}).click();
+    assert.match(await second.locator(".x-posts-notes").innerText(), /Screenshot/);
     await second.getByRole("button", {name: "Mark resolved"}).click();
-    assert.equal(await second.getByText("Screenshot").count(), 0);
-    await second.locator('[data-x-readiness="1"]').selectOption("ready");
+    assert.equal(await second.getByRole("button", {name: "Mark resolved"}).count(), 0);
+    await second.getByRole("button", {name: "Mark ready", exact: true}).click();
     await second.locator('[data-x-action="save"]').click();
     await page.waitForFunction(() => Boolean(window.releaseSave));
     assert.equal(await second.locator('[data-x-text="1"]').isDisabled(), true);
-    assert.equal(await second.locator('[data-x-readiness="1"]').isDisabled(), true);
     assert.equal(await second.locator('[data-x-upload="1"]').isDisabled(), true);
     await page.evaluate(() => releaseSave());
     await second.locator('[data-x-text="1"]').waitFor({state: "visible"});
@@ -218,7 +232,7 @@ test("missing assets need an explicit resolution and in-flight save locks editab
     assert.deepEqual(await page.evaluate(() => ({readiness: saved.posts[1].readiness, missing_assets: saved.posts[1].missing_assets, attachments: saved.posts[1].attachments.map(item => item.path)})), {
       readiness: "ready", missing_assets: [], attachments: ["images/launch.png"],
     });
-    await second.locator('[data-x-action="preview"]').click();
+    await page.locator('[data-x-action="preview"]').click();
     await page.locator("[data-x-exact]").waitFor();
   } finally {await browser.close();}
 });

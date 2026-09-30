@@ -164,10 +164,13 @@ test("MCP X draft handoff opens the composer for its project without exposing ra
     const errors = [];
     page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${base}/activity?project=project-one&x_draft=social%2Fx%2Fdraft.json`);
-    await page.locator('[data-x-text="0"]').waitFor();
-    assert.equal(await page.locator('[data-x-text="0"]').inputValue(), "A saved post");
+    await page.locator('[data-x-copy]').waitFor();
+    assert.equal(await page.locator('[data-x-copy]').textContent(), "A saved post");
+    assert.equal(await page.locator('dialog[open], [data-x-text]').count(), 0);
     assert.deepEqual(calls, ["social/x/draft.json"]);
-    assert.equal(new URL(page.url()).searchParams.has("x_draft"), false);
+    assert.equal(new URL(page.url()).searchParams.get("x_draft"), "social/x/draft.json");
+    await page.locator('[data-x-action="edit"]').click();
+    assert.equal(await page.locator('[data-x-text="0"]').inputValue(), "A saved post");
     assert.deepEqual(errors, []);
   } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
 });

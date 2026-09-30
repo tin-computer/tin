@@ -69,7 +69,7 @@ function routeUrl(route, base = window.location.href, carry = null) {
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
   if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
-  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back"]) url.searchParams.delete(key);
+  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
   return `${url.pathname}${url.search}`;
@@ -291,6 +291,7 @@ const state = {
 };
 
 function viewFromLocation() {
+  if (xDraftPathFromLocation()) return "x-draft";
   if (compareRouteFromLocation()) return "compare";
   if (documentRouteFromLocation()) return "document";
   if (taskRouteFromLocation()) return "task";
@@ -298,6 +299,11 @@ function viewFromLocation() {
   const path = window.location.pathname.slice(1);
   const view = path === "system" ? "workflows" : path;
   return ALLOWED_VIEWS.has(view) ? view : "workflows";
+}
+
+function xDraftPathFromLocation() {
+  const path = new URLSearchParams(window.location.search).get("x_draft");
+  return path && path.length <= 512 ? path : null;
 }
 
 function fileRouteFromLocation() {
@@ -1327,8 +1333,23 @@ function openRunArtifact(runId, returnView = state.view) {
 
 function openXComposer(path, runId = "manual") {
   if (!window.TinXPosts || !state.project || state.projectAccess !== "ready") return;
+  goToRoute(`files?${new URLSearchParams({x_draft: path, x_run: runId, x_back: currentRoute()})}`);
+}
+
+function renderXComposer() {
+  const path = xDraftPathFromLocation();
+  if (!path || !window.TinXPosts) return;
+  const query = new URLSearchParams(window.location.search);
+  const runId = query.get("x_run") || "manual";
+  const candidate = query.get("x_back") || "files";
+  const back = DASHBOARD_ROUTE.test(candidate) && !new URLSearchParams(candidate.split("?")[1]).has("x_draft") ? candidate : "files";
+  const backView = back.split("?")[0];
   const context = currentProjectContext();
   window.TinXPosts.open({
+    host: main,
+    actorId: state.signedInUserId,
+    returnLabel: backView === "file" ? "files" : backView === "system" ? "my system" : backView,
+    onClose: () => goToRoute(back),
     projectId: context.projectId,
     path,
     runId,
@@ -1462,6 +1483,7 @@ function comparisonFileLabel(route) {
 }
 
 function render() {
+  if (state.view !== "x-draft" || state.projectAccess !== "ready") window.TinXPosts?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
   disposeDocument();
@@ -1475,7 +1497,7 @@ function render() {
       item.dataset.view === state.view ||
         (state.view === "task" && item.dataset.view === "workflows") ||
         (state.view === "document" && state.documentRoute?.returnView === item.dataset.view) ||
-        (state.view === "file" && item.dataset.view === "files"),
+        (["file", "x-draft"].includes(state.view) && item.dataset.view === "files"),
     );
     // On the mobile strip a deep link can land on a tab that sits past the edge; bring it into view.
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1498,6 +1520,7 @@ function render() {
     workspaceName: state.project.workspace_name || "Workspace",
     onChange: (value) => { state.billing = value; renderProjectMenu(); },
   });
+  if (state.view === "x-draft") renderXComposer();
   if (state.view === "document") renderDocument();
   if (state.view === "task") renderTask();
   if (state.view === "file") renderFile();
@@ -7208,13 +7231,6 @@ async function initializeAuth() {
   const integrationReturn = connection || (state.githubInstallationChoice
     ? { provider: "infra.github", projectId: state.githubInstallationChoice.projectId } : null);
   await bootstrap(invitedProject?.id || integrationReturn?.projectId || null, integrationReturn);
-  const handoffUrl = new URL(window.location.href);
-  const xDraftPath = handoffUrl.searchParams.get("x_draft");
-  if (xDraftPath && xDraftPath.length <= 512 && state.projectAccess === "ready") {
-    handoffUrl.searchParams.delete("x_draft");
-    window.history.replaceState(null, "", `${handoffUrl.pathname}${handoffUrl.search}${handoffUrl.hash}`);
-    openXComposer(xDraftPath);
-  }
   if (connection && connection.projectId === state.project?.id) await promptForIntegrationResource(connection.provider);
   if (state.githubInstallationChoice) chooseGitHubInstallation();
 }

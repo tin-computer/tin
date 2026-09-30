@@ -5,8 +5,8 @@ individually confirmed post with images or a video. Drafts and media live in the
 project's ordinary Files. You can use the dashboard or ask your coding agent to work
 through MCP; both use the same preview and publication service.
 
-This is fixture-tested source support. It still needs deployment, an operator-configured
-X app, and live acceptance with an account before it can be called production verified.
+The implementation is tested with simulated X responses. Deployment, X app configuration
+and testing with a connected account are still needed before it is ready for production use.
 
 ## Connect an account
 
@@ -62,12 +62,20 @@ run reads current project files; retries keep the run's internally pinned snapsh
 
 ## Review and publish one post
 
-Open the draft from its run or Files, edit the text, and attach existing project files or
-upload media. Save it, preview the exact post, check the connected account and attachment
-order, then choose **Publish this exact post**. Missing evidence or assets must be resolved
-first. A changed post, attachment or account requires a new preview.
+Open the draft from its run or Files. It opens in the dashboard reader, showing one post
+at a time. Select **Edit post** to change the text, choose an image or video from Files,
+or upload media. **Draft notes** holds supporting evidence and anything still missing.
+Unsaved edits stay available when you move between posts or leave and return in the same
+browser session. Save them to Files before closing or refreshing the browser.
 
-![X draft editor with synthetic example text](images/x-drafts.png)
+Choose **Preview post**, check the connected account, exact text and attachment order,
+then select **Publish this exact post**. Missing evidence or assets must be resolved
+first. A changed post, attachment or account requires a new preview. The reader follows
+the dashboard’s light and dark themes; its URL also works when opened through MCP.
+
+![X draft reader in the dashboard, with synthetic example text](images/x-drafts.png)
+
+![The same X reader using the dashboard’s dark theme](images/x-drafts-dark.png)
 
 The first release accepts:
 

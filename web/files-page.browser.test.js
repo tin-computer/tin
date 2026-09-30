@@ -128,10 +128,13 @@ test("canonical X draft JSON in Files opens the editor without replacing the gen
     await page.locator(".project-file-view.is-json").waitFor();
     assert.equal(await page.locator(".project-json-body").isVisible(), true);
     await page.getByRole("button", {name: "Edit X drafts"}).click();
-    await page.locator('[data-x-text="0"]').waitFor();
-    assert.equal(await page.locator('[data-x-text="0"]').inputValue(), "One saved X post");
+    await page.locator("[data-x-copy]").waitFor();
+    assert.equal(await page.locator("[data-x-copy]").textContent(), "One saved X post");
+    assert.equal(new URL(page.url()).searchParams.get("x_draft"), "social/x-drafts/release.json");
+    assert.equal(await page.locator("dialog[open]").count(), 0);
     assert.deepEqual(chosen, ["social/x-drafts/release.json"]);
-    await page.getByRole("button", {name: "Close X drafts"}).click();
+    await page.locator("[data-x-close]").click();
+    await page.locator(".project-json-body").waitFor();
     assert.equal(await page.locator(".project-json-body").isVisible(), true);
     await page.goto(`${base}${fileUrl("reports/keyword-plan/keywords.json")}&project=project`);
     await page.locator(".project-file-view.is-json").waitFor();
