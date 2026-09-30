@@ -165,6 +165,7 @@ This one validates. Copy it and change the parts that describe your workflow.
 ```
 
 Every text input needs a `maxLength`, every array a `maxItems`, and `project_id` stays as it is.
+A `"format": "uri"` input accepts only an http(s) URL with a host, and no input may contain NUL.
 A package declares one output: either a file in the project, as above, or a GitHub pull request.
 
 For a complete minimal example, save this as `PROMPT.md`:
