@@ -3144,23 +3144,104 @@ async def test_connect_google_ads_sends_the_manager_invitation_and_records_it() 
     assert "Accept it in Google Ads" in database.activities[-1]["summary"]
 
 
+OTHER_ADS_PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000ad")
+
+
+def link_row(link_id: str, status: str) -> dict:
+    return {
+        "customerClientLink": {
+            "resourceName": f"customers/{ADS_MCC}/customerClientLinks/{ADS_CID}~{link_id}",
+            "clientCustomer": f"customers/{ADS_CID}",
+            "managerLinkId": link_id,
+            "status": status,
+        }
+    }
+
+
 @pytest.mark.asyncio
-async def test_connect_google_ads_already_invited_falls_back_to_the_link_status() -> None:
+async def test_connect_google_ads_refuses_a_link_this_project_did_not_invite() -> None:
+    # Another project's accepted link: Google says the account is already managed by Tin.
     backend = AdsBackend()
     backend.link_error = ("managerLinkError", "ALREADY_MANAGED_BY_THIS_MANAGER")
     backend.link_status = "ACTIVE"
     service, database = ads_service(backend)
+    with pytest.raises(IntegrationAuthorizationError, match="didn't send"):
+        await service.connect_google_ads(
+            project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+        )
+    assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+    assert database.calls[-1]["status"] == "failed"
+    assert database.calls[-1]["error_code"] == "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
+    assert not any(
+        "FROM customer_client_link" in body.get("query", "") for _, body, _ in backend.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_google_ads_readopts_its_own_invitation() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    backend.link_error = ("managerLinkError", "ALREADY_INVITED_BY_THIS_MANAGER")
+    backend.link_status = "ACTIVE"
     connection = await service.connect_google_ads(
         project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
     )
     assert connection.configuration["link_status"] == "active"
+    assert connection.configuration["manager_link_id"] == "555"
     assert connection.status == "connected"
-    statuses = [call["status"] for call in database.calls]
-    assert statuses == ["completed", "completed"]
-    assert database.calls[0]["response_summary"] == {
-        "code": "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
-    }
-    assert backend.requests[-1][1]["query"].startswith("SELECT customer_client_link")
+    assert [call["status"] for call in database.calls][-2:] == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_google_ads_link_status_ignores_another_projects_link() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    # This project's invitation (555) was declined; someone else's link (999) is active.
+    backend.link_rows = [link_row("999", "ACTIVE"), link_row("555", "REFUSED")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "refused"
+    assert connection.configuration["manager_link_id"] == "555"
+    backend.link_rows = [link_row("999", "ACTIVE")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "missing"
+    assert connection.status == "needs_attention"
+    with pytest.raises(IntegrationAuthorizationError):
+        await service.google_ads_account(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_a_link_recorded_by_two_projects_fails_closed_and_survives_disconnect() -> None:
+    backend = AdsBackend()
+    backend.link_status = "ACTIVE"
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
+    # A connection made before links were bound to the inviting project shares the link.
+    database.connections[(OTHER_ADS_PROJECT_ID, ADS_PROVIDER)] = IntegrationConnection(
+        **{**connection.__dict__, "id": uuid4(), "project_id": OTHER_ADS_PROJECT_ID}
+    )
+    for project_id in (PROJECT_ID, OTHER_ADS_PROJECT_ID):
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_account(project_id=project_id)
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_health(project_id=project_id)
+    before = len(backend.requests)
+    assert (
+        await service.disconnect(project_id=OTHER_ADS_PROJECT_ID, provider_key=ADS_PROVIDER) is True
+    )
+    assert not any(
+        path.endswith("customerClientLinks:mutate") for path, _, _ in backend.requests[before:]
+    )
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
 
 
 @pytest.mark.asyncio
