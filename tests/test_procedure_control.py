@@ -275,7 +275,7 @@ async def test_http_and_mcp_authorize_and_use_the_same_control(publication_db, m
     ) as client:
         path = f"/api/workflows/runs/{f.run.id}/stop-procedure"
         assert (await client.post(path)).status_code == 404
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool("stop_procedure", {"run_id": str(f.run.id)})
         f.handle.cancel.assert_not_awaited()
         token.subject = f.member
