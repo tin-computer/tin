@@ -28,6 +28,10 @@ CODEX_ACTIVITIES = frozenset(
 )
 TRUSTED_ACTIVITIES = frozenset(
     {
+        "x_draft_prepare",
+        "x_draft_step",
+        "x_draft_finish",
+        "x_draft_failure",
         "x_style_prepare",
         "x_style_extract",
         "x_style_propose",

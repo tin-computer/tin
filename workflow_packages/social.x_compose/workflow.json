@@ -2,13 +2,12 @@
   "package_format": "tin-workflow-package-v1",
   "definition": {
     "key": "social.x_compose",
-    "title": "Draft a post for X",
-    "description": "Turn current project facts and your direction into one X draft or a small set of distinct drafts, ready for individual review and editing.",
+    "title": "Compose X posts directly",
+    "description": "Composition step; use Draft for X for automatic voice setup. Turn current project facts and your direction into one X draft or a small set of distinct drafts, ready for individual review and editing.",
     "version": "1.0.0",
     "executor": "workflow.code",
-    "system": "organic-traffic",
+    "system": "x",
     "schedule_modes": ["on_demand"],
-    "human_review": {"eligible": false},
     "input_schema": {
       "type": "object",
       "additionalProperties": false,

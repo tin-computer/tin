@@ -955,7 +955,7 @@ function systemTemplateCard(workflow, query) {
   </article>`;
 }
 
-const isXAuthoring = workflow => ["social.x_style", "social.x_compose"].includes(workflow?.key);
+const isXAuthoring = workflow => ["social.x_style", "social.x_compose", "social.x_draft"].includes(workflow?.key);
 
 function xWorkflowFields(workflow, inputs = {}) {
   const schema = workflow.definition?.input_schema || {};
@@ -967,9 +967,9 @@ function xWorkflowFields(workflow, inputs = {}) {
   };
   // Account IDs remain in saved/MCP inputs, but are not a user-facing form field.
   const account = inputs.account_id ? `<input type="hidden" name="input:account_id" value="${escapeHtml(inputs.account_id)}">` : "";
-  if (workflow.key === "social.x_compose") return `<div class="x-workflow-fields">${account}${field("direction")}${field("post_count")}${field("notes")}
+  if (["social.x_compose", "social.x_draft"].includes(workflow.key)) return `<div class="x-workflow-fields">${account}${field("direction")}${field("post_count")}${field("notes")}
     <details class="x-workflow-details" ${inputs.evidence_paths?.length || inputs.plan_path || inputs.asset_paths?.length ? "open" : ""}><summary>Relevant files, a social plan or existing media</summary><div>${field("evidence_paths")}${field("plan_path")}${field("asset_paths")}</div></details>
-    <p class="system-config-note">Reads current project context and your approved X guide automatically.</p></div>`;
+    ${workflow.key === "social.x_draft" ? `<details class="x-workflow-details" ${inputs.supplied_samples || inputs.source_path || inputs.preferences ? "open" : ""}><summary>Writing samples for first-time voice setup (optional)</summary><div>${field("supplied_samples")}${field("source_path")}${field("preferences")}</div></details><p class="system-config-note">Reuses your X guide. If needed, learns from supplied samples or your connected public X account, then continues after you approve the guide. Without samples, drafts from project context.</p>` : '<p class="system-config-note">Reads current project context and your approved X guide automatically.</p>'}</div>`;
   const connection = state.integrations.find(item => item.key === "social.x" && item.status === "connected");
   const source = ["connected", "supplied"].includes(inputs.sample_source) ? inputs.sample_source
     : inputs.supplied_samples || inputs.source_path || inputs.preferences ? "supplied" : "connected";
@@ -1390,7 +1390,7 @@ function openRunArtifact(runId, returnView = state.view) {
   const run = state.runs.find((item) => item.id === runId);
   if (hasOutputConflict(run)) { openOutputComparison(runId, returnView); return; }
   const output = availableRunOutput(run);
-  if (run?.workflow_name === "social.x_compose" && output?.source === "canonical" && output.path.endsWith(".json") && window.TinXPosts) {
+  if (output?.source === "canonical" && /^social\/x-drafts\/[^/]+\.json$/.test(output.path) && window.TinXPosts) {
     openXComposer(output.path, runId);
     return;
   }

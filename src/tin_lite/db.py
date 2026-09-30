@@ -6783,6 +6783,7 @@ class Database:
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
             "social.x_style": ("x_style_ready", "Your X writing guide is ready."),
+            "social.x_draft": ("x_draft_ready", "Your X draft is ready."),
             "social.x_publish": ("x_post_published", "Your X post is published."),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),

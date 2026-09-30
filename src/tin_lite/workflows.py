@@ -1356,6 +1356,39 @@ class StyleCaptureWorkflow:
             raise
 
 
+@workflow.defn(name="social.x_draft")
+class XDraftWorkflow:
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, payload):
+            return await workflow.execute_activity(
+                name,
+                payload,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            await call("x_draft_prepare", run_id)
+            for step in ("style", "compose"):
+                child = await call("x_draft_step", {"run_id": run_id, "step": step})
+                if child.get("run_id"):
+                    # A voice child waits durably on its existing approval signal.
+                    # The parent cannot dispatch composition until that child succeeds.
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+            await call("x_draft_finish", run_id)
+        except BaseException:
+            await call("x_draft_failure", run_id)
+            raise
+
+
 @workflow.defn(name="social.x_style")
 class XStyleWorkflow:
     def __init__(self) -> None:
@@ -1506,6 +1539,7 @@ def registered_workflows() -> list[type]:
         ContentDraftDeliveryWorkflow,
         ProjectCodexExecution,
         StyleCaptureWorkflow,
+        XDraftWorkflow,
         XStyleWorkflow,
         XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
@@ -1539,6 +1573,7 @@ def registered_workflow_implementations() -> dict[str, type]:
     return {
         "workflow.code": CodeWorkflow,
         "style.capture": StyleCaptureWorkflow,
+        "social.x_draft": XDraftWorkflow,
         "social.x_style": XStyleWorkflow,
         "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,

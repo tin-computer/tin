@@ -84,7 +84,7 @@ def test_manifest_and_shared_counter():
     _, definition = package()
     spec = validate_code_definition(definition)
     assert definition["schedule_modes"] == ["on_demand"]
-    assert definition["human_review"]["eligible"] is False
+    assert "human_review" not in definition
     assert spec.output_path == "social/x-drafts/{date}-{slug}.json"
     assert [(r.model, r.max_calls, r.max_input_bytes) for r in spec.model_routes] == [
         ("gpt-6-sol", 1, 32000)
@@ -105,6 +105,7 @@ async def test_plan_free_singleton_uses_exact_current_fact_and_json_artifact():
     assert artifact["posts"][0]["text"] == POST["text"]
     assert artifact["posts"][0]["support"] == [{"source_path": "direction", "excerpt": FACT}]
     assert artifact["account_id"] == ""
+    assert "Personal X voice was not applied" in artifact["posts"][0]["editor_notes"]
     assert ctx.calls[0]["step"] == "compose_x_posts"
     validate_code_result(
         json.dumps(result).encode(),

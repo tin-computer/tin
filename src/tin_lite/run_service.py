@@ -178,6 +178,15 @@ async def start_workflow_run(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
             raise LookupError("project not found")
+    if workflow.executor == "social.x_draft" and existing is None:
+        from tin_lite import x_draft
+
+        try:
+            x_draft.check_inputs(normalized_inputs)
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not getattr(settings, "luna_api_key", None):
+            raise WorkflowExecutorUnavailableError("X drafting requires the native model service.")
     if workflow.executor == "social.x_style" and existing is None:
         from tin_lite import x_style
 

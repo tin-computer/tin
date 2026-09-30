@@ -21,6 +21,7 @@ from tin_lite import (
     paid_ads_monitor,
     style_capture,
     technical_fix,
+    x_draft,
     x_posts,
     x_style,
 )
@@ -128,6 +129,7 @@ COLD_OUTREACH_SYSTEM = "cold-outreach"
 PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
+X_SYSTEM = "x"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -208,6 +210,7 @@ WORKFLOW_SYSTEMS = (
         name="Paid ads system",
         display_order=5,
     ),
+    WorkflowSystem(id=X_SYSTEM, name="X", display_order=6),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -422,6 +425,8 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+        if self.key == x_draft.KEY:
+            definition["x_draft_policy"] = dict(x_draft.POLICY)
         if self.key == x_style.KEY:
             definition["x_style_policy"] = dict(x_style.POLICY)
             definition["x_style_instructions"] = x_style.INSTRUCTIONS
@@ -734,6 +739,19 @@ BUILTIN_WORKFLOWS = (
         },
     ),
     BuiltinWorkflow(
+        id=x_draft.WORKFLOW_ID,
+        key=x_draft.KEY,
+        title="Draft for X",
+        description=(
+            "Describe a product update. Tin sets up your voice if needed, then writes a draft."
+        ),
+        executor=x_draft.KEY,
+        version_label="1.0.0",
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        input_schema=x_draft.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
         id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
         key=x_style.KEY,
         title="Learn my X writing style",
@@ -744,7 +762,7 @@ BUILTIN_WORKFLOWS = (
         executor=x_style.KEY,
         version_label="1.0.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
-        system=ORGANIC_TRAFFIC_SYSTEM,
+        system=X_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=x_style.ROUTE,
         input_schema={
@@ -809,7 +827,7 @@ BUILTIN_WORKFLOWS = (
         executor=x_posts.KEY,
         version_label="1.0.0",
         schedule_modes=("on_demand",),
-        system=ORGANIC_TRAFFIC_SYSTEM,
+        system=X_SYSTEM,
         agent_only=True,
         input_schema=x_posts.INPUT_SCHEMA,
     ),
@@ -2476,6 +2494,7 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
+    x_draft.KEY: tuple(x_draft.STEPS.values()),
     organic_system.KEY: tuple(organic_system.STEPS.values()),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }

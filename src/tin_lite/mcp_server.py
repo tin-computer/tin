@@ -2618,6 +2618,8 @@ def create_mcp_app(
         if run is None:
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="get_run")
+        from tin_lite.x_draft import facts as x_draft_facts
+
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
         selected_sources = await selected_run_sources(
@@ -2628,6 +2630,11 @@ def create_mcp_app(
             "project_id": str(run.project_id),
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
+            **(
+                {"x_draft": await x_draft_facts(runtime().database, run)}
+                if run.executor == "social.x_draft"
+                else {}
+            ),
             "status": run.status.value,
             "status_label": STATUS_LABELS.get(run.status.value, run.status.value),
             "artifact_path": run.artifact_path,

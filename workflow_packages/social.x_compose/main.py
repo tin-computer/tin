@@ -552,6 +552,16 @@ async def run(ctx, inputs):
     posts = _validate_model(
         response.get("parsed"), count, data["source_units"], source_texts, assets
     )
+    if not style:
+        posts[0]["editor_notes"] = "\n\n".join(
+            filter(
+                None,
+                (
+                    posts[0]["editor_notes"],
+                    "Personal X voice was not applied; this draft uses project context and your direction.",
+                ),
+            )
+        )
     note = _coverage_note(coverage)
     if note:
         posts[0]["editor_notes"] = "\n\n".join(filter(None, (posts[0]["editor_notes"], note)))

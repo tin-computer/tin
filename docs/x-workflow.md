@@ -34,7 +34,34 @@ has no Tin model charge in this first release; this does not make the X API free
 Sampling is bounded to three timeline requests and 150 returned posts per capture.
 Check current X pricing and app permissions before enabling the connection.
 
-## Learn a voice, then draft
+## Start with Draft for X
+
+Choose **Draft for X** in the **X** Registry group, or ask your coding agent to run
+`social.x_draft` with a direction such as “draft a tweet about this product update.”
+One post is the default; you can request up to six. Tin reads current project context,
+and you can add specific files, facts, an existing image or video, or an optional plan.
+
+The parent workflow uses the existing voice and composition workflows in order:
+
+1. Reuse the current X writing guide when it belongs to the selected account.
+2. If a guide is needed, learn from supplied samples or the connected public account.
+   Review the proposed guide in Decisions. Approval saves it and drafting continues
+   automatically; there is no second run to start.
+3. Compose the post and open the result in the existing draft reader. With no guide,
+   account or supplied samples, Tin drafts from project context and says in Draft notes
+   that personal voice was not applied.
+
+An account change during guide review stops the request rather than switching voices.
+A failed capture does not silently buy another capture or proceed to composition.
+Retries reuse the same child runs. Both child definitions are published with the parent
+and pinned to its catalog revision; the project files are read at each child's start.
+The parent links to the composer's saved draft instead of saving a second copy.
+
+The parent has a $4 Tin model spending ceiling shared by its children; only actual
+usage is charged. X API credits remain separate. This workflow finishes with a draft.
+Publishing still requires previewing and confirming an individual post.
+
+## Run the individual steps
 
 Run `social.x_style` when you want Tin to learn from your own public X account. It aims
 for 50 usable posts, with more weight on recent writing and some examples from earlier
@@ -99,7 +126,10 @@ run receipt under `reports/x/`, with the public post link.
 
 ## MCP
 
-Use normal workflow discovery and `start_workflow` for style capture and composition.
+Use normal workflow discovery and `start_workflow` with `social.x_draft` for the full
+drafting request, or select a step directly when that is what you need. `get_run` returns
+the voice choice and child run IDs/statuses from Postgres; a waiting style child uses
+the existing review action.
 Then use `read_x_drafts`, `save_x_draft`, `preview_x_post` and `publish_x_post` to edit
 and deliver the selected post. Publishing consumes the preview token and a stable request
 ID; retry the same request after a lost acknowledgement. Show the exact preview and obtain
@@ -111,9 +141,9 @@ the upload handoff uses the browser instead of sending large base64 files throug
 ### Design references
 
 The source is Page 1 of [thinklikeanagent in Paper](https://app.paper.design/file/01M0TWXA4TWEXQTK664B7997HZ/1-0).
-Boards 135–137 are new X-specific designs built from Tin's existing expanded System
-cards: connected-account voice capture, post drafting, and voice capture from supplied
-samples. They show the actual inputs and manual-run behavior rather than another
+Boards 135–138 are new X-specific designs built from Tin's existing expanded System
+cards: connected-account voice capture, direct composition, voice capture from supplied
+samples, and the parent drafting entry point. They show the actual inputs and manual-run behavior rather than another
 workflow's example fields.
 
 Drafts mount the existing generic document viewer. The voice guide is Markdown;
@@ -124,8 +154,10 @@ without an eyebrow. Boards 132 and 128 remain references for the context actions
 and editing panel. Fonts use the dashboard's shared brand setting, including the
 licensed hosted font and the self-host fallback.
 
-These images are exported directly from Paper. The three X setup boards are specific
+These images are exported directly from Paper. The four X setup boards are specific
 designs for this change; the reader and editor images are existing shared references.
+
+![Paper board 138: Draft for X, with automatic voice setup](images/paper-x-draft-parent.png)
 
 ![Paper board 135: learn an X voice from the connected account](images/paper-x-voice.png)
 
@@ -141,7 +173,8 @@ designs for this change; the reader and editor images are existing shared refere
 
 Offline provider fixtures cover OAuth state, token refresh, account and capability checks,
 media requests and ambiguous writes. Tests with disposable Postgres cover guide approval
-and edit conflicts, publication receipts and duplicate recovery. Browser fixtures cover
+and edit conflicts, parent/child admission and shared budgets, publication receipts and
+duplicate recovery. Local Temporal tests cover review sequencing, child failure and replay. Browser fixtures cover
 editing, preview invalidation, media ordering and callbacks. These tests buy no provider
 work and publish no real posts.
 

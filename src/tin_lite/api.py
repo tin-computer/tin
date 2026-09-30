@@ -646,6 +646,7 @@ class RunView(BaseModel):
     review_version: int = 1
     review_decision: str | None = None
     selected_sources: dict = Field(default_factory=dict)
+    x_draft: dict | None = None
     review_requested_at: datetime | None = None
     reviewed_at: datetime | None = None
     system_wiki_commit_sha: str | None = None
@@ -3092,7 +3093,7 @@ async def start_project_workflow_run(
                 database=request.app.state.runtime.database,
                 settings=request.app.state.settings,
                 run=run,
-            )
+            ),
         }
     )
 
@@ -3598,11 +3599,15 @@ async def get_run(
     run = await _run_from_postgres(run_id, request, user)
     response.headers["X-Tin-Read-Source"] = "postgres"
     from tin_lite.content_delivery_api import delivery_service, page_url_service
+    from tin_lite.x_draft import facts as x_draft_facts
 
     runtime = request.app.state.runtime
     delivery = await delivery_service(runtime).status(run)
     return RunView.model_validate(run).model_copy(
         update={
+            "x_draft": await x_draft_facts(runtime.database, run)
+            if run.executor == "social.x_draft"
+            else None,
             "content_delivery": delivery,
             "page_url": await page_url_service(
                 runtime, getattr(request.app.state, "settings", None)

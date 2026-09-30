@@ -828,6 +828,19 @@ class BillingService:
         """
         key = run["start_idempotency_key"]
         parent_id = parent["run_id"]
+        if parent["executor"] == "social.x_draft":
+            from tin_lite.x_draft import STEPS
+
+            step = next((s for s, child in STEPS.items() if child == definition["key"]), None)
+            prepared = await self.db.get_effect(f"x-draft:{parent_id}:prepare", conn=conn)
+            return bool(
+                step
+                and key == f"x-draft:{parent_id}:{step}"
+                and prepared
+                and prepared.status == "completed"
+                and prepared.result["definitions"].get(step) == definition
+                and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
+            )
         if parent["executor"] == "organic.traffic_system":
             from tin_lite.organic_system import STEPS
 

@@ -12,7 +12,7 @@ from uuid import UUID
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from tin_lite.document_handoff import document_handoff
+from tin_lite.document_handoff import document_handoff, document_url
 from tin_lite.growth_onboarding import (
     CONTENT_DRAFT_KEYS,
     current_plan_text,
@@ -85,7 +85,7 @@ def result_links(settings: Any, run: Any) -> list[dict[str, Any]]:
             "run_id": str(run.id),
             "title": getattr(run, "workflow_name", "Result"),
             "kind": "review" if review else "report",
-            "url": f"{dashboard_url(settings)}/document/{run.id}?project={run.project_id}",
+            "url": document_url(settings, run),
             "artifact_path": run.artifact_path,
             "revision": run.canonical_commit_sha,
             **document_handoff(settings, run),
