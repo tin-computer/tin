@@ -16,9 +16,14 @@ from tin_lite.community import REPOSITORY_ROOT
 TODAY = dt.datetime(2026, 9, 29, 15, 0, tzinfo=dt.UTC)
 
 
+# Package-local helper modules; each package imports its own copy by these names.
+HELPERS = ("channels", "readout", "panel_check", "architecture")
+
+
 def load(key, monkeypatch=None, *, now=TODAY):
     root = REPOSITORY_ROOT / "workflow_packages" / key
-    sys.modules.pop("channels", None)
+    for name in HELPERS:
+        sys.modules.pop(name, None)
     sys.path.insert(0, str(root))
     # No __pycache__ in the package: the validator refuses files a package can't carry.
     writes, sys.dont_write_bytecode = sys.dont_write_bytecode, True
@@ -31,7 +36,8 @@ def load(key, monkeypatch=None, *, now=TODAY):
     finally:
         sys.dont_write_bytecode = writes
         sys.path.remove(str(root))
-        sys.modules.pop("channels", None)
+        for name in HELPERS:
+            sys.modules.pop(name, None)
     if monkeypatch is not None:
         monkeypatch.setattr(module, "dt", clock(now))
     return module

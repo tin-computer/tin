@@ -1,12 +1,13 @@
-"""The buyer prompt panel a founder approved, as the organic audit's frozen question set.
+"""The newest buyer prompt panel for a site, as the organic audit's question set.
 
-`organic.prompt_panel` (a Registry package) drafts 32 buyer prompts in four intent families,
-weighted so the product's own category leads, and the founder reviews the draft in
-Decisions. Approving it freezes it: audit policy organic-audit-v11 then asks those questions
-instead of drafting its own. The audit's cost bound stays the same, so it asks at most
-`max_questions` of them, allocated to the families by weight.
+`organic.prompt_panel` (a Registry package) writes 32 buyer prompts in four intent families,
+weighted so the product's own category leads, plus four branded prompts. It publishes a
+panel only when every check passes. Audit policy organic-audit-v11 then asks the newest
+succeeded panel that names its host instead of drafting its own questions. The audit's cost
+bound stays the same, so it asks at most `max_questions` of them, allocated to the families
+by weight.
 
-Pure parsing and selection; organic_audit_panel.founder_panel reads the approved run.
+Pure parsing and selection; organic_audit_panel.panel_questions reads the run.
 """
 
 from __future__ import annotations
@@ -114,7 +115,7 @@ def questions(panel: dict, max_questions: int, site_url: str) -> list[dict]:
                 "job": name if len(name) >= 5 else f"Buyers looking for {name}",
                 "family": STAGES[row["stage"]],
                 "question": str(row["text"]).strip(),
-                "fit_reason": f"From the approved buyer prompt panel, family {family.get('id')} "
+                "fit_reason": f"From the buyer prompt panel, family {family.get('id')} "
                 f"({name}), prompt {row.get('id')}.",
                 "source_url": site_url,
             }

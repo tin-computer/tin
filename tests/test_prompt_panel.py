@@ -1,34 +1,23 @@
-"""organic.prompt_panel: its weights and checks, and the organic audit asking an approved panel."""
+"""organic.prompt_panel: families and weights in code, one model call, and the audit asking it."""
 
 import json
-import re
 from dataclasses import replace
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from loop_workflow_fakes import context, definition, gsc, load
 from test_organic_audit import activities_fixture
 
 from tin_lite import prompt_panel
+from tin_lite.community import REPOSITORY_ROOT
+from tin_lite.workflow_code import validate_code_definition, validate_code_result
 from tin_lite.workflow_qualification import Qualification, assess_output
 
-ROOT = Path(__file__).parents[1]
-PANEL_MD = ROOT / "workflow_packages/organic.prompt_panel/skills/prompt-panel/PANEL.md"
-CASES = ROOT / "workflow_evals/organic.prompt_panel/qualification.json"
+KEY = "organic.prompt_panel"
+CASES = REPOSITORY_ROOT / "workflow_evals" / KEY / "qualification.json"
 STAGES = ("discovery", "comparison", "problem", "buying_intent")
-
-
-def resource():
-    blocks = re.findall(r"```python\n(.*?)\n```", PANEL_MD.read_text(encoding="utf-8"), re.S)
-    assert len(blocks) == 1
-    namespace = {}
-    exec(compile(blocks[0], str(PANEL_MD), "exec"), namespace)  # noqa: S102
-    return namespace
-
-
-PANEL = resource()
 TEXTS = {
     "discovery": ["What tools help {x} for a small team?", "Need a way to handle {x} better"],
     "comparison": [
@@ -44,162 +33,207 @@ TEXTS = {
         "What are good paid options for {x} right now?",
     ],
 }
-TOPICS = ["team deadlines", "project status", "weekly reviews", "task handoffs"]
+TOPICS = {
+    "F1": "team deadlines",
+    "C1": "project status",
+    "C2": "task handoffs",
+    "C3": "weekly reviews",
+}
+BRANDED = [
+    {"topic": "pricing", "text": "How much does Loopwell cost per month for a team?"},
+    {"topic": "reviews", "text": "What do people say about Loopwell after a few months?"},
+    {"topic": "integrations", "text": "Does Loopwell work with Slack and Google Calendar?"},
+    {"topic": "versus", "text": "Loopwell or Asana for keeping a small team on track?"},
+]
+BRAND = """# Loopwell brand
+
+## Brand direction
+
+Loopwell is a team deadline tracker for small product teams.
+
+## Visual style
+
+Plain.
+
+```json
+{"schema": "tin-brand.v1", "name": "Loopwell",
+ "light": {"ink": "#111111", "paper": "#FFFFFF", "accent": "#287A55"}}
+```
+"""
+INDEX = """# Loopwell
+
+### Feature map
+
+- Deadline tracking across projects, status reports, handoff checklists, weekly reviews.
+
+### Code map
+
+- web/
+"""
+FILES = {"brand/BRAND.md": BRAND, "wiki/INDEX.md": INDEX}
 
 
-def panel(**overrides):
-    impressions = {"F2": 9000, "F3": 700, "F4": 300}
-    weights = PANEL["family_weights"](impressions)
-    families = [
-        {
-            "id": f"F{i + 1}",
-            "role": "core" if i == 0 else "adjacent",
-            "name": f"Buyers tracking {topic}",
-            "head_words": [topic.split()[0]],
-            "impressions": impressions.get(f"F{i + 1}"),
-            "volume": 100 if i == 0 else 5000,
-            "volume_share": 0.05 if i == 0 else 0.3,
-            "weight": weights[f"F{i + 1}"],
-            "top_queries": [topic],
-        }
-        for i, topic in enumerate(TOPICS)
+def queries():
+    rows = [
+        ("project status report template", 9000),
+        ("weekly status update", 3000),
+        ("task handoff checklist", 700),
+        ("weekly review meeting agenda", 300),
+        ("team deadline tracker", 200),
+        ("asana alternative", 100),
+        ("loopwell login", 400),
     ]
-    prompts = []
-    for i, topic in enumerate(TOPICS):
-        n = 0
-        for stage in STAGES:
-            for text in TEXTS[stage]:
-                n += 1
-                named = ["competitor:asana", "competitor:trello"] if "Asana" in text else []
-                prompts.append(
-                    {
-                        "id": f"F{i + 1}-{n}",
-                        "family": f"F{i + 1}",
-                        "stage": stage,
-                        "text": text.format(x=topic),
-                        "flags": named,
-                        "source_queries": [topic],
-                    }
-                )
+    return gsc([{"keys": [q], "clicks": 1, "impressions": n} for q, n in rows])
+
+
+def family(fid, text=None):
+    prompts = [
+        {"stage": stage, "text": t.format(x=TOPICS[fid])} for stage in STAGES for t in TEXTS[stage]
+    ]
+    if text:
+        prompts[0]["text"] = text
+    return {"id": fid, "name": f"Buyers tracking {TOPICS[fid]}", "prompts": prompts}
+
+
+def answer(first_text=None, **overrides):
     value = {
-        "schema": "tin.prompt_panel/1",
-        "status": "draft",
-        "target": "loopwell.example",
-        "name": "Loopwell",
+        "core": {
+            "name": "team deadline tracking",
+            "same_as": "C4",
+            "quote": "Loopwell is a team deadline tracker for small product teams.",
+        },
         "aliases": ["Loopwell app"],
-        "generated_at": "2026-09-29T10:00:00Z",
-        "low_confidence": False,
-        "sources": {"positioning": ["brand/BRAND.md"], "competitors": ["Asana", "Trello"]},
-        "families": families,
-        "prompts": prompts,
-        "branded": [
-            {
-                "id": "B1",
-                "topic": "pricing",
-                "text": "How much does Loopwell cost per month for a team?",
-                "fact_check": "pricing page",
-            },
-            {
-                "id": "B2",
-                "topic": "reviews",
-                "text": "What do people say about Loopwell after a few months?",
-                "fact_check": "reviews",
-            },
-            {
-                "id": "B3",
-                "topic": "integrations",
-                "text": "Does Loopwell work with Slack and Google Calendar?",
-                "fact_check": "integrations",
-            },
-            {
-                "id": "B4",
-                "topic": "versus",
-                "text": "Loopwell or Asana for keeping a small team on track?",
-                "fact_check": "comparison",
-            },
-        ],
+        "competitors": ["Asana", "Trello"],
+        "families": [family("F1", first_text), family("C1"), family("C2"), family("C3")],
+        "branded": [{**b, "fact_check": "brand/BRAND.md"} for b in BRANDED],
     }
     value.update(overrides)
     return value
 
 
-def report(value):
-    return (
-        "The panel leads with team deadline tracking.\n\n## Intent families\n\n## Checks\n\nOK\n\n"
-        "## Approval\n\nStatus: draft\n\n<!-- prompts.json:start -->\n```json\n"
-        + json.dumps(value, indent=2)
-        + "\n```\n<!-- prompts.json:end -->\n"
+def block_of(content):
+    return prompt_panel.parse(content)
+
+
+async def run_panel(monkeypatch, *, files=FILES, models=None, inputs=None, **services):
+    module = load(KEY, monkeypatch)
+    ctx = context(
+        files=files,
+        services={"G1_queries": queries(), **services},
+        models=models if models is not None else {"prompts": answer()},
     )
+    result = await module.run(ctx, {"target": "loopwell.example", **(inputs or {})})
+    validate_code_result(json.dumps(result).encode(), validate_code_definition(definition(KEY)))
+    return result["content"], ctx
 
 
-def test_the_core_family_leads_even_when_adjacent_keywords_have_the_volume():
+def test_manifest_is_code_with_one_model_route_and_no_review():
+    spec = validate_code_definition(definition(KEY))
+    assert "human_review" not in definition(KEY)
+    assert [(r.name, r.model, r.max_calls) for r in spec.model_routes] == [
+        ("prompts", "gpt-6-luna", 2)
+    ]
+    assert spec.output_path == prompt_panel.PANEL_PATH
+    assert definition(KEY)["code"]["services"]["gsc"]["max_calls"] == 1
+
+
+def test_the_core_family_leads_even_when_adjacent_searches_have_the_impressions(monkeypatch):
     """The private panel inherited an SEO-tool keyword plan and gave the core category 5.2%."""
-    weights = PANEL["family_weights"]({"F2": 50_000, "F3": 10, "F4": 10})
+    weights = load(KEY, monkeypatch).family_weights({"F2": 50_000, "F3": 10, "F4": 10})
     assert weights["F1"] == 0.40 and max(weights[k] for k in ("F2", "F3", "F4")) < 0.40
     assert abs(sum(weights.values()) - 1) < 0.001 and min(weights.values()) >= 0.12
-    even = PANEL["family_weights"]({"F2": None, "F3": 100, "F4": 5})
+    even = load(KEY, monkeypatch).family_weights({"F2": None, "F3": 100, "F4": 5})
     assert even == {"F1": 0.40, "F2": 0.2, "F3": 0.2, "F4": 0.2}
 
 
-def test_a_good_panel_passes_the_check():
-    assert PANEL["check_panel"](panel(), "loopwell.example", ["Asana", "Trello"]) == []
-
-
-@pytest.mark.parametrize(
-    ("change", "failure"),
-    [
-        (
-            lambda p: p["prompts"][0].update(
-                text="Which project tool is best for early-stage startups?"
-            ),
-            "forcing clause",
-        ),
-        (
-            lambda p: p["prompts"][1].update(text="Is Loopwell good for tracking team deadlines?"),
-            "names the product",
-        ),
-        (lambda p: p["families"][0].update(weight=0.052), "F1 weighs 0.052"),
-        (lambda p: p.update(status="frozen"), "status must be draft"),
-        (lambda p: p["branded"].pop(), "branded prompts; the panel needs 4"),
-        (lambda p: p["prompts"][2].update(flags=[]), "names Asana but carries no competitor"),
-    ],
-)
-def test_the_check_catches_a_plausible_but_unusable_panel(change, failure):
-    value = panel()
-    change(value)
-    fails = PANEL["check_panel"](value, "loopwell.example", ["Asana", "Trello"])
-    assert any(failure in line for line in fails), fails
-
-
-def test_an_approved_panel_becomes_eight_questions_allocated_by_weight():
-    block = prompt_panel.parse(report(panel()))
-    asked = prompt_panel.questions(block, 8, "https://loopwell.example/")
-    per_family = {}
-    for question in asked:
-        per_family[question["job"]] = per_family.get(question["job"], 0) + 1
-    assert len(asked) == 8
-    assert per_family["Buyers tracking team deadlines"] == 3  # core, 0.40 of 8
-    assert {q["family"] for q in asked} <= {"discovery", "comparison", "problem", "constraint"}
-    first_core = [q for q in asked if q["job"] == "Buyers tracking team deadlines"]
-    assert [q["family"] for q in first_core] == ["discovery", "comparison", "problem"]
-    assert prompt_panel.identity(block, "loopwell.example")["competitor_names"] == [
-        "Asana",
-        "Trello",
+async def test_code_picks_families_and_weights_and_one_call_writes_the_prompts(monkeypatch):
+    content, ctx = await run_panel(monkeypatch)
+    block = block_of(content)
+    assert block["status"] == "ready" and block["name"] == "Loopwell"
+    families = {f["id"]: f for f in block["families"]}
+    assert families["F1"]["name"] == "team deadline tracking" and families["F1"]["weight"] == 0.4
+    assert families["F1"]["source"] == "C4"  # the model said the tracker group is the core
+    # Adjacent families by Search Console impressions; the branded query stays out.
+    assert [families[f]["head_words"] for f in ("F2", "F3", "F4")] == [
+        ["status"],
+        ["task"],
+        ["weekly"],
     ]
-    assert prompt_panel.parse("no block") is None
+    assert families["F2"]["impressions"] == 12_000 and families["F2"]["weight"] < 0.40
+    assert len(block["prompts"]) == 32 and len(block["branded"]) == 4
+    flagged = [p for p in block["prompts"] if p["flags"]]
+    assert flagged and all(
+        set(p["flags"]) == {"competitor:asana", "competitor:trello"} for p in flagged
+    )
+    assert block["sources"]["competitors"] == ["Asana", "Trello"]
+    assert [c["step"] for c in ctx.models.calls] == ["prompts"]
+    request = ctx.models.calls[0]
+    assert request["route"] == "prompts"
+    assert "loopwell login" not in json.dumps(request["data"])
+    assert "check_panel passed." in content and "Status: ready" in content
+    assert "the families come from Search Console alone" in content
+    assert load(KEY, monkeypatch).check_panel(block, "loopwell.example", ["Asana"]) == []
 
 
-def approved_run(text, *, decision="approved", key="organic.prompt_panel"):
+async def test_a_forcing_prompt_gets_one_corrective_call(monkeypatch):
+    """A plausible but unusable answer: one prompt forces a single pick."""
+    bad = answer("Which project tool is best for early-stage startups?")
+    content, ctx = await run_panel(monkeypatch, models={"prompts": bad, "prompts_fix": answer()})
+    assert [c["step"] for c in ctx.models.calls] == ["prompts", "prompts_fix"]
+    assert "forcing clause" in json.dumps(ctx.models.calls[1]["data"]["failures"])
+    assert "best for early-stage startups" not in content
+
+
+async def test_a_panel_that_still_fails_is_not_published(monkeypatch):
+    bad = answer("Is Loopwell good for tracking team deadlines?")
+    with pytest.raises(ValueError, match="names the product outside the branded family"):
+        await run_panel(monkeypatch, models={"prompts": bad, "prompts_fix": bad})
+
+
+async def test_an_answer_outside_the_schema_publishes_nothing(monkeypatch):
+    with pytest.raises(ValueError, match="does not match its schema"):
+        await run_panel(monkeypatch, models={"prompts": {"families": "all of them"}})
+
+
+async def test_without_positioning_the_run_stops_and_names_the_files(monkeypatch):
+    content, ctx = await run_panel(monkeypatch, files={})
+    assert "Status: stopped" in content and "brand/BRAND.md" in content
+    assert block_of(content) is None
+    assert ctx.models.calls == [] and ctx.services.calls == []
+
+
+async def test_without_search_console_the_weights_split_evenly(monkeypatch):
+    content, _ = await run_panel(
+        monkeypatch,
+        G1_queries=ValueError("Search Console refused the read"),
+        models={
+            "prompts": answer(
+                core={"name": "team deadline tracking", "same_as": "none", "quote": "x"},
+                families=[
+                    family("F1"),
+                    {**family("C1"), "id": "X1"},
+                    {**family("C2"), "id": "X2"},
+                    {**family("C3"), "id": "X3"},
+                ],
+            )
+        },
+    )
+    block = block_of(content)
+    assert [f["weight"] for f in block["families"]] == [0.4, 0.2, 0.2, 0.2]
+    assert "weights are split evenly" in content
+
+
+def panel_row(text, *, key="organic.prompt_panel", decision=None):
     run = SimpleNamespace(
         id=uuid4(),
         review_decision=decision,
-        canonical_commit_sha="e" * 40,
+        canonical_commit_sha=uuid4().hex + "e" * 8,
         artifact_path=prompt_panel.PANEL_PATH,
     )
     return (key, run), text
 
 
-async def audit_with(activities, db, storage, rows):
+async def audit_with(db, storage, rows):
     texts = {run.canonical_commit_sha: text for (_, run), text in rows}
     original = storage.read_canonical_artifact
 
@@ -212,20 +246,29 @@ async def audit_with(activities, db, storage, rows):
     db.list_prerequisite_runs = AsyncMock(return_value=[row for row, _ in rows])
 
 
+async def published(monkeypatch, target="example.com"):
+    content, _ = await run_panel(monkeypatch, inputs={"target": target})
+    return content
+
+
 @pytest.mark.asyncio
-async def test_the_audit_asks_the_founders_approved_panel_without_drafting():
+async def test_the_audit_asks_the_newest_succeeded_panel_without_approval(monkeypatch):
+    content = await published(monkeypatch)
     activities, db, storage, _ = await activities_fixture()
     run_id = str(db.run.id)
-    value = panel(target="example.com")
-    await audit_with(activities, db, storage, [approved_run(report(value))])
+    await audit_with(db, storage, [panel_row(content)])  # nobody approved it
     activities.responses = SimpleNamespace(create=AsyncMock(side_effect=AssertionError))
     # Eight questions, three answers with web search and one without: 32, as before.
     assert await activities.organic_prepare_panel(run_id) == 32
     saved = await activities._result(run_id, "panel")
     assert saved["status"] == "completed" and len(saved["questions"]) == 8
     assert saved["name"] == "Loopwell" and saved["origin"]["workflow"] == "organic.prompt_panel"
+    per_family = {}
+    for question in saved["questions"]:
+        per_family[question["job"]] = per_family.get(question["job"], 0) + 1
+    assert per_family["team deadline tracking"] == 3  # core, 0.40 of 8
     preparation = await activities._result(run_id, "panel_preparation")
-    assert preparation["method"] == "founder_approved_panel"
+    assert preparation["method"] == "buyer_prompt_panel"
     # A retry asks the same questions without reading the panel again.
     db.list_prerequisite_runs.reset_mock()
     assert await activities.organic_prepare_panel(run_id) == 32
@@ -233,51 +276,61 @@ async def test_the_audit_asks_the_founders_approved_panel_without_drafting():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "row",
-    [
-        {"decision": None},  # a draft nobody approved
-        {"key": "organic.audit"},
-    ],
-)
-async def test_unapproved_or_foreign_panels_are_ignored(row):
-    activities, db, storage, _ = await activities_fixture()
-    run_id = str(db.run.id)
-    await audit_with(
-        activities, db, storage, [approved_run(report(panel(target="example.com")), **row)]
-    )
-    from tin_lite.organic_audit_panel import founder_panel
+async def test_other_workflows_other_sites_and_unready_panels_are_ignored(monkeypatch):
+    from tin_lite.organic_audit_panel import panel_questions
 
-    scope = await activities._result(run_id, "scope")
-    assert await founder_panel(activities, run_id, scope) is None
+    ours = await published(monkeypatch)
+    other_site = await published(monkeypatch, target="loopwell.example")
+    not_ready = ours.replace('"status": "ready"', '"status": "draft"')
+    for row in (
+        panel_row(ours, key="organic.audit"),
+        panel_row(other_site),  # loopwell.example is not the audited example.com
+        panel_row(not_ready),
+    ):
+        activities, db, storage, _ = await activities_fixture()
+        run_id = str(db.run.id)
+        await audit_with(db, storage, [row])
+        scope = await activities._result(run_id, "scope")
+        assert await panel_questions(activities, run_id, scope) is None
 
 
 @pytest.mark.asyncio
-async def test_a_panel_for_another_site_is_ignored_and_refresh_questions_skips_it():
-    from tin_lite.organic_audit_panel import founder_panel
-
-    activities, db, storage, _ = await activities_fixture()
-    run_id = str(db.run.id)
-    await audit_with(activities, db, storage, [approved_run(report(panel()))])
-    scope = await activities._result(run_id, "scope")
-    assert await founder_panel(activities, run_id, scope) is None  # loopwell.example ≠ example.com
+async def test_refresh_questions_skips_the_panel(monkeypatch):
+    from tin_lite.organic_audit_panel import panel_questions
 
     activities, db, storage, _ = await activities_fixture()
     db.run = replace(db.run, input={**db.run.input, "refresh_questions": True})
     run_id = str(db.run.id)
-    await audit_with(activities, db, storage, [approved_run(report(panel(target="example.com")))])
+    await audit_with(db, storage, [panel_row(await published(monkeypatch))])
     scope = await activities._result(run_id, "scope")
-    assert await founder_panel(activities, run_id, scope) is None
+    assert await panel_questions(activities, run_id, scope) is None
     assert db.list_prerequisite_runs.await_count == 0
 
 
-def test_qualification_ordinary_case_passes_on_a_fixture_report():
+QUALIFICATION = {
+    "ordinary": ({}, FILES),
+    "no_positioning": ({}, {}),
+    "forcing_clause_must_fail": (
+        {
+            "prompts": answer("which project management tool is best for early-stage startups"),
+            "prompts_fix": answer(),
+        },
+        FILES,
+    ),
+}
+
+
+async def test_qualification_cases_pass_on_their_fixtures(monkeypatch):
     qualification = Qualification.model_validate_json(CASES.read_text())
-    ordinary = next(case for case in qualification.cases if case.id == "ordinary")
-    verdict = assess_output(ordinary, status="succeeded", content=report(panel()).encode())
-    assert verdict["status"] == "passed", verdict["checks"]
-    assert {case.id for case in qualification.cases} == {
-        "ordinary",
-        "no_positioning",
-        "forcing_clause_must_fail",
-    }
+    assert {case.id for case in qualification.cases} == set(QUALIFICATION)
+    for case in qualification.cases:
+        models, files = QUALIFICATION[case.id]
+        module = load(KEY, monkeypatch)
+        ctx = context(
+            files=files,
+            services={"G1_queries": queries()},
+            models=models or {"prompts": answer()},
+        )
+        result = await module.run(ctx, dict(case.inputs))
+        verdict = assess_output(case, status="succeeded", content=result["content"].encode())
+        assert verdict["status"] == "passed", (case.id, verdict["checks"])

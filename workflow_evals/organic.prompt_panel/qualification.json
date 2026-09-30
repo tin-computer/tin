@@ -1,19 +1,19 @@
 {
   "version": 1,
   "assumptions": [
-    "Cases need fictional Loopwell project states (brand guide, Feature map, optional keyword plan) and a stubbed Search Console; they are not live evidence.",
-    "tests/test_prompt_panel.py checks PANEL.md's weights and checks offline and runs the ordinary case's assertions on a fixture report."
+    "Cases use a fictional Loopwell project (brand guide and Feature map), a stubbed Search Console and stubbed model answers; tests/test_prompt_panel.py supplies them offline. They are not live evidence.",
+    "The keyword plan is not read: its keywords.json is larger than the 64 KB a code workflow can read, so the families come from Search Console alone."
   ],
   "cost_drivers": [
-    "One Codex procedure run: the positioning files, the keyword plan (up to about 250 KB) and up to 1,000 Search Console queries in, 36 prompts and up to three check-and-fix rounds out. Unmeasured until qualification."
+    "One Search Console read and one gpt-6-luna call of up to 32,000 input bytes and 4,096 output tokens; a second call only when check_panel lists failures. Unmeasured until qualification."
   ],
   "effects": [
-    "Replaces reports/research/prompt-panel/PROMPT_PANEL.md with a draft. Approving it in Decisions freezes it for the organic audit. Never runs prompts against an AI assistant; no send, post, spend, PR or provider change."
+    "Replaces reports/research/prompt-panel/PROMPT_PANEL.md when every check passes; the organic audit asks the newest such panel for its site. Never runs prompts against an AI assistant; no send, post, spend, PR or provider change."
   ],
   "cases": [
     {
       "id": "ordinary",
-      "description": "Loopwell: a brand guide naming the category, a keyword plan dominated by an adjacent category, and Search Console queries. The core family must lead.",
+      "description": "Loopwell: a brand guide naming the category and Search Console queries dominated by an adjacent category. The core family must lead.",
       "inputs": {"target": "loopwell.example"},
       "expected_status": "succeeded",
       "expect": {
@@ -22,9 +22,9 @@
           "\"schema\": \"tin.prompt_panel/1\"",
           "\"role\": \"core\"",
           "\"weight\": 0.4,",
-          "Status: draft"
+          "Status: ready"
         ],
-        "excludes": ["\"status\": \"frozen\"", "Status: incomplete"]
+        "excludes": ["Status: stopped", "\"status\": \"draft\""]
       }
     },
     {
@@ -39,11 +39,11 @@
     },
     {
       "id": "forcing_clause_must_fail",
-      "description": "A draft where one discovery prompt reads \"which project management tool is best for early-stage startups\": the check must catch it and the delivered panel must not contain it.",
+      "description": "The first answer has a discovery prompt that reads \"which project management tool is best for early-stage startups\": the check must catch it and the published panel must not contain it.",
       "inputs": {"target": "loopwell.example"},
       "expected_status": "succeeded",
       "expect": {
-        "contains": ["Checks"],
+        "contains": ["check_panel passed."],
         "excludes": ["which project management tool is best for early-stage startups"]
       }
     }
@@ -59,7 +59,7 @@
     },
     {
       "id": "boundaries",
-      "question": "Does the product appear only in the branded prompts, is every competitor mention flagged, and does the panel stay a draft?"
+      "question": "Does the product appear only in the branded prompts, and is every competitor mention flagged?"
     }
   ]
 }

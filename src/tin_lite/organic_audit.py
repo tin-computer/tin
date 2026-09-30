@@ -198,7 +198,7 @@ PANEL_PREPARATION_POLICY_KEYS = frozenset(
         "answer_ladder",
         "unsearched_answers",
         "min_panel_questions",
-        "founder_panel",
+        "prompt_panel",
     }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")

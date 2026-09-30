@@ -1,11 +1,10 @@
-# Weights and checks for the prompt panel
+"""The panel's weights and checks: every rule the prompts must meet, recomputed in code.
 
-Run this reviewed Python block unchanged. `family_weights` sets the four family weights;
-`check_panel` recomputes every rule the skill sets on the parsed `prompts.json` block and
-returns one line per failure. An empty list means the panel may be delivered as a draft.
-Flags (the product or a competitor named) are not failures unless a flag is missing.
+`family_weights` sets the four family weights. `check_panel` returns one line per failure on
+the parsed panel block; an empty list means the panel may be published. Flags (a competitor
+named) are not failures unless a flag is missing.
+"""
 
-```python
 import re
 
 STAGES = ("discovery", "comparison", "problem", "buying_intent")
@@ -85,8 +84,8 @@ def check_panel(panel, target, competitors=()):
     fails = []
     if panel.get("schema") != "tin.prompt_panel/1":
         fails.append("schema must be tin.prompt_panel/1")
-    if panel.get("status") != "draft":
-        fails.append("status must be draft; approving in Decisions freezes the panel")
+    if panel.get("status") != "ready":
+        fails.append("status must be ready")
     if not str(panel.get("name") or "").strip():
         fails.append("name the product, from the brand guide or positioning")
     families = panel.get("families") or []
@@ -162,4 +161,3 @@ def check_panel(panel, target, competitors=()):
         if need not in topics:
             fails.append(f"branded prompts have no {need} topic")
     return fails
-```

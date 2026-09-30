@@ -3,26 +3,20 @@
   "definition": {
     "key": "organic.prompt_panel",
     "title": "Choose the buyer questions AI visibility is measured on",
-    "description": "Draft 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. The family weights come from your positioning and your own Search Console searches, not from keyword volume alone. Review it in Decisions; approving freezes it, and the organic audit then measures AI answers on these questions every run so results compare.",
+    "description": "Write 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. Code picks the families from your positioning and your own Search Console searches and sets their weights; one model call writes the prompts, and code checks every rule before publishing. The organic audit asks the newest panel on its next run, so AI visibility is measured on the same questions every time. No review step: a panel that fails the checks is not published.",
     "version": "1.0.0",
-    "executor": "codex.procedure",
+    "executor": "workflow.code",
     "system": "organic-traffic",
-    "schedule_modes": ["on_demand"],
-    "human_review": {
-      "eligible": true,
-      "reason": "Approval freezes the panel: the organic audit asks these questions from its next run on.",
-      "review_label": "Review buyer questions",
-      "defer_label": "Not now",
-      "summary": "Check that the first family is the category you sell in and that each prompt sounds like a buyer. Approving freezes the panel for the organic audit.",
-      "queue_clause": "Buyer questions ready to review"
-    },
+    "schedule_modes": [
+      "on_demand"
+    ],
     "prerequisites": [
       {
         "kind": "artifact",
         "level": "recommended",
         "path": "brand/BRAND.md",
         "producer": "brand.capture",
-        "reason": "The brand guide names the product, its category and its competitors, which set the lead family."
+        "reason": "The brand guide names the product and its positioning, which name the lead family."
       },
       {
         "kind": "artifact",
@@ -35,15 +29,18 @@
       {
         "kind": "run",
         "level": "recommended",
-        "workflow": "organic.keyword_plan",
-        "reason": "The keyword plan supplies the words buyers use; it adds vocabulary, never weight."
+        "workflow": "organic.audit",
+        "reason": "The audit names the site's host, which the panel must match for the audit to ask it."
       }
     ],
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "project_id": {"type": "string", "format": "uuid"},
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
         "target": {
           "type": "string",
           "maxLength": 253,
@@ -54,37 +51,60 @@
         "seed_keywords": {
           "type": "array",
           "maxItems": 64,
-          "items": {"type": "string", "minLength": 1, "maxLength": 200},
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
           "title": "Extra seed phrases (optional)"
         },
         "competitor_names": {
           "type": "array",
           "maxItems": 20,
-          "items": {"type": "string", "minLength": 1, "maxLength": 100},
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
           "title": "Competitors to include (optional)"
         }
       },
-      "required": ["project_id"]
+      "required": [
+        "project_id"
+      ]
     },
     "integration_requirements": [
       {
         "provider_key": "analytics.gsc",
-        "capabilities": ["search_analytics.read"],
+        "capabilities": [
+          "search_analytics.read"
+        ],
         "required": true
       }
     ],
-    "procedure": {
-      "prompt_path": "PROMPT.md",
-      "skills_path": "skills",
-      "skill_files": [
-        "skills/prompt-panel/SKILL.md",
-        "skills/prompt-panel/PANEL.md"
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "panel_check.py"
       ],
-      "entry_skill": "prompt-panel",
-      "workspace": {"kind": "project.state"},
-      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
+      "timeout_seconds": 60,
+      "model_routes": {
+        "prompts": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 2,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        }
+      },
       "services": {
-        "gsc": {"provider_key": "analytics.gsc", "max_calls": 2, "max_response_bytes": 64000}
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 1,
+          "max_response_bytes": 64000
+        }
       },
       "output": {
         "kind": "project.artifact",
