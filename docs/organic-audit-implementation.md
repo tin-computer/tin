@@ -443,6 +443,24 @@ constraint), and v10 discards the whole panel. Under v11:
 - The panel prompt anchors every question, including the constraint question, to the
   product's own category, never to a quality any tool could claim.
 
+### The founder's approved panel
+
+When the founder has approved an `organic.prompt_panel` draft in Decisions, a v11 audit asks
+that panel's questions instead of drafting its own (`founder_panel`):
+
+- Tin reads the newest approved `organic.prompt_panel` run at its own published revision,
+  so a later draft changes nothing until it is approved too. The panel must name the audited
+  host.
+- The audit asks at most `max_questions` (eight) of its 32 prompts, allocated to the four
+  families by weight with the largest remainder, one prompt per stage before a second. The
+  panel's core family weighs 0.40, so it gets three of the eight. Answers per question and
+  the cost bound are unchanged.
+- The product name, aliases and competitors come from the panel. There is no research,
+  drafting or review call; `panel_preparation.method` is `founder_approved_panel`.
+- The choice is saved once, so a retry asks the same questions. An earlier audit is reused
+  only when it asked exactly this panel; a newly approved panel starts a new baseline.
+  `refresh_questions` still drafts a new set.
+
 ### What else Tin reads
 
 - Each page's HTML facts now include text length, headings (the first eight H2/H3, and how

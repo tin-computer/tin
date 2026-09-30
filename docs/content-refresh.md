@@ -11,6 +11,10 @@ new pages.
    Console evidence, then chooses one page:
    - It considers pages the audit flagged with `search.low_ctr` or `search.near_page_one`, plus
      `search.decay` and `aeo.answer_structure` when the audit reports them.
+   - It also considers the refresh rows of a current Page decisions file
+     (`organic.content_efficacy`, `content/efficacy.md`, 14 days): low click-through, a leading
+     search just below the top results, a decline, or a page that absorbs merged pages. The
+     selection says `planned_by` for these.
    - It picks the page with the most impressions at stake.
    - It skips a page whose refresh is still waiting for review, was approved but has not
      reached the site, sits in an open PR (or one Tin could not check), or went live less than

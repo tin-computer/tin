@@ -36,7 +36,12 @@
           "content.answer_page",
           "organic.mention_backlinks",
           "organic.error_surface",
-          "competitor.watch"
+          "competitor.watch",
+          "organic.traffic_snapshot",
+          "organic.content_efficacy",
+          "content.blog_index",
+          "organic.prompt_panel",
+          "growth.acquisition_analytics"
         ],
         "integrations": [
           "analytics.gsc"
@@ -69,7 +74,9 @@
         "coverage": "full",
         "workflows": [
           "organic.audit",
-          "organic.technical_fix"
+          "organic.technical_fix",
+          "organic.content_efficacy",
+          "organic.site_architecture"
         ],
         "integrations": [
           "infra.github",
@@ -624,7 +631,13 @@
     "social.x_publish": "Publish an approved X post",
     "social.x_compose": "Compose X posts directly",
     "social.x_draft": "Draft for X",
-    "social.x_revise": "Revise X writing"
+    "social.x_revise": "Revise X writing",
+    "organic.traffic_snapshot": "Take a weekly traffic snapshot",
+    "organic.content_efficacy": "Decide what each page needs",
+    "organic.site_architecture": "Plan the site's page tree and redirects",
+    "content.blog_index": "Build or fix the blog index",
+    "growth.acquisition_analytics": "Weekly growth analytics",
+    "organic.prompt_panel": "Choose the buyer questions AI visibility is measured on"
   },
   "workflow_scope": {
     "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
@@ -684,6 +697,12 @@
     "social.x_draft": "Draft one X post or a small set from current project files and direction. Reuse a matching X guide; otherwise capture from supplied samples or a connected public account and continue after guide approval. With no voice source, draft from project context and state the limitation. No automatic posting, schedules or generated media.",
     "social.x_style": "Sample up to 50 of the connected account’s own public X posts, favoring recent writing, or read supplied samples. Propose an X writing guide for review before adopting it in project Files. Does not draft or publish posts.",
     "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
-    "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation."
+    "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation.",
+    "organic.traffic_snapshot": "Weekly data file per landing page from Search Console and PostHog (both connections, read-only): clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth and the audit's findings; numbers only, read by page decisions and the growth report; no model calls.",
+    "organic.content_efficacy": "Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; URL changes become technical-fix judgment calls and refreshes become content.refresh candidates; edits nothing itself.",
+    "organic.site_architecture": "Page tree, URL and navigation rules from the connected repository's routes and navigation (read-only), click depth and a year of Search Console clicks; when URLs change, the exact redirects, which the technical fix asks about and applies; weekly follow-ups against a saved baseline; changes nothing itself.",
+    "content.blog_index": "For a site with a blog in the connected repository: one unmerged PR for an index that lists every eligible post within two clicks from the post source, with categories from existing tags, an RSS feed and per-post sitemap dates, at the founder's article route; asks for the route once when none exists; never merges or deploys.",
+    "growth.acquisition_analytics": "Weekly acquisition report from PostHog and Search Console (read-only): channels and named AI assistants, a brand split of search clicks, content reading, landing pages and first-touch activation, with changes called only by an exact test with Holm's correction and each decision routed to the workflow that acts on it; no model calls.",
+    "organic.prompt_panel": "Drafts the 36 buyer prompts AI visibility is measured on, four intent families led by the category the positioning names and weighted by the site's own Search Console searches, plus four branded prompts; approving it in Decisions freezes it as the organic audit's question set; never runs prompts itself."
   }
 }

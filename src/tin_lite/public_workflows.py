@@ -153,6 +153,12 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     ),
     PublicWorkflow(UUID("234d05ce-c9e6-46c5-8299-5ec3973645ef"), "competitor.sunset_rescue"),
     PublicWorkflow(UUID("4cfd20c4-6aaa-46d7-a5c1-1f67032a4358"), "growth.framework_starter"),
+    PublicWorkflow(UUID("cf62caaa-fc6f-4a32-b0bd-8babceec534d"), "organic.traffic_snapshot"),
+    PublicWorkflow(UUID("51b9959f-3f5c-4df3-b417-f6fbf12d19fc"), "organic.content_efficacy"),
+    PublicWorkflow(UUID("d6a097d3-056f-4ffd-af85-3205f32f58f8"), "organic.site_architecture"),
+    PublicWorkflow(UUID("896b8e66-ea09-4dda-ac11-7a1824282349"), "content.blog_index"),
+    PublicWorkflow(UUID("0dd4b124-cd4d-4558-b3c9-21d00d820dfb"), "growth.acquisition_analytics"),
+    PublicWorkflow(UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"), "organic.prompt_panel"),
 )
 
 
