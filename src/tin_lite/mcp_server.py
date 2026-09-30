@@ -197,14 +197,9 @@ async def _content_program_next_call(
                 "request_id": str(uuid4()),
             },
         },
-        "then": {
-            "name": "start_project_workflow",
-            "arguments": {
-                "project_id": str(project_id),
-                "project_workflow_id": "<id returned by create_project_workflow>",
-                "request_id": str(uuid4()),
-            },
-        },
+        # Saving a schedule runs it once right away; starting it again would plan twice.
+        "then": "create_project_workflow starts the program's first run itself; read it with "
+        "get_run using first_run.id.",
     }
 
 
@@ -478,6 +473,14 @@ def _project_workflow_message(configured: Any, *, created: bool) -> str:
         f"{name} {verb}: {when}{first}. Results show under My system; anything needing your "
         "yes waits in Decisions."
     )
+
+
+def _first_run_message(first_run: dict[str, Any]) -> str:
+    if first_run.get("id"):
+        return "It is also running once now, so the first result does not wait for the calendar."
+    if first_run.get("status") == "waits_for_start":
+        return "Its first run waits for the start date you chose; nothing runs before then."
+    return f"Its first run could not start now: {first_run.get('reason', 'unknown reason')}"
 
 
 def _mcp_project_workflow_view(configured: Any) -> dict[str, Any]:
@@ -2224,6 +2227,11 @@ def create_mcp_app(
         schedule is {"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00",
         "timezone": "America/New_York"} or {"cadence": "daily", "local_time": "09:00",
         "timezone": "..."}; the workflow's schedule_modes must allow the cadence.
+
+        A saved schedule also runs once right away, so the founder sees a result now rather
+        than at the first slot; `first_run` has that run's id and status, or why it could not
+        start (the schedule is saved either way). Do not also call start_project_workflow for
+        it. Without a schedule nothing runs until started.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -2280,10 +2288,73 @@ def create_mcp_app(
             )
         except (LookupError, RuntimeError, ValueError, WorkflowInputError) as exc:
             raise ToolError(str(exc)) from exc
+        first_run = None
+        if configured.schedule is not None:
+            starts_at = WorkflowSchedule.model_validate(configured.schedule).start_at
+            if starts_at is not None and starts_at > datetime.now(UTC):
+                # The founder chose when the schedule begins; running now would spend early.
+                first_run = {"status": "waits_for_start", "starts_at": starts_at.isoformat()}
+            else:
+                first_run = await _start_first_run(
+                    services=services,
+                    workflow=workflow,
+                    configured=configured,
+                    clerk_user_id=clerk_user_id,
+                    oauth_client_id=token.client_id,
+                )
+        message = _project_workflow_message(configured, created=True)
         return {
             **_mcp_project_workflow_view(configured),
-            **_founder_words(relay=_project_workflow_message(configured, created=True)),
+            **({"first_run": first_run} if first_run else {}),
+            **_founder_words(
+                relay=[message, _first_run_message(first_run)] if first_run else message
+            ),
         }
+
+    async def _start_first_run(
+        *, services, workflow, configured, clerk_user_id, oauth_client_id
+    ) -> dict[str, Any]:
+        """The one run a newly saved schedule makes right away, billed like any run.
+
+        Its start key is derived from the saved configuration, so a retried save returns the
+        same run. A refusal (limits, credits, prerequisites) leaves the schedule in place and
+        says why; the next scheduled slot runs as usual.
+        """
+        try:
+            run = await start_workflow_run(
+                runtime=services,
+                settings=settings,
+                workflow=workflow,
+                project_id=configured.project_id,
+                started_by_clerk_user_id=clerk_user_id,
+                start_idempotency_key=f"first-run:{configured.id}",
+                input_payload=configured.inputs,
+                project_workflow_id=configured.id,
+                definition_commit_sha=configured.definition_commit_sha,
+                input_schema=configured.input_schema,
+                trigger_source="mcp",
+                started_by_oauth_client_id=oauth_client_id,
+            )
+        except PrerequisiteError as exc:
+            return {"status": "not_started", "reason": str(exc)[:500]}
+        except (
+            IntegrationError,
+            LookupError,
+            RuntimeError,
+            TemporalStartError,
+            ValueError,
+            WorkflowExecutorUnavailableError,
+            WorkflowInputError,
+        ) as exc:
+            # A lost start reply still leaves the accepted run; recovery dispatches it.
+            accepted = await services.database.get_run_by_start_key(
+                project_id=configured.project_id,
+                start_idempotency_key=f"first-run:{configured.id}",
+            )
+            if accepted is not None:
+                return {"id": str(accepted.id), "status": accepted.status.value}
+            return {"status": "not_started", "reason": str(exc)[:500]}
+        return {"id": str(run.id), "status": run.status.value, **_prerequisite_facts(run)}
 
     @server.tool()
     async def update_project_workflow(

@@ -40,7 +40,7 @@ workflow_packages/custom.research_digest/
 4. Refresh `list_workflows`, inspect using `get_workflow` (UUID or unambiguous key), then use normal
    `start_workflow`. Supply `project_id` outside inputs. Optionally save a configuration
    with `create_project_workflow` for My system, using only the definition's supported schedule
-   modes; no user-facing version selection is needed.
+   modes; a saved schedule also runs once right away. No user-facing version selection is needed.
 5. `archive_private_workflow(project_id, workflow_id, request_id, expected_revision)` removes the
    recipe from discovery and prevents new starts. It preserves source files, saved configurations,
    running work and historical results. Explicit activation restores the same UUID.

@@ -661,7 +661,8 @@ def authoring_guide(*, settings, project_id):
             "Refresh list_workflows. Call start_workflow with its UUID, project_id and inputs; "
             "do not put project_id inside inputs.",
             "Call get_code_workflow_setup for code input, connection and cost readiness. "
-            "Optionally create_project_workflow to save inputs and an eligible code schedule. "
+            "Optionally create_project_workflow to save inputs and an eligible code schedule; "
+            "a saved schedule also runs once right away. "
             "Saves choose the active definition automatically; existing saves/runs do not move.",
             "Code definitions may opt into daily/weekly schedule_modes alongside on_demand. "
             "Schedules use local time/timezone, optional start_at/end_at and selected weekdays. "
