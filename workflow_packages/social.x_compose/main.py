@@ -558,7 +558,8 @@ async def run(ctx, inputs):
                 None,
                 (
                     posts[0]["editor_notes"],
-                    "Personal X voice was not applied; this draft uses project context and your direction.",
+                    "Personal X voice was not applied; this draft uses project context "
+                    "and your direction.",
                 ),
             )
         )
