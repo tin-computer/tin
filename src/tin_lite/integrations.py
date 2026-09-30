@@ -54,6 +54,7 @@ GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
 ADS_PROVIDER = "ads.google"
 STRIPE_PROVIDER = "payments.stripe"
 POSTHOG_PROVIDER = "analytics.posthog"
+X_PROVIDER = "social.x"
 # A founder's own GitHub account, through Tin's GitHub OAuth App (see github_account.py).
 GITHUB_USER_PROVIDER = "infra.github_user"
 PROVIDER_KEYS = frozenset(
@@ -64,6 +65,7 @@ PROVIDER_KEYS = frozenset(
         ADS_PROVIDER,
         STRIPE_PROVIDER,
         POSTHOG_PROVIDER,
+        X_PROVIDER,
         GITHUB_USER_PROVIDER,
     }
 )
@@ -77,6 +79,7 @@ STRIPE_CAPABILITIES = (
 )
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
+X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
 ADS_CAPABILITIES = ("account.read", "campaigns.read", "campaigns.write")
 # Only what an approved list submission needs; nothing on the founder's own repositories.
 GITHUB_USER_CAPABILITIES = ("forks.write", "public_pull_requests.write", "public_issues.write")
@@ -397,6 +400,15 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             unlocks=("Activation and funnel evidence", "Product analytics brief"),
         ),
         IntegrationDefinition(
+            key=X_PROVIDER,
+            name="X",
+            badge="X",
+            description="Read your own posts and publish only posts you explicitly approve.",
+            access_label="Own posts · approved publishing",
+            capabilities=X_CAPABILITIES,
+            unlocks=("X writing voice", "Approved X posts"),
+        ),
+        IntegrationDefinition(
             key=GITHUB_USER_PROVIDER,
             name="GitHub account",
             badge="GH",
@@ -586,6 +598,10 @@ class IntegrationService:
             from tin_lite.posthog_connection import oauth_ready
 
             return self._cipher is not None and oauth_ready(self._settings)
+        if provider_key == X_PROVIDER:
+            from tin_lite.x_connection import oauth_ready
+
+            return self._cipher is not None and oauth_ready(self._settings)
         if provider_key == GITHUB_USER_PROVIDER:
             from tin_lite.github_account import oauth_ready as github_oauth_ready
 
@@ -630,6 +646,12 @@ class IntegrationService:
         from tin_lite.posthog_connection import PostHogConnections
 
         return PostHogConnections(self)
+
+    @property
+    def x(self):
+        from tin_lite.x_connection import XConnection
+
+        return XConnection(self)
 
     @property
     def github_account(self):
@@ -718,6 +740,14 @@ class IntegrationService:
                         + "; reconnect PostHog and approve the read access"
                     )
                 continue
+            if requirement.provider_key == X_PROVIDER:
+                if connection.credential_ciphertext is None or set(
+                    requirement.capabilities
+                ) - _granted(connection):
+                    raise IntegrationAuthorizationError(
+                        "Reconnect X and approve the access this workflow needs"
+                    )
+                continue
             if requirement.provider_key == GITHUB_USER_PROVIDER:
                 granted = connection.configuration.get("granted_capabilities", [])
                 if connection.credential_ciphertext is None or not set(
@@ -796,6 +826,8 @@ class IntegrationService:
             requested_capabilities = (
                 WORKSPACE_DEFAULT_CAPABILITIES
                 if provider_key == GOOGLE_WORKSPACE_PROVIDER
+                else ("x.posts.read",)
+                if provider_key == X_PROVIDER
                 else definition.capabilities
             )
         else:
@@ -806,7 +838,7 @@ class IntegrationService:
                 raise IntegrationAuthorizationError(
                     "requested integration capabilities are empty or unsupported"
                 )
-        if provider_key == GOOGLE_WORKSPACE_PROVIDER:
+        if provider_key in {GOOGLE_WORKSPACE_PROVIDER, X_PROVIDER}:
             existing = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key
             )
@@ -821,7 +853,13 @@ class IntegrationService:
                             ]
                         )
                     )
-        pkce = {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER, POSTHOG_PROVIDER, GITHUB_USER_PROVIDER}
+        pkce = {
+            GSC_PROVIDER,
+            GOOGLE_WORKSPACE_PROVIDER,
+            POSTHOG_PROVIDER,
+            GITHUB_USER_PROVIDER,
+            X_PROVIDER,
+        }
         state = secrets.token_urlsafe(32)
         state_hash = _sha256(state)
         verifier_ciphertext = None
@@ -852,6 +890,18 @@ class IntegrationService:
             return ConnectStart(
                 authorization_url=authorization_url(
                     self._settings, state=state, challenge=challenge
+                )
+            )
+        if provider_key == X_PROVIDER:
+            from tin_lite.x_connection import CALLBACK, authorization_url
+
+            return ConnectStart(
+                authorization_url=authorization_url(
+                    self._settings,
+                    state=state,
+                    challenge=challenge,
+                    redirect=self._callback_url(CALLBACK),
+                    capabilities=requested_capabilities,
                 )
             )
         if provider_key == GITHUB_USER_PROVIDER:
@@ -3741,6 +3791,12 @@ class IntegrationService:
             if connection is not None:
                 # Best effort, like Google: local disconnection is authoritative.
                 await self.posthog.revoke(connection)
+        if provider_key == X_PROVIDER:
+            connection = await self._database.get_integration_connection(
+                project_id=project_id, provider_key=provider_key
+            )
+            if connection is not None:
+                await self.x.revoke(connection)
         if provider_key == GITHUB_USER_PROVIDER:
             connection = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key

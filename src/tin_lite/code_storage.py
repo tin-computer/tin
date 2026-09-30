@@ -542,11 +542,20 @@ class CodeStorage:
         elif executor == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
             valid_path = path == GROWTH_ONBOARDING_PLAN_PATH
             limit, target = 40_000, f"native-plan/{run_id}/{generation}"
+        elif executor == "social.x_style":
+            valid_path = path == ".agents/skills/x-writing-style/SKILL.md"
+            limit, target = 24_000, f"native-x-style/{run_id}/{generation}"
         else:
             valid_path = path == STYLE_PATH
             limit, target = 24_000, f"native-style/{run_id}/{generation}"
         if (
-            executor not in {"style.capture", "workflow.code", GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME}
+            executor
+            not in {
+                "style.capture",
+                "social.x_style",
+                "workflow.code",
+                GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
+            }
             or str(UUID(run_id)) != run_id
             or not valid_path
             or not 0 < len(content) <= limit
@@ -1101,7 +1110,11 @@ class CodeStorage:
         for change in changes:
             if change.operation == "upsert":
                 assert change.content is not None
-                builder = builder.add_file_from_string(change.path, change.content)
+                builder = (
+                    builder.add_file(change.path, change.content)
+                    if isinstance(change.content, bytes)
+                    else builder.add_file_from_string(change.path, change.content)
+                )
                 changed_paths.add(change.path)
             elif change.operation == "delete":
                 if change.path not in existing_paths:
@@ -1129,6 +1142,20 @@ class CodeStorage:
             if isinstance(exc, RefUpdateError):
                 raise _project_commit_error(exc) from exc
             raise
+
+    async def read_project_media(self, *, repo_id: str, revision: str, path: str) -> bytes:
+        from tin_lite.project_files import safe_project_file_path
+        from tin_lite.project_media import MAX_VIDEO_BYTES
+
+        if not safe_project_file_path(path):
+            raise ValueError("Unsafe media path.")
+        repo = await self.get_repo(repo_id)
+        result = await self._publication_file(
+            repo, ref=revision, path=path, max_bytes=MAX_VIDEO_BYTES
+        )
+        if result is None:
+            raise ValueError("The selected media file is missing.")
+        return result[1]
 
     async def revert_latest_project_commit(
         self,

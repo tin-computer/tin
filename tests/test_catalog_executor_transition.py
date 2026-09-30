@@ -49,6 +49,11 @@ class Storage:
 
 async def test_the_plan_moves_from_the_codex_procedure_and_nothing_else_may(monkeypatch):
     monkeypatch.setattr("tin_lite.public_workflows.PUBLIC_WORKFLOWS", ())
+    # Executor migration is a native-only fixture; the X parent needs its code package.
+    monkeypatch.setattr(
+        "tin_lite.catalog.BUILTIN_WORKFLOWS",
+        tuple(item for item in BUILTIN_WORKFLOWS if item.key != "social.x_draft"),
+    )
     # The only reviewed transition: the Start here plan, from the Codex procedure it shipped as.
     assert EXECUTOR_TRANSITIONS == {growth_plan.KEY: (CODEX_PROCEDURE_EXECUTOR, growth_plan.KEY)}
     assert executor_replaced_by(growth_plan.KEY, growth_plan.KEY) == CODEX_PROCEDURE_EXECUTOR

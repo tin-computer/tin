@@ -43,6 +43,7 @@ NATIVE_EXECUTORS = {
     "content.plan",
     "creative.character",
     "style.capture",
+    "social.x_style",
     "content.answer_page",
     "project.memory",
     "project.weekly_brief",
@@ -55,7 +56,7 @@ NATIVE_EXECUTORS = {
     "ads.launch",
     "ads.monitor",
 }
-PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding"}
+PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_draft"}
 
 # Organic audit ceiling, from its bounded calls at the GPT-6 Luna rates above. A run makes at
 # most 28 searched calls (two research attempts, 12 questions asked twice, two brand checks) and
@@ -119,6 +120,9 @@ def service_terms(definition, *, inputs=None):
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
         kinds = []  # The parent itself never buys a model call.
+    elif executor == "social.x_draft":
+        # One bounded voice capture and one composition; only actual child usage is charged.
+        maximum, kinds = 4 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding_plan":

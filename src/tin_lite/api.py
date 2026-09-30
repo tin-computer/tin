@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
@@ -54,6 +54,7 @@ from tin_lite.integrations import (
     GSC_PROVIDER,
     POSTHOG_PROVIDER,
     STRIPE_PROVIDER,
+    X_PROVIDER,
     GitHubInstallationChoiceError,
     GitHubInstallationRequiredError,
     IntegrationAuthorizationError,
@@ -92,6 +93,7 @@ from tin_lite.project_files import (
     StaleProjectRevisionError,
     safe_project_file_path,
 )
+from tin_lite.project_media import MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, MEDIA_TYPES
 from tin_lite.projects import (
     ProjectCreationConflictError,
     ProjectProvisioningError,
@@ -115,6 +117,7 @@ from tin_lite.technical_fix_api import system_router as organic_system_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
+from tin_lite.x_posts import XPosts
 
 
 class _RunSafeRoute(APIRoute):
@@ -391,6 +394,8 @@ ASSET_VERSION = hashlib.sha256(
             "content-delivery.js",
             "style-capture.js",
             "content-draft.js",
+            "x-posts.js",
+            "x-posts.css",
             "delimited-viewer.js",
             "json-viewer.js",
             "diagram-loader.js",
@@ -641,6 +646,7 @@ class RunView(BaseModel):
     review_version: int = 1
     review_decision: str | None = None
     selected_sources: dict = Field(default_factory=dict)
+    x_draft: dict | None = None
     review_requested_at: datetime | None = None
     reviewed_at: datetime | None = None
     system_wiki_commit_sha: str | None = None
@@ -1129,6 +1135,29 @@ class ProjectFilesCommit(BaseModel):
     changes: list[ProjectFileMutationInput] = Field(min_length=1, max_length=50)
 
 
+class XDraftSave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    expected_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    request_id: UUID
+    draft: dict[str, Any]
+
+
+class XPostPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    post_id: str = Field(pattern=r"^p[1-6]$")
+
+
+class XPostPublish(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_token: UUID
+    request_id: UUID
+
+
 class ProjectFilesRevert(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -1278,6 +1307,7 @@ async def authentication_ui(request: Request) -> HTMLResponse:
 @router.get("/integrations/callback/google", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/github", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/posthog", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/integrations/callback/x", response_class=HTMLResponse, include_in_schema=False)
 @router.get(
     "/integrations/callback/github-account", response_class=HTMLResponse, include_in_schema=False
 )
@@ -1674,6 +1704,27 @@ async def complete_posthog_integration(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from None
     return _integration_view(service._definition(POSTHOG_PROVIDER), connection, configured=True)
+
+
+@router.post("/api/integrations/x/complete", response_model=IntegrationView)
+async def complete_x_integration(
+    payload: GoogleIntegrationComplete,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Finish the project-bound X PKCE grant after verifying the member and state."""
+    service = request.app.state.runtime.integrations
+    try:
+        project_id = await service.x.pending_project(
+            state=payload.state, clerk_user_id=user.clerk_user_id
+        )
+        await _require_project_access(project_id, request, user)
+        connection = await service.x.complete(
+            state=payload.state, code=payload.code, clerk_user_id=user.clerk_user_id
+        )
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+    return _integration_view(service._definition(X_PROVIDER), connection, configured=True)
 
 
 @router.post(
@@ -2248,6 +2299,161 @@ async def delete_project(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
         ) from exc
     return ProjectDeletionView(**result)
+
+
+def _x_posts_service(request: Request) -> XPosts:
+    return XPosts(request.app.state.runtime, request.app.state.settings)
+
+
+@router.get("/api/projects/{project_id}/x/drafts")
+async def read_x_drafts(
+    project_id: UUID,
+    request: Request,
+    path: str = Query(min_length=1, max_length=512),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).read(project_id, user.clerk_user_id, path)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid or unavailable.") from exc
+
+
+@router.put("/api/projects/{project_id}/x/drafts")
+async def save_x_draft(
+    project_id: UUID,
+    payload: XDraftSave,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).save(
+            project_id,
+            user.clerk_user_id,
+            path=payload.path,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+            draft=payload.draft,
+            client_id="browser",
+        )
+    except (StaleProjectRevisionError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=422, detail="X draft has an invalid field or path."
+        ) from exc
+
+
+@router.post("/api/projects/{project_id}/x/preview")
+async def preview_x_post(
+    project_id: UUID,
+    payload: XPostPreview,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).preview(
+            project_id, user.clerk_user_id, path=payload.path, post_id=payload.post_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/projects/{project_id}/x/publish")
+async def publish_x_post(
+    project_id: UUID,
+    payload: XPostPublish,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).publish(
+            project_id,
+            user.clerk_user_id,
+            preview_token=payload.preview_token,
+            request_id=payload.request_id,
+            client_id="browser",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
+    except (ValueError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BillingError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    except (TemporalStartError, WorkflowExecutorUnavailableError) as exc:
+        raise HTTPException(
+            status_code=503, detail="X delivery could not start; retry the same request ID."
+        ) from exc
+
+
+@router.post("/api/projects/{project_id}/files/upload")
+async def upload_project_media(
+    project_id: UUID,
+    request: Request,
+    request_id: UUID,
+    path: str = Query(min_length=1, max_length=512),
+    expected_revision: str = Query(pattern=r"^[0-9a-f]{40}$"),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Store one bounded image/video in project Files; bytes never enter MCP or JSON."""
+    project = await _require_project_access(project_id, request, user)
+    expected_media_type = MEDIA_TYPES.get(PurePosixPath(path).suffix.lower())
+    actual_media_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    if (
+        not safe_project_file_path(path)
+        or not expected_media_type
+        or actual_media_type != expected_media_type
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a JPEG, PNG or MP4 project file with its matching content type.",
+        )
+    limit = MAX_VIDEO_BYTES if expected_media_type == "video/mp4" else MAX_IMAGE_BYTES
+    if request.headers.get("content-length"):
+        try:
+            if int(request.headers["content-length"]) > limit:
+                raise HTTPException(
+                    status_code=413, detail="Media file exceeds the supported size."
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid content length.") from exc
+    chunks = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail="Media file exceeds the supported size.")
+        chunks.append(chunk)
+    try:
+        return await request.app.state.runtime.project_files.upload(
+            project=project,
+            actor_clerk_user_id=user.clerk_user_id,
+            client_id="browser",
+            request_id=request_id,
+            expected_revision=expected_revision,
+            path=path,
+            content=b"".join(chunks),
+            media_type=actual_media_type,
+        )
+    except (StaleProjectRevisionError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @router.get(
@@ -2887,7 +3093,7 @@ async def start_project_workflow_run(
                 database=request.app.state.runtime.database,
                 settings=request.app.state.settings,
                 run=run,
-            )
+            ),
         }
     )
 
@@ -3393,11 +3599,15 @@ async def get_run(
     run = await _run_from_postgres(run_id, request, user)
     response.headers["X-Tin-Read-Source"] = "postgres"
     from tin_lite.content_delivery_api import delivery_service, page_url_service
+    from tin_lite.x_draft import facts as x_draft_facts
 
     runtime = request.app.state.runtime
     delivery = await delivery_service(runtime).status(run)
     return RunView.model_validate(run).model_copy(
         update={
+            "x_draft": await x_draft_facts(runtime.database, run)
+            if run.executor == "social.x_draft"
+            else None,
             "content_delivery": delivery,
             "page_url": await page_url_service(
                 runtime, getattr(request.app.state, "settings", None)

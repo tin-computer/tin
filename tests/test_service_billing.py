@@ -867,3 +867,62 @@ async def test_unknown_supplier_cost_stays_pending_until_reconciliation_deadline
         await f.db.pool.fetchval("SELECT status FROM billing_operations WHERE run_id=$1", run.id)
         == "absorbed"
     )
+
+
+async def test_x_parent_and_both_children_share_one_budget(billed):
+    from tin_lite.public_workflows import load_public_workflows
+
+    f = billed
+    package = next(w for w in await load_public_workflows() if w.key == "social.x_compose")
+    await fund(f)
+    parent = await admit(f, "social.x_draft", {"direction": "Describe our new product update."})
+    prepared = {
+        "definition_revision": parent.definition_commit_sha,
+        "definitions": {"style": SPECS["social.x_style"].definition, "compose": package.definition},
+    }
+    key = f"x-draft:{parent.id}:prepare"
+    async with f.db.effect_lock(key, "social.x_draft") as (conn, _):
+        await f.db.start_effect(conn, execution_key=key, operation="social.x_draft")
+        await f.db.complete_effect(conn, execution_key=key, result=prepared)
+    child = await admit(
+        f,
+        "social.x_style",
+        {"supplied_samples": "A concrete post about a feature I built."},
+        parent=parent,
+        step=f"x-draft:{parent.id}:style",
+    )
+    await f.db.upsert_registry_workflow(
+        workflow_id=package.id,
+        key=package.key,
+        title=package.title,
+        description=package.description,
+        executor=package.executor,
+        definition_repo_id="registry/workflows",
+        definition_path=package.definition_path,
+        current_commit_sha=parent.definition_commit_sha,
+        version_label=package.version_label,
+        definition=package.definition,
+    )
+    compose, _ = await f.db.create_run(
+        project_id=f.project.id,
+        workflow_id=package.id,
+        started_by_clerk_user_id=ACTOR,
+        input_payload={
+            "project_id": str(f.project.id),
+            "direction": "Describe our new product update.",
+        },
+        pinned_definition=package.definition,
+        definition_commit_sha=parent.definition_commit_sha,
+        start_idempotency_key=f"x-draft:{parent.id}:compose",
+        billing_parent_run_id=parent.id,
+    )
+    rows = await f.db.pool.fetch(
+        "SELECT run_id, root_run_id FROM billing_run_budgets WHERE run_id=ANY($1::uuid[])",
+        [parent.id, child.id, compose.id],
+    )
+    assert len(rows) == 3 and all(row["root_run_id"] == parent.id for row in rows)
+    assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
+    assert (
+        f.billing.terms(SPECS["social.x_draft"].definition, f.project.id)["maximum_nanos"]
+        == 4_000_000_000
+    )

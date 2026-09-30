@@ -1,0 +1,44 @@
+{
+  "version": 2,
+  "assumptions": [
+    "Drafts are standalone posts for X, not approvals or publications. A connected account is optional for drafting but required by the separate publisher.",
+    "Current user direction, notes and project files can support factual claims. A social plan and the account-specific writing guide influence topics and voice, not facts.",
+    "A conservative weighted-character check may reject some valid edge-case Unicode or URL posts. The trusted publisher revalidates an edited artifact independently."
+  ],
+  "cost_drivers": [
+    "One gpt-6-sol model call, bounded by 32000 serialized input bytes and 4096 output tokens; evidence files, guide length and requested count drive input and output."
+  ],
+  "effects": [
+    "Writes one versioned JSON draft file in social/x-drafts. Does not contact X, upload media, schedule, approve or publish."
+  ],
+  "cases": [
+    {
+      "id": "one_current_post",
+      "description": "One supplied current implementation fact yields one standalone, supported X draft without a content plan.",
+      "inputs": {
+        "project_id": "a0000000-0000-0000-0000-000000000061",
+        "direction": "Explain that the new project workflow returns an exact draft through MCP for review."
+      },
+      "expected_status": "succeeded",
+      "expect": {"contains": ["tin.social.x_draft.v1", "\"id\": \"p1\"", "\"attachments\": []"], "excludes": ["published", "approved"]}
+    },
+    {
+      "id": "small_distinct_batch",
+      "description": "A request for three posts returns distinct self-contained angles from current notes, or fewer drafts with a visible evidence-gap explanation.",
+      "inputs": {
+        "project_id": "a0000000-0000-0000-0000-000000000062",
+        "direction": "Draft a few X posts about the exact review and file-edit behavior.",
+        "post_count": 3,
+        "notes": "The workflow returns a JSON draft file through MCP. Editing the post text changes the file revision. Publishing uses an exact preview of the current file revision."
+      },
+      "expected_status": "succeeded",
+      "expect": {"contains": ["tin.social.x_draft.v1", "\"readiness\""], "excludes": ["published on X"]}
+    }
+  ],
+  "rubric": [
+    {"id": "useful", "question": "Does each post say something specific and useful in the account's voice rather than generic launch copy?"},
+    {"id": "grounded", "question": "Are present-tense claims supported by current cited source statements, with missing evidence visible?"},
+    {"id": "distinct", "question": "For a batch, are posts materially different and independently understandable?"},
+    {"id": "editability", "question": "Are exact post text, support, notes and media references separate so human edits and exact publication preview are safe?"}
+  ]
+}

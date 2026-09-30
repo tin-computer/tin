@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -129,6 +129,7 @@ from tin_lite.workflow_inputs import (
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
 from tin_lite.writing_style import style_capture_preparation
+from tin_lite.x_posts import XPosts
 
 MCP_SCOPE = "openid"
 logger = logging.getLogger(__name__)
@@ -2617,6 +2618,8 @@ def create_mcp_app(
         if run is None:
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="get_run")
+        from tin_lite.x_draft import facts as x_draft_facts
+
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
         selected_sources = await selected_run_sources(
@@ -2627,6 +2630,11 @@ def create_mcp_app(
             "project_id": str(run.project_id),
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
+            **(
+                {"x_draft": await x_draft_facts(runtime().database, run)}
+                if run.executor == "social.x_draft"
+                else {}
+            ),
             "status": run.status.value,
             "status_label": STATUS_LABELS.get(run.status.value, run.status.value),
             "artifact_path": run.artifact_path,
@@ -3883,6 +3891,121 @@ def create_mcp_app(
             }
             for run in runs
         ]
+
+    def x_draft_handoff(project_id: UUID, path: str) -> dict[str, str]:
+        query = urlencode({"project": str(project_id), "x_draft": path})
+        url = f"{dashboard_url(settings)}/activity?{query}"
+        return {"upload_url": url, "open_command": _open_command(url)}
+
+    @server.tool()
+    async def read_x_drafts(project_id: str, path: str) -> dict[str, Any]:
+        """Read a bounded X draft in project Files and get its browser editor/upload link.
+
+        The returned JSON has separate publishable text, facts, notes and attachments.
+        Reading or editing a draft never publishes to X.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="read_x_drafts")
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).read(project, token.subject, path)
+        except ValidationError as exc:
+            raise ToolError("X draft is invalid or unavailable") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def save_x_draft(
+        project_id: str,
+        path: str,
+        expected_revision: str,
+        request_id: str,
+        draft: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Save an edited X draft as an ordinary project file at expected_revision.
+
+        Preserve stable post IDs and separate notes from publishable text. Reuse the
+        same request_id only when retrying identical edits after an uncertain response.
+        This does not approve or publish any post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        request = _mcp_uuid(request_id, field="request_id")
+        await require_project(project, token, tool_name="save_x_draft")
+        _validate_revision(expected_revision)
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).save(
+                project,
+                token.subject,
+                path=path,
+                expected_revision=expected_revision,
+                request_id=request,
+                draft=draft,
+                client_id=token.client_id,
+            )
+        except ValidationError as exc:
+            raise ToolError("X draft has an invalid field") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def preview_x_post(project_id: str, path: str, post_id: str) -> dict[str, Any]:
+        """Prepare one exact X post preview; do not treat its token as consent to publish.
+
+        Show the person the destination account, exact text and media. Any later edit
+        requires a fresh preview. Publishing is a separate explicit confirmation.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preview_x_post")
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).preview(
+                project, token.subject, path=path, post_id=post_id
+            )
+        except ValidationError as exc:
+            raise ToolError("X draft has an invalid field") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def publish_x_post(
+        project_id: str,
+        preview_token: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Publish only after the person explicitly confirms this exact X preview.
+
+        The call starts durable delivery; return its run ID immediately and check
+        list_project_runs for progress. Retry an uncertain call only with the SAME
+        preview_token and request_id. Never silently send another post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="publish_x_post")
+        assert token.subject is not None
+        return await XPosts(runtime(), settings).publish(
+            project,
+            token.subject,
+            preview_token=_mcp_uuid(preview_token, field="preview_token"),
+            request_id=_mcp_uuid(request_id, field="request_id"),
+            client_id=token.client_id,
+        )
+
+    @server.tool()
+    async def prepare_x_media_upload(project_id: str, path: str) -> dict[str, str]:
+        """Give the member the secure X draft editor to upload local images or video.
+
+        MCP accepts project file paths in draft attachments but never raw media bytes,
+        local device paths or arbitrary external URLs.
+        """
+        from tin_lite.project_files import safe_project_file_path
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="prepare_x_media_upload")
+        if not safe_project_file_path(path) or not path.endswith(".json"):
+            raise ToolError("Choose an X draft JSON path in this project")
+        return x_draft_handoff(project, path)
 
     @server.tool()
     async def list_project_files(project_id: str, revision: str | None = None) -> dict[str, Any]:

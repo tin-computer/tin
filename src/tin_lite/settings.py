@@ -176,6 +176,10 @@ class Settings(BaseSettings):
     github_oauth_client_secret: SecretStr | None = Field(
         default=None, alias="TIN_LITE_GITHUB_OAUTH_CLIENT_SECRET"
     )
+    x_oauth_client_id: str | None = Field(default=None, alias="TIN_LITE_X_OAUTH_CLIENT_ID")
+    x_oauth_client_secret: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_X_OAUTH_CLIENT_SECRET"
+    )
     # Bearer secret the tin repository's contributor gate sends; unset disables the check.
     contributor_check_token: SecretStr | None = Field(
         default=None, alias="TIN_LITE_CONTRIBUTOR_CHECK_TOKEN"
@@ -364,6 +368,17 @@ class Settings(BaseSettings):
                 raise ValueError(
                     "TIN_LITE_INTEGRATION_CREDENTIAL_KEY is required when the GitHub OAuth App "
                     "is configured"
+                )
+        x_oauth_values = (self.x_oauth_client_id, self.x_oauth_client_secret)
+        if any(value is not None for value in x_oauth_values):
+            if not all(value is not None for value in x_oauth_values):
+                raise ValueError(
+                    "TIN_LITE_X_OAUTH_CLIENT_ID and TIN_LITE_X_OAUTH_CLIENT_SECRET "
+                    "must be configured together"
+                )
+            if self.integration_credential_key is None:
+                raise ValueError(
+                    "TIN_LITE_INTEGRATION_CREDENTIAL_KEY is required when X OAuth is configured"
                 )
         if self.integration_credential_key is None and self.google_oauth_client_id is not None:
             raise ValueError(

@@ -70,7 +70,7 @@ class StaleProjectRevisionError(ProjectFileError):
 class ProjectFileMutation:
     operation: str
     path: str
-    content: str | None = None
+    content: str | bytes | None = None
     new_path: str | None = None
 
 
@@ -186,6 +186,73 @@ class ProjectFileService:
     def __init__(self, *, database: Database, storage: CodeStorage) -> None:
         self._database = database
         self._storage = storage
+
+    async def upload(
+        self,
+        *,
+        project: Project,
+        actor_clerk_user_id: str,
+        client_id: str | None,
+        request_id: UUID,
+        expected_revision: str,
+        path: str,
+        content: bytes,
+        media_type: str,
+    ) -> dict:
+        from tin_lite.project_media import validate_media
+
+        metadata = validate_media(path, content, media_type)
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
+            raise ValueError("expected_revision must be a commit SHA")
+        fingerprint = project_file_request_fingerprint(
+            operation="commit",
+            expected_revision=expected_revision,
+            payload={"path": path, "sha256": hashlib.sha256(content).hexdigest(), **metadata},
+        )
+        async with self._database.project_file_change_lock(
+            project_id=project.id, request_id=request_id
+        ):
+            existing = await self._database.get_project_file_change(
+                project_id=project.id, request_id=request_id
+            )
+            replay = self._replay(existing, fingerprint=fingerprint)
+            if replay is not None:
+                return {"path": path, "revision": replay.revision, **metadata}
+            await self._database.start_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                operation="commit",
+                request_fingerprint=fingerprint,
+                expected_head_sha=expected_revision,
+            )
+            try:
+                revision, changed = await self._storage.commit_project_changes(
+                    repo_id=project.state_repo_id,
+                    branch=project.canonical_branch,
+                    expected_head_sha=expected_revision,
+                    request_id=str(request_id),
+                    message=f"Upload {path}",
+                    changes=(ProjectFileMutation("upsert", path, content),),
+                )
+            except RuntimeError as exc:
+                if "changed" in str(exc):
+                    raise StaleProjectRevisionError(
+                        "Files changed; refresh and try again."
+                    ) from exc
+                raise
+            await self._database.complete_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                commit_sha=revision,
+                changed_paths=list(changed),
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                message=f"Uploaded {path}",
+                operation="commit",
+            )
+            return {"path": path, "revision": revision, **metadata}
 
     async def commit(
         self,

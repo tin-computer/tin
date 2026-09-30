@@ -112,3 +112,19 @@ async def test_database_cannot_repurpose_a_published_builtin_id(publication_db):
     assert (
         await publication_db.get_workflow(values["workflow_id"])
     ).title == "Updated same workflow"
+
+
+async def test_x_parent_pins_native_and_package_children_together():
+    from tin_lite import x_draft, x_style
+    from tin_lite.workflow_packages import decode_workflow_source
+
+    db, storage = catalog_database(), RegistrySnapshots()
+    await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
+    parent = db.rows[x_draft.WORKFLOW_ID]
+    files = storage.revisions[parent.current_commit_sha]
+    assert json.loads(files[f"workflows/{x_style.KEY}.json"])["executor"] == x_style.KEY
+    path = "workflow_packages/social.x_compose/workflow.json"
+    source = decode_workflow_source(files[path], definition_path=path)
+    assert source.definition["key"] == "social.x_compose"
+    assert all(path in files for path in source.resource_paths.values())
+    assert b"async def run(" in files["workflow_packages/social.x_compose/main.py"]
