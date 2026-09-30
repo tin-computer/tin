@@ -313,6 +313,16 @@ def report_lines(
         lines.extend([f"### {number}. {title}", ""])
         items = [item for item in findings if item["area"] == area]
         if area == "authority":
+            if not analysis["view"].angles:
+                # v10 as released: authority was not measured at all.
+                lines.extend(
+                    [
+                        "Not measured in this version: backlinks and brand mentions on other "
+                        "sites are out of scope.",
+                        "",
+                    ]
+                )
+                continue
             lines.extend(
                 [
                     "Backlinks and brand mentions on other sites are not measured in this "
@@ -515,7 +525,7 @@ def report_lines(
             ]
         )
 
-    speed = speed_rows(analysis["pagespeed"])
+    speed = speed_rows(analysis["pagespeed"], angles=analysis["view"].angles)
     if speed:
         lines.extend(
             ["## Speed", "", "| Page | Data | LCP | INP | CLS |", "| --- | --- | --- | --- | --- |"]
@@ -526,7 +536,7 @@ def report_lines(
                 continue
             values, grades = row["values"], row["grades"]
             lines.append(
-                f"| {md(_path(row['url'], host))} | {row['source_label']} | "
+                f"| {md(_path(row['url'], host))} | {row.get('source_label', row['source'])} | "
                 + _grade_cell(grades, "lcp_ms", f"{(values['lcp_ms'] or 0) / 1000:.1f} s")
                 + " | "
                 + _grade_cell(grades, "inp_ms", f"{values['inp_ms'] or 0:.0f} ms")
