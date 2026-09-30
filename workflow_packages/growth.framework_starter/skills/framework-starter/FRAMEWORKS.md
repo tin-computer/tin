@@ -49,19 +49,40 @@ LANGUAGES = ("typescript", "python")
 
 FILES = {
     "nextjs": (
-        "package.json", "tsconfig.json", ".env.example", ".gitignore", "README.md",
-        "app/layout.tsx", "app/page.tsx", "app/api/demo/route.ts",
+        "package.json",
+        "tsconfig.json",
+        ".env.example",
+        ".gitignore",
+        "README.md",
+        "app/layout.tsx",
+        "app/page.tsx",
+        "app/api/demo/route.ts",
     ),
     "fastapi": (
-        "pyproject.toml", ".env.example", ".gitignore", "README.md", "main.py",
+        "pyproject.toml",
+        ".env.example",
+        ".gitignore",
+        "README.md",
+        "main.py",
         "static/index.html",
     ),
     "vite-react": (
-        "package.json", "tsconfig.json", "vite.config.ts", "index.html", ".env.example",
-        ".gitignore", "README.md", "src/main.tsx", "src/App.tsx",
+        "package.json",
+        "tsconfig.json",
+        "vite.config.ts",
+        "index.html",
+        ".env.example",
+        ".gitignore",
+        "README.md",
+        "src/main.tsx",
+        "src/App.tsx",
     ),
     "express": (
-        "package.json", "tsconfig.json", ".env.example", ".gitignore", "README.md",
+        "package.json",
+        "tsconfig.json",
+        ".env.example",
+        ".gitignore",
+        "README.md",
         "src/index.ts",
     ),
 }
@@ -83,7 +104,11 @@ MAX_FILES = 10
 
 def _no_change(reason):
     return {
-        "outcome": "no_change", "framework": None, "path": None, "files": (), "run": None,
+        "outcome": "no_change",
+        "framework": None,
+        "path": None,
+        "files": (),
+        "run": None,
         "reason": reason,
     }
 
@@ -100,7 +125,12 @@ def _examples_dir(value):
 
 
 def choose_starter(facts, earlier=(), requested="", max_files=MAX_FILES):
-    if not isinstance(facts, dict) or set(facts) != {"surface", "auth", "languages", "examples_dir"}:
+    if not isinstance(facts, dict) or set(facts) != {
+        "surface",
+        "auth",
+        "languages",
+        "examples_dir",
+    }:
         raise ValueError("facts must name surface, auth, languages and examples_dir")
     surface, auth, languages = facts["surface"], facts["auth"], facts["languages"]
     if surface not in SURFACES or auth not in AUTH:
@@ -133,7 +163,9 @@ def choose_starter(facts, earlier=(), requested="", max_files=MAX_FILES):
     if surface == "sdk":
         if not languages:
             raise ValueError("an sdk surface needs the language it is published in")
-        ordered = [fw for lang in LANGUAGES if lang in languages for fw in LANGUAGE_FRAMEWORKS[lang]]
+        ordered = [
+            fw for lang in LANGUAGES if lang in languages for fw in LANGUAGE_FRAMEWORKS[lang]
+        ]
     else:
         preferred = {fw for lang in languages for fw in LANGUAGE_FRAMEWORKS[lang]}
         options = SURFACE_FRAMEWORKS[surface]
