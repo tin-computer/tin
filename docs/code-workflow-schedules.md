@@ -32,7 +32,10 @@ mode, or approval step. Private Codex procedures remain manual. Existing definit
    }
    ```
 
-5. `start_project_workflow` runs the saved configuration now. The calendar continues independently
+5. Saving a schedule over MCP also runs the configuration once right away: `create_project_workflow`
+   returns `first_run` with that run's id, or why it could not start (the schedule is saved either
+   way), billed like any run. The dashboard keeps its choice between "Set up" and "Set up and run
+   now". `start_project_workflow` runs a saved configuration again. The calendar continues independently
    of the coding agent or browser. My System shows next run, latest result, editable inputs,
    connection/setup issues and the estimate. Code forms preserve multiple weekdays and existing
    start/end bounds; date bounds are authored through MCP/API and displayed in the editor.
