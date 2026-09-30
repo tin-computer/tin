@@ -44,10 +44,13 @@ def redact(value: Any) -> Any:
 def clip(value: Any, *, cap: int = PAYLOAD_CAP) -> tuple[Any, dict[str, Any]]:
     """Return the value JSON-safe and under `cap` bytes, plus size facts for the event."""
     text = json.dumps(redact(value), default=str, ensure_ascii=False)
-    size = len(text.encode("utf-8"))
+    # A lone surrogate (only possible inside a JSON string) cannot be UTF-8 encoded; it
+    # becomes "?" so a malformed argument or result never breaks the call it describes.
+    encoded = text.encode("utf-8", errors="replace")
+    size = len(encoded)
     if size <= cap:
-        return json.loads(text), {"bytes": size, "truncated": False}
-    return text.encode("utf-8")[:cap].decode("utf-8", errors="ignore"), {
+        return json.loads(encoded.decode("utf-8")), {"bytes": size, "truncated": False}
+    return encoded[:cap].decode("utf-8", errors="ignore"), {
         "bytes": size,
         "truncated": True,
     }

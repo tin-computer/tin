@@ -55,6 +55,16 @@ def refused(response: dict) -> bool:
 MAX_PAGESPEED_BYTES = 12_000_000
 
 
+def body_text(response: dict, *, charset: str | None = None) -> str:
+    """An observed body as text without NUL, which Postgres text and jsonb refuse."""
+    body = response["body"]
+    try:
+        text = body.decode(charset or response.get("charset") or "utf-8", "replace")
+    except LookupError:  # an unknown charset label from the server
+        text = body.decode("utf-8", "replace")
+    return text.replace("\x00", "")
+
+
 class SiteReader:
     """One bounded read session: shared client, one DNS answer per host."""
 
@@ -193,7 +203,7 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
     if response["status"] != "observed":
         robots["status"] = "unreachable"
     elif response["status_code"] == 200:
-        text = response["body"].decode("utf-8", "replace")
+        text = body_text(response, charset="utf-8")
         robots.update(status="observed", **parse_robots(text))
         robots["truncated"] = response["truncated"]
     elif refused(response):
@@ -235,7 +245,7 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
                 entry["status"] = "too_large_or_invalid"
             else:
                 parsed = parse_sitemap(
-                    body.decode("utf-8", "replace"),
+                    body.decode("utf-8", "replace").replace("\x00", ""),
                     max_urls=max(0, policy["max_sitemap_urls"] - len(urls)),
                 )
                 entry.update(status="observed", kind=parsed["kind"], entries=parsed["total"])
