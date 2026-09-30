@@ -25,6 +25,10 @@ For a self-host, configure `TIN_LITE_X_OAUTH_CLIENT_ID` and
 state and PKCE verifier. Configure OAuth 2.0 with the read, write, media and offline
 scopes required by the features you enable.
 
+Deploy the web service and worker together, apply `051_x_connection.sql`, and sync the
+catalog so the connection tables and workflow definitions recognize X. The migration
+extends the existing integration provider constraints; it adds no tables.
+
 The app operator pays X API credits separately from Tin's model costs. X publication
 has no Tin model charge in this first release; this does not make the X API free.
 Sampling is bounded to three timeline requests and 150 returned posts per capture.

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -11,7 +13,12 @@ from temporalio.exceptions import ApplicationError
 from test_procedure_publication import HistoryStorage
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite.integrations import IntegrationAuthorizationError, IntegrationDeliveryUnknownError
+from tin_lite.integrations import (
+    IntegrationAuthorizationError,
+    IntegrationDeliveryUnknownError,
+    IntegrationUpstreamError,
+)
+from tin_lite.project_media import validate_media
 from tin_lite.x_posts import KEY, save_effect
 from tin_lite.x_publish_activities import XPublishActivities
 
@@ -24,15 +31,21 @@ class SyntheticX:
         self.calls = 0
         self.uncertain = False
         self.connected = True
+        self.media_calls = []
+        self.fail_processing = False
+        self.status_error_once = False
+        self.uncertain_append = False
+        self.media_ids = None
 
     async def connection(self, project_id, capability):
-        assert project_id and capability == "x.posts.publish"
+        assert project_id and capability in {"x.posts.publish", "x.media.upload"}
         if not self.connected:
             raise IntegrationAuthorizationError("X disconnected")
         return SimpleNamespace(id=self.id, external_account_id="12345")
 
     async def create_post(self, connection, *, text, media_ids):
-        assert connection.id == self.id and text == "Exact approved text" and media_ids is None
+        assert connection.id == self.id and text == "Exact approved text"
+        assert media_ids == self.media_ids
         self.calls += 1
         if self.uncertain:
             raise IntegrationDeliveryUnknownError("Synthetic lost response")
@@ -42,8 +55,48 @@ class SyntheticX:
             "url": "https://x.com/i/web/status/9001",
         }
 
+    async def upload_image(self, connection, *, content, media_type):
+        assert connection.id == self.id and content and media_type == "image/png"
+        self.media_calls.append("image")
+        return {"media_id": "300", "expires_after_secs": 3600}
 
-async def setup(publication_db, storage, x):
+    async def set_alt_text(self, connection, *, media_id, text):
+        assert connection.id == self.id and media_id == "300" and text == "Product screenshot"
+        self.media_calls.append("alt")
+        return {"media_id": media_id}
+
+    async def initialize_video(self, connection, *, total_bytes):
+        assert connection.id == self.id and total_bytes > 0
+        self.media_calls.append("initialize")
+        return {"media_id": "301", "expires_after_secs": 3600}
+
+    async def append_video(self, connection, *, media_id, segment_index, content):
+        assert connection.id == self.id and media_id == "301" and segment_index == 0 and content
+        self.media_calls.append("append")
+        if self.uncertain_append:
+            raise IntegrationDeliveryUnknownError("Synthetic lost append response")
+        return {"data": {"expires_at": 999999}}
+
+    async def finalize_video(self, connection, *, media_id):
+        assert connection.id == self.id and media_id == "301"
+        self.media_calls.append("finalize")
+        return {"data": {"id": media_id, "processing_info": {"state": "pending"}}}
+
+    async def media_status(self, connection, *, media_id):
+        assert connection.id == self.id and media_id == "301"
+        self.media_calls.append("status")
+        if self.status_error_once:
+            self.status_error_once = False
+            raise IntegrationUpstreamError("Synthetic temporary read failure")
+        return {
+            "data": {
+                "id": media_id,
+                "processing_info": {"state": "failed" if self.fail_processing else "succeeded"},
+            }
+        }
+
+
+async def setup(publication_db, storage, x, *, attachments=None):
     db = publication_db
     project = await db.create_project(name="X publisher", state_repo_id=storage.repo.id)
     await db.grant_project_membership(project_id=project.id, clerk_user_id=ACTOR)
@@ -65,7 +118,7 @@ async def setup(publication_db, storage, x):
         "actor": ACTOR,
         "revision": storage.repo.head,
         "text": "Exact approved text",
-        "attachments": [],
+        "attachments": attachments or [],
         "connection_id": str(x.id),
         "account_id": "12345",
         "fingerprint": "f" * 64,
@@ -88,6 +141,20 @@ async def setup(publication_db, storage, x):
         json.dumps({"project_id": str(project.id), "approval_id": str(approval_id)}),
     )
     return run_id, approval_id
+
+
+def attach_fixture(storage, *, kind: str):
+    filename = "image.png" if kind == "image" else "demo.mp4"
+    path = f"media/{filename}"
+    raw = (Path(__file__).parent / "fixtures" / "x_media" / filename).read_bytes()
+    storage.repo.edit({path: raw}, message="Synthetic approved attachment")
+    return {
+        "type": kind,
+        "path": path,
+        "alt_text": "Product screenshot" if kind == "image" else "",
+        **validate_media(path, raw),
+        "sha256": hashlib.sha256(raw).hexdigest(),
+    }
 
 
 @pytest.mark.asyncio
@@ -174,3 +241,76 @@ async def test_revoked_project_membership_stops_post_before_dispatch(publication
     with pytest.raises(ApplicationError, match="access was removed"):
         await activities.execute(str(run_id))
     assert x.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_image_upload_alt_text_and_post_use_approved_media(publication_db):
+    storage, x = HistoryStorage(), SyntheticX()
+    attachment = attach_fixture(storage, kind="image")
+    x.media_ids = ["300"]
+    run_id, approval_id = await setup(publication_db, storage, x, attachments=[attachment])
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    await activities.execute(str(run_id))
+    assert x.media_calls == ["image", "alt"] and x.calls == 1
+    for stage in ("upload", "alt"):
+        receipt = await publication_db.get_effect(f"x:media:{approval_id}:0:1:{stage}")
+        assert receipt.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_video_upload_resumes_after_status_read_failure(publication_db):
+    storage, x = HistoryStorage(), SyntheticX()
+    attachment = attach_fixture(storage, kind="video")
+    x.media_ids = ["301"]
+    x.status_error_once = True
+    run_id, approval_id = await setup(publication_db, storage, x, attachments=[attachment])
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    with pytest.raises(IntegrationUpstreamError, match="temporary read failure"):
+        await activities.execute(str(run_id))
+    assert x.calls == 0
+    assert x.media_calls == ["initialize", "append", "finalize", "status"]
+    await activities.execute(str(run_id))
+    assert x.media_calls == ["initialize", "append", "finalize", "status", "status"]
+    assert x.calls == 1
+    for stage in ("initialize", "append:0", "finalize"):
+        assert (
+            await publication_db.get_effect(f"x:media:{approval_id}:0:1:{stage}")
+        ).status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_failed_video_processing_never_posts(publication_db):
+    storage, x = HistoryStorage(), SyntheticX()
+    attachment = attach_fixture(storage, kind="video")
+    x.fail_processing = True
+    run_id, approval_id = await setup(publication_db, storage, x, attachments=[attachment])
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    with pytest.raises(ApplicationError, match="could not process"):
+        await activities.execute(str(run_id))
+    assert x.calls == 0
+    assert await publication_db.get_effect(f"x:post:{approval_id}") is None
+
+
+@pytest.mark.asyncio
+async def test_uncertain_video_append_is_never_repeated(publication_db):
+    storage, x = HistoryStorage(), SyntheticX()
+    attachment = attach_fixture(storage, kind="video")
+    x.uncertain_append = True
+    run_id, approval_id = await setup(publication_db, storage, x, attachments=[attachment])
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    with pytest.raises(IntegrationDeliveryUnknownError):
+        await activities.execute(str(run_id))
+    assert (
+        await publication_db.get_effect(f"x:media:{approval_id}:0:1:append:0")
+    ).status == "started"
+    with pytest.raises(ApplicationError, match="uncertain outcome"):
+        await activities.execute(str(run_id))
+    assert x.media_calls.count("append") == 1 and x.calls == 0
