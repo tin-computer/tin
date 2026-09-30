@@ -445,6 +445,7 @@ v10 is not deployed yet, so these additions keep its policy name and findings sc
 | `https.http_not_redirected` | The plain-HTTP homepage does not move to HTTPS |
 | `indexation.not_indexed_by_google`, `indexation.google_canonical_differs` | URL Inspection results for key pages |
 | `onpage.title_length`, `onpage.description_length`, `onpage.viewport_missing`, `onpage.image_alt_missing`, `onpage.open_graph_missing` | Page basics |
+| `onpage.accessible_name_missing`, `onpage.form_label_missing` | Accessibility: links or buttons with no text, aria-label, title or image alt, and form fields with no label. These are the checks site health (`site.health_improve`) made on one page, now on every page the audit reads |
 | `schema.invalid` | JSON-LD that does not parse or lacks required fields; missing recommended fields alone are not reported |
 | `aeo.llms_txt_missing` | Low severity; no major assistant has confirmed it reads llms.txt |
 | `aeo.dates_missing`, `trust.author_missing` | Articles without a date or author |

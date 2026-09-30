@@ -357,14 +357,56 @@ class _FactsParser(HTMLParser):
         self._lead_before_h1: str | None = None
         self._script_text: list[str] = []
         self._script_chars = 0
+        # Accessible names, as site health used to check them: a link or button needs text,
+        # an aria-label, aria-labelledby, a title, or an image with alt text inside it. A form
+        # field needs a <label> (wrapping it or naming its id), an aria-label or a title.
+        self.unnamed_controls = 0
+        self._controls: list[dict] = []
+        self._label_depth = 0
+        self._label_for: set[str] = set()
+        self._fields: list[str | None] = []
 
     def _scan_analytics(self, text: str) -> None:
         for name, pattern in ANALYTICS_SIGNATURES:
             if name not in self.analytics and pattern.search(text):
                 self.analytics.add(name)
 
+    def _accessibility_start(self, tag, values):
+        named = any(
+            values.get(key, "").strip() for key in ("aria-label", "aria-labelledby", "title")
+        )
+        if (tag == "a" and values.get("href")) or tag == "button":
+            if values.get("aria-hidden", "").lower() != "true":
+                self._controls.append({"tag": tag, "named": named})
+        elif tag == "img" and self._controls and values.get("alt", "").strip():
+            self._controls[-1]["named"] = True
+        elif tag == "label":
+            self._label_depth += 1
+            if values.get("for", "").strip():
+                self._label_for.add(values["for"].strip())
+        elif tag in {"input", "select", "textarea"}:
+            kind = values.get("type", "text").strip().lower()
+            if tag == "input" and kind in {"hidden", "submit", "button", "reset", "image"}:
+                return
+            if named or self._label_depth:
+                return
+            # Resolved at the end, since <label for> may come after the field.
+            self._fields.append(values.get("id", "").strip() or None)
+
+    def _accessibility_end(self, tag):
+        if tag == "label" and self._label_depth:
+            self._label_depth -= 1
+        elif tag in {"a", "button"} and self._controls and self._controls[-1]["tag"] == tag:
+            if not self._controls.pop()["named"]:
+                self.unnamed_controls += 1
+
+    @property
+    def unlabeled_fields(self) -> int:
+        return sum(1 for field in self._fields if field is None or field not in self._label_for)
+
     def handle_starttag(self, tag, attrs):
         values = {name.lower(): (value or "") for name, value in attrs}
+        self._accessibility_start(tag, values)
         if tag in _HIDDEN_TEXT:
             self._hidden += 1
         if tag == "html" and not self.seen_html:
@@ -447,6 +489,7 @@ class _FactsParser(HTMLParser):
             self._stack.append(tag)
 
     def handle_endtag(self, tag):
+        self._accessibility_end(tag)
         if tag in self._stack:
             while self._stack:
                 if self._stack.pop() == tag:
@@ -496,6 +539,8 @@ class _FactsParser(HTMLParser):
                 self._script_text.append(data[:20_000])
                 self._script_chars += min(len(data), 20_000)
         elif not self._hidden:
+            if self._controls and data.strip():
+                self._controls[-1]["named"] = True
             self.words += len(data.split())
             if self._heading is not None:
                 self._heading.append(data)
@@ -686,6 +731,8 @@ def html_facts(body: bytes, *, url: str, charset: str | None, truncated: bool) -
         "schema_invalid_blocks": schema["invalid_blocks"],
         "analytics": sorted(parser.analytics),
         "not_found_text": bool(NOT_FOUND_TEXT.search(heading_text)),
+        "unnamed_controls": parser.unnamed_controls,
+        "unlabeled_fields": parser.unlabeled_fields,
     }
 
 

@@ -1488,6 +1488,61 @@ def _page_basics_findings(view: SiteView, host: str) -> list[dict]:
                 evidence_refs=["site.pages"],
             )
         )
+    unnamed = [f for f in content if f.get("unnamed_controls")]
+    if unnamed:
+        total = sum(f["unnamed_controls"] for f in unnamed)
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="onpage.accessible_name_missing",
+                category="site",
+                area="on_page",
+                issue="Links or buttons have no accessible name",
+                impact="low",
+                evidence=[
+                    f"{count(total, 'link or button', 'links or buttons')} on "
+                    f"{count(len(unnamed), 'page')} have no text, aria-label, title or image "
+                    "alt, so screen readers and crawlers can't tell what they do.",
+                    *(
+                        f"{_path(f['url'])}: {count(f['unnamed_controls'], 'control')}"
+                        for f in unnamed[:6]
+                    ),
+                ],
+                fix="Give each icon-only link or button an aria-label that says what it does.",
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[f["url"] for f in unnamed],
+                next_action="technical_fix",
+                evidence_refs=["site.pages"],
+            )
+        )
+    unlabeled = [f for f in content if f.get("unlabeled_fields")]
+    if unlabeled:
+        total = sum(f["unlabeled_fields"] for f in unlabeled)
+        findings.append(
+            site_finding(
+                host=host,
+                check_id="onpage.form_label_missing",
+                category="site",
+                area="on_page",
+                issue="Form fields have no label",
+                impact="low",
+                evidence=[
+                    f"{count(total, 'form field')} on {count(len(unlabeled), 'page')} have no "
+                    "<label>, aria-label or title; a placeholder alone disappears as people type.",
+                    *(
+                        f"{_path(f['url'])}: {count(f['unlabeled_fields'], 'field')}"
+                        for f in unlabeled[:6]
+                    ),
+                ],
+                fix="Connect each field to a <label>, or give it an aria-label.",
+                priority="quick_win",
+                evidence_kind="page_fetch",
+                urls=[f["url"] for f in unlabeled],
+                next_action="technical_fix",
+                evidence_refs=["site.pages"],
+            )
+        )
     no_og = [
         f
         for f in pages

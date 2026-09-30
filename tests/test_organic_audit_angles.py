@@ -254,6 +254,25 @@ def test_page_basics_structured_data_and_article_signals():
     assert found(findings, "trust.about_contact_missing")["area"] == "authority"
 
 
+def test_unnamed_controls_and_unlabeled_fields_are_accessibility_findings():
+    body = (
+        '<a href="/x"></a><a href="/y">Pricing</a><button aria-label="Close"></button>'
+        '<button><svg></svg></button><input id="q"><label>Email <input></label>'
+        '<input type="hidden"><input id="name"><label for="name">Name</label>' + CONTENT
+    )
+    page = facts("/signup", html_page(title="Sign up for Example", body=body))
+    assert (page["unnamed_controls"], page["unlabeled_fields"]) == (2, 1)
+    findings = site_findings(view([page]), home=f"{BASE}/", pagespeed={})
+    names = found(findings, "onpage.accessible_name_missing")
+    assert names["urls"] == [page["url"]] and "2 links or buttons" in names["evidence"][0]
+    labels = found(findings, "onpage.form_label_missing")
+    assert labels["next_action"] == "technical_fix" and "1 form field" in labels["evidence"][0]
+    clean = facts("/", html_page(title="Example planning tool", body=CONTENT))
+    assert not {"onpage.accessible_name_missing", "onpage.form_label_missing"} & ids(
+        site_findings(view([clean]), home=f"{BASE}/", pagespeed={})
+    )
+
+
 def test_recommended_schema_fields_alone_are_not_an_error():
     page = facts("/", html_page(json_ld='{"@type":"Organization","name":"Example"}'))
     assert "schema.invalid" not in ids(site_findings(view([page]), home=f"{BASE}/", pagespeed={}))
