@@ -70,7 +70,7 @@ V9_AUDIT_POLICY = {
     "check_applicability": True,
     "respect_sitemap": True,
 }
-AUDIT_POLICY = {
+V10_AUDIT_POLICY = {
     **V9_AUDIT_POLICY,
     "version": "organic-audit-v10",
     # The ceiling for an operator-configured page cap; each run pins its own cap in scope.
@@ -104,6 +104,35 @@ AUDIT_POLICY = {
     # eight. The cost ceiling is computed from this bound: 8 x 3 answers, like 12 x 2 before.
     "max_questions": 8,
 }
+# v11 keeps v10 and adds the audit angles. v10 is deployed, so none of this may change a run
+# pinned to it: every addition below is read from the pinned policy, never assumed.
+AUDIT_POLICY = {
+    **V10_AUDIT_POLICY,
+    "version": "organic-audit-v11",
+    # New site reads and checks: llms.txt, the plain-HTTP homepage, a made-up URL, redirect
+    # hops, crawler access, page basics, structured data, answer-engine and trust signals,
+    # accessibility and Lighthouse categories.
+    "site_angles": True,
+    # A validated panel keeps its accepted questions when the validator rejects a few, as
+    # long as this many remain; fewer means a new draft.
+    "min_panel_questions": 3,
+    # Site and search evidence beyond the page facts. Translations of one page do not
+    # compete, and a search needs this many impressions before two pages count as competing.
+    "cannibalization_min_impressions": 10,
+    # A page that had at least this many clicks in the previous 28 days and lost this share.
+    "decay_min_previous_clicks": 10,
+    "decay_drop_share": 0.4,
+    "max_redirect_hops": 5,
+    # Google's URL Inspection allows 2,000 inspections a day per property.
+    "url_inspection_max_urls": 10,
+    "access_check_pages": 2,
+    # One text-model review of the top content pages' structure, within the ceiling.
+    "content_review_pages": 5,
+    # AI grading follows the visibility audit's ladder: found, mentioned, evaluated,
+    # shortlisted, picked first. Each question also gets one answer without web search.
+    "answer_ladder": True,
+    "unsearched_answers": True,
+}
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
 # requested or graded, so an explicit answer completion may ignore them.
@@ -127,13 +156,29 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "low_ctr_min_impressions",
         "pagespeed_max_urls",
         "finding_format",
+        "site_angles",
+        "cannibalization_min_impressions",
+        "decay_min_previous_clicks",
+        "decay_drop_share",
+        "max_redirect_hops",
+        "url_inspection_max_urls",
+        "access_check_pages",
+        "content_review_pages",
     }
 )
 
 # How a NEW question panel is drafted. An existing panel records its own answer count, so an
 # explicit answer completion of an older run may ignore these too.
 PANEL_PREPARATION_POLICY_KEYS = frozenset(
-    {"reuse_questions", "repetitions", "max_panel_jobs", "max_questions"}
+    {
+        "reuse_questions",
+        "repetitions",
+        "max_panel_jobs",
+        "max_questions",
+        "answer_ladder",
+        "unsearched_answers",
+        "min_panel_questions",
+    }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
 
@@ -150,7 +195,9 @@ def question_results(panel: dict, observations: list[dict]) -> list[dict]:
         scored = [
             row
             for row in observations
-            if row.get("question_index") == index and row.get("status") == "completed"
+            if row.get("question_index") == index
+            and row.get("status") == "completed"
+            and row.get("mode") != "memory"
         ]
         rows.append(
             {
@@ -175,6 +222,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -191,6 +239,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -221,12 +270,17 @@ AUDIT_GAP_REASONS = {
     "panel_review_rejected": (
         "The proposed buyer questions were not supported by the saved product research."
     ),
+    "panel_review_invalid": "The question review named a question the panel does not have.",
+    "panel_questions_too_few": (
+        "Too few proposed buyer questions passed review to measure AI visibility."
+    ),
     "evidence_too_large": "The answer and its sources exceeded the saved-evidence size limit.",
     "response_invalid": "The response did not match the expected structure.",
     "judgment_invalid": "The grading response did not match the required structure.",
     "mention_quote_invalid": "The mention grade lacked an exact quote naming the target.",
     "shortlist_quote_invalid": "The recommendation grade lacked an exact quote naming the target.",
     "first_choice_quote_invalid": "The first-choice grade lacked an exact quote naming the target.",
+    "evaluation_quote_invalid": "The evaluation grade lacked an exact quote naming the target.",
     "judgment_inconsistent": "The mention and recommendation grades contradicted each other.",
     "invalid_answer_judgment": "The AI grade could not be verified against the saved answer.",
     "provider_result_unavailable": "The provider request outcome could not be confirmed.",
@@ -634,7 +688,11 @@ def content_review_findings(
         return []
     groups: dict[str, list[dict]] = {}
     for index, question in enumerate(ai["panel"]["questions"]):
-        answers = [row for row in ai["observations"] if row.get("question_index") == index]
+        answers = [
+            row
+            for row in ai["observations"]
+            if row.get("question_index") == index and row.get("mode") != "memory"
+        ]
         if len(answers) != panel_repetitions(ai["panel"]) or any(
             row.get("status") != "completed" for row in answers
         ):
@@ -716,7 +774,53 @@ def content_review_findings(
                 fix=findings[-1]["suggested_remedy"],
                 priority="long_term",
             )
+    findings.extend(_cited_instead_findings(ai, host, policy_version=policy_version))
     return findings
+
+
+def _cited_instead_findings(ai: dict, host: str, *, policy_version: str) -> list[dict]:
+    """The sites AI answers cite when they do not cite yours: where to earn a mention."""
+    domains = ai.get("cited_domains") or []
+    ladder = ai.get("ladder") or {}
+    if not domains or not audit_policy(policy_version).get("finding_format"):
+        return []
+    from tin_lite.organic_audit_format import count, site_finding
+
+    scored = ladder.get("scored", 0)
+    cited = sum(
+        bool(row["classification"].get("owned_domain_cited"))
+        for row in ai.get("observations", [])
+        if row.get("status") == "completed"
+    )
+    if not scored or cited * 2 >= scored:
+        return []
+    return [
+        site_finding(
+            host=host,
+            check_id="ai.cited_instead",
+            category="content",
+            area="authority",
+            issue="AI answers to your buyer questions cite other sites",
+            impact="medium",
+            evidence=[
+                f"Your website was cited in {cited} of {count(scored, 'searched answer')}.",
+                *(
+                    f"{row['domain']}: cited in {count(row['answers'], 'answer')}"
+                    for row in domains[:8]
+                ),
+            ],
+            fix=(
+                "Earn a place on the sources assistants cite for these questions (directories, "
+                "comparison articles, community threads) and publish pages that answer the same "
+                "questions directly."
+            ),
+            priority="high_impact",
+            evidence_kind="sampled_ai_answers",
+            next_action="content_plan",
+            ownership="content_owner",
+            evidence_refs=["ai_visibility.cited_domains"],
+        )
+    ]
 
 
 def ai_report_details(ai: dict) -> list[str]:
@@ -792,6 +896,75 @@ def ai_report_details(ai: dict) -> list[str]:
         )
     if gaps:
         lines.extend(["### Missing evidence", "", *gaps, ""])
+    dropped = (panel or {}).get("dropped_questions") or []
+    if dropped:
+        lines.extend(
+            [
+                "### Questions dropped in review",
+                "",
+                "The reviewer rejected these before any answer was requested; the rest were asked.",
+                "",
+                *(
+                    "- " + " ".join(re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", text).split())
+                    for text in (f"{row['question']} ({row['reason']})" for row in dropped)
+                ),
+                "",
+            ]
+        )
+    lines.extend(ladder_report_lines(ai))
+    return lines
+
+
+def ladder_report_lines(ai: dict) -> list[str]:
+    """The recommendation ladder, answers without web search, and the sites answers cite."""
+    ladder = ai.get("ladder")
+    if not ladder:
+        return []
+    labels = {
+        "found": "Found (named, or its site read or cited)",
+        "mentioned": "Mentioned in the answer",
+        "evaluated": "Evaluated against the buyer's needs",
+        "shortlisted": "Recommended",
+        "selected_first": "Picked first",
+    }
+    lines = [
+        "### Recommendation ladder",
+        "",
+        f"Out of {ladder['scored']} scored answers with web search, the same ladder as the AI "
+        "visibility audit:",
+        "",
+        "| Stage | Answers |",
+        "| --- | ---: |",
+        *(f"| {labels[key]} | {ladder['counts'][key]} |" for key in labels),
+        "",
+        f"Main break: {ladder['bottleneck']['label']}. {ladder['bottleneck']['why']}",
+        "",
+    ]
+    memory = ai.get("memory") or {}
+    if memory.get("planned"):
+        lines.extend(
+            [
+                "### Answers without web search",
+                "",
+                f"One answer per question from the model's own knowledge: {memory['completed']} "
+                f"of {memory['planned']} scored; the target was mentioned in "
+                f"{memory['mentioned']} and recommended in {memory['shortlisted']}. This shows "
+                "what the model knows before it searches.",
+                "",
+            ]
+        )
+    domains = ai.get("cited_domains") or []
+    if domains:
+        lines.extend(
+            [
+                "### Sites AI answers cite",
+                "",
+                "The sites cited most often in the searched answers, other than yours:",
+                "",
+                *(f"- {row['domain']}: {row['answers']} answers" for row in domains),
+                "",
+            ]
+        )
     return lines
 
 
@@ -845,6 +1018,7 @@ def build_documents(
     search_console: dict | None = None,
     search_queries: dict | None = None,
     site: dict | None = None,
+    search_previous: dict | None = None,
 ) -> dict[str, bytes]:
     policy = audit_policy(policy_version)
     if policy.get("site_checks"):
@@ -860,6 +1034,7 @@ def build_documents(
             search_console=search_console,
             search_queries=search_queries,
             site=site or {},
+            search_previous=search_previous,
         )
     modern = policy != LEGACY_AUDIT_POLICY
     hosts = audit_hosts(scope)
@@ -1145,6 +1320,7 @@ def site_check_documents(
     search_console: dict | None,
     search_queries: dict | None,
     site: dict,
+    search_previous: dict | None = None,
 ) -> dict[str, bytes]:
     """organic-audit-v10: coverage-honest report with site, search and crawl findings."""
     import copy
@@ -1166,6 +1342,7 @@ def site_check_documents(
         search_console=search_console,
         search_queries=search_queries,
         site=site,
+        search_previous=search_previous,
     )
     findings = sorted([*technical, *content, *analysis["findings"]], key=order_key)
     evidence = {
@@ -1180,6 +1357,14 @@ def site_check_documents(
         "spending": spending,
         "search_console": search_console or {"status": "not_available"},
         "search_console_queries": copy.deepcopy(search_queries) or {"status": "not_available"},
+        **(
+            {
+                "search_console_previous": copy.deepcopy(search_previous)
+                or {"status": "not_available"}
+            }
+            if policy.get("decay_min_previous_clicks")
+            else {}
+        ),
         "site": {
             "status": "observed" if site else "not_collected",
             "files": copy.deepcopy(site.get("files")),
@@ -1187,6 +1372,16 @@ def site_check_documents(
             "pages": sorted(site.get("pages", []), key=lambda row: row["url"]),
             "pages_status": site.get("pages_status", "not_collected"),
             "pagespeed": analysis["pagespeed"],
+            # v11's added evidence; a v10 evidence file keeps v10's shape.
+            **(
+                {
+                    "access": site.get("access") or {"status": "not_collected"},
+                    "url_inspection": site.get("url_inspection") or {"status": "not_collected"},
+                    "content_review": site.get("content_review") or {"status": "not_collected"},
+                }
+                if policy.get("site_angles")
+                else {}
+            ),
         },
         "coverage": analysis["coverage"],
     }

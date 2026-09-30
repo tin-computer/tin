@@ -103,6 +103,8 @@ async def test_page_reads_resume_after_the_time_limit_without_rereading(monkeypa
     result = await run_audit(site=site)
     assert budgets[:2] == [120, 20]
     page_reads = [url for url in site.requests if not url.endswith((".txt", ".xml"))]
+    # The plain-HTTP homepage and a made-up missing page are probes, not page reads.
+    page_reads = [u for u in page_reads if u.startswith("https://") and "missing-page" not in u]
     assert len(page_reads) == len(set(page_reads)) == 100
     assert result.evidence["site"]["pages_status"] == "complete"
 
@@ -211,15 +213,19 @@ async def test_a_crash_between_search_console_reads_still_reads_queries_once():
     result = await run_audit()
     activities, run_id = result.activities, result.run_id
     calls = result.integrations.search_console_analytics
-    assert calls.await_count == 2
-    # Lose the query receipt as if the worker stopped between the two reads.
+    assert calls.await_count == 3
+    # Lose the query receipts as if the worker stopped between the reads.
     del result.db.effects[activities.key(run_id, "search_console_queries")]
+    del result.db.effects[activities.key(run_id, "search_console_previous")]
     activities.integrations = SimpleNamespace(
         search_console_analytics=AsyncMock(side_effect=calls.side_effect)
     )
     scope = await activities._result(run_id, "scope")
     await activities._search_console_evidence(run_id, scope)
     retried = activities.integrations.search_console_analytics
-    assert [tuple(c.kwargs["dimensions"]) for c in retried.await_args_list] == [("query", "page")]
+    assert [tuple(c.kwargs["dimensions"]) for c in retried.await_args_list] == [
+        ("query", "page"),
+        ("page",),
+    ]
     await activities._search_console_evidence(run_id, scope)
-    assert retried.await_count == 1
+    assert retried.await_count == 2

@@ -31,7 +31,8 @@ from tin_lite.domain import PREREQUISITE_WAIT_MEMO
 from tin_lite.workflow_prerequisites import PrerequisiteError
 from tin_lite.workflows import AnswerPageWorkflow, ScheduledDispatchWorkflow
 
-ANSWER = ("visibility.audit", "content.answer_page")
+# Answer pages recommend the latest organic audit, whose fixed questions they answer.
+ANSWER = ("organic.audit", "content.answer_page")
 
 
 async def running_run(f, key, inputs, *, status="running"):
@@ -64,7 +65,9 @@ def activities(f):
 
 async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_db, monkeypatch):
     f = await project_fixture(publication_db, extra=ANSWER)
-    audit = await running_run(f, "visibility.audit", {"target": "this project"})
+    audit = await running_run(
+        f, "organic.audit", {"site_url": "https://example.com/", "market": "US"}
+    )
     tools = server(f, monkeypatch)
     started = structured(
         await tools.call_tool(
@@ -73,7 +76,7 @@ async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_d
         )
     )
     note = (
-        f"This run waits up to 30 minutes for visibility.audit run {audit.id} to finish, "
+        f"This run waits up to 30 minutes for organic.audit run {audit.id} to finish, "
         "then reads its result."
     )
     assert started["status"] == "pending" and started["advisories"] == []
@@ -98,7 +101,7 @@ async def test_answer_page_waits_for_a_running_audit_then_reads_it(publication_d
     assert evidence["waited"]["refused"] is None and "waiting" not in evidence
     assert evidence["items"][0]["satisfied"] is True
     assert evidence["items"][0]["evidence"]["run_id"] == str(audit.id)
-    done = f"visibility.audit run {audit.id} finished; this run reads its result."
+    done = f"organic.audit run {audit.id} finished; this run reads its result."
     assert evidence["notes"] == [done] and run.progress_summary == done
     view = structured(await tools.call_tool("get_run", {"run_id": run_id}))
     assert view["prerequisite_notes"] == [done]
@@ -115,7 +118,7 @@ async def test_recommended_prerequisite_says_when_the_run_goes_without_it(
     # Nothing is running and nothing succeeded: the start says so and does not wait.
     started = structured(await tools.call_tool("start_workflow", args))
     assert started["prerequisite_notes"] == [
-        "Tin starts this run without a successful visibility.audit run. Run visibility.audit "
+        "Tin starts this run without a successful organic.audit run. Run organic.audit "
         "and wait for it to succeed. Then start this workflow again to use it."
     ]
     assert "waiting" not in started
@@ -123,7 +126,9 @@ async def test_recommended_prerequisite_says_when_the_run_goes_without_it(
 
     wait = activities(f).prerequisite_wait
     for outcome in ("failed", "timed out"):
-        audit = await running_run(f, "visibility.audit", {"target": "this project"})
+        audit = await running_run(
+            f, "organic.audit", {"site_url": "https://example.com/", "market": "US"}
+        )
         run_id = structured(await tools.call_tool("start_workflow", args))["id"]
         if outcome == "failed":
             await finish(f, audit, "failed")
@@ -134,8 +139,8 @@ async def test_recommended_prerequisite_says_when_the_run_goes_without_it(
         assert await wait({"run_id": run_id, "final": outcome != "failed"}) is False
         run = await f.db.get_run(UUID(run_id))
         assert run.prerequisite_evidence["notes"] == [
-            "Tin runs this without a successful visibility.audit run: "
-            f"visibility.audit run {audit.id} {ending}."
+            "Tin runs this without a successful organic.audit run: "
+            f"organic.audit run {audit.id} {ending}."
         ]
         assert run.status.value == "pending"
         await finish(f, audit, "stopped")

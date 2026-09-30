@@ -137,8 +137,10 @@ The organic traffic system is Tin's default. When the business has a live public
 in the US, GB, CA or AU, code makes it the first system Tin suggests, whatever the ranking says,
 and starts its research run once at setup: it audits the site, researches buyer searches, builds
 the content plan and drafts the first article for review, then drafts the next planned article
-each week. AI visibility is part of this system: the weekly check of whether assistants name the
-product and the answer pages sit beside the articles. The other suggestions build around it.
+each week. AI visibility is part of this system: its audit asks a fixed set of buyer questions
+and grades whether assistants find, name and recommend the product, and the answer pages sit
+beside the articles. Never add a separate AI visibility audit next to it. The other suggestions
+build around it.
 Never configure a separate audit or keyword research run next to it: its research run already
 does both.
 

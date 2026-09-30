@@ -33,7 +33,6 @@
           "content.generate",
           "content.public_article",
           "content.answer_page",
-          "visibility.audit",
           "organic.mention_backlinks",
           "organic.error_surface",
           "competitor.watch"
@@ -43,7 +42,7 @@
         ],
         "founder_keeps": "publishing to the site and the final voice",
         "impact": 0.7,
-        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants name the product; the founder publishes and keeps the voice."
+        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants find, name and recommend the product in its audit; the founder publishes and keeps the voice."
       }
     },
     {

@@ -5020,10 +5020,12 @@ class TinActivities:
             project_id=project.id,
             exclude_run_id=run_id,
         )
+        # The organic audit asks the same kind of buyer questions, graded the same way, so
+        # the newest of either audit supplies the questions the page answers.
         visibility_runs = [
             source_run
             for source_run in source_runs
-            if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+            if source_run.executor in {VISIBILITY_AUDIT_WORKFLOW_NAME, "organic.audit"}
         ]
         selected_runs = (
             visibility_runs[-1:] if visibility_runs else ([] if sources else source_runs[-5:])
@@ -5054,6 +5056,8 @@ class TinActivities:
                     label=(
                         "latest AI visibility audit"
                         if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+                        else "latest organic audit, with its AI buyer questions"
+                        if source_run.executor == "organic.audit"
                         else source_run.executor
                     ),
                     artifact_ref=source_run.artifact_ref,

@@ -2891,6 +2891,59 @@ class IntegrationService:
             raise ServiceResponseTooLarge("A single Search Console row exceeds the response bound.")
         return payload
 
+    async def search_console_url_inspection(
+        self,
+        *,
+        project_id: UUID,
+        url: str,
+        expected_site_url: str,
+        execution_key: str | None = None,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Google's own index status for one URL of the selected property (read only)."""
+        connection = await self._connection(project_id, GSC_PROVIDER)
+        selected_site = connection.configuration.get("selected_site_url")
+        if not isinstance(selected_site, str) or not selected_site:
+            raise IntegrationAuthorizationError("Choose a Search Console property first")
+        if selected_site != expected_site_url:
+            raise IntegrationAuthorizationError("The selected Search Console property changed")
+        request_body = {"inspectionUrl": url, "siteUrl": selected_site, "languageCode": "en-US"}
+        fingerprint = _sha256(_canonical_json(request_body))
+        receipt_key = execution_key or f"integration:{uuid4()}"
+        access_token = await self._google_access_token(connection)
+        try:
+            response = await self._client.post(
+                "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json=request_body,
+            )
+            payload = _provider_json(response, provider="Google Search Console")
+        except IntegrationError:
+            await self._database.record_integration_call(
+                execution_key=receipt_key,
+                project_id=project_id,
+                run_id=run_id,
+                connection_id=connection.id,
+                provider_key=GSC_PROVIDER,
+                capability="url_inspection.read",
+                request_fingerprint=fingerprint,
+                status="failed",
+                error_code="provider_request_failed",
+            )
+            raise
+        await self._database.record_integration_call(
+            execution_key=receipt_key,
+            project_id=project_id,
+            run_id=run_id,
+            connection_id=connection.id,
+            provider_key=GSC_PROVIDER,
+            capability="url_inspection.read",
+            request_fingerprint=fingerprint,
+            status="completed",
+            response_summary={"inspected": 1},
+        )
+        return payload
+
     async def github_create_pull_request(
         self,
         *,
