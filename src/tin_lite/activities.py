@@ -16,6 +16,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tin_lite import analytics_brief
 from tin_lite.answer_page import (
     AnswerPageDrafter,
     AnswerPageSource,
@@ -3874,7 +3875,11 @@ class TinActivities:
                     conn,
                     execution_key=execution_key,
                     error_message=(
-                        str(exc)
+                        # A brief that measured nothing fails with its own plain reason.
+                        exc.message
+                        if isinstance(exc, ApplicationError)
+                        and exc.type == analytics_brief.MEASURED_NOTHING
+                        else str(exc)
                         if isinstance(exc, ApplicationError)
                         and exc.type in {"OutputConflictError", "PublicationPendingError"}
                         else _safe_failure(exc)
@@ -4025,6 +4030,23 @@ class TinActivities:
                 or proof.get("themes") != ["light", "dark"]
             ):
                 raise ValueError("Diagram publication has no matching trusted visual check")
+        analytics = None
+        if procedure.output_validator == analytics_brief.VALIDATOR:
+            analytics = analytics_brief.read(content)
+            if analytics.measured_nothing:
+                # Keep the diagnostic readable on the run; a brief with no measurement is
+                # never published to Files and never reported as a success.
+                await self._db.retain_procedure_output(
+                    conn,
+                    run_id=run.id,
+                    checkpoint=checkpoint.to_dict(),
+                    reason="not_published",
+                )
+                raise ApplicationError(
+                    analytics_brief.failure(analytics),
+                    type=analytics_brief.MEASURED_NOTHING,
+                    non_retryable=True,
+                )
         await self._db.retain_procedure_output(
             conn,
             run_id=run.id,
@@ -4069,6 +4091,8 @@ class TinActivities:
                             f"{procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
+                if analytics is not None and analytics_brief.summary(analytics):
+                    result["summary"] = analytics_brief.summary(analytics)
                 if procedure.review_revision_context is not None:
                     from tin_lite.article_review import change_summary
 

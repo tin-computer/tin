@@ -12,6 +12,8 @@ Codex chooses defensible semantics and explains findings; the resources own quer
 
 Tin validates and binds project_id before execution; context.inputs omits it. Call settings()
 with the effective client inputs, freeze its UTC boundaries once and reuse them for every request.
+The structured inputs exclude_email_domains and internal_flag_property belong to the binding;
+input_exclusions(c) compiles them, and request() refuses any plan that leaves them out.
 Before settings(), resolve an omitted website_hosts only when existing project context establishes
 one unambiguous website. Use its documented host aliases, record that source and the effective
 hosts in evidence, and bind them through settings(). Do not edit the saved configuration or ask
@@ -44,25 +46,35 @@ product data in different projects get separate briefs; do not join their identi
    in Integrations and is not in the binding: if the founder switched projects, the schema
    signature changes and plan_state() reports it; never reuse a pin across that change. If a relevant previous pin is
    malformed, disclose that continuity is unavailable; do not silently reuse its numbers.
+   Pins written before builder reusable-v2 (plans without exclusion ops, with a sources list)
+   fail validate_plan() the same way: disclose it and propose a fresh plan.
 2. Event discovery is the inventory query (step 4). Tin's definitions return names and types, not
    descriptions, so semantics come from event names, the saved event_mapping and project
    documentation. None of them proves firing-site correctness or coverage.
-3. Translate any requested exclusions into at most six exact scalar predicates. An event field
-   uses {property:"is_test",value:true}; a current person field uses
-   {property:"person:email",value:"team@example.test"}; an explicit supplied identity uses
-   {property:"distinct_id",value:"test-device"}. The compiler preserves value types. These are
-   event-row filters; person properties are current, not historical identity evidence. Missing
-   values remain included and their coverage must be reported. Never claim all team activity
-   was removed if the mapping is uncertain. Unsupported patterns, SQL or unclear identity rules
-   produce Status: unsupported exclusions before counting. Do not silently drop an exclusion.
-4. Run inventory through request() using only the resolved exclusions. Validate with table()
+3. Exclusions are {property, op, value} rules. Start with input_exclusions(c), unchanged: an
+   email-domain rule from exclude_email_domains and a flag rule from internal_flag_property.
+   Then translate any prose exclusions into at most six more rules:
+   - eq, exact and type-preserving: {property:"is_test",op:"eq",value:true} matches only the
+     boolean; {property:"person:email",op:"eq",value:"team@example.test"} reads a current
+     person field; {property:"distinct_id",op:"eq",value:"test-device"} an explicit identity.
+   - suffix, domains: {property:"person:email",op:"suffix",value:["example.test"]} matches an
+     address ending in @example.test or .example.test, in any case (1-10 lowercase hostnames).
+   - truthy, flags: {property:"is_internal",op:"truthy",value:true} matches true, "true" in any
+     case and 1; false, 0 and "1" stay included. Use it when a flag's type is uncertain.
+   These are event-row filters; person properties are current, not historical identity
+   evidence. Missing values remain included and their coverage must be reported. Never claim all
+   team activity was removed if the mapping is uncertain. Other patterns (contains, regular
+   expressions, SQL, unclear identity rules) produce Status: unsupported exclusions before
+   counting. Do not silently drop an exclusion.
+4. Run inventory through request() with {"exclusions": <the rules from step 3>}. Validate with table()
    and validate_inventory(). It returns up to 200 event types ranked by comparison-window volume, then historical
    volume, with the total observed event-type count. validate_inventory() checks this bounded
    discovery response; inventory_scope() states how much of the catalog it covers. A large
    catalog is not a failed query. Disclose partial discovery and never infer event absence
    from it. Coverage/trends/funnel/traffic still query all rows for their selected events and
    windows, including user-specified or pinned events outside the discovery list. A complete
-   zero-row inventory is a useful explicitly bounded finding.
+   zero-row inventory means the brief measured nothing: write the diagnostic with
+   Status: incomplete and stop. Tin then fails the run and keeps the diagnostic readable.
    First observed is not the first reliable instrumentation date or the product's inception.
    Then call properties_request() once (step properties) with the candidate plan events (at
    most 20) and validate it with property_types(). After step 5, check_property_types() lists
@@ -76,12 +88,22 @@ product data in different projects get separate briefs; do not join their identi
    interpretation provisional/unavailable. Never equate setup completion with delivered value
    or presume distinct_id is a human. Identity properties must be nonempty strings. Choose
    actor_key and chain_key for activation, and independently traffic_actor_key/traffic_chain_key
-   for pageview identities/sessions. Keys use distinct_id or event:<property>. Do not require
-   website pageviews to carry the product's account or run IDs. A pageview used in both families
-   must have consistent identity semantics. If no session/attempt key is defensible, keep raw
-   trends and explicitly withhold dependent funnel metrics.
+   for pageview identities/sessions. Actor keys are distinct_id, person_id (PostHog's person,
+   which identify() shares between anonymous and identified distinct IDs) or event:<property>.
+   A chain key is an identity or window:<hours> (1-168): with a window, a later step counts when
+   the same actor does it within that many hours of a step-1 event, and there is no attempt key.
+   Traffic keys are identities, never a window. Do not require website pageviews to carry the
+   product's account or run IDs.
+   For a web funnel whose steps mix pageviews with product or server events (a sign-up recorded
+   by the backend has no $session_id, and follows identify()), the default is actor_key
+   person_id with chain_key window:24. Fall back to distinct_id with event:$session_id only when
+   person linkage is absent: the project documents that it never identifies people, or a
+   previous comparable report showed person_id missing on the funnel's events or an unjoinable
+   identity. A pageview step may use person/window identities while traffic keeps sessions;
+   coverage then reports the pageview under both (split_pageview). If no chain is defensible,
+   keep raw trends and explicitly withhold dependent funnel metrics.
 6. Select at most one defensible non-identifying category property before looking at conversion
-   outcomes. For traffic, select documented pageview, pathname and source properties.
+   outcomes. For traffic, select documented pageview, pathname and referring-domain properties.
    When $pageview is observed, use PostHog's documented web SDK defaults as candidate mappings:
    distinct_id with event:$session_id, $pathname and $referring_domain; $device_type is a
    candidate non-identifying breakdown when a funnel exists. See
@@ -94,9 +116,11 @@ product data in different projects get separate briefs; do not join their identi
    channel, and distinct IDs/session pairs are not verified people. Server events need not
    carry browser session IDs: withhold an unsupported product funnel without discarding
    independent website findings. On a first
-   mapping, the dimensions request discovers up to eight safe named categories, paths and
-   sources, ranked by volume only. Validate with validate_dimensions(). This never returns
-   emails, raw URLs or identifier-shaped labels. Other/Unknown/Ambiguous buckets remain visible.
+   mapping, the dimensions request discovers up to eight safe named categories and paths,
+   ranked by volume only. Validate with validate_dimensions(). This never returns emails, raw
+   URLs or identifier-shaped labels. Other/Unknown/Ambiguous buckets remain visible. Traffic
+   sources are not chosen by you: traffic() classifies each session's entry into a fixed
+   channel (CHANNELS) and names the top eight referral domains by entry sessions itself.
    If safe labels or mappings are unavailable, say so; do not invent a named breakdown.
 7. Reuse a comparable previous plan, labels and category family. Dates and counts may change;
    meanings must not change silently. plan_state() records a first provisional pin, stable
@@ -131,20 +155,29 @@ for a numerical result.
   inclusion. Infer no absent row until the relevant complete, uncapped query succeeded.
 - **Ordered activation:** funnel() deduplicates event/timestamp repeats within actor and
   attempt/session. It uses strict increasing timestamps, never crosses attempts or periods,
-  and chooses the deepest then earliest qualifying chain per actor/period. Each actor belongs
+  and chooses the deepest then earliest qualifying chain per actor/period. A window chain tries
+  every step-1 event as a start and keeps later steps within the window. Each actor belongs
   to one selected-start day. These are selected-attempt cohorts, not first-ever acquisition
   cohorts. reconcile_funnel() checks coverage bounds and only then fills absent days;
   funnel_display() computes all displayed rates and medians. Never average daily medians.
-  Show raw event-day volumes separately from selected-start-day actor cohorts.
+  Show raw event-day volumes separately from selected-start-day actor cohorts. When actors
+  started the funnel and others did its final step but none joined, reconcile_funnel() raises
+  "unjoinable identity": report the funnel as unavailable for that reason, never as 0%.
 - **Trends:** validate_trends() checks daily counts in both comparison windows and weekly
   buckets earlier in the 90-day lookback. Edge weeks can be partial; identify them. Whole-period
   distinct counts come from coverage, never sums of daily uniques. change() handles differences
   and undefined percentage changes. Long history is bounded, not a since-launch claim.
 - **Traffic:** traffic() uses the first observed in-window pageview per traffic identity/session.
-  It pins both source and path to that timestamp; conflicting ties are Ambiguous. This is
-  window-entry attribution, not lifetime acquisition or proof the session began in-window.
-  validate_traffic() reconciles retained pageviews/session pairs with coverage. No pageviews in
-  a complete inventory is an explicit finding; partial discovery cannot establish absence; a failed query never establishes no traffic.
+  It pins channel, referring domain and path to that timestamp; conflicting ties are Ambiguous.
+  Channels are fixed and builder-owned: UTM medium first (Paid, Email, Social), then the
+  lowercased referring domain without www.: $direct or empty is Direct, the page's own host or
+  website_hosts is Internal, then AI assistants, Search, Social, else Referral; a missing
+  referrer is Unknown. Referral rows name the top eight domains by entry sessions; the rest are
+  Other. This is window-entry attribution, not lifetime acquisition or proof the session began
+  in-window. validate_traffic() reconciles retained pageviews/session pairs with coverage and
+  traffic_summary() totals them by channel, referrer and path. No pageviews in a complete
+  inventory is an explicit finding; partial discovery cannot establish absence; a failed query
+  never establishes no traffic.
 - **Errors:** use named error-event trends, affected actors/attempts and error_signals()'s
   declared daily-concentration heuristic. Uncompleted funnels mean no completion observed
   in-window, not proven bugs or abandoned users. A failure percentage requires an aligned
@@ -160,12 +193,17 @@ for a numerical result.
 ## Delivery
 
 Write only context.output.path, using REPORT.md, at most context.output.max_bytes. Use Python
-to render checked tables and append compact JSON evidence from saved responses; do not manually
-transcribe numbers or ask the model to reprint large SQL/results. Keep the human brief within
-REPORT.md's 10000-character bound and keep full detailed rows in evidence.
+to render checked tables and append the evidence with render_evidence(), recording every call
+with request_record(); do not manually transcribe numbers or ask the model to reprint large
+SQL/results. Keep the human brief within REPORT.md's 10000-character bound and keep full
+detailed rows in evidence.
 Every output is fresh, including failures. A complete brief needs five defensible findings;
 verified missing pageviews or insufficient statistical evidence can satisfy their sections.
 A failed required query makes the report incomplete and fails ordinary qualification.
+Tin reads the Status line and evidence before publishing (analytics-brief.v1). A brief that
+measured nothing (no events in the inventory, every query refused or invalid, or no selected
+event in either window) fails its run; the diagnostic stays readable on the run. Any other
+incomplete brief is published and its run summary carries your status_reason.
 
 Normal Tin Files/Activity and immutable run artifacts provide delivery and history. No email,
 Slack, publication, instrumentation changes, workflow starts or recommendations. The model's

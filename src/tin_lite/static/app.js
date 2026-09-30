@@ -1291,6 +1291,9 @@ function retainedOutputMessage(run) {
   if (run.retained_output.reason === "execution_interrupted") {
     return "This workflow stopped before finishing. Its partial result is saved for reading and has not been applied to Files.";
   }
+  if (run.retained_output.reason === "not_published") {
+    return "This result is saved for reading and was not added to Files.";
+  }
   return run.retained_output.reason === "output_conflict"
     ? "The result was saved because this file changed while the workflow ran. The current file was left alone."
     : "The result is saved. Tin has not yet confirmed whether it reached Files.";

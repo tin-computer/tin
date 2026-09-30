@@ -23,6 +23,16 @@ The report states what it chose
 and why; edit the saved inputs to correct it. Missing semantics are a limitation,
 not permission to invent an activation event or treat an identifier as a human.
 
+Two optional inputs remove your own team without relying on the procedure to read prose:
+`exclude_email_domains` (up to ten lowercase domains, such as `example.com`; a person whose
+current email ends in `@example.com` or `.example.com`, in any case, is excluded) and
+`internal_flag_property` (one event property, or `person:<property>` for a person property;
+rows where it is `true`, `"true"` or `1` are excluded). Tin compiles both into the queries
+itself. The prose `exclusions` field still takes up to six more rules: exact values, domain
+suffixes or truthy flags. Anything else, such as "contains" or a pattern, makes the brief
+report unsupported exclusions instead of guessing. Rows missing the field stay included and
+are counted.
+
 Choose manual, daily or weekly execution through the ordinary saved-workflow form.
 Existing schedule authorization and billing rules apply. Results arrive in Tin's
 Files and Activity, with a separate `reports/analytics/<run_id>.md` for each run.
@@ -32,8 +42,22 @@ Use a separate Tin project for a separate PostHog project. Website visitors and
 product accounts are different populations; this workflow does not join them.
 A project without pageviews can still produce a useful product brief, with traffic
 explicitly unavailable. When pageviews exist, the procedure checks PostHog's documented web
-properties through the same bounded queries. A missing session key on a server-side product
-event can prevent a same-session funnel without preventing independent website traffic analysis.
+properties through the same bounded queries.
+
+A web funnel that runs from pageviews to a sign-up the backend records follows people, not
+browser sessions: server events carry no `$session_id`, and `identify()` gives the signed-up
+person a new distinct ID. By default such a funnel uses PostHog's `person_id`, which links the
+anonymous and identified IDs, and counts a later step when the same person does it within 24
+hours of a step-1 event (`window:24`). Browser sessions remain the fallback when a project
+never identifies people. If the chosen identity cannot link the steps (people did the final
+step, others started the funnel, and none joined), the brief says so and withholds the funnel
+instead of showing 0%.
+
+Traffic is grouped into fixed channels that Tin assigns, not the procedure: UTM medium first
+(Paid, Email, Social), then the referring domain, lowercased and without `www.`: `$direct` or
+empty is Direct, your own host or `website_hosts` is Internal, then AI assistants (ChatGPT,
+Perplexity, Claude, Gemini, Copilot), Search, Social, and Referral for everything else. Inside
+Referral the eight domains with the most entry sessions are named and the rest are Other.
 
 ## What is checked
 
@@ -53,6 +77,13 @@ small samples and incomplete provider responses stay visible. First observed dat
 does not establish when an event became reliable or what its firing site means.
 A failed required query makes the brief incomplete; an honest diagnostic is not
 a passing ordinary qualification case.
+
+Before publishing, Tin reads the report's `Status:` line and its evidence block
+(`analytics-brief.v1`). A brief that measured nothing fails its run with a plain reason: PostHog
+returned no events in the 90-day lookback, every query was refused or invalid, or none of the
+selected events occurred in either window. The diagnostic stays readable on the failed run and
+is not added to Files. Any other incomplete brief is published, and the run summary reads
+"Analytics brief incomplete: <reason>".
 
 A screened breakdown is descriptive evidence, not proof of causation. The report
 names the test and its multiple-comparison correction. No supported split is a

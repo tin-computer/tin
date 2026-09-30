@@ -615,7 +615,11 @@ class RetainedOutputView(BaseModel):
     media_type: str
     byte_count: int
     reason: Literal[
-        "publication_pending", "reconciliation_pending", "output_conflict", "execution_interrupted"
+        "publication_pending",
+        "reconciliation_pending",
+        "output_conflict",
+        "execution_interrupted",
+        "not_published",
     ]
 
 
