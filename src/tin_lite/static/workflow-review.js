@@ -91,6 +91,18 @@
         region.querySelector("[data-current-review]").onclick = () => openRun(review.current_run_id);
         return;
       }
+      if (review.x_feedback && review.change_summary) {
+        const summary = document.createElement("p");
+        summary.className = "review-change-summary";
+        summary.textContent = review.change_summary;
+        region.append(summary);
+      }
+      if (review.pending_run_id) {
+        const pending = document.createElement("p");
+        pending.className = "review-change-summary";
+        pending.textContent = "Revising from your feedback. This copy stays readable while Tin works.";
+        region.append(pending);
+      }
       if (review.version > 1) {
         const versions = document.createElement("div");
         versions.className = "review-version-row";
@@ -119,7 +131,7 @@
       form.className = "review-composer";
       const id = `review-feedback-${runId}`;
       form.innerHTML = `<label for="${esc(id)}">What should change?</label>
-        <p>For this draft only. Your feedback won’t change your saved writing style.</p>
+        <p>${esc(review.feedback_hint || "For this draft only. Your feedback won’t change your saved writing style.")}</p>
         <textarea id="${esc(id)}" name="feedback" maxlength="8000" required placeholder="What should we change, keep, or explain better? Mention any project files to use.">${esc(draft.feedback)}</textarea>
         <p class="review-error" role="alert" hidden></p>
         <footer><button type="submit" class="review-submit">${review.artifact?.assessment ? "Recheck with feedback" : "Revise draft"}</button></footer>`;

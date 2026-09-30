@@ -4352,7 +4352,7 @@ async function discardCampaignRevision(runId, button) {
 function supportsArticleFeedback(run) {
   if (!run) return false;
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article"].includes(workflowForRun(run)?.key || run?.workflow_name);
+    ["content.generate", "content.public_article", "social.x_style"].includes(workflowForRun(run)?.key || run?.workflow_name);
 }
 
 function mountArticleFeedback(host, runId, reader = false) {
@@ -4370,9 +4370,10 @@ function mountArticleFeedback(host, runId, reader = false) {
     onRevised: successor => {
       if (!isCurrentProjectContext(context)) return;
       const source = state.runs.find(r => r.id === runId);
-      if (source) upsertRun({...source, status: "superseded"});
+      const xGuide = source?.workflow_name === "social.x_style";
+      if (source && !xGuide) upsertRun({...source, status: "superseded"});
       upsertRun(successor);
-      state.decisions = state.decisions.filter(d => d.run_id !== runId);
+      if (!xGuide) state.decisions = state.decisions.filter(d => d.run_id !== runId);
       state.workflowSection = "yours";
       navigate("workflows");
       showToast("Revising from your feedback. The previous copy remains readable.");

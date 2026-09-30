@@ -93,6 +93,7 @@ async def start_workflow_run(
     _organic_parent_run_id: UUID | None = None,
     _approval_delivery: bool = False,
     _x_publication: bool = False,
+    _x_feedback: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
     if implementation is None:
@@ -152,6 +153,10 @@ async def start_workflow_run(
         from tin_lite.private_workflows import require_private_execution
 
         require_private_execution(settings, workflow, project_id)
+    if workflow.executor == "social.x_revise" and not _x_feedback:
+        raise WorkflowInputError("Read the X draft and use request_workflow_changes to revise it.")
+    if workflow.executor == "social.x_revise" and not getattr(settings, "luna_api_key", None):
+        raise WorkflowExecutorUnavailableError("X feedback requires the native model service.")
     schema = workflow.definition["input_schema"]
     normalized_inputs = normalize_workflow_inputs(
         schema=schema,

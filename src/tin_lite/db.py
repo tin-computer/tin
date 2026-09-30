@@ -2458,6 +2458,15 @@ class Database:
                 raise RuntimeError(
                     "The pinned child definition does not match its registry identity"
                 )
+            if workflow["executor"] == "social.x_revise":
+                from tin_lite.x_feedback_service import guard_admission
+
+                await guard_admission(
+                    conn,
+                    project_id=project_id,
+                    inputs=input_payload,
+                    actor=started_by_clerk_user_id,
+                )
             if review_transition is not None:
                 origin = await conn.fetchrow(
                     "SELECT project_workflow_id, input FROM workflow_runs "
@@ -6821,6 +6830,7 @@ class Database:
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
             "social.x_style": ("x_style_ready", "Your X writing guide is ready."),
+            "social.x_revise": ("x_revision_ready", "Your X revision is ready."),
             "social.x_draft": ("x_draft_ready", "Your X draft is ready."),
             "social.x_publish": ("x_post_published", "Your X post is published."),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),

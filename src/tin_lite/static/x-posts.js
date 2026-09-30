@@ -22,10 +22,12 @@
     const state = {root, context, key, revision: null, draft: null, dirty: false, busy: false,
       preview: null, previewPost: null, publishRequest: null, saveRequest: null, message: "",
       mediaUrls: new Map(), closed: false, selected: 0, editing: false, notes: false,
-      picking: false, files: [], ...kept};
+      picking: false, files: [], feedback: "", feedbackOpen: false, feedbackRequest: null, feedbackRun: null, feedbackSource: null, review: null, ...kept};
     state.close = () => {
       sessions.set(key, {draft: state.draft && copy(state.draft), revision: state.revision,
-        dirty: state.dirty, selected: state.selected, saveRequest: state.saveRequest});
+        dirty: state.dirty, selected: state.selected, saveRequest: state.saveRequest,
+        feedback: state.feedback, feedbackRequest: state.feedbackRequest, feedbackRun: state.feedbackRun});
+      clearTimeout(state.feedbackTimer);
       // In-memory unsaved edits survive navigation, but a preview never survives a close.
       state.closed = true;
       state.cleanupReader?.();
@@ -54,10 +56,60 @@
       if (result?.draft?.schema_version !== "tin.social.x_draft.v1" || !Array.isArray(result.draft.posts)) throw new Error("This file is not an X draft. Open it in Files.");
       state.revision = result.revision;
       state.draft = copy(result.draft);
+      state.feedbackSource = result.feedback_run_id || null;
       state.selected = Math.min(state.selected, state.draft.posts.length - 1);
       state.dirty = false; state.preview = null; state.previewPost = null; state.saveRequest = null;
       state.message = ""; render(state);
+      await loadFeedback(state);
     } catch (error) { if (!state.closed) {state.message = error.message; render(state);} }
+  }
+
+  async function loadFeedback(state) {
+    if (!state.feedbackSource || state.closed) return;
+    const postId = state.draft.posts[state.selected].id;
+    try {
+      const review = await state.context.api(`/api/workflows/runs/${state.feedbackSource}/review?${new URLSearchParams({post_id: postId})}`);
+      if (state.closed || state.draft.posts[state.selected].id !== postId) return;
+      state.review = review;
+      state.feedbackRun = review.pending_run_id || null;
+      render(state);
+      if (state.feedbackRun) watchFeedback(state);
+    } catch (error) {if (!state.closed) {state.message = error.message; renderStatus(state);}}
+  }
+
+  function watchFeedback(state) {
+    clearTimeout(state.feedbackTimer);
+    state.feedbackTimer = setTimeout(async () => {
+      if (state.closed || !state.feedbackRun) return;
+      try {
+        const run = await state.context.api(`/api/workflows/runs/${state.feedbackRun}`);
+        if (state.closed) return;
+        if (["succeeded", "failed", "stopped"].includes(run.status)) {
+          state.feedbackRun = null; state.feedbackRequest = null;
+          if (run.status === "succeeded" && !state.dirty) {state.feedback = ""; await load(state);}
+          else {state.message = run.error_message || "Revision finished. Reload the saved draft when your edits are saved."; await loadFeedback(state); renderStatus(state);}
+        } else watchFeedback(state);
+      } catch (_error) {if (!state.closed) watchFeedback(state);}
+    }, 2000);
+  }
+
+  async function revise(state) {
+    if (state.busy || !state.feedback.trim() || !state.review) return;
+    if (state.dirty) {state.message = "Save your edits before requesting a revision."; renderStatus(state); return;}
+    state.busy = true; renderStatus(state);
+    state.feedbackRequest ||= crypto.randomUUID();
+    try {
+      const run = await state.context.api(`/api/workflows/runs/${state.feedbackSource}/request-changes`, {
+        method: "POST", body: JSON.stringify({feedback: state.feedback, post_id: state.draft.posts[state.selected].id,
+          review_token: state.review.review_token, request_id: state.feedbackRequest}),
+      });
+      if (state.closed) return;
+      state.feedbackRun = run.id; state.feedbackOpen = false;
+      state.preview = null; state.previewPost = null; state.publishRequest = null;
+      state.message = "Revising from your feedback. This copy stays readable while Tin works.";
+      render(state); watchFeedback(state);
+    } catch (error) {if (!state.closed) {state.message = error.message; renderStatus(state);}}
+    finally {state.busy = false; if (!state.closed) renderStatus(state);}
   }
 
   function changed(state) {
@@ -84,6 +136,7 @@
       state.dirty = false; state.saveRequest = null;
       state.message = "Draft saved to Files.";
       render(state);
+      await loadFeedback(state);
       return true;
     } catch (error) {
       if (!state.closed) {state.message = `${error.message} Your edits are still here. Reload only if you want to discard them.`; renderStatus(state);}
@@ -159,6 +212,9 @@
   }
 
   function renderStatus(state) {
+    const feedbackButton = state.root.querySelector('[data-x-action="feedback"]');
+    if (feedbackButton) feedbackButton.dataset.xEdgeDisabled = String(state.dirty || !!state.feedbackRun || !state.review?.can_request_changes);
+    state.root.querySelectorAll("#x-feedback, .review-submit").forEach(field => {field.disabled = state.busy;});
     const status = state.root.querySelector("[data-x-status]");
     if (status) {status.textContent = state.message; status.hidden = !state.message;}
     state.root.querySelectorAll("button[data-x-action]").forEach(button => {button.disabled = state.busy || button.dataset.xEdgeDisabled === "true";});
@@ -214,6 +270,15 @@
       if (index < 2) button.setAttribute("aria-expanded", String(index === 0 ? state.notes : !!editing));
       if (action === "preview") button.dataset.xPreview = "";
     });
+    if (post && state.review && !exact) {
+      const request = document.createElement("button");
+      request.type = "button"; request.className = "x-posts-button"; request.dataset.xAction = "feedback";
+      request.dataset.xEdgeDisabled = String(state.dirty || !!state.feedbackRun || !state.review.can_request_changes);
+      request.textContent = state.feedbackOpen ? "Close feedback" : "Request changes";
+      request.setAttribute("aria-expanded", String(state.feedbackOpen));
+      actions[1]?.before(request);
+    }
+    if (state.feedbackRun) actions.at(-1)?.setAttribute("data-x-edge-disabled", "true");
     const layout = state.root.querySelector(".markdown-reader-layout");
     layout.classList.remove("has-no-map");
     layout.classList.add("x-posts-layout");
@@ -250,6 +315,20 @@
               <p class="x-posts-limit">Up to four images (PNG or JPEG, 5 MB each) or one MP4 video (64 MB, 5 minutes).</p>
             </div><footer class="x-posts-editor-actions"><button type="button" class="x-posts-button is-primary" data-x-action="save">Save draft</button></footer>
           </section>` : ""}`;
+      if (state.review?.change_summary && !exact) {
+        const note = document.createElement("p"); note.className = "review-change-summary";
+        note.textContent = state.review.change_summary; card.append(note);
+      }
+      if (state.feedbackOpen && !exact) {
+        const form = document.createElement("form"); form.className = "review-composer";
+        form.innerHTML = `<label for="x-feedback">What should change?</label><p>${esc(state.review.feedback_hint)}</p>
+          <textarea id="x-feedback" maxlength="8000" required>${esc(state.feedback)}</textarea>
+          <footer><button class="review-submit" type="submit">Revise draft</button></footer>`;
+        form.querySelector("textarea").oninput = event => {state.feedback = event.target.value; state.feedbackRequest = null;};
+        form.onsubmit = event => {event.preventDefault(); if (form.reportValidity()) revise(state);};
+        form.querySelector("button").disabled = state.busy;
+        card.append(form);
+      }
       card.append(article);
       if (!state.notes && (post.readiness !== "ready" || post.missing_assets?.length)) card.insertAdjacentHTML("beforeend", `<p class="x-posts-needs">${esc(statusLabel(post))}. <button type="button" class="x-posts-link" data-x-action="notes">Review draft notes</button></p>`);
       column.append(card);
@@ -285,6 +364,10 @@
       const action = button.dataset.xAction;
       const postIndex = Number(button.dataset.post);
       const post = state.draft.posts[postIndex];
+      if (action === "feedback") {
+        state.feedbackOpen = !state.feedbackOpen; state.editing = false;
+        render(state); body.querySelector("#x-feedback")?.focus(); return;
+      }
       if (action === "notes") {state.notes = !state.notes; render(state); body.querySelector('[data-x-action="notes"]')?.focus(); return;}
       if (action === "edit") {
         state.editing = !state.editing; state.preview = null; state.previewPost = null; state.publishRequest = null;
@@ -292,8 +375,9 @@
       }
       if (action === "select") {
         state.selected = postIndex; state.editing = false; state.notes = false; state.picking = false;
+        state.feedbackOpen = false; state.feedback = ""; state.feedbackRequest = null; state.review = null;
         state.preview = null; state.previewPost = null; state.publishRequest = null; state.message = "";
-        render(state); body.querySelector('[data-x-action="select"][aria-current]')?.focus(); return;
+        render(state); body.querySelector('[data-x-action="select"][aria-current]')?.focus(); await loadFeedback(state); return;
       }
       if (action === "ready") {if (!post.missing_assets?.length) post.readiness = "ready"; changed(state); render(state); return;}
       if (action === "pick-files") {

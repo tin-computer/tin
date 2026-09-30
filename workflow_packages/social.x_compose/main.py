@@ -120,6 +120,8 @@ INSTRUCTIONS = (
     "plan guides topics but is not factual evidence. Use source units by ID for specific current "
     "claims; do not invent results, dates, numbers, customers, implementation details, quotes, "
     "URLs or personal experiences. The X style guide controls voice, not factual truth. "
+    "Explicit preferences override sampled habits. Later explicit corrections qualify earlier "
+    "preferences; respect their stated scope (for example product updates only). "
     "First person and links are welcome when the supplied source supports them. Avoid generic "
     "launch copy, engagement bait, forced CTAs and repetitive batch angles. The text field is "
     "the exact standalone publishable post: no notes, citations, markdown heading or thread "

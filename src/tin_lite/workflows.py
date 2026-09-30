@@ -1389,6 +1389,26 @@ class XDraftWorkflow:
             raise
 
 
+@workflow.defn(name="social.x_revise")
+class XFeedbackWorkflow:
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            await call("x_feedback_generate")
+            await call("x_feedback_publish")
+        except BaseException:
+            await call("x_feedback_failure")
+            raise
+
+
 @workflow.defn(name="social.x_style")
 class XStyleWorkflow:
     def __init__(self) -> None:
@@ -1541,6 +1561,7 @@ def registered_workflows() -> list[type]:
         StyleCaptureWorkflow,
         XDraftWorkflow,
         XStyleWorkflow,
+        XFeedbackWorkflow,
         XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
@@ -1575,6 +1596,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         "style.capture": StyleCaptureWorkflow,
         "social.x_draft": XDraftWorkflow,
         "social.x_style": XStyleWorkflow,
+        "social.x_revise": XFeedbackWorkflow,
         "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,

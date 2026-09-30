@@ -89,3 +89,6 @@
 @media (max-width: 820px) {
   .app-shell .x-posts-context { top: var(--top-menu-height); }
 }
+
+/* Reuse Paper’s feedback panel in the generic document column. */
+.x-posts-card > .review-composer { margin-bottom: 40px; }

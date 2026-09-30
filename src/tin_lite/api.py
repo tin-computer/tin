@@ -908,6 +908,8 @@ class DecisionApply(BaseModel):
 class WorkflowRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    post_id: str = Field(default="", max_length=2)
+
     feedback: str = Field(min_length=1, max_length=8000)
     reference_files: list[str] = Field(default_factory=list, max_length=8)
     request_id: UUID
@@ -4088,9 +4090,11 @@ def _workflow_reviews(request):
 
 
 @router.get("/api/workflows/runs/{run_id}/review")
-async def workflow_review(run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER):
+async def workflow_review(
+    run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER, post_id: str = ""
+):
     try:
-        return await _workflow_reviews(request).view(run_id, user.clerk_user_id)
+        return await _workflow_reviews(request).view(run_id, user.clerk_user_id, post_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4113,6 +4117,7 @@ async def request_workflow_changes(
             run_id=run_id,
             actor=user.clerk_user_id,
             feedback=payload.feedback,
+            post_id=payload.post_id,
             request_id=payload.request_id,
             token=payload.review_token,
             reference_files=payload.reference_files,
@@ -4189,10 +4194,14 @@ async def approve_run(
         await _choose_content_delivery(run, payload, request, user)
     from tin_lite.reviewed_documents import document_spec
 
-    if run.workflow_id in SUPPORTED_IDS or (
-        run.executor == "codex.procedure"
-        and await document_spec(
-            request.app.state.runtime.database, request.app.state.runtime.storage, run
+    if (
+        run.executor == "social.x_style"
+        or run.workflow_id in SUPPORTED_IDS
+        or (
+            run.executor == "codex.procedure"
+            and await document_spec(
+                request.app.state.runtime.database, request.app.state.runtime.storage, run
+            )
         )
     ):
         try:
