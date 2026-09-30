@@ -2684,7 +2684,9 @@ class IntegrationService:
         fingerprint = _sha256(_canonical_json(request_value))
         async with self._database.integration_call_lock(execution_key):
             existing = await self._database.get_integration_call_receipt(execution_key)
-            is_retry = existing is not None
+            # Only an attempt that got as far as the send may have reached Gmail. One that
+            # failed before it, or that Gmail refused outright, sent nothing and may try again.
+            is_retry = existing is not None and existing.status in {"started", "unknown"}
             if existing is not None:
                 if (
                     existing.project_id != project_id
@@ -2701,16 +2703,6 @@ class IntegrationService:
                         **_gmail_send_result(existing.response_summary),
                         "rfc_message_id": rfc_message_id,
                     }
-            await self._database.record_integration_call(
-                execution_key=execution_key,
-                project_id=project_id,
-                run_id=run_id,
-                connection_id=connection.id,
-                provider_key=GOOGLE_WORKSPACE_PROVIDER,
-                capability="gmail.messages.send",
-                request_fingerprint=fingerprint,
-                status="started",
-            )
             access_token = await self._google_access_token(connection)
             recovered = await self._gmail_find_message(
                 access_token=access_token,
@@ -2733,15 +2725,42 @@ class IntegrationService:
                     raise IntegrationDeliveryUnknownError(
                         "Gmail delivery could not be confirmed; Tin will not resend automatically"
                     )
-                try:
-                    response = await self._client.post(
-                        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        json={
-                            "raw": raw,
-                            **({"threadId": thread_id} if thread_id is not None else {}),
-                        },
+                # Recorded right before the send, so a failure getting here sent nothing.
+                await self._database.record_integration_call(
+                    execution_key=execution_key,
+                    project_id=project_id,
+                    run_id=run_id,
+                    connection_id=connection.id,
+                    provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                    capability="gmail.messages.send",
+                    request_fingerprint=fingerprint,
+                    status="started",
+                )
+                response = await self._client.post(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json={
+                        "raw": raw,
+                        **({"threadId": thread_id} if thread_id is not None else {}),
+                    },
+                )
+                if 400 <= response.status_code < 500 and response.status_code != 408:
+                    # Gmail refused the request, so nothing was sent; a later attempt may send.
+                    await self._database.record_integration_call(
+                        execution_key=execution_key,
+                        project_id=project_id,
+                        run_id=run_id,
+                        connection_id=connection.id,
+                        provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                        capability="gmail.messages.send",
+                        request_fingerprint=fingerprint,
+                        status="failed",
+                        error_code=f"gmail_http_{response.status_code}",
                     )
+                    raise IntegrationError(
+                        f"Gmail refused the message (HTTP {response.status_code})"
+                    )
+                try:
                     payload = _provider_json(response, provider="Gmail")
                     recovered = _gmail_send_result(payload)
                     provider_request_id = response.headers.get("x-guploader-uploadid")

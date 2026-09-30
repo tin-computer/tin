@@ -163,6 +163,19 @@ def _email_campaign_progress_text(
     return "waiting", "Waiting for the next approved email"
 
 
+# A copy revision waiting for review holds every recipient's next send. Checking every minute
+# for as long as it waits grew each recipient's history without bound, so the wait lengthens.
+REVISION_WAITS = ((timedelta(minutes=10), 60), (timedelta(days=1), 15 * 60))
+REVISION_LONG_WAIT_SECONDS = 60 * 60
+
+
+def revision_wait_seconds(pending_for: timedelta) -> int:
+    for limit, seconds in REVISION_WAITS:
+        if pending_for < limit:
+            return seconds
+    return REVISION_LONG_WAIT_SECONDS
+
+
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -4649,15 +4662,16 @@ class Database:
             row = await conn.fetchrow(
                 """
                 SELECT delivery.execution_key, delivery.status,
-                       delivery.campaign_run_id,
+                       delivery.campaign_run_id, campaign.status AS campaign_status,
                        campaign.external_account_id, campaign.daily_send_cap,
                        campaign.send_interval_seconds, campaign.send_window_start,
                        campaign.send_window_end, campaign.send_timezone,
-                       EXISTS (
-                           SELECT 1 FROM outreach_campaign_revisions AS revision
+                       (
+                           SELECT min(revision.requested_at)
+                           FROM outreach_campaign_revisions AS revision
                            WHERE revision.campaign_run_id = campaign.run_id
                              AND revision.status = 'pending'
-                       ) AS revision_pending
+                       ) AS revision_pending_since
                 FROM outreach_deliveries AS delivery
                 JOIN outreach_campaigns AS campaign
                   ON campaign.run_id = delivery.campaign_run_id
@@ -4674,6 +4688,9 @@ class Database:
                 return 0
             if row["status"] != "pending":
                 raise RuntimeError("outreach delivery cannot be reserved")
+            if row["campaign_status"] == "stopped":
+                # No slot is taken; the send step records the delivery as skipped.
+                return 0
 
             async def defer(seconds: int) -> int:
                 await conn.execute(
@@ -4688,8 +4705,8 @@ class Database:
                 await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
                 return seconds
 
-            if row["revision_pending"]:
-                return await defer(60)
+            if row["revision_pending_since"] is not None:
+                return await defer(revision_wait_seconds(current - row["revision_pending_since"]))
 
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -4770,6 +4787,18 @@ class Database:
             await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
         return 0
 
+    async def skip_outreach_delivery(self, *, execution_key: str, reason: str) -> None:
+        """Record that a reserved or pending delivery was never handed to the provider."""
+        await self.pool.execute(
+            """
+            UPDATE outreach_deliveries
+            SET status = 'skipped', error_code = $2, updated_at = now()
+            WHERE execution_key = $1 AND status IN ('pending', 'started')
+            """,
+            execution_key,
+            reason[:200],
+        )
+
     async def fail_outreach_delivery(
         self, *, execution_key: str, error_code: str, unknown: bool
     ) -> None:
@@ -4837,7 +4866,7 @@ class Database:
             error_code[:200],
         )
 
-    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any]:
+    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as conn, conn.transaction():
             counts = await conn.fetchrow(
                 """
@@ -4858,8 +4887,11 @@ class Database:
                 run_id,
             )
             assert counts is not None
-            if counts["failed_count"]:
-                raise RuntimeError("one or more email recipients failed")
+            status = await conn.fetchval(
+                "SELECT status FROM outreach_campaigns WHERE run_id = $1", run_id
+            )
+            if status == "stopped":
+                return None
             campaign = await conn.fetchrow(
                 """
                 UPDATE outreach_campaigns
@@ -4897,6 +4929,11 @@ class Database:
                 (
                     f"Email campaign delivered {counts['sent_count']} message(s) "
                     f"to {campaign['recipient_count']} recipient(s)."
+                    + (
+                        f" {counts['failed_count']} recipient(s) could not be sent."
+                        if counts["failed_count"]
+                        else ""
+                    )
                 ),
                 f"{run_id}:email_campaign_completed",
             )

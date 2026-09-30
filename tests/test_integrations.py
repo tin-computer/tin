@@ -1044,6 +1044,92 @@ async def test_workspace_send_reconciles_ambiguous_delivery_without_resending() 
     assert database.call_receipts["run:recipient:ambiguous"].status == "completed"
 
 
+def _gmail_values(key: str) -> dict:
+    return {
+        "project_id": PROJECT_ID,
+        "run_id": RUN_ID,
+        "execution_key": key,
+        "recipient_email": "ada@example.com",
+        "recipient_name": "Ada Lovelace",
+        "subject": "A precise hello",
+        "body": "Hello Ada.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_after_a_token_failure_is_not_treated_as_a_lost_send() -> None:
+    # The receipt used to be written before the token refresh, so a refresh blip made every
+    # retry look like a send whose answer was lost, and the recipient could never be sent.
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    token_calls = sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, sends
+        if request.url.path == "/token":
+            token_calls += 1
+            if token_calls == 1:
+                return httpx.Response(500, json={"error": "backend_error"})
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            return httpx.Response(200, json={"id": "gmail-message-1", "threadId": "t-1"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError) as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        assert "run:recipient:token" not in database.call_receipts
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+
+    assert sends == 1 and sent["id"] == "gmail-message-1"
+    assert database.call_receipts["run:recipient:token"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_refused_by_gmail_is_a_failure_that_may_be_retried() -> None:
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            if sends == 1:
+                return httpx.Response(429, json={"error": {"code": 429}})
+            return httpx.Response(200, json={"id": "gmail-message-2", "threadId": "t-2"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError, match="refused") as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        receipt = database.call_receipts["run:recipient:refused"]
+        assert receipt.status == "failed" and receipt.error_code == "gmail_http_429"
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+
+    assert sends == 2 and sent["id"] == "gmail-message-2"
+    assert database.call_receipts["run:recipient:refused"].status == "completed"
+
+
 @pytest.mark.asyncio
 async def test_workspace_reply_check_detects_only_external_mail_after_initial_send() -> None:
     database = FakeIntegrationDatabase()

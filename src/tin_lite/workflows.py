@@ -937,7 +937,12 @@ class EmailCampaignWorkflow:
                         task_queue=workflow.info().task_queue,
                     )
                 )
-            await asyncio.gather(*children)
+            if workflow.patched("email-recipients-settle-alone-v1"):
+                # A recipient that fails records it on its own row; the others keep sending.
+                # Failing here would terminate every other recipient mid-campaign.
+                await asyncio.gather(*children, return_exceptions=True)
+            else:
+                await asyncio.gather(*children)
             await workflow.execute_activity(
                 "complete_email_campaign",
                 run_id,

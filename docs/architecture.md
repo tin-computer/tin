@@ -76,7 +76,7 @@ You connect GitHub, select the repository, and opt in to write access. You start
 
 You connect Google Workspace and start `outreach.email_shortlist` with an objective, say "people I met at events in the last ninety days who asked about pricing". The sandbox gets a run-bound grant to read Gmail and Calendar and writes `outreach/email/SHORTLIST.csv` with a reason and evidence per row. You edit the CSV in Files or from your coding agent and mark rows as selected.
 
-Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP.
+Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. A recipient Gmail refuses is marked failed and counted in the campaign's result; everyone else keeps sending. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP; after a stop nothing more is started and each recipient keeps the state it had reached.
 
 ## Example workflows
 
