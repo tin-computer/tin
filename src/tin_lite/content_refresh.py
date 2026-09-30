@@ -112,9 +112,19 @@ def page_path(url: str) -> str:
 # Selection.
 
 
-def candidates(findings_document: dict) -> dict[str, dict[str, Any]]:
-    """Pages the audit's search findings name, with the checks that name each one."""
+def candidates(
+    findings_document: dict, planned: dict[str, set[str]] | None = None, host: str | None = None
+) -> dict[str, dict[str, Any]]:
+    """Pages the audit's search findings name, with the checks that name each one.
+
+    `planned` adds the refresh rows of a current organic.content_efficacy decision, as site
+    paths with the audit check each rule stands for (planned_url_changes.refresh_candidates).
+    """
     pages: dict[str, dict[str, Any]] = {}
+    for path, checks in (planned or {}).items() if host else ():
+        entry = pages.setdefault(path, {"url": f"https://{host}{path}", "checks": set()})
+        entry["checks"] |= checks & REFRESH_CHECKS
+        entry["planned"] = True
     for finding in findings_document.get("findings") or []:
         check = finding.get("check_id")
         if check not in REFRESH_CHECKS:
@@ -159,11 +169,17 @@ def top_searches(evidence: dict, key: str) -> list[dict[str, Any]]:
     return found[:MAX_SEARCHES]
 
 
-def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict | None:
+def choose(
+    findings_document: dict,
+    evidence: dict,
+    blocked: set[str],
+    planned: dict[str, set[str]] | None = None,
+) -> dict | None:
     """The eligible page with the most search impressions at stake, or None."""
     rows = page_rows(evidence)
     ranked = []
-    for key, entry in candidates(findings_document).items():
+    host = (evidence.get("scope") or {}).get("host")
+    for key, entry in candidates(findings_document, planned, host).items():
         if key in blocked:
             continue
         row = rows.get(key, {"clicks": 0.0, "impressions": 0.0, "position": 0.0})
@@ -180,6 +196,7 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
         "metrics": {**row, "ctr": round(ctr, 4)},
         "searches": top_searches(evidence, key),
         "body_allowed": bool(entry["checks"] & BODY_CHECKS),
+        **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
     }
 
 

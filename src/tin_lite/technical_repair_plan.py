@@ -310,6 +310,48 @@ REPAIRS: dict[str, Repair] = {
         "config, point internal links at the surviving page, and remove the redirected URLs "
         "from the sitemap. Don't rewrite the surviving page's copy.",
     ),
+    # URL changes a planning workflow proposed (planned_url_changes): Page decisions merges
+    # and retirements, and a site architecture plan's redirects. Each is a judgment call.
+    "planned.redirect": Repair(
+        "merge_redirect",
+        "redirects",
+        "redirects pages a planning workflow proposed moving, and points internal links and "
+        "the sitemap at the new URL",
+        live="redirects_to",
+        decision=_yes_no(
+            "A planning workflow proposes this redirect. Should Tin add it?",
+            "apply",
+            "keep",
+            "apply",
+            "The proposal already ruled out paid visits, protected pages and unsafe targets. "
+            "Say keep when the old page still has a job the numbers don't show, such as a link "
+            "you send people to or a page a partner points at.",
+            yes_label="Add the permanent redirect",
+            no_label="Keep the page where it is",
+        ),
+        how="Add a permanent (301 or 308) redirect from each old URL to its new URL in the "
+        "framework's or host's redirect config, point internal links at the new URL, and "
+        "remove the old URL from the sitemap. Don't rewrite either page's copy.",
+    ),
+    "planned.noindex": Repair(
+        "html_noindex",
+        "indexing",
+        "marks pages a planning workflow proposed keeping out of search noindex",
+        live="noindex",
+        decision=_yes_no(
+            "A planning workflow proposes keeping this page out of search results. Should Tin "
+            "mark it noindex?",
+            "apply",
+            "keep",
+            "apply",
+            "It was proposed because the page shows up in search without being a page searchers "
+            "should land on, such as a sign-in or ad page. Say keep if people should find it.",
+            yes_label="Mark it noindex",
+            no_label="Keep it in search",
+        ),
+        how="Add robots noindex in the page's own metadata and remove it from the sitemap. "
+        "Keep it crawlable: don't block it in robots.txt.",
+    ),
     "http.redirect_chain": Repair(
         "redirect_chain",
         "redirects",
@@ -769,9 +811,13 @@ def build_plan(selections: list[dict], answers: dict[str, str]) -> dict:
             "affected_count": row.get("affected_count"),
             **({"decision": choice} if choice else {}),
         }
-        if repair.kind == "merge_redirect" and choice:
+        if repair.kind == "merge_redirect" and (finding.get("planned") or {}).get("redirects"):
+            entry["redirects"] = finding["planned"]["redirects"][:MAX_URLS_PER_FINDING]
+        elif repair.kind == "merge_redirect" and choice:
             entry["redirects"] = merge_expectations(finding, choice)
             entry["survivor"] = choice
+        if finding.get("planned"):
+            entry["planned_by"] = finding["planned"]["source"]
         repairs.append(entry)
     return {"repairs": repairs, "decisions_needed": decisions_needed, "left_out": left_out}
 
