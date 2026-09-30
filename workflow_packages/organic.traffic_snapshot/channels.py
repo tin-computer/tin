@@ -1,13 +1,10 @@
-"""Traffic channels: one fixed map shared by the traffic snapshot and the growth analytics.
+"""Traffic channels: one fixed map for the traffic snapshot and its weekly readout.
 
 The order and the domain patterns are product.analytics_brief's (its CALCULATIONS.md), so a
-channel means the same thing in all three reports; tests/test_traffic_snapshot.py checks that
-they stay identical. UTM medium decides paid, email and social first; then the lowercased
-referring domain without a leading "www." is tested in order. The two code workflows add one
-thing the brief does not do: when the referrer is empty, a utm_source names the source.
-
-This file is byte-identical in organic.traffic_snapshot and growth.acquisition_analytics,
-because a package can only read its own files.
+channel means the same thing in both reports; tests/test_traffic_snapshot.py checks that they
+stay identical. UTM medium decides paid, email and social first; then the lowercased
+referring domain without a leading "www." is tested in order. The snapshot adds one thing the
+brief does not do: when the referrer is empty, a utm_source names the source.
 """
 
 import re

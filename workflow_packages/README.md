@@ -56,11 +56,10 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
-| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy`, `growth.acquisition_analytics`, `organic.site_architecture`, `content.blog_index` read its data file | Organic traffic |
+| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy`, `organic.site_architecture`, `content.blog_index` read its data file; its weekly readout routes decisions to `growth.signup_source`, `content.refresh` and `organic.audit` | Organic traffic |
 | `organic.content_efficacy` | traffic snapshot, organic audit, onboarding plan, brand guide, earlier `content.refresh` drafts | `organic.technical_fix` (URL changes as judgment calls), `content.refresh` (refresh candidates) | Organic traffic, technical SEO |
 | `organic.site_architecture` | connected repository, traffic snapshot, page decisions, organic audit, Code map | `organic.technical_fix` (its `redirects.json` block), `content.refresh`, `content.diagram` | Technical SEO |
 | `content.blog_index` | connected repository, saved article route (`save_page_route`), Code map, traffic snapshot | founder merges the PR; `content.deliver` adds a missing route with the next article | Organic traffic |
-| `growth.acquisition_analytics` | PostHog and Search Console connections, traffic snapshot | `growth.signup_source`, `content.refresh`, `organic.content_efficacy`, `organic.audit` by rule | Organic traffic |
 | `organic.prompt_panel` | brand guide, Feature map, onboarding plan, keyword plan, Search Console | `organic.audit` asks the approved panel | Organic traffic |
 
 The onboarding plan lists these under their programs in
