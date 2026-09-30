@@ -3946,8 +3946,8 @@ def create_mcp_app(
         paths: list[str] | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Search bounded project-state text without checking out the repository."""
-        from tin_lite.project_files import safe_project_file_path
+        """Search project-state files for literal text without checking out the repository."""
+        from tin_lite.project_files import safe_project_search_path
 
         token = await caller()
         clerk_user_id = token.subject
@@ -3956,7 +3956,7 @@ def create_mcp_app(
         await require_project(parsed_project_id, token, tool_name="search_project_files")
         if not query or len(query) > 500 or limit < 1 or limit > 100:
             raise ValueError("query or limit is outside the supported bounds")
-        if paths and any(not safe_project_file_path(path) for path in paths):
+        if paths and any(not safe_project_search_path(path) for path in paths):
             raise ValueError("unsafe or protected project path")
         project = await runtime().database.get_project(parsed_project_id)
         if project is None:

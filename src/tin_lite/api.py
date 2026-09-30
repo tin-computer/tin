@@ -91,6 +91,7 @@ from tin_lite.project_files import (
     ProjectFileMutationInput,
     StaleProjectRevisionError,
     safe_project_file_path,
+    safe_project_search_path,
 )
 from tin_lite.projects import (
     ProjectCreationConflictError,
@@ -2299,7 +2300,7 @@ async def search_project_files(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectFileSearchView:
     project = await _require_project_access(project_id, request, user)
-    if path and any(not safe_project_file_path(item) for item in path):
+    if path and any(not safe_project_search_path(item) for item in path):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unsafe path")
     if revision is None:
         _, revision = await request.app.state.runtime.storage.list_canonical_files(
@@ -2314,6 +2315,14 @@ async def search_project_files(
             paths=path,
             limit=limit,
         )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="revision not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     except Exception as exc:
         storage_status = getattr(exc, "status_code", None)
         response_status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -4401,7 +4410,7 @@ async def _read_project_file(
     except Exception as exc:
         storage_status = getattr(exc, "status_code", None)
         response_status = getattr(getattr(exc, "response", None), "status_code", None)
-        if storage_status == 404 or response_status == 404:
+        if isinstance(exc, LookupError) or storage_status == 404 or response_status == 404:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project file not found at this revision",
