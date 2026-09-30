@@ -130,13 +130,14 @@ def adaptation_refusal(exc):
 def publish_sentence(mode, *, route_missing=False):
     """What Publish does for an adapted page, in the founder's words.
 
-    Tin merges only a pull request that adds nothing but the page, so when the site has no
-    route for these pages yet the first one stays a pull request whatever the setting says.
+    Tin merges a pull request that adds only the page, or the page and the route the founder
+    chose for these pages. Until a route is chosen, a commit-to-main setting still leaves the
+    first pull request open.
     """
-    if route_missing:
+    if route_missing and mode == "github_commit":
         return (
             "Tin adapts it to your site and opens a pull request, "
-            "since your site first needs a route for these pages"
+            "since you have not chosen where these pages live yet"
         )
     if mode == "github_commit":
         return "Tin adapts it to your site and commits it to main"
@@ -635,11 +636,15 @@ class ContentDelivery:
         binding = await self.integrations.github_repository_binding(
             project_id=run.project_id, expected_repository=chosen.repository
         )
+        from tin_lite.page_routes import PageRouteService
+
         record = {
             "adapter": ADAPTER,
             "settings": chosen.model_dump(),
             "settings_revision": configured["revision"] if configured else None,
             "path": None,
+            # Where the founder chose these pages live, pinned at approval; None when unset.
+            "route": await PageRouteService(database=self.db, storage=self.storage).route_for(run),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
             "installation_id": binding.installation_id,

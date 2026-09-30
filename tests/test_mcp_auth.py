@@ -150,6 +150,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert {
         "get_content_delivery_settings",
         "save_content_delivery_settings",
+        "save_page_route",
         "retry_content_delivery",
     } <= {tool.name for tool in tools}
     assert {"get_workflow_review", "request_workflow_changes"} <= {tool.name for tool in tools}
@@ -163,7 +164,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "evaluate_workflow_case",
     } <= {tool.name for tool in tools}
     assert {"get_brand_guide", "get_brand"} <= {tool.name for tool in tools}
-    assert len(tools) == 88
+    assert len(tools) == 89
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description
