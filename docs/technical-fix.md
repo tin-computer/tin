@@ -1,10 +1,88 @@
 # Technical repair from an organic audit
 
-`organic.technical_fix` takes one evidenced audit finding, reads the live site again,
-finds the repository files behind it, and proposes an unmerged GitHub PR. It does not
-merge or deploy the repair. The current policy is `site-fix-v4`; older runs and saved
-configurations retain their pinned policy (`missing-html-title-v1` through
-`html-metadata-v3`).
+`organic.technical_fix` reads an organic audit's findings, checks them on the live site
+again, and proposes an unmerged GitHub PR that fixes every one it can. It does not merge
+or deploy the repair. The current policy is `site-fix-v5` (catalog 0.6.0); older runs
+and saved configurations retain their pinned policy (`missing-html-title-v1` through
+`site-fix-v4`, which repair one finding per run).
+
+## site-fix-v5: everything the audit found
+
+One run takes a whole audit. `technical_repair_plan.py` gives every audit check one
+place:
+
+- **Fixed in the repository**, grouped by the kind of change: indexing directives
+  (noindex, canonicals, soft 404s), the sitemap, robots.txt, merges and redirects (after
+  a cannibalization decision, redirect chains and loops, HTTP to HTTPS), page structure
+  (title and description from existing text, H1, lang, hreflang, viewport),
+  accessibility (image alt, accessible names, form labels, Lighthouse markup items),
+  structured data, Open Graph tags that mirror the existing title and description, and
+  internal links (orphans, broken links).
+- **A judgment call**, when the fix depends on what the founder intends:
+  - which URL pattern survives a merge;
+  - whether a noindexed page with search traffic should be indexed;
+  - whether a canonical to another page means a duplicate;
+  - which language a mislabeled page is in;
+  - whether to allow AI search crawlers, open a closed wildcard group, unblock important
+    pages or repeat general rules in named groups;
+  - whether to add an llms.txt.
+- **Copy**, left to the content workflows: title and description rewrites (length,
+  duplicates, low click-through, near page one, decay), answer structure, dates, authors,
+  about and contact pages, and content gaps. The technical fix never writes marketing copy.
+- **Manual**, outside the repository, with where the step lives: a CDN or bot protection
+  refusing crawlers, Core Web Vitals, JavaScript-only rendering, oversized HTML, analytics,
+  server errors, an unreachable robots.txt, and asking Google to index pages.
+
+### Judgment calls through MCP
+
+`preflight_technical_fix(project_id, audit_run_id, audit_revision, expected_repository,
+repository_serves_site, decisions=[])` returns the plan without starting anything:
+`plan.repairs`, `plan.left_out` (with a reason for each finding) and `decisions_needed`.
+Each decision has an `id` (the finding), the `question`, `options` (`value` and `label`),
+Tin's `suggestion` and `why`. The `ask` field tells the coding agent to answer from the
+codebase and what it knows about the product, and to ask the founder only the ones it is
+unsure of, in one message. Answers go back as `decisions: ["finding_id=choice", ...]`, to
+the preview to check them and to `start_workflow` to run them. A finding whose decision is
+unanswered, or answered "keep", stays out of the PR and is listed. Starting a run with
+nothing ready to fix is refused with the count of decisions still waiting.
+
+### One run, one pull request
+
+- The run re-reads the live site: robots.txt, the sitemaps it names, and up to 40 pages.
+  It drops findings that are already fixed, then binds the repository and reads open-PR
+  evidence.
+- Codex gets the plan (up to 30 findings, most urgent first) through the
+  `audit-batch-repair` skill. It traces each finding to its source in the site's own
+  framework, fixes it where it applies to every affected page, runs the repository's
+  checks plus `git diff --check`, and writes a PR body with the fixes by group, the
+  decisions followed, anything left for a later run, manual steps, and checks run and
+  skipped. The skill carries site health's repair rules (see below).
+- Before the PR opens, the worker checks the patch:
+  - at most 20 files and 800 changed lines, files at most 200 KB and new files at most
+    20 KB, text only;
+  - no dependencies, lockfiles, CI, deploy or build settings, secrets, `.github/` or
+    `.gitmodules`; the one deploy setting it may edit is a host's redirect list
+    (`redirects` in `vercel.json` or `netlify.toml`), and only that list;
+  - no file an open PR already changes;
+  - files the site serves byte for byte (robots.txt, sitemaps, static pages) change only
+    as their findings call for, checked from the diff as in site-fix-v4, and a served
+    page with several findings keeps its visible text; the live file must still match
+    what was read;
+  - any other change carries the sentence that Tin couldn't build the site.
+- After the PR merges, `get_run`'s `live_check` lists each finding as fixed, waiting for
+  the deploy, still broken a day after the merge, or confirmed by the next audit (redirect
+  chains, internal links and other changes with no single-page check).
+
+The organic traffic system passes the whole audit under v5. Its run leaves judgment calls
+out and lists them; a later technical-fix run can take the coding agent's answers.
+
+### Site health is folded in
+
+`site.health_improve` made one evidenced fix per run. Its repair rules are in the
+`audit-batch-repair` skill, and its checks are in the audit: title, description,
+canonical, lang, viewport, H1s, image alt, and now accessible names and form labels on
+every page the audit reads. Site health leaves Start here and workflow discovery; saved
+configurations and schedules keep running at their pinned revision.
 
 ## Select a finding
 
@@ -97,7 +175,8 @@ first.
 
 ## Earlier policies
 
-The rest of this page describes the metadata-only policies that pinned runs keep.
+`site-fix-v4` and the metadata-only policies below repair one finding per run; pinned runs
+keep them.
 
 ## Current repair coverage
 

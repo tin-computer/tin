@@ -19,8 +19,10 @@ live site rather than trusted.
 from __future__ import annotations
 
 import difflib
+import html as htmllib
 import json
 import posixpath
+import re
 import tomllib
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -223,14 +225,30 @@ def verify_sitemap(before: str, after: str, expected: dict) -> None:
             raise ValueError("A new sitemap entry holds one <loc> and an optional <lastmod>.")
 
 
+def _visible_text(html: str) -> list[str]:
+    """The words a reader sees in <body>, in order."""
+    body = re.split(r"<body\b[^>]*>", html, maxsplit=1, flags=re.I)[-1]
+    body = re.sub(r"<(script|style|template)\b.*?</\1\s*>", " ", body, flags=re.I | re.S)
+    return htmllib.unescape(re.sub(r"<[^>]+>", " ", body)).split()
+
+
 def verify_html(before: str, after: str, kinds: list[str], page_url: str) -> None:
-    """One change: site-fix-v4's exact tag check. Several: each finding gone, and small."""
+    """One change: site-fix-v4's exact tag check. Several: each finding gone, the visible text
+    unchanged (an added H1 aside), and the diff small."""
     if len(kinds) == 1:
         return site_rules.verify_html_change(before, after, kinds[0], page_url)
     site_rules._same_page(before, after)
     for kind in kinds:
         if site_rules.page_needs(kind, after, page_url):
             raise ValueError(f"The page still needs its {kind.replace('_', ' ')} change.")
+    old, new = _visible_text(before), _visible_text(after)
+    if new != old:
+        added = [word for word in new]
+        for word in old:
+            if word in added:
+                added.remove(word)
+        if "html_h1" not in kinds or len(new) - len(old) != len(added) or len(added) > 16:
+            raise ValueError("A served page's visible text may not change.")
     if changed_lines(before, after) > MAX_STRICT_HTML_LINES:
         raise ValueError("A served page changes only in the tags its findings call for.")
 
