@@ -46,6 +46,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   managed-model Python and Codex procedures, with explicit maintainer registration.
 - [Social planning and drafts](social-post-batch.md): an editable plan, weekly batches
   from project files, and article repurposing with the current writing guide.
+- [X drafting and publishing](x-workflow.md): account connection, personal voice capture,
+  project-file drafts and individually confirmed posts with images or video.
 - [Project files in code workflows](code-project-files.md): direct reads of current files,
   optional caller inputs, and stable retries without a source or version picker.
 - [Product analytics brief](product-analytics-brief.md): the public PostHog package and qualification limits.

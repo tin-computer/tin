@@ -92,6 +92,7 @@ async def start_workflow_run(
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
     _approval_delivery: bool = False,
+    _x_publication: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
     if implementation is None:
@@ -157,6 +158,55 @@ async def start_workflow_run(
         project_id=project_id,
         inputs=input_payload,
     )
+    if workflow.executor == "social.x_publish":
+        from tin_lite.x_posts import approved_payload
+
+        approval_id = normalized_inputs["approval_id"]
+        if (
+            not _x_publication
+            or start_idempotency_key != f"x-publish:{approval_id}"
+            or project_workflow_id
+        ):
+            raise WorkflowInputError("Preview the X post and explicitly confirm publication first.")
+        try:
+            await approved_payload(
+                runtime.database, approval_id, project_id, started_by_clerk_user_id
+            )
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not await runtime.database.has_project_access(
+            project_id=project_id, clerk_user_id=started_by_clerk_user_id
+        ):
+            raise LookupError("project not found")
+    if workflow.executor == "social.x_style" and existing is None:
+        from tin_lite import x_style
+
+        try:
+            x_style.validate_inputs(normalized_inputs)
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not getattr(settings, "luna_api_key", None):
+            raise WorkflowExecutorUnavailableError(
+                "X style capture requires the native model service."
+            )
+        if not any(
+            normalized_inputs.get(k) for k in ("supplied_samples", "source_path", "preferences")
+        ):
+            connection = await runtime.integrations.x.connection(
+                project_id, capability="x.posts.read"
+            )
+            if connection.configuration.get("protected") is not False:
+                raise WorkflowInputError(
+                    "Connect a public X account or supply your own writing samples."
+                )
+            if normalized_inputs.get("account_id") not in {
+                None,
+                "",
+                connection.external_account_id,
+            }:
+                raise WorkflowInputError(
+                    "The selected X account differs from the connected account."
+                )
     if existing is None and workflow.executor == "workflow.code":
         from tin_lite.workflow_code import validate_code_definition
 

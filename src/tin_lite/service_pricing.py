@@ -43,6 +43,7 @@ NATIVE_EXECUTORS = {
     "content.plan",
     "creative.character",
     "style.capture",
+    "social.x_style",
     "content.answer_page",
     "project.memory",
     "project.weekly_brief",

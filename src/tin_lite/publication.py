@@ -21,15 +21,16 @@ _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 OUTPUT_REASONS = frozenset(
     {"publication_pending", "reconciliation_pending", "output_conflict", "execution_interrupted"}
 )
-RETAINED_OUTPUT_EXECUTORS = frozenset({"codex.procedure", "style.capture", "workflow.code"})
+RETAINED_OUTPUT_EXECUTORS = frozenset(
+    {"codex.procedure", "style.capture", "social.x_style", "workflow.code"}
+)
 
 
 def output_checkpoint_key(run: WorkflowRun) -> str:
-    suffix = (
-        "style_artifact_persist"
-        if run.executor == "style.capture"
-        else "procedure_artifact_persist"
-    )
+    suffix = {
+        "style.capture": "style_artifact_persist",
+        "social.x_style": "x_style_artifact_persist",
+    }.get(run.executor, "procedure_artifact_persist")
     return f"{run.id}:{suffix}"
 
 

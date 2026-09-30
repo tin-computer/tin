@@ -26,6 +26,7 @@ class PublicWorkflow:
 PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("7c9ec5f4-d6e5-4800-9628-c7789f82b619"), "social.content_plan"),
     PublicWorkflow(UUID("5ad36b92-1f48-4ad2-a8a5-3c7f0bd7e905"), "social.post_batch"),
+    PublicWorkflow(UUID("3eebd981-bc95-4c50-86a1-0643155270bc"), "social.x_compose"),
     PublicWorkflow(UUID("a94f3a5d-d58c-4e91-b6bb-c1e047dc8372"), "brand.capture"),
     PublicWorkflow(UUID("0ddd88b9-6ded-44c3-9982-b7505c2e31b1"), "product.analytics_brief"),
     PublicWorkflow(UUID("543626b6-635f-4cef-b00e-e46225753c13"), "growth.score_quiz"),

@@ -69,6 +69,8 @@ from tin_lite.visibility import VisibilityAuditor
 from tin_lite.weekly_brief import WeeklyBriefReporter
 from tin_lite.worker_group import WorkerGroup
 from tin_lite.workflows import registered_workflows
+from tin_lite.x_publish_activities import XPublishActivities
+from tin_lite.x_style_activities import XStyleActivities
 
 ROOT = Path(__file__).parents[2]
 
@@ -255,6 +257,12 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     style_activities = StyleCaptureActivities(
         database=database, storage=storage, router=model_router
     )
+    x_style_activities = XStyleActivities(
+        database=database, storage=storage, router=model_router, x_connection=integrations.x
+    )
+    x_publish_activities = XPublishActivities(
+        database=database, storage=storage, integrations=integrations
+    )
     plan_activities = GrowthPlanActivities(
         database=database,
         storage=storage,
@@ -313,6 +321,14 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         style_activities.record_approval,
         style_activities.publish,
         style_activities.failure,
+        x_style_activities.prepare,
+        x_style_activities.extract,
+        x_style_activities.propose,
+        x_style_activities.record_approval,
+        x_style_activities.publish,
+        x_style_activities.failure,
+        x_publish_activities.execute,
+        x_publish_activities.failure,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,

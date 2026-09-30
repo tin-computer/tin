@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { chromium } from "playwright";
-import { fileUrl, openApp, serveApp } from "./app-fixture.js";
+import { fileUrl, openApp, revision, serveApp } from "./app-fixture.js";
 
 const fileKinds = [
   ["reports/answers/page-1.md", ".markdown-return"],
@@ -106,4 +106,37 @@ test("tree rows keep the right icon while folders open and close", {timeout: 120
     await browser.close();
     server.close();
   }
+});
+
+test("canonical X draft JSON in Files opens the editor without replacing the generic reader", async () => {
+  const {server, base} = await serveApp();
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await openApp(browser, base, {url: "/files"});
+    const chosen = [];
+    await page.route(url => new URL(url).pathname === "/api/projects/project/x/drafts", route => {
+      chosen.push(new URL(route.request().url()).searchParams.get("path"));
+      return route.fulfill({json: {
+        path: "social/x-drafts/release.json", revision,
+        draft: {schema_version: "tin.social.x_draft.v1", account_id: "123", posts: [{
+          id: "p1", text: "One saved X post", readiness: "ready", support: [],
+          editor_notes: "", attachments: [], missing_assets: [],
+        }]},
+      }});
+    });
+    await page.goto(`${base}${fileUrl("social/x-drafts/release.json")}&project=project`);
+    await page.locator(".project-file-view.is-json").waitFor();
+    assert.equal(await page.locator(".project-json-body").isVisible(), true);
+    await page.getByRole("button", {name: "Edit X drafts"}).click();
+    await page.locator('[data-x-text="0"]').waitFor();
+    assert.equal(await page.locator('[data-x-text="0"]').inputValue(), "One saved X post");
+    assert.deepEqual(chosen, ["social/x-drafts/release.json"]);
+    await page.getByRole("button", {name: "Close X drafts"}).click();
+    assert.equal(await page.locator(".project-json-body").isVisible(), true);
+    await page.goto(`${base}${fileUrl("reports/keyword-plan/keywords.json")}&project=project`);
+    await page.locator(".project-file-view.is-json").waitFor();
+    assert.equal(await page.getByRole("button", {name: "Edit X drafts"}).count(), 0);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
 });

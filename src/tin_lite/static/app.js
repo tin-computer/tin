@@ -118,7 +118,7 @@ const CUSTOM_API_TEMPLATE = Object.freeze({
   status: "available",
 });
 const CONNECT_REQUEST_KEY = "tin-lite:connect-providers";
-const CONNECT_PROVIDERS = new Set(["infra.github", "infra.github_user", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog"]);
+const CONNECT_PROVIDERS = new Set(["infra.github", "infra.github_user", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog", "social.x"]);
 let pendingConnectRequest = null;
 
 function rememberConnectRequest(projectId, providers) {
@@ -1314,11 +1314,42 @@ function openRunArtifact(runId, returnView = state.view) {
   const run = state.runs.find((item) => item.id === runId);
   if (hasOutputConflict(run)) { openOutputComparison(runId, returnView); return; }
   const output = availableRunOutput(run);
+  if (run?.workflow_name === "social.x_compose" && output?.source === "canonical" && output.path.endsWith(".json") && window.TinXPosts) {
+    openXComposer(output.path, runId);
+    return;
+  }
   if (!output || isMarkdownPath(output.path)) {
     openDocument(runId, returnView, output?.source || "canonical");
     return;
   }
   openRunOutputFile(run, output, returnView);
+}
+
+function openXComposer(path, runId = "manual") {
+  if (!window.TinXPosts || !state.project || state.projectAccess !== "ready") return;
+  const context = currentProjectContext();
+  window.TinXPosts.open({
+    projectId: context.projectId,
+    path,
+    runId,
+    supportsAltText: state.integrations.find(item => item.key === "social.x")?.configuration?.supports_alt_text !== false,
+    api: async (apiPath, options) => {
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      const result = await api(apiPath, options);
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      return result;
+    },
+    rawFetch: async (apiPath, options) => {
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      const result = await authorizedFetch(apiPath, options);
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      return result;
+    },
+    onPublished: async () => {
+      if (!isCurrentProjectContext(context)) return;
+      await pollRuns();
+    },
+  });
 }
 
 function hasOutputConflict(run) {
@@ -5322,6 +5353,18 @@ function renderJsonProjectFile(route, file) {
       }
     },
   });
+  if (route.source === "canonical" && !route.compareRun && /^social\/x-drafts\/[^/]+\.json$/.test(route.path)) {
+    const actions = main.querySelector(".project-json-actions");
+    if (actions) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "project-file-action";
+      edit.textContent = "Edit X drafts";
+      edit.title = "Open the latest saved X draft";
+      edit.addEventListener("click", () => openXComposer(route.path));
+      actions.prepend(edit);
+    }
+  }
 }
 
 function renderTextProjectFile(route, file) {
@@ -5667,7 +5710,7 @@ function bindIntegrationCardControls() {
   document.querySelectorAll("[data-integration-upgrade]").forEach((button) => {
     button.addEventListener("click", () => connectIntegration(
       button.dataset.integrationUpgrade,
-      ["gmail.messages.send"],
+      button.dataset.integrationCapabilities?.split(",") || ["gmail.messages.send"],
     ));
   });
   document.querySelectorAll("[data-integration-disconnect]").forEach((button) => {
@@ -5783,6 +5826,9 @@ function renderIntegrationCard(integration) {
       : selected || integration.external_account_label || "Choose an account";
   const health = integration.key.startsWith("custom.api.")
     ? integration.configuration?.access_verified ? "access verified" : "saved · not verified"
+    : integration.key === "social.x" && connected
+    ? integration.status === "needs_attention" ? "reconnect required"
+      : (integration.configuration?.granted_capabilities || []).includes("x.posts.publish") ? "ready to publish approved posts" : "reading only"
     : integration.key === "ads.google" && connected
     ? googleAdsHealth(integration)
     : integration.key === "payments.stripe" && connected
@@ -5873,8 +5919,35 @@ function renderStripeExpanded(integration) {
   </div>`;
 }
 
+function renderXIntegrationExpanded(integration) {
+  const granted = new Set(integration.configuration?.granted_capabilities || []);
+  const capabilityRows = [
+    ["x.posts.read", "Read your own posts"],
+    ["x.posts.publish", "Publish posts you approve"],
+    ["x.media.upload", "Upload media for approved posts"],
+  ];
+  const missingPublish = !granted.has("x.posts.publish");
+  const missingMedia = !granted.has("x.media.upload");
+  return `<div class="integration-expanded">
+    ${integration.status === "needs_attention" ? `<p class="integration-setup-prompt" role="status"><strong>X needs reconnecting.</strong> Tin cannot use this connection until access is restored.</p>` : ""}
+    <div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Connected X account")}</span></div>
+    <div class="integration-detail-row"><span class="integration-detail-label">Access</span><span class="integration-detail-value">${capabilityRows.map(([key, label]) => `${granted.has(key) ? "✓" : "○"} ${escapeHtml(label)}`).join(" · ")}</span></div>
+    <div class="integration-detail-row"><span class="integration-detail-label">Unlocks</span><span class="integration-detail-value is-muted">${escapeHtml((integration.unlocks || []).join(" · "))}</span></div>
+    <p class="integration-setup-prompt">Drafting never posts to X. Tin publishes only the exact post you preview and confirm.</p>
+    <div class="integration-control-footer">
+      <span>connected ${escapeHtml(integration.connected_at ? timeLabel(integration.connected_at) : "recently")} · ${escapeHtml(integration.last_checked_at ? `checked ${timeLabel(integration.last_checked_at)}` : "not checked yet")}</span>
+      ${missingPublish ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.posts.publish">Enable publishing</button>` : ""}
+      ${missingMedia ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.media.upload">Enable media</button>` : ""}
+      ${integration.status === "needs_attention" ? `<button class="integration-reconnect" type="button" data-integration-connect="social.x">Reconnect</button>` : ""}
+      <button class="integration-disconnect" type="button" data-integration-disconnect="social.x">Disconnect</button>
+      <button class="integration-done" type="button" data-integration-expand="social.x">Done</button>
+    </div>
+  </div>`;
+}
+
 function renderIntegrationExpanded(integration) {
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
+  if (integration.key === "social.x") return renderXIntegrationExpanded(integration);
   const options = state.integrationOptions.get(integration.key);
   const selected = integrationSelection(integration) || "";
   const isPostHog = integration.key === "analytics.posthog";
@@ -5986,7 +6059,7 @@ async function toggleIntegration(providerKey) {
   state.expandedIntegration = providerKey;
   const integration = state.integrations.find((item) => item.key === providerKey);
   const context = currentProjectContext();
-  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe", "infra.github_user"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
+  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe", "infra.github_user", "social.x"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
     state.integrationLoading = providerKey;
     renderIntegrations();
     try {
@@ -6550,15 +6623,15 @@ async function bootstrap(invitedProjectId = null, integrationReturn = null) {
 
 async function completeIntegrationCallback() {
   const path = window.location.pathname.replace(/\/$/, "");
-  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account"].includes(path)) return null;
+  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account", "/integrations/callback/x"].includes(path)) return null;
   const values = new URL(window.location.href).searchParams;
   const provider = path.split("/").pop();
   const stateToken = values.get("state");
   let connected;
-  if (provider === "google" || provider === "posthog" || provider === "github-account") {
+  if (provider === "google" || provider === "posthog" || provider === "github-account" || provider === "x") {
     if (!stateToken) throw new Error("The integration connection did not return a valid state.");
     const code = values.get("code");
-    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account" }[provider];
+    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account", x: "X" }[provider];
     if (!code) throw new Error(values.get("error_description") || `${label} connection was cancelled.`);
     connected = await api(`/api/integrations/${provider}/complete`, {
       method: "POST",
@@ -7135,6 +7208,13 @@ async function initializeAuth() {
   const integrationReturn = connection || (state.githubInstallationChoice
     ? { provider: "infra.github", projectId: state.githubInstallationChoice.projectId } : null);
   await bootstrap(invitedProject?.id || integrationReturn?.projectId || null, integrationReturn);
+  const handoffUrl = new URL(window.location.href);
+  const xDraftPath = handoffUrl.searchParams.get("x_draft");
+  if (xDraftPath && xDraftPath.length <= 512 && state.projectAccess === "ready") {
+    handoffUrl.searchParams.delete("x_draft");
+    window.history.replaceState(null, "", `${handoffUrl.pathname}${handoffUrl.search}${handoffUrl.hash}`);
+    openXComposer(xDraftPath);
+  }
   if (connection && connection.projectId === state.project?.id) await promptForIntegrationResource(connection.provider);
   if (state.githubInstallationChoice) chooseGitHubInstallation();
 }

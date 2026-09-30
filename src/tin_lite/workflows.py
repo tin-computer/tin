@@ -1356,6 +1356,59 @@ class StyleCaptureWorkflow:
             raise
 
 
+@workflow.defn(name="social.x_style")
+class XStyleWorkflow:
+    def __init__(self) -> None:
+        self._approved = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=5),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            await call("x_style_prepare")
+            await call("x_style_extract")
+            if await call("x_style_propose"):
+                await workflow.wait_condition(lambda: self._approved)
+                await call("x_style_record_approval")
+            await call("x_style_publish")
+        except BaseException:
+            await call("x_style_failure")
+            raise
+
+
+@workflow.defn(name="social.x_publish")
+class XPublishWorkflow:
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        try:
+            await workflow.execute_activity(
+                "x_publish_execute",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=15),
+                heartbeat_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+        except BaseException:
+            await workflow.execute_activity(
+                "x_publish_failure",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=1),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+            raise
+
+
 @workflow.defn(name="growth.onboarding_plan")
 class GrowthOnboardingPlanWorkflow:
     """Read, write, save. Only the run identifier enters history; activities hold every result."""
@@ -1453,6 +1506,8 @@ def registered_workflows() -> list[type]:
         ContentDraftDeliveryWorkflow,
         ProjectCodexExecution,
         StyleCaptureWorkflow,
+        XStyleWorkflow,
+        XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -1484,6 +1539,8 @@ def registered_workflow_implementations() -> dict[str, type]:
     return {
         "workflow.code": CodeWorkflow,
         "style.capture": StyleCaptureWorkflow,
+        "social.x_style": XStyleWorkflow,
+        "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,

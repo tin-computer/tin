@@ -40,11 +40,13 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
-# Workflows that act only through the founder's own connected account and buy no model or
-# provider work: no quote, no reservation, a $0 Tin charge. The value is the pinned rate card.
+# Workflows with no Tin charge. X API credits are paid by the configured app's operator,
+# separately from Tin's model ledger; included execution does not claim X API calls are free.
+# The other providers below buy no model or provider work.
 CONNECTED_ACCOUNT_EXECUTORS = {
     "outreach.email_campaign": "tin-connected-email-v1",
     "outreach.awesome_submit": "tin-connected-github-v1",
+    "social.x_publish": "tin-x-operator-funded-v1",
 }
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
@@ -376,6 +378,11 @@ class BillingService:
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
+                **(
+                    {"external_api_funding": "operator_x_credits"}
+                    if definition["executor"] == "social.x_publish"
+                    else {}
+                ),
             }
         if supports_api_definition(definition) and codex_api_enabled(self.settings, project_id):
             from tin_lite.codex_api_pricing import api_terms

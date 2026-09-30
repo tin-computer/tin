@@ -83,7 +83,7 @@ _OUTPUT_REVISION_SQL = """
 """
 
 _PENDING_OUTPUT_CONFLICT_SQL = """
-    run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+    run.executor IN ('codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
     AND run.canonical_commit_sha IS NULL
     AND run.retained_output->>'reason' = 'output_conflict'
@@ -91,7 +91,8 @@ _PENDING_OUTPUT_CONFLICT_SQL = """
     AND EXISTS (
         SELECT 1 FROM effect_receipts AS receipt
         WHERE receipt.execution_key = run.id::text || CASE WHEN run.executor='style.capture'
-            THEN ':style_artifact_persist' ELSE ':procedure_artifact_persist' END
+            THEN ':style_artifact_persist' WHEN run.executor='social.x_style'
+            THEN ':x_style_artifact_persist' ELSE ':procedure_artifact_persist' END
           AND receipt.status = 'completed'
           AND receipt.result->'checkpoint' = run.retained_output - 'reason'
           AND receipt.result->'checkpoint'->>'run_id' = run.id::text
@@ -6330,6 +6331,25 @@ class Database:
         Every statement is a no-op on replay. Activity goes last so the events written by
         integration disconnects during the same deletion are swept too.
         """
+        # X approval keys outlive an individual run so retries cannot duplicate a post.
+        # Purge the owning project's frozen drafts and delivery metadata with its files.
+        await conn.execute(
+            """WITH approvals AS (
+                SELECT split_part(execution_key, ':', 3) AS id FROM effect_receipts
+                WHERE operation='social.x_publish' AND execution_key LIKE 'x:approved:%'
+                  AND result->>'project_id'=$1::text
+            )
+            DELETE FROM effect_receipts
+            WHERE operation IN ('social.x_publish', 'social.x_style') AND (
+                (execution_key LIKE 'x:preview:%' AND result->>'project_id'=$1::text)
+                OR execution_key LIKE 'x:confirm:' || $1::text || ':%'
+                OR (split_part(execution_key, ':', 2) IN ('approved', 'media', 'post')
+                    AND split_part(execution_key, ':', 3) IN (SELECT id FROM approvals))
+                OR split_part(execution_key, ':', 1) IN (
+                    SELECT id::text FROM workflow_runs WHERE project_id=$1::uuid)
+            )""",
+            str(project_id),
+        )
         statements = (
             "DELETE FROM content_plan_revisions WHERE project_id = $1",
             "DELETE FROM content_plan_batches WHERE project_workflow_id IN "
@@ -6564,6 +6584,8 @@ class Database:
             raise ValueError("Unsupported report result status")
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
+            "social.x_style": ("x_style_ready", "Your X writing guide is ready."),
+            "social.x_publish": ("x_post_published", "Your X post is published."),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),
             "organic.audit": ("organic_audit_ready", "Organic visibility audit is ready."),
@@ -6636,6 +6658,39 @@ class Database:
             run_id,
         )
 
+    async def clear_x_style_review_projection(self, run_id: UUID) -> None:
+        await self.pool.execute(
+            """UPDATE workflow_runs
+               SET canonical_commit_sha=NULL, artifact_ref=NULL, artifact_path=NULL,
+                   artifact_title=NULL
+               WHERE id=$1 AND executor='social.x_style' AND review_decision='approved'
+                 AND status='running'
+                 AND artifact_path LIKE 'style/proposals/%-x-writing-style-%'""",
+            run_id,
+        )
+
+    async def complete_x_publish_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+    ) -> None:
+        await self._complete_readonly_report_projection(
+            conn,
+            execution_key=execution_key,
+            run_id=run_id,
+            canonical_commit_sha=canonical_commit_sha,
+            artifact_path=artifact_path,
+            artifact_ref=artifact_ref,
+            summary=summary,
+            workflow_key="social.x_publish",
+        )
+
     async def retain_procedure_output(
         self,
         conn: asyncpg.Connection,
@@ -6652,7 +6707,9 @@ class Database:
         await conn.execute(
             """
             UPDATE workflow_runs SET retained_output = $2::jsonb
-            WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+            WHERE id = $1
+              AND executor IN (
+                  'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
               AND canonical_commit_sha IS NULL
               AND (NOT $3 OR retained_output IS NULL)
             """,
@@ -6671,7 +6728,9 @@ class Database:
     ) -> None:
         updated = await conn.fetchval(
             """UPDATE workflow_runs SET output_resolution = $2::jsonb
-               WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+               WHERE id = $1
+                 AND executor IN (
+                     'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
                  AND status IN ('failed', 'stopped') AND NOT lease_active
                  AND canonical_commit_sha IS NULL
                  AND retained_output->>'reason' = 'output_conflict'
