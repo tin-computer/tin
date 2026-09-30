@@ -185,3 +185,50 @@ Confirm the expected post and media on X and the matching receipt in Tin for eac
 Provider references: [X OAuth 2.0 authorization](https://docs.x.com/fundamentals/authentication/oauth-2-0/authorization-code),
 [own-post timeline](https://docs.x.com/x-api/users/get-posts), and
 [media upload](https://docs.x.com/x-api/media/quickstart/media-upload).
+
+## Feedback that improves the next post
+
+Open a drafted post and choose **Request changes**. One text field is enough: Tin
+revises that post and automatically carries clear, reusable writing preferences into
+`.agents/skills/x-writing-style/SKILL.md`. For example, “lead product updates with a
+demo” belongs in the guide; “remove the second sentence from this post” does not.
+Facts, dates and one-off corrections remain specific to the draft. “Just this post”
+and “do not remember this” are instructions to keep a change local. Ambiguous feedback
+should revise the post without creating a lasting rule.
+
+A short note beside the revised post says what changed and what was remembered. The
+post text, other posts, attachments and publishing controls stay in the existing reader.
+Feedback changes the selected post's text; it does not resolve missing evidence or media.
+If there is no guide yet, explicit preferences can create a small guide that clearly
+states it was not learned from sampled posts. A mismatched account's guide is never used.
+
+Feedback also works on the initial proposed X guide. It edits that proposal while the
+original guide review and parent drafting workflow keep waiting. Approving the revised
+guide remains the step that adopts it and lets the parent continue.
+
+MCP uses the same service: call `get_workflow_review` with the producing run ID and
+`post_id` for a batch, then `request_workflow_changes` with the user's **unchanged**
+feedback, returned review token and a stable request ID. `read_x_drafts` returns
+`feedback_run_id` for workflow-produced files. Clients handle the token internally;
+users do not choose versions or whether to remember a preference. Article feedback
+retains its existing draft-only contract.
+
+Each feedback request creates an ordinary, separately metered `social.x_revise` run.
+The registered native workflow makes one bounded model call. Its durable receipts
+prevent retrying an uncertain purchase, and its canonical file commit applies the
+post and guide together. Newer edits to either file stop application of the revision;
+unrelated project changes can be retained. Temporal history contains only the run ID.
+Initial guide approval is serialized with revision admission and pins the exact guide
+before its durable approval signal is sent. The implementation adds no database table
+or preference registry. Run and Activity summaries remain Postgres projections.
+
+The model decides whether a preference is reusable; validation requires a literal
+supporting excerpt from the feedback, bounds every output and keeps the account fixed.
+This is conservative model judgment, not a guarantee that every preference will be
+classified perfectly. The saved guide remains an editable project file.
+
+Feedback never publishes to X. Publishing still requires a fresh exact preview and
+explicit confirmation. Fixture coverage includes HTTP/MCP parity, duplicate requests,
+uncertain calls, concurrent file edits, atomic writes, guide approval, Temporal replay,
+and the feedback panel at desktop and phone widths. Live model quality and live X
+publication are separate acceptance checks.

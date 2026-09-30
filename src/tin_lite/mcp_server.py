@@ -3267,12 +3267,13 @@ def create_mcp_app(
         }
 
     @server.tool()
-    async def get_workflow_review(run_id: str) -> dict[str, Any]:
+    async def get_workflow_review(run_id: str, post_id: str = "") -> dict[str, Any]:
         """Read the current review and exact-version token, including proposed document pairs.
 
         Collect feedback in one pass; do not ask again if the user already stated changes.
         Attach only relevant, authorized project files. Requesting changes does not approve,
-        publish, or save permanent writing preferences.
+        publish. X feedback automatically remembers clear reusable writing preferences in the
+        account-specific X guide; one-off edits remain local to the draft. Pass post_id for a batch.
         """
         from fastapi.encoders import jsonable_encoder
 
@@ -3284,7 +3285,9 @@ def create_mcp_app(
             raise LookupError("run not found")
         await require_project(run.project_id, token, tool_name="get_workflow_review")
         return jsonable_encoder(
-            await WorkflowReviews(runtime=runtime(), settings=settings).view(run.id, token.subject)
+            await WorkflowReviews(runtime=runtime(), settings=settings).view(
+                run.id, token.subject, post_id
+            )
         )
 
     @server.tool()
@@ -3294,15 +3297,22 @@ def create_mcp_app(
         review_token: str,
         request_id: str,
         reference_files: list[str] | None = None,
+        post_id: str = "",
         billing_quote_id: str | None = None,
     ) -> dict[str, Any]:
-        """Revise the exact article/assessment using feedback and optional project-file paths.
+        """Revise an article, X post or X guide from the user's verbatim feedback.
+
+        Relay the user's words unchanged. For X, pass post_id from get_workflow_review.
+        Clear reusable writing preferences are automatically saved to the X guide; factual
+        corrections and one-off edits stay with the draft. No remember checkbox is needed.
+        X revisions never publish, change attachments, or approve an initial guide.
 
         First get_workflow_review. Reuse request_id when retrying a lost response. This admits
         one separately metered generation of the SAME piece, not the next roadmap item.
         Feedback may name or describe project files for the procedure to inspect; no file
         selection is required. reference_files optionally pins exact supplied file contents.
-        Return its run/review link; approval of the revised copy is a separate user decision.
+        Return its run/review link. Article and initial-guide approval remain separate;
+        X post publication still requires an exact preview and explicit confirmation.
         """
         from tin_lite.workflow_reviews import WorkflowReviews
 
@@ -3316,6 +3326,7 @@ def create_mcp_app(
                 run_id=run.id,
                 actor=token.subject,
                 feedback=feedback,
+                post_id=post_id,
                 token=review_token,
                 request_id=_mcp_uuid(request_id, field="request_id"),
                 reference_files=reference_files or [],
@@ -3439,9 +3450,13 @@ def create_mcp_app(
 
         from tin_lite.reviewed_documents import document_spec
 
-        if run.workflow_id in SUPPORTED_IDS or (
-            run.executor == "codex.procedure"
-            and await document_spec(runtime().database, runtime().storage, run)
+        if (
+            run.executor == "social.x_style"
+            or run.workflow_id in SUPPORTED_IDS
+            or (
+                run.executor == "codex.procedure"
+                and await document_spec(runtime().database, runtime().storage, run)
+            )
         ):
             approved = await WorkflowReviews(runtime=runtime(), settings=settings).approve(
                 run_id=run.id,

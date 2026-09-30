@@ -908,6 +908,8 @@ class DecisionApply(BaseModel):
 class WorkflowRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    post_id: str = Field(default="", max_length=2)
+
     feedback: str = Field(min_length=1, max_length=8000)
     reference_files: list[str] = Field(default_factory=list, max_length=8)
     request_id: UUID
@@ -1115,6 +1117,7 @@ class MarkdownDocumentView(BaseModel):
     revision: str | None = None
     size_bytes: int | None = None
     related_documents: list[dict[str, str]] = Field(default_factory=list)
+    sha256: str | None = None
 
 
 class ProjectFileView(BaseModel):
@@ -4088,9 +4091,11 @@ def _workflow_reviews(request):
 
 
 @router.get("/api/workflows/runs/{run_id}/review")
-async def workflow_review(run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER):
+async def workflow_review(
+    run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER, post_id: str = ""
+):
     try:
-        return await _workflow_reviews(request).view(run_id, user.clerk_user_id)
+        return await _workflow_reviews(request).view(run_id, user.clerk_user_id, post_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -4113,6 +4118,7 @@ async def request_workflow_changes(
             run_id=run_id,
             actor=user.clerk_user_id,
             feedback=payload.feedback,
+            post_id=payload.post_id,
             request_id=payload.request_id,
             token=payload.review_token,
             reference_files=payload.reference_files,
@@ -4150,9 +4156,20 @@ async def read_previous_review_copy(
     response: Response,
     user: AuthContext = AUTHENTICATED_USER,
 ):
-    """Read a revision's previous copy without calling it that revision's own output."""
+    """Read the current X guide, or an article revision's previous saved copy."""
     try:
         service = _workflow_reviews(request)
+        candidate = await service.db.get_run(run_id)
+        if candidate and candidate.executor == "social.x_style":
+            from tin_lite.x_feedback_service import XFeedback
+
+            feedback = XFeedback(service.runtime, service.settings)
+            run = await feedback.source(run_id, user.clerk_user_id)
+            snapshot, _, _ = await feedback.snapshot(run)
+            document = await get_project_file_document(
+                run.project_id, request, response, snapshot["path"], snapshot["revision"], user
+            )
+            return document.model_copy(update={"sha256": snapshot["sha256"]})
         run, _ = await service.source(run_id, user.clerk_user_id)
         artifact_run, _ = await service.artifact(run)
     except LookupError as exc:
@@ -4189,10 +4206,14 @@ async def approve_run(
         await _choose_content_delivery(run, payload, request, user)
     from tin_lite.reviewed_documents import document_spec
 
-    if run.workflow_id in SUPPORTED_IDS or (
-        run.executor == "codex.procedure"
-        and await document_spec(
-            request.app.state.runtime.database, request.app.state.runtime.storage, run
+    if (
+        run.executor == "social.x_style"
+        or run.workflow_id in SUPPORTED_IDS
+        or (
+            run.executor == "codex.procedure"
+            and await document_spec(
+                request.app.state.runtime.database, request.app.state.runtime.storage, run
+            )
         )
     ):
         try:

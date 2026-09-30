@@ -14,6 +14,7 @@
     const {api, projectId, runId, reader, openRun, onRevised, toast} = context;
     let disposed = false, comparisonCleanup = null;
     const key = keyFor(projectId, runId);
+    reviews.delete(key);
     const draft = drafts.get(key) || {feedback: "", open: false, request: null};
     drafts.set(key, draft);
     const approval = [...host.querySelectorAll(reader ? ".markdown-context-action:not(.is-secondary)" : "[data-apply-decision]")];
@@ -91,6 +92,18 @@
         region.querySelector("[data-current-review]").onclick = () => openRun(review.current_run_id);
         return;
       }
+      if (review.x_feedback && review.change_summary) {
+        const summary = document.createElement("p");
+        summary.className = "review-change-summary";
+        summary.textContent = review.change_summary;
+        region.append(summary);
+      }
+      if (review.pending_run_id) {
+        const pending = document.createElement("p");
+        pending.className = "review-change-summary";
+        pending.textContent = "Revising from your feedback. This copy stays readable while Tin works.";
+        region.append(pending);
+      }
       if (review.version > 1) {
         const versions = document.createElement("div");
         versions.className = "review-version-row";
@@ -119,7 +132,7 @@
       form.className = "review-composer";
       const id = `review-feedback-${runId}`;
       form.innerHTML = `<label for="${esc(id)}">What should change?</label>
-        <p>For this draft only. Your feedback won’t change your saved writing style.</p>
+        <p>${esc(review.feedback_hint || "For this draft only. Your feedback won’t change your saved writing style.")}</p>
         <textarea id="${esc(id)}" name="feedback" maxlength="8000" required placeholder="What should we change, keep, or explain better? Mention any project files to use.">${esc(draft.feedback)}</textarea>
         <p class="review-error" role="alert" hidden></p>
         <footer><button type="submit" class="review-submit">${review.artifact?.assessment ? "Recheck with feedback" : "Revise draft"}</button></footer>`;
@@ -172,6 +185,13 @@
     }
     api(`/api/workflows/runs/${runId}/review`).then(value => {
       if (disposed || !host.isConnected) return;
+      // X guide revisions keep their original approval gate. Never pair a cached
+      // document with a token for newer text, including edits made through Files.
+      if (reader && value.x_feedback && context.documentSha !== value.artifact?.sha256) {
+        region.textContent = "Loading the updated guide…";
+        context.reloadDocument?.();
+        return;
+      }
       review = value; reviews.set(key, review);
       if (review.status === "failed" && !draft.feedback) draft.feedback = review.feedback || "";
       redraw();

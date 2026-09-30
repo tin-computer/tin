@@ -147,7 +147,21 @@ class XPosts:
         )
         if raw is None:
             raise LookupError("X draft not found")
-        return {"path": path, "revision": revision, "draft": validate_draft(raw)}
+        source_id = await self.db.pool.fetchval(
+            "SELECT r.id FROM workflow_runs r JOIN workflows w ON w.id=r.workflow_id "
+            "WHERE r.project_id=$1 AND r.artifact_path=$2 AND r.status='succeeded' "
+            "AND w.key='social.x_compose' AND w.project_id IS NULL ORDER BY r.created_at "
+            "DESC LIMIT 1",
+            project_id,
+            path,
+        )
+        return {
+            "path": path,
+            "revision": revision,
+            "draft": validate_draft(raw),
+            "sha256": digest(raw),
+            "feedback_run_id": str(source_id) if source_id else None,
+        }
 
     async def save(
         self, project_id, actor, *, path, expected_revision, request_id, draft, client_id=None
@@ -174,7 +188,12 @@ class XPosts:
                 }
             ],
         )
-        return {"path": path, "revision": result.revision, "draft": value}
+        return {
+            "path": path,
+            "revision": result.revision,
+            "draft": value,
+            "sha256": digest(content.encode()),
+        }
 
     async def snapshot(self, project_id, actor, path, post_id):
         view = await self.read(project_id, actor, path)

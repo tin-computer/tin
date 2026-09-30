@@ -22,6 +22,7 @@ from tin_lite import (
     style_capture,
     technical_fix,
     x_draft,
+    x_feedback,
     x_posts,
     x_style,
 )
@@ -427,6 +428,13 @@ class BuiltinWorkflow:
             definition["style_schema"] = style_capture.MODEL_SCHEMA
         if self.key == x_draft.KEY:
             definition["x_draft_policy"] = dict(x_draft.POLICY)
+        if self.key == x_feedback.KEY:
+            definition["public_discovery"] = False
+            definition["x_feedback_contract"] = {
+                "policy": x_feedback.POLICY,
+                "instructions": x_feedback.INSTRUCTIONS,
+                "schema": x_feedback.SCHEMA,
+            }
         if self.key == x_style.KEY:
             definition["x_style_policy"] = dict(x_style.POLICY)
             definition["x_style_instructions"] = x_style.INSTRUCTIONS
@@ -737,6 +745,19 @@ BUILTIN_WORKFLOWS = (
             },
             "required": ["project_id", "source_path"],
         },
+    ),
+    BuiltinWorkflow(
+        id=x_feedback.WORKFLOW_ID,
+        key=x_feedback.KEY,
+        title="Revise X writing",
+        description="Revise an X draft and remember clear writing preferences from feedback.",
+        executor=x_feedback.KEY,
+        version_label="1.0.0",
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        agent_only=True,
+        input_schema=x_feedback.INPUT_SCHEMA,
+        model_route=x_feedback.ROUTE,
     ),
     BuiltinWorkflow(
         id=x_draft.WORKFLOW_ID,

@@ -41,3 +41,5 @@ The dashboard composer is `src/tin_lite/static/workflow-review.js`.
 Run focused service/Temporal review tests and `npm run test:workflow-review-browser`
 when changing this contract. Fixture checks do not imply live provider or customer
 acceptance; never approve a customer's draft as an incidental test.
+
+X uses the same review endpoints with its own [file-based revision contract](x-workflow.md#feedback-that-improves-the-next-post). X feedback can automatically update the account's writing guide; the article adapter above continues to keep feedback local to its draft.

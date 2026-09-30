@@ -274,6 +274,13 @@ class XStyleActivities:
             raise ApplicationError("X voice capture is no longer active", non_retryable=True)
         if not run.review_required:
             raise ApplicationError("X voice capture requires guide review", non_retryable=True)
+        if await self.db.pool.fetchval(
+            "SELECT true FROM workflow_runs WHERE project_id=$1 AND executor='social.x_revise' "
+            "AND input->>'source_run_id'=$2 AND status='succeeded' LIMIT 1",
+            run.project_id,
+            str(run.id),
+        ):
+            return run.review_decision is None
         project = await self.db.get_project(run.project_id)
         key = f"{run.id}:x_style_proposal"
         async with self.db.effect_lock(key, x_style.KEY) as (conn, saved):

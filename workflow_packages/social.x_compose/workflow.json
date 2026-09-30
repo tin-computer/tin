@@ -4,7 +4,7 @@
     "key": "social.x_compose",
     "title": "Compose X posts directly",
     "description": "Composition step; use Draft for X for automatic voice setup. Turn current project facts and your direction into one X draft or a small set of distinct drafts, ready for individual review and editing.",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "executor": "workflow.code",
     "system": "x",
     "schedule_modes": ["on_demand"],

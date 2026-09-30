@@ -15,6 +15,7 @@ from tin_lite import (
     paid_ads,
     paid_ads_launch,
     style_capture,
+    x_feedback,
 )
 from tin_lite.activities import TinActivities
 from tin_lite.activity_lanes import (
@@ -70,6 +71,7 @@ from tin_lite.weekly_brief import WeeklyBriefReporter
 from tin_lite.worker_group import WorkerGroup
 from tin_lite.workflows import registered_workflows
 from tin_lite.x_draft_activities import XDraftActivities
+from tin_lite.x_feedback_activities import XFeedbackActivities
 from tin_lite.x_publish_activities import XPublishActivities
 from tin_lite.x_style_activities import XStyleActivities
 
@@ -133,6 +135,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             SITE_HEALTH_MODEL_ROUTE,
             CHARACTER_MODEL_ROUTE,
             style_capture.ROUTE,
+            x_feedback.ROUTE,
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
@@ -261,6 +264,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     x_draft_activities = XDraftActivities(
         database=database, storage=storage, integrations=integrations, settings=settings
     )
+    x_feedback_activities = XFeedbackActivities(
+        database=database, storage=storage, router=model_router
+    )
     x_style_activities = XStyleActivities(
         database=database, storage=storage, router=model_router, x_connection=integrations.x
     )
@@ -329,6 +335,9 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         x_draft_activities.step,
         x_draft_activities.finish,
         x_draft_activities.failure,
+        x_feedback_activities.generate,
+        x_feedback_activities.publish,
+        x_feedback_activities.failure,
         x_style_activities.prepare,
         x_style_activities.extract,
         x_style_activities.propose,

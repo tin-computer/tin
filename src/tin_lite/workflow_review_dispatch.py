@@ -61,6 +61,30 @@ async def dispatch_reviews(runtime, settings):
             )
         except Exception:
             logging.getLogger(__name__).warning("Review dispatch pending; it will retry.")
+    await dispatch_x_revisions(runtime, settings)
+
+
+async def dispatch_x_revisions(runtime, settings):
+    """The admitted run is the intent, including on self-hosts without a billing loop."""
+    from tin_lite.workflows import XFeedbackWorkflow
+
+    rows = await runtime.database.pool.fetch(
+        "SELECT r.id FROM workflow_runs r JOIN projects p ON p.id=r.project_id "
+        "WHERE r.executor='social.x_revise' AND r.status='pending' AND p.deleted_at IS NULL "
+        "AND r.created_at<now()-interval '30 seconds' ORDER BY r.created_at LIMIT 20"
+    )
+    for row in rows:
+        run = await runtime.database.get_run(row["id"])
+        try:
+            await runtime.temporal.start_workflow(
+                XFeedbackWorkflow.run,
+                str(run.id),
+                id=run.temporal_workflow_id,
+                task_queue=settings.task_queue,
+                id_reuse_policy=WorkflowIDReusePolicy.REJECT_DUPLICATE,
+            )
+        except WorkflowAlreadyStartedError:
+            pass
 
 
 async def review_reconciliation_loop(runtime, settings):

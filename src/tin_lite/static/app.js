@@ -3185,7 +3185,8 @@ function renderDocument() {
   }
   const reviewedRun = state.runs.find(item => item.id === route.runId);
   const previousReviewCopy = reviewedRun?.review_source_run_id && !reviewedRun.artifact_path;
-  const cacheKey = route.taskPath ? `task:${route.runId}:${route.taskPath}` : `run:${route.runId}:${route.source || "canonical"}${previousReviewCopy ? ":previous" : ""}`;
+  const xGuide = reviewedRun?.workflow_name === "social.x_style";
+  const cacheKey = route.taskPath ? `task:${route.runId}:${route.taskPath}` : `run:${route.runId}:${route.source || "canonical"}:${reviewedRun?.canonical_commit_sha || ""}${previousReviewCopy ? ":previous" : ""}`;
   const cached = state.documentCache.get(cacheKey);
   if (cached) {
     const run = state.runs.find((item) => item.id === route.runId);
@@ -3234,7 +3235,13 @@ function renderDocument() {
     }
     if (route.source !== "retained" && supportsArticleFeedback(run)) {
       const cleanReader = state.documentCleanup;
-      const cleanReview = mountArticleFeedback(main, run.id, true);
+      const cleanReview = mountArticleFeedback(main, run.id, true, {
+        documentSha: cached.sha256,
+        reloadDocument: () => {
+          state.documentCache.delete(cacheKey);
+          render();
+        },
+      });
       state.documentCleanup = () => {cleanReview(); cleanReader();};
     }
     return;
@@ -3246,7 +3253,7 @@ function renderDocument() {
   const context = currentProjectContext();
   const endpoint = route.taskPath
     ? `/api/tasks/${encodeURIComponent(route.runId)}/review/document?path=${encodeURIComponent(route.taskPath)}`
-    : previousReviewCopy ? `/api/workflows/runs/${encodeURIComponent(route.runId)}/review/document`
+    : previousReviewCopy || (xGuide && route.source !== "retained") ? `/api/workflows/runs/${encodeURIComponent(route.runId)}/review/document`
     : `/api/workflows/runs/${encodeURIComponent(route.runId)}/artifact/document` + (route.source === "retained" ? "?source=retained" : "");
   api(endpoint)
     .then((documentData) => {
@@ -4352,10 +4359,10 @@ async function discardCampaignRevision(runId, button) {
 function supportsArticleFeedback(run) {
   if (!run) return false;
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article"].includes(workflowForRun(run)?.key || run?.workflow_name);
+    ["content.generate", "content.public_article", "social.x_style"].includes(workflowForRun(run)?.key || run?.workflow_name);
 }
 
-function mountArticleFeedback(host, runId, reader = false) {
+function mountArticleFeedback(host, runId, reader = false, documentContext = {}) {
   const context = currentProjectContext();
   const run = state.runs.find(item => item.id === runId);
   const repositoryDelivery = repositoryDeliveryAvailable(run);
@@ -4365,14 +4372,16 @@ function mountArticleFeedback(host, runId, reader = false) {
     deliveryOptions: reader && repositoryDelivery && !adapted ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
     onApprove: async (button, delivery = null) => approveRun(runId, button, delivery ? { delivery } : await publishDelivery(run, repositoryDelivery ? "github_commit" : null)),
     api, projectId: context.projectId, runId, reader, toast: showToast,
+    ...documentContext,
     loadRenderer: loadComparisonRenderer,
     openRun: id => openDocument(id, "decisions"),
     onRevised: successor => {
       if (!isCurrentProjectContext(context)) return;
       const source = state.runs.find(r => r.id === runId);
-      if (source) upsertRun({...source, status: "superseded"});
+      const xGuide = source?.workflow_name === "social.x_style";
+      if (source && !xGuide) upsertRun({...source, status: "superseded"});
       upsertRun(successor);
-      state.decisions = state.decisions.filter(d => d.run_id !== runId);
+      if (!xGuide) state.decisions = state.decisions.filter(d => d.run_id !== runId);
       state.workflowSection = "yours";
       navigate("workflows");
       showToast("Revising from your feedback. The previous copy remains readable.");
