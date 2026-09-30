@@ -126,6 +126,17 @@ facts; there is no separate run-inspector page. Email campaign runs additionally
 delivery projection for recipient, touch, schedule, send, reply, and failure state. Provider message
 and request identifiers are not returned to the browser.
 
+Files requests `GET /api/projects/{project_id}/files?include_modified=true` to show each
+file's last saved change. Dates come from code.storage's per-file commit metadata at the
+same revision as the listing; bulk pages reuse the immutable revision cache. An unrelated
+project commit does not change a file's date. Missing timestamps remain unknown. Dates use
+the browser's local timezone, with an exact timestamp on hover; narrow and search views
+show the same metadata. The default API listing remains path-only for existing clients.
+
+Background workflow polling updates run facts while preserving an open configuration form,
+its unsaved inputs, focus and setup result. Code setup is checked on opening and when workflow
+inputs change; changing the name or schedule alone does not repeat the server check.
+
 All product API routes require a Clerk session token and enforce the requested project's local
 membership. Project membership has one access level: any current member can use the project and
 create a seven-day invitation for another verified email address. Invitation tokens are stored only

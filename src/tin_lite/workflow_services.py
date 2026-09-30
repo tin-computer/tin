@@ -3,6 +3,8 @@
 import re
 from dataclasses import dataclass
 
+from tin_lite.provider_costs import validate_provider_cost
+
 # Capabilities a service binding may declare per first-party provider. A provider added here
 # also needs its reviewed operations in code_services.OPERATIONS.
 SERVICE_CAPABILITIES = {
@@ -39,9 +41,11 @@ def service_bindings(value, requirements):
             not isinstance(name, str)
             or not re.fullmatch(r"[a-z][a-z0-9_]{0,47}", name)
             or not isinstance(entry, dict)
-            or set(entry) != {"provider_key", "max_calls", "max_response_bytes"}
+            or set(entry) - {"provider_cost"} != {"provider_key", "max_calls", "max_response_bytes"}
         ):
             raise ValueError("invalid service binding")
+        if "provider_cost" in entry:
+            validate_provider_cost(entry["provider_cost"])
         provider = entry["provider_key"]
         requirement = parsed.get(provider) if isinstance(provider, str) else None
         if (

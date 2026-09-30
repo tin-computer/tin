@@ -5331,6 +5331,9 @@ button.activity-ref {
   font-size: 11px;
 }
 
+.file-metadata { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.file-metadata .file-modified, .file-metadata .file-type { font: inherit; white-space: nowrap; }
+
 .project-file-icon {
   display: block;
   width: 16px;
