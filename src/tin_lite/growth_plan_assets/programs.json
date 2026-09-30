@@ -481,6 +481,7 @@
         "workflows": [
           "research.deep_dive",
           "competitor.watch",
+          "competitor.sunset_rescue",
           "outreach.paying_segment"
         ],
         "integrations": [],
@@ -596,6 +597,7 @@
     "ads.launch": "Launch a Google Ads campaign",
     "ads.monitor": "Check the Google Ads campaign",
     "competitor.watch": "Watch competitors for pricing and product changes",
+    "competitor.sunset_rescue": "Catch the users of a tool that is shutting down",
     "qa.buyer_trust": "Check if a buyer would trust your checkout",
     "organic.mention_backlinks": "Turn unlinked mentions into backlink asks",
     "organic.error_surface": "Find the errors your users search for",
@@ -647,6 +649,7 @@
     "ads.launch": "From a successful assessment, draft one Google Search campaign (keywords, ads, negatives, budget, click ceiling) for the founder's approval, then create it in their linked Google Ads account. Blocks until a conversion is measured; on demand only.",
     "ads.monitor": "Read a launched campaign, add negatives from wasted search terms, pause disapproved ads and wasteful keywords, and propose budget or bidding changes for approval. Daily or weekly once a campaign is live.",
     "competitor.watch": "Reread known competitors' public pricing and changelog pages weekly and report only material changes against the last watch, with at most three suggested Tin follow-ups. Never signs in, contacts competitors, publishes, or changes your pricing.",
+    "competitor.sunset_rescue": "Weekly, checks the watch list, competitor-watch changes and a small web sweep for a neighboring tool that is shutting down, dropping a free plan, repricing or relicensing; verifies it from the vendor's own pages, vetoes events the product cannot honestly serve, and for at most one builds a dated migration kit (export mapped to the product, import gap, ready inputs for a migration article, importer task and thread search). Never posts, contacts anyone or lists another tool's users.",
     "qa.buyer_trust": "Check the public site and checkout a buyer sees against fixed trust rules (HTTPS, security headers, exposed files, privacy, contact, refund and total-before-pay) and hand each code fix to Improve site health and each policy or host fix to the founder; public GET requests only, never signs in, submits forms, changes the site or claims CVE coverage.",
     "organic.mention_backlinks": "Finds pages and AI-cited sources that name the product without linking to its site and drafts one ask per page for the founder to send; it never sends, contacts anyone or re-asks a page asked before.",
     "organic.error_surface": "Reads the connected repository for user-visible error messages and ranks the undocumented ones as pages to add to content.plan as a context file, with cause and fix cited to code; it never writes pages, opens PRs or estimates demand.",

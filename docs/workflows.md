@@ -74,7 +74,7 @@ Tin ships 33 built-in workflows. Every workflow also takes a `project_id`; requi
 
 # Registry packages
 
-18 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
+19 contributed packages from `workflow_packages/` are selected in `src/tin_lite/public_workflows.py` and published with the next catalog sync. [The package guide](../workflow_packages/README.md#how-the-packages-fit-together) shows how they build on the built-ins.
 
 ## Organic traffic system
 
@@ -118,3 +118,4 @@ Tin ships 33 built-in workflows. Every workflow also takes a `project_id`; requi
 | Announce a new release (human review)<br>`content.release_announce` | Turn a changelog or release notes into posts written for X, LinkedIn, Reddit and Hacker News, plus a newsletter email for people who already follow the product, mentioning only what actually shipped. Drafts only: Tin never posts, sends or publishes them. | **`changelog`**, **`product_name`**, `release_url`, `audience`, `tone`, `voice_notes` | `content/releases/{date}-{slug}.md` |
 | Get your product into the awesome lists that will actually accept it<br>`outreach.awesome_lists` | A founder with a public product or repository gets the curated GitHub lists whose own rules it meets, ranked, with the exact entry and pull request text for each, and the one fix that would unlock the most others. Submit to awesome lists sends the entries you approve from your GitHub account. | `product_url`, `repository_url`, `category`, `avoid` | `reports/awesome-lists/{run_id}.md` |
 | Get featured in the newsletters and communities your buyers read<br>`outreach.newsletter_placements` | Finds newsletters and communities your buyers read that have a written way in, such as a featured-tool slot, reader submissions, a showcase thread or a sponsorship, verifies each one's rules, and drafts one submission per placement in your voice. Skips placements drafted in earlier runs; never submits, pays or contacts anyone. | `focus`, `geography`, `budget_usd`, `max_picks` | `reports/outreach/newsletters/{run_id}.md` |
+| Catch the users of a tool that is shutting down<br>`competitor.sunset_rescue` | Weekly or on demand: find a nearby tool that is shutting down, dropping its free plan, repricing or relicensing, check that your product can honestly take its users, and get a dated migration kit with their export mapped to your product, the import gap, and ready inputs for the migration page and the importer. Quiet weeks end with a short watch list. | `known_event`, `lookback_days` | `reports/sunset-rescue/{run_id}.md` |

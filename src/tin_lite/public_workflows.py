@@ -42,6 +42,7 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("a233f94b-03d8-42f1-8843-ff12c1d6f006"), "outreach.awesome_lists"),
     PublicWorkflow(UUID("d1fa829d-c40b-4e4b-b039-93ed9c3f1766"), "outreach.community_threads"),
     PublicWorkflow(UUID("5411afb9-0a11-4970-b096-724cc7fb1ab7"), "outreach.newsletter_placements"),
+    PublicWorkflow(UUID("234d05ce-c9e6-46c5-8299-5ec3973645ef"), "competitor.sunset_rescue"),
 )
 
 
