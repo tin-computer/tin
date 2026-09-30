@@ -2894,11 +2894,93 @@ async def test_github_repositories_follow_every_installation_page(monkeypatch):
         )
 
     async with repository_service(monkeypatch, github) as service:
+        service._connection.return_value.configuration["user_repositories"] = names
         options = await service.github_repositories(project_id=PROJECT_ID)
         receipt = service._database.calls[-1]
     assert [option.id for option in options] == names
     assert len(requests) == 2
     assert receipt["response_summary"] == {"count": 150, "truncated": False}
+
+
+def _installation_repositories(names):
+    async def github(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/installation/repositories"
+        return httpx.Response(
+            200,
+            json={
+                "total_count": len(names),
+                "repositories": [{"full_name": name, "private": True} for name in names],
+            },
+        )
+
+    return github
+
+
+async def test_github_repositories_offer_only_what_the_person_can_push_to(monkeypatch):
+    github = _installation_repositories(
+        ["example-org/site", "example-org/billing", "Example-Org/Docs"]
+    )
+    async with repository_service(monkeypatch, github) as service:
+        configuration = service._connection.return_value.configuration
+        configuration["user_repositories"] = ["example-org/docs", "example-org/site"]
+        options = await service.github_repositories(project_id=PROJECT_ID)
+    assert [option.id for option in options] == ["Example-Org/Docs", "example-org/site"]
+
+
+async def test_a_github_connection_from_before_access_was_recorded_keeps_only_its_choice(
+    monkeypatch,
+):
+    github = _installation_repositories(["example-org/site", "example-org/billing"])
+    async with repository_service(monkeypatch, github) as service:
+        options = await service.github_repositories(project_id=PROJECT_ID)
+        assert [option.id for option in options] == ["example-org/site"]
+        service._connection.return_value.configuration["selected_repository"] = None
+        with pytest.raises(IntegrationAuthorizationError, match="Reconnect GitHub"):
+            await service.github_repositories(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_connecting_github_records_the_repositories_the_person_can_push_to(tmp_path):
+    configured, private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    github, _ = _github_write_app(private_key_path)
+    pages = [
+        [
+            {"full_name": "example-org/site", "permissions": {"pull": True, "push": True}},
+            {"full_name": "example-org/billing", "permissions": {"pull": True, "push": False}},
+        ],
+        [
+            {"full_name": "example-org/docs", "permissions": {"pull": True, "maintain": True}},
+            {"full_name": "example-org/secret", "permissions": {"pull": False}},
+        ],
+    ]
+
+    async def user_access(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/user/installations/42/repositories":
+            assert request.headers["authorization"] == "Bearer user-token"
+            page = int(request.url.params["page"])
+            headers = {"link": '<https://api.github.com/x?page=2>; rel="next"'} if page == 1 else {}
+            return httpx.Response(200, headers=headers, json={"repositories": pages[page - 1]})
+        return await github(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(user_access)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GITHUB_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        connection = await service.complete_github(
+            state=state,
+            code="one-time-code",
+            installation_id=42,
+            setup_action="install",
+            clerk_user_id=USER_ID,
+        )
+    assert connection.configuration["user_repositories"] == ["example-org/docs", "example-org/site"]
 
 
 # ---------------------------------------------------------------- Google Ads (ads.google)
