@@ -1,6 +1,11 @@
 /* Paper 19 supplies the shared Markdown typography and centered reading column;
    132/128 supply context actions and editing outside the copy. No title eyebrows.
    The dashboard's font and theme aliases apply in both paper and coal. */
+.x-workflow-fields, .x-workflow-details > div { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.x-workflow-fields[hidden], .x-workflow-fields [hidden] { display: none; }
+.x-workflow-fields .system-config-note { margin: 0; }
+.x-workflow-details summary { color: var(--accent-text); font: 400 13px/18px var(--sans); cursor: pointer; }
+.x-workflow-details > div { padding-top: 14px; }
 .x-posts-reader { container: x-reader / inline-size; min-height: 100svh; background: var(--paper-bg); color: var(--ink); font-family: var(--sans); }
 .x-posts-context { min-height: 62px; gap: 16px; }
 .x-posts-context .markdown-filename { min-width: 0; color: var(--ink-secondary); }
@@ -63,7 +68,7 @@
 .x-posts-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--paper-border); }
 .x-posts-footer a { color: var(--accent-text); text-decoration: none; font: 400 13px/20px var(--sans); }
 @container x-reader (max-width: 1100px) {
-  .x-posts-layout { width: min(680px, calc(100% - 64px)); grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 36px; transform: none; }
+  .x-posts-layout { display: grid; width: min(680px, calc(100% - 64px)); grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 36px; transform: none; }
   .x-posts-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 16px 28px; }
   .x-posts-nav button span { display: none; }
   .x-posts-context { flex-wrap: wrap; gap: 12px; }

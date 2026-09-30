@@ -185,7 +185,10 @@ class FakeRouter:
         )
 
 
-async def test_activity_keeps_raw_api_text_out_of_receipt(monkeypatch):
+@pytest.mark.parametrize(
+    "inputs", [{}, {"sample_source": "connected", "preferences": "Keep technical details."}]
+)
+async def test_activity_keeps_raw_api_text_out_of_receipt(monkeypatch, inputs):
     import tin_lite.x_style_activities as activities
 
     monkeypatch.setattr(activities, "model_usage_scope", lambda **kwargs: nullcontext())
@@ -194,7 +197,7 @@ async def test_activity_keeps_raw_api_text_out_of_receipt(monkeypatch):
         executor=x_style.KEY,
         status=SimpleNamespace(value="running"),
         project_id=UUID("a0000000-0000-0000-0000-000000000061"),
-        input={},
+        input=inputs,
     )
     db = FakeDB(run)
     x = FakeX()
@@ -207,6 +210,14 @@ async def test_activity_keeps_raw_api_text_out_of_receipt(monkeypatch):
     assert "source text is private" not in json.dumps(db.completed)
     await worker.extract(str(RUN_ID))
     assert router.calls == 1
+
+
+def test_explicit_sample_source_cannot_fall_back_to_connected_account():
+    with pytest.raises(ValueError, match="Supply writing samples"):
+        x_style.validate_inputs({"sample_source": "supplied"})
+    with pytest.raises(ValueError, match="one X sample source"):
+        x_style.validate_inputs({"sample_source": "connected", "supplied_samples": "An own post."})
+    x_style.validate_inputs({"sample_source": "supplied", "preferences": "Use plain language."})
 
 
 async def test_public_guard_and_unknown_attempt_do_not_buy_again(monkeypatch):

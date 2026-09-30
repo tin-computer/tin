@@ -955,10 +955,70 @@ function systemTemplateCard(workflow, query) {
   </article>`;
 }
 
+const isXAuthoring = workflow => ["social.x_style", "social.x_compose"].includes(workflow?.key);
+
+function xWorkflowFields(workflow, inputs = {}) {
+  const schema = workflow.definition?.input_schema || {};
+  const field = name => {
+    const definition = schema.properties?.[name];
+    if (!definition) return "";
+    const label = definition.title || humanize(name);
+    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, inputs[name] ?? definition.default ?? "", label, `x-input-${name}`, (schema.required || []).includes(name))}</label>`;
+  };
+  // Account IDs remain in saved/MCP inputs, but are not a user-facing form field.
+  const account = inputs.account_id ? `<input type="hidden" name="input:account_id" value="${escapeHtml(inputs.account_id)}">` : "";
+  if (workflow.key === "social.x_compose") return `<div class="x-workflow-fields">${account}${field("direction")}${field("post_count")}${field("notes")}
+    <details class="x-workflow-details" ${inputs.evidence_paths?.length || inputs.plan_path || inputs.asset_paths?.length ? "open" : ""}><summary>Relevant files, a social plan or existing media</summary><div>${field("evidence_paths")}${field("plan_path")}${field("asset_paths")}</div></details>
+    <p class="system-config-note">Reads current project context and your approved X guide automatically.</p></div>`;
+  const connection = state.integrations.find(item => item.key === "social.x" && item.status === "connected");
+  const source = ["connected", "supplied"].includes(inputs.sample_source) ? inputs.sample_source
+    : inputs.supplied_samples || inputs.source_path || inputs.preferences ? "supplied" : "connected";
+  return `<div class="x-workflow-fields" data-x-voice-fields>${account}
+    <div class="system-setting"><strong>Learn from</strong>${tinSegmentedControl("input:sample_source", source, [["connected", "Connected X account"], ["supplied", "My samples"]], "Learn from")}</div>
+    <div data-x-connected-source><p class="system-config-note">${connection ? `${escapeHtml(connection.external_account_label || "X account")} · Connected` : 'Connect your public X account in Integrations. <button class="button-quiet" type="button" data-open-integrations>Connect X →</button>'}</p><p class="system-config-note">Up to 50 of your own posts, with more weight on recent writing.</p></div>
+    <div class="x-workflow-fields" data-x-supplied-source>${field("supplied_samples")}
+      <div class="system-setting"><strong>Samples in project Files (optional)</strong><div data-x-sample-picker>${tinSelectControl("input:source_path", inputs.source_path || "", [["", "Choose a Markdown file…"], ...(inputs.source_path ? [[inputs.source_path, inputs.source_path]] : [])], "Samples in project Files")}</div></div>
+      <p class="system-config-note">Use pasted samples, a project file or your preferences. An X connection is optional.</p>
+    </div>${field("preferences")}${field("direction")}</div>`;
+}
+
+function xWorkflowRunControls(workflow) {
+  return `<input type="hidden" name="schedule_mode" value="manual"><strong class="system-config-note">Run</strong><p class="system-config-note">Manually, when you ${workflow.key === "social.x_style" ? "want to capture or refresh your X voice" : "have something to share"}.</p><p class="system-config-note">${workflow.key === "social.x_style" ? "The proposed guide waits in Decisions. Approving it makes it available to future X drafts." : "Drafts are saved in Files. Open a post, edit it, then preview and confirm before publishing."}</p>`;
+}
+
+function bindXWorkflowFields(root) {
+  const context = currentProjectContext();
+  root.querySelectorAll("[data-x-voice-fields]").forEach(fields => {
+    const source = fields.querySelector('[name="input:sample_source"]');
+    const supplied = fields.querySelector("[data-x-supplied-source]");
+    const connected = fields.querySelector("[data-x-connected-source]");
+    const update = () => {
+      supplied.hidden = source.value !== "supplied";
+      connected.hidden = !supplied.hidden;
+      supplied.querySelectorAll("input, textarea, select").forEach(input => { input.disabled = supplied.hidden; });
+    };
+    source.addEventListener("change", update);
+    update();
+    const picker = fields.querySelector("[data-x-sample-picker]");
+    api(`/api/projects/${encodeURIComponent(state.project.id)}/files`).then(inventory => {
+      if (!isCurrentProjectContext(context) || !picker.isConnected) return;
+      const value = picker.querySelector("input").value;
+      const choices = [["", "Choose a Markdown file…"], ...(value ? [[value, value]] : [])];
+      for (const file of inventory.files || []) {
+        if (!file.path.endsWith(".md") || file.path === ".agents/skills/x-writing-style/SKILL.md" || choices.some(option => option[0] === file.path)) continue;
+        choices.push([file.path, file.path]);
+      }
+      picker.innerHTML = tinSelectControl("input:source_path", value, choices, "Samples in project Files");
+      bindTinControls(picker);
+      update();
+    }).catch(() => {});
+  });
+}
+
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</label>`;
@@ -977,15 +1037,14 @@ function systemTemplateSetupCard(workflow) {
     </header>
     <div class="system-template-setup-body">
       <section>
-        <code class="system-config-kicker">what it works on</code>
-        <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>
+        ${isXAuthoring(workflow) ? "" : `<code class="system-config-kicker">what it works on</code><label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>`}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
+        ${isXAuthoring(workflow) ? `<label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>` : ""}
         ${requirementRows ? `<div class="system-requirements"><code class="system-config-kicker">connections</code>${requirementRows}</div>` : ""}
       </section>
       <section class="system-config-when">
-        <code class="system-config-kicker">when</code>
-        ${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : null, false, workflow.definition?.schedule_modes)}
-        <p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : null, false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -1855,6 +1914,7 @@ function bindWorkflowResultControls(root) {
       form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
     });
   });
+  bindXWorkflowFields(root);
   root.querySelectorAll(".workflow-ledger-form").forEach((form) => {
     form.addEventListener("submit", saveProjectWorkflowField);
     bindTinControls(form);
@@ -2517,7 +2577,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   if (workflow.key === "content.plan") return systemContentProgramEditor(workflow, configured, run);
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
@@ -2555,14 +2615,13 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     ${runDetail}
     <div class="system-config-body">
       <section>
-        <code class="system-config-kicker">what it works on</code>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">what it works on</code>'}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
         <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}" /></label>
       </section>
       <section class="system-config-when">
-        <code class="system-config-kicker">when</code>
-        ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly"] : workflow.definition?.schedule_modes)}
-        <p>${escapeHtml(systemConfigurationFact(configured))}</p>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -3348,7 +3407,7 @@ function orderedWorkflowFields(schema) {
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
     .map(([name, definition]) => workflowInputField(
       name,
       definition,
@@ -3920,7 +3979,7 @@ function readWorkflowInputs(form, schema) {
   for (const [name, definition] of Object.entries(schema.properties || {})) {
     if (name === "project_id") continue;
     const field = form.elements[`input:${name}`];
-    if (!field) continue;
+    if (!field || field.disabled) continue;
     inputs[name] = readWorkflowInputValue(field, definition);
   }
   return inputs;

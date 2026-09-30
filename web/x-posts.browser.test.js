@@ -20,6 +20,7 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
     await page.goto("http://localhost/x-post-test");
     await page.addStyleTag({path: "src/tin_lite/static/app.css"});
     await page.addStyleTag({path: "src/tin_lite/static/x-posts.css"});
+    await page.addScriptTag({path: "src/tin_lite/static/markdown-viewer.js"});
     await page.addScriptTag({path: "src/tin_lite/static/x-posts.js"});
     await page.evaluate(draft => {
       window.requests = [];
@@ -48,6 +49,7 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
       TinXPosts.open({projectId: "project-one", runId: "run-one", path: "social/x/draft.json", api: mockApi, rawFetch: mockRawFetch, onPublished: async () => {window.refreshed = true;}});
     }, initial);
     await page.locator(".x-posts-card").first().waitFor();
+    assert.equal(await page.locator(".markdown-viewer .markdown-document.x-posts-document").count(), 1);
     assert.equal(await page.locator(".x-posts-card").count(), 1);
     assert.equal(await page.locator(".x-posts-nav button").count(), 2);
     assert.equal(await page.locator("dialog").count(), 0);
@@ -59,10 +61,13 @@ test("X composer saves edits, pins media, previews exact post, and sends one exp
       await page.setViewportSize({width: 760, height: 900});
     }
     await page.getByRole("button", {name: "Edit post", exact: true}).click();
-    await page.locator('[data-x-text="0"]').fill("The exact revised post.");
+    const revisedText = "The exact revised post.\n**Literal** #tag <demo>";
+    await page.locator('[data-x-text="0"]').fill(revisedText);
     await page.locator('[data-x-action="preview"][data-post="0"]').click();
     await page.locator("[data-x-exact]").waitFor();
     assert.match(await page.locator("[data-x-exact]").innerText(), /@tin[\s\S]*The exact revised post/);
+    assert.equal(await page.locator("[data-x-exact] .x-posts-copy").textContent(), revisedText);
+    assert.equal(await page.locator(".x-posts-copy strong, .x-posts-copy demo").count(), 0);
     let calls = await page.evaluate(() => requests.filter(item => ["PUT", "POST"].includes(item.method)));
     assert.deepEqual(calls.map(item => item.path.split("/").at(-1)), ["drafts", "preview"]);
     assert.equal(calls[0].body.expected_revision, "a".repeat(40));
@@ -88,6 +93,7 @@ test("X composer uploads bounded media through project Files and keeps unsaved e
     const page = await browser.newPage();
     await page.route("http://localhost/x-post-test", route => route.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
     await page.goto("http://localhost/x-post-test");
+    await page.addScriptTag({path: "src/tin_lite/static/markdown-viewer.js"});
     await page.addScriptTag({path: "src/tin_lite/static/x-posts.js"});
     await page.evaluate(draft => {
       window.calls = [];
@@ -129,6 +135,7 @@ test("X attachment order invalidates the exact preview and an uncertain publish 
     const page = await browser.newPage();
     await page.route("http://localhost/x-post-test", route => route.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
     await page.goto("http://localhost/x-post-test");
+    await page.addScriptTag({path: "src/tin_lite/static/markdown-viewer.js"});
     await page.addScriptTag({path: "src/tin_lite/static/x-posts.js"});
     await page.evaluate(draft => {
       window.calls = [];
@@ -180,6 +187,7 @@ test("late response from a closed project composer cannot replace the new projec
     const page = await browser.newPage();
     await page.route("http://localhost/x-post-test", route => route.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
     await page.goto("http://localhost/x-post-test");
+    await page.addScriptTag({path: "src/tin_lite/static/markdown-viewer.js"});
     await page.addScriptTag({path: "src/tin_lite/static/x-posts.js"});
     await page.evaluate(draft => {
       window.releaseOld = null;
@@ -200,6 +208,7 @@ test("missing assets need an explicit resolution and in-flight save locks editab
     const page = await browser.newPage();
     await page.route("http://localhost/x-post-test", route => route.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
     await page.goto("http://localhost/x-post-test");
+    await page.addScriptTag({path: "src/tin_lite/static/markdown-viewer.js"});
     await page.addScriptTag({path: "src/tin_lite/static/x-posts.js"});
     await page.evaluate(draft => {
       window.saved = structuredClone(draft);

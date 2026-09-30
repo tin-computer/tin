@@ -130,7 +130,7 @@ class XStyleActivities:
                 "timeline_calls": 0,
             }
             return examples, metadata, account
-        if inputs.get("preferences"):
+        if inputs.get("preferences") and inputs.get("sample_source") != "connected":
             return (
                 [],
                 {

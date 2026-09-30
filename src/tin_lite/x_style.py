@@ -64,6 +64,17 @@ def guide_account(guide: str) -> str | None:
 def validate_inputs(inputs: dict[str, Any]) -> None:
     if not isinstance(inputs, dict):
         raise ValueError("X style inputs are invalid")
+    source = inputs.get("sample_source", "auto")
+    if source not in ("auto", "connected", "supplied"):
+        raise ValueError("Choose connected X posts or supplied samples")
+    if source == "connected" and (inputs.get("supplied_samples") or inputs.get("source_path")):
+        raise ValueError("Choose one X sample source")
+    if source == "supplied" and not any(
+        inputs.get(field, "").strip()
+        for field in ("supplied_samples", "source_path", "preferences")
+        if isinstance(inputs.get(field, ""), str)
+    ):
+        raise ValueError("Supply writing samples, a project file or writing preferences")
     supplied = inputs.get("supplied_samples") or ""
     path = inputs.get("source_path") or ""
     if not isinstance(supplied, str) or len(supplied.encode()) > MAX_SUPPLIED_BYTES:

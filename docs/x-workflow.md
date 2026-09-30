@@ -41,7 +41,11 @@ for 50 usable posts, with more weight on recent writing and some examples from e
 months. It excludes reposts, quotes, duplicate text and thin replies, and limits bursts
 from one day. A sparse account produces a smaller sample with its limits stated in
 the guide. You can instead supply writing samples, a Markdown file in Files, or explicit
-preferences without connecting X.
+preferences without connecting X. In the expanded setup panel, choose **Connected X account**
+or **My samples**. Writing preferences can refine either source; they do not replace
+connected-account sampling. The browser hides account IDs and offers a Markdown file
+picker for saved samples. MCP can set `sample_source` explicitly, or omit it to infer
+the source from supplied inputs.
 
 The proposed guide waits for review. Approval saves
 `.agents/skills/x-writing-style/SKILL.md`; you can edit it like any other file. A concurrent
@@ -107,17 +111,27 @@ the upload handoff uses the browser instead of sending large base64 files throug
 ### Design references
 
 The source is Page 1 of [thinklikeanagent in Paper](https://app.paper.design/file/01M0TWXA4TWEXQTK664B7997HZ/1-0).
-Workflow setup uses the existing System cards and expanded forms (boards 81 and 94).
-Drafts share the Markdown reader’s centered 680px column and title/body styles from
-board 19, without an eyebrow. Boards 132 and 128 guide the context actions and the
-separate editing panel. Post text stays literal, including line breaks; Markdown
-syntax never changes what will be posted. Fonts come from the dashboard’s shared
-brand setting, including the licensed hosted font and the self-host fallback.
+Boards 135–137 are new X-specific designs built from Tin's existing expanded System
+cards: connected-account voice capture, post drafting, and voice capture from supplied
+samples. They show the actual inputs and manual-run behavior rather than another
+workflow's example fields.
 
-These are exports of the Paper source designs, not screenshots of the X implementation.
-Their example workflows, article copy and actions illustrate the shared components.
+Drafts mount the existing generic document viewer. The voice guide is Markdown;
+publishable drafts remain JSON to preserve post IDs, evidence and ordered attachments.
+The reader displays escaped, literal post text so Markdown punctuation cannot change
+what gets posted. It uses board 19's centered 680px column and title/body styles,
+without an eyebrow. Boards 132 and 128 remain references for the context actions
+and editing panel. Fonts use the dashboard's shared brand setting, including the
+licensed hosted font and the self-host fallback.
 
-![Paper board 94: workflow setup in an expanded System card](images/paper-workflow-setup.png)
+These images are exported directly from Paper. The three X setup boards are specific
+designs for this change; the reader and editor images are existing shared references.
+
+![Paper board 135: learn an X voice from the connected account](images/paper-x-voice.png)
+
+![Paper board 136: draft one or more X posts](images/paper-x-compose.png)
+
+![Paper board 137: learn an X voice from supplied samples](images/paper-x-samples.png)
 
 ![Paper board 132: draft reading and context actions](images/paper-draft-reader.png)
 

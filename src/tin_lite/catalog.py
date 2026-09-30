@@ -752,6 +752,16 @@ BUILTIN_WORKFLOWS = (
             "additionalProperties": False,
             "properties": {
                 "project_id": {"type": "string", "format": "uuid"},
+                "sample_source": {
+                    "type": "string",
+                    "enum": ["auto", "connected", "supplied"],
+                    "default": "auto",
+                    "title": "Learn from",
+                    "description": (
+                        "Use the connected account, supplied samples/preferences, "
+                        "or infer from the supplied inputs."
+                    ),
+                },
                 "supplied_samples": {
                     "type": "string",
                     "maxLength": 32000,
