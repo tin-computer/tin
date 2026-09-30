@@ -69,6 +69,13 @@ PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_dra
 # would cost $1.92. Real runs cost far less: a production audit, keyword plan and content plan
 # together came to $0.73.
 AUDIT_MAXIMUM_USD = 2
+# The organic parent's spending pool beyond the founder's keyword limit: about five times what a
+# production run spent ($2.49 for audit, keyword research, content plan and one draft, with the
+# technical fix and page adaptation costing nothing that run). Every child keeps its own
+# ceiling, but each paid call also reserves against the parent's maximum, so the parent's
+# maximum is the run's real total. Typical runs finish well inside it; a run whose early
+# steps spent unusually much stops its later paid steps rather than exceeding the pool.
+TRAFFIC_SYSTEM_POOL_USD = 10
 # The content plan's share inside the organic parent. Its one model call reads at most
 # 240,000 bytes of evidence plus instructions and schema and writes at most 16,000 tokens:
 # under $0.10 even at long-context rates. Standalone plans keep the $2 native ceiling.
@@ -102,7 +109,8 @@ def service_terms(definition, *, inputs=None):
         maximum = amount_nanos(inputs.get("max_cost_usd", 9))
         kinds = ["native_model", "tool"]
     elif executor == "organic.traffic_system":
-        maximum = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
+        keywords = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
+        maximum = keywords
         if maximum is not None:
             maximum += (
                 AUDIT_MAXIMUM_USD
@@ -120,6 +128,8 @@ def service_terms(definition, *, inputs=None):
                 maximum += (
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
+            # The children's ceilings add up to more than a run spends; the pool bounds the run.
+            maximum = min(maximum, keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR)
         kinds = []  # The parent itself never buys a model call.
     elif executor == "social.x_draft":
         # One bounded voice capture and one composition; only actual child usage is charged.

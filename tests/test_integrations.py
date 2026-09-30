@@ -1880,6 +1880,126 @@ async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_pa
     assert not any(method == "POST" and path.endswith("/git/refs") for method, path in requests)
 
 
+class _PastOverlapCheck(Exception):
+    """Raised by the fake GitHub when a write reaches branch creation."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("open_pr_file", "blocked"),
+    [("src/app/sitemap.ts", False), ("content/blog/new-page.md", True)],
+)
+async def test_only_blocking_paths_count_against_an_open_pull_request(
+    tmp_path, open_pr_file, blocked
+) -> None:
+    """An article PR shares a sitemap with another open PR; only its own page blocks it."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key_path = tmp_path / "github-app.pem"
+    private_key_path.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    database = FakeIntegrationDatabase()
+    now = datetime.now(UTC)
+    database.connections[(PROJECT_ID, GITHUB_PROVIDER)] = IntegrationConnection(
+        id=uuid4(),
+        project_id=PROJECT_ID,
+        provider_key=GITHUB_PROVIDER,
+        status="connected",
+        external_account_id="42",
+        external_account_label="example-org/site",
+        configuration={
+            "selected_repository": "example-org/site",
+            "write_opted_in": True,
+            "permissions": {"contents": "write", "pull_requests": "write"},
+        },
+        credential_ciphertext=None,
+        credential_key_version=None,
+        connected_by_clerk_user_id=USER_ID,
+        last_checked_at=now,
+        last_error_code=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/access_tokens"):
+            return httpx.Response(201, json={"token": "installation-token"})
+        if request.method == "GET" and path == "/repos/example-org/site":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and path.endswith("/git/ref/heads/main"):
+            return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+        if request.method == "GET" and path.endswith("/pulls"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 32,
+                        "title": "Improve site health",
+                        "body": "Tin's own open PR.",
+                        "html_url": "https://github.com/example-org/site/pull/32",
+                        "draft": False,
+                        "updated_at": "2026-09-29T12:00:00Z",
+                        "user": {"login": "tin"},
+                        "head": {"ref": "tin/site-health", "sha": "c" * 40},
+                    }
+                ],
+            )
+        if request.method == "GET" and path.endswith("/pulls/32/files"):
+            return httpx.Response(200, json=[{"filename": open_pr_file, "status": "modified"}])
+        if request.method == "POST" and path.endswith("/git/refs"):
+            raise _PastOverlapCheck
+        raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
+
+    configured = settings(
+        integration_credential_key=None,
+        google_oauth_client_id=None,
+        google_oauth_client_secret=None,
+        github_app_slug="tin-test",
+        github_app_id="1234",
+        github_app_client_id="Iv1.test",
+        github_app_client_secret=SecretStr("github-client-secret"),
+        github_app_private_key_path=private_key_path,
+        github_webhook_secret=SecretStr("webhook-secret"),
+    )
+    files = (
+        GitHubFileChange(path="content/blog/new-page.md", content="# New page\n"),
+        GitHubFileChange(path="src/app/sitemap.ts", content="export default []\n"),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        expected = IntegrationAuthorizationError if blocked else _PastOverlapCheck
+        with pytest.raises(expected):
+            await service.github_create_pull_request(
+                project_id=PROJECT_ID,
+                execution_key="run-12:github-pr",
+                title="Add the new page",
+                body="Adds the approved page and its sitemap entry.",
+                files=files,
+                base_branch="main",
+                expected_base_sha="base-sha",
+                run_id=RUN_ID,
+                blocking_paths=frozenset({"content/blog/new-page.md"}),
+            )
+        with pytest.raises(IntegrationError, match="Blocking paths"):
+            await service.github_create_pull_request(
+                project_id=PROJECT_ID,
+                execution_key="run-13:github-pr",
+                title="Add the new page",
+                body="A blocking path outside the PR is a caller error.",
+                files=files,
+                blocking_paths=frozenset({"content/blog/other.md"}),
+            )
+
+
 @pytest.mark.asyncio
 async def test_github_write_recovers_an_ambiguous_completed_pull_request(tmp_path) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)

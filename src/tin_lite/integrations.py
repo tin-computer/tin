@@ -2904,7 +2904,16 @@ class IntegrationService:
         run_id: UUID | None = None,
         expected_binding: GitHubRepositoryBinding | None = None,
         allow_unrelated_base_advance: bool = False,
+        blocking_paths: frozenset[str] | None = None,
     ) -> GitHubPullRequestResult:
+        """Open one PR. `blocking_paths` narrows which of its files another open PR or a later
+        commit may not also touch; by default every file counts. Content delivery passes its
+        page file alone, so a shared sitemap or index edited elsewhere never blocks an article.
+        """
+        if blocking_paths is not None and (
+            not blocking_paths or not blocking_paths <= {item.path for item in files}
+        ):
+            raise IntegrationError("Blocking paths must name files in this pull request")
         if allow_unrelated_base_advance and (
             expected_binding is None or expected_base_sha != expected_binding.head_sha
         ):
@@ -3054,6 +3063,7 @@ class IntegrationService:
                         if allow_unrelated_base_advance
                         else {}
                     ),
+                    **({"blocking_paths": blocking_paths} if blocking_paths is not None else {}),
                 )
             except IntegrationError:
                 await self._database.record_integration_call(
@@ -3577,7 +3587,13 @@ class IntegrationService:
         expected_base_sha: str | None,
         expected_binding: GitHubRepositoryBinding | None = None,
         allow_unrelated_base_advance: bool = False,
+        blocking_paths: frozenset[str] | None = None,
     ) -> tuple[GitHubPullRequestResult, str | None]:
+        blocking = (
+            files
+            if blocking_paths is None
+            else tuple(item for item in files if item.path in blocking_paths)
+        )
         token = await self._github_installation_token(_installation_id(connection))
         headers = self._github_headers(token)
         repository_path = quote(repository, safe="/")
@@ -3606,7 +3622,10 @@ class IntegrationService:
                     "The GitHub repository changed after analysis; start a new workflow run"
                 )
             await self._github_validate_base_advance(
-                connection=connection, binding=expected_binding, current_sha=base_sha, files=files
+                connection=connection,
+                binding=expected_binding,
+                current_sha=base_sha,
+                files=blocking,
             )
             # Keep the immutable prepared branch base. GitHub's PR merge preserves
             # later unrelated commits; retry never rewrites the approved content.
@@ -3617,7 +3636,7 @@ class IntegrationService:
             base_branch=resolved_base,
         )
         overlapping_paths = sorted(
-            {item.path for item in files}.intersection(open_pull_requests.changed_paths)
+            {item.path for item in blocking}.intersection(open_pull_requests.changed_paths)
         )
         if overlapping_paths:
             preview = ", ".join(overlapping_paths[:3])

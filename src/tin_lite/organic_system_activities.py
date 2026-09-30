@@ -2,9 +2,10 @@
 
 import json
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid5
+from zoneinfo import ZoneInfo
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -30,6 +31,20 @@ from tin_lite.workflow_prerequisites import PrerequisiteError
 
 # The first scheduled draft comes a week after the system's own first article at the earliest.
 WEEKLY_START_DELAY = timedelta(days=7)
+
+
+def first_weekly_start(timezone, now=None):
+    """The start of the founder's day a week from today, so next week's slot counts.
+
+    Counting seven days from the current moment skipped a whole week: a system that finished
+    at 17:00 on a Tuesday put next Tuesday's 10:00 slot a few hours too early, and the first
+    weekly draft landed two weeks out. A slot on this weekday a week from now is still never
+    on top of the system's own first article, which is drafted today.
+    """
+    zone = ZoneInfo(timezone)
+    today = (now or datetime.now(UTC)).astimezone(zone).date()
+    start = datetime.combine(today + WEEKLY_START_DELAY, time.min, tzinfo=zone)
+    return start.astimezone(UTC)
 
 
 async def founder_timezone(database, project_id):
@@ -545,12 +560,13 @@ class OrganicSystemActivities:
 
     async def _create_weekly_articles(self, run, prepared, program_id, weekdays):
         definition = prepared["definitions"]["draft"]
+        timezone = await founder_timezone(self.db, run.project_id)
         schedule = WorkflowSchedule(
             cadence="weekly",
             weekdays=weekdays,
             local_time=run.input.get("article_local_time") or "10:00",
-            timezone=await founder_timezone(self.db, run.project_id),
-            start_at=datetime.now(UTC) + WEEKLY_START_DELAY,
+            timezone=timezone,
+            start_at=first_weekly_start(timezone),
         )
         try:
             ensure_schedule_allowed(definition, schedule)

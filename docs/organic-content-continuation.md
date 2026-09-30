@@ -37,8 +37,10 @@ Once the content plan exists, and beside the first draft, it also saves one week
   nothing and leaves drafting on demand.
 - The timezone is the one Start here recorded for the founder, then the newest saved
   schedule's, then the project's (UTC by default).
-- The first occurrence comes at least seven days after the parent saves it, so it never
-  doubles the parent's own first article.
+- The first occurrence is on or after the start of the founder's day one week after the
+  parent saves it, so a Tuesday system run first drafts again the following Tuesday, never on
+  top of the system's own first article. (Counting seven days from the moment of saving skipped
+  a week when the run finished after the drafting time.)
 - Each occurrence selects the next eligible plan article exactly as a manual start does and
   waits for review. It holds, without a run, while any article from the program waits for
   review or is drafting, or while a plan revision holds the next batch. When nothing is left
