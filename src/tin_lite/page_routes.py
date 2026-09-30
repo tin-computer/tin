@@ -144,7 +144,14 @@ class PageRouteService:
         from tin_lite.organic_audit import canonical_json
         from tin_lite.project_files import ProjectFileService
 
-        current = await self.read(project_id)
+        # A retried save rebuilds its request against the head it first saw, so the file
+        # service replays that commit, or refuses a different route under the same request ID.
+        earlier = await self.db.get_project_file_change(
+            project_id=project_id, request_id=request_id
+        )
+        current = await self.read(
+            project_id, revision=earlier["expected_head_sha"] if earlier else None
+        )
         routes = PageRoutes.model_validate({"routes": {**current["routes"], kind: route}})
         project = await self.db.get_project(project_id)
         result = await ProjectFileService(database=self.db, storage=self.storage).commit(
