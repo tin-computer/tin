@@ -11,6 +11,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_plan as legacy
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.content_plan import KEY, plan_path
 from tin_lite.content_plan_activities import ContentPlanActivities
 from tin_lite.content_programs import ContentPrograms
@@ -32,7 +33,7 @@ class Storage(HistoryStorage):
         self, *, repo_id, branch, expected_head_sha, request_id, message, changes
     ):
         if self.repo.head != expected_head_sha:
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         sha = self.repo.edit({change.path: change.content.encode() for change in changes}, message)
         return sha, tuple(change.path for change in changes)
 

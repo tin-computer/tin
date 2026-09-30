@@ -18,6 +18,7 @@ from test_service_billing import install
 from tin_lite import growth_onboarding
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.growth_onboarding import PLAN_PATH, plan_readiness
 from tin_lite.mcp_server import _run_allowed_actions, create_mcp_app
 from tin_lite.project_files import ProjectFileService
@@ -53,7 +54,7 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
 
     async def commit(*, repo_id, branch, expected_head_sha, request_id, message, changes):
         if storage.repo.head != expected_head_sha:
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         sha = storage.repo.edit({c.path: c.content.encode() for c in changes}, message)
         return sha, tuple(c.path for c in changes)
 
