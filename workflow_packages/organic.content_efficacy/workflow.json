@@ -1,0 +1,124 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.content_efficacy",
+    "title": "Decide what each page needs",
+    "description": "Each week, judge every page the site shows in search from its clicks, visits, signups and audit findings: keep it, refresh it, rewrite it, merge it into a stronger page or retire it. Merges and retirements are held back whenever paid visits, links or a safe redirect target are unknown. The next technical fix asks about each URL change and puts the ones you agree to in one pull request; refreshes go to Refresh an existing page. Edits nothing itself.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "analytics/traffic-snapshot.json",
+        "producer": "organic.traffic_snapshot",
+        "reason": "The snapshot's PostHog visits are what rule out paid traffic before any merge or retirement; without it every cut is held."
+      },
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit's cannibalization, utility-page and brand-landing findings name the pages that compete."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "brand_terms": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 100},
+          "title": "Brand terms",
+          "description": "Leave empty to read the name from brand/BRAND.md and the host."
+        },
+        "protected_paths": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 150},
+          "title": "Paths never merged or retired",
+          "description": "Each also covers the pages below it. Defaults to /, /pricing, /privacy, /terms and /security."
+        },
+        "utility_paths": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 150},
+          "title": "Utility paths",
+          "description": "Sign-in, account and app screens; one that appears in search is proposed for noindex. Defaults to the common sign-in and account paths."
+        },
+        "ad_paths": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {"type": "string", "minLength": 1, "maxLength": 150},
+          "title": "Ad landing page paths",
+          "description": "Defaults to /offer/, /lp/ and URLs with utm_."
+        },
+        "links_file": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "title": "Optional Search Console links export in project Files",
+          "description": "A CSV with Target page and Incoming links columns. Without it, a page is never proposed for removal."
+        },
+        "audit_run_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Organic audit run",
+          "description": "Leave empty to use the newest audit."
+        },
+        "max_rows": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 150,
+          "default": 120,
+          "title": "Most decision rows kept in the file"
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": ["search_analytics.read"],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "judgment": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 2,
+          "max_input_bytes": 30000,
+          "max_output_tokens": 2048
+        }
+      },
+      "services": {
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 3,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "content/efficacy.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
