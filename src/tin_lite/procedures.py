@@ -11,7 +11,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from tin_lite import article_review, content_draft
+from tin_lite import analytics_brief, article_review, content_draft
 from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
@@ -88,9 +88,12 @@ REVIEWED_DIAGRAM_VALIDATORS = frozenset(
 MEMORY_SECTION_VALIDATOR = "memory-section.v1"
 PRODUCT_AUDIT_VALIDATOR = "product-audit.v1"
 PUBLIC_ARTICLE_VALIDATOR = "public-article.v2"
+ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
+ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 ARTIFACT_VALIDATORS = frozenset(
     {
         "brand-design-capture.v1",
+        ANALYTICS_BRIEF_VALIDATOR,
         *content_draft.VALIDATORS,
         PUBLIC_ARTICLE_VALIDATOR,
         EMAIL_SHORTLIST_VALIDATOR,
@@ -888,7 +891,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                 raise ValueError("readable run folders are reserved for reviewed documents")
             if placeholders in (["{run_id}"], ["{run_folder}"]):
                 plain_report = (
-                    output_validator is None
+                    output_validator in (None, ANALYTICS_BRIEF_VALIDATOR)
                     and raw_output_template.startswith("reports/")
                     and raw_output_template.endswith("/{run_id}.md")
                     and output.get("media_type") == "text/markdown"
@@ -948,6 +951,12 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != PROJECT_STATE_WORKSPACE
         ):
             raise ValueError("content.generate requires its run-owned Markdown output")
+        if output_validator == ANALYTICS_BRIEF_VALIDATOR and (
+            output_path_template != ANALYTICS_BRIEF_PATH_TEMPLATE
+            or output_media_type != "text/markdown"
+            or workspace_kind != PROJECT_STATE_WORKSPACE
+        ):
+            raise ValueError("Analytics briefs are run-owned reports/analytics Markdown reports.")
         if output_validator == PUBLIC_ARTICLE_VALIDATOR and (
             definition.get("key") != "content.public_article"
             or output_path_template not in article_review.PATH_TEMPLATES
@@ -1387,6 +1396,8 @@ def validate_procedure_artifact(
         )
     elif spec.output_validator == PRODUCT_AUDIT_VALIDATOR:
         _validate_product_audit(text)
+    elif spec.output_validator == ANALYTICS_BRIEF_VALIDATOR:
+        analytics_brief.validate(text)
 
 
 def signup_walkthrough_activation(content: str) -> bool:

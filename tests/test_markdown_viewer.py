@@ -168,6 +168,8 @@ async def test_run_markdown_adapter_keeps_raw_source_and_serves_generic_document
     payload = document.json()
     assert payload["markdown"] == markdown.decode()
     assert payload["filename"] == "SCAN.md"
+    # The reader links each folder of the saved output's project path, as Files does.
+    assert (payload["path"], payload["revision"]) == ("reports/SCAN.md", "c" * 40)
     assert payload["source_url"] == f"/api/workflows/runs/{run.id}/artifact"
     assert payload["timestamp"] == finished_at.isoformat().replace("+00:00", "Z")
     assert [heading["title"] for heading in payload["headings"]] == [

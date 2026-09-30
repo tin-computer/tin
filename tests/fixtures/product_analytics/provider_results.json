@@ -1,5 +1,5 @@
 {
-  "provenance": "Fabricated inline event CTEs executed through PostHog HogQL on 2026-09-21 and 2026-09-22; no customer events or metadata. CI replays these responses, without live access. On 2026-09-24 the coverage and dimensions builders were restructured for Tin's analytics.posthog HogQL guard (one SELECT, at most 8000 bytes); their hashes were updated and the recorded aggregates kept, pending live requalification of those two queries.",
+  "provenance": "Fabricated inline event CTEs executed through PostHog HogQL on 2026-09-21 and 2026-09-22; no customer events or metadata. CI replays these responses, without live access. On 2026-09-24 the coverage and dimensions builders were restructured for Tin's analytics.posthog HogQL guard (one SELECT, at most 8000 bytes). On 2026-09-29 the reusable-v2 builders changed the coverage, funnel, traffic and dimensions text: unchanged queries keep their PostHog responses; changed ones were executed on embedded ClickHouse (chdb) over the same events, matched the recorded rows where the columns did not change, and await live requalification.",
   "cases": {
     "accounts": {
       "inventory": {
@@ -232,7 +232,7 @@
         }
       },
       "coverage": {
-        "query_sha256": "77b80113d74d69dea02423fcdad3dae79144c7c812e32a8ada1226554b6ac94e",
+        "query_sha256": "051626588dcf1c9f89dce4edbb5e4aeaea67f0db97e75c206ee99635655455df",
         "data": {
           "columns": [
             "event",
@@ -317,7 +317,7 @@
         }
       },
       "funnel": {
-        "query_sha256": "f0ea713b1ac5c2a2d2de5048477c638e59939ecec45f8dd393975c318b741c76",
+        "query_sha256": "224e4d58de52aec035a3e62bb1affa477e8cea7e7f3160ec0753cd3ceed1a825",
         "data": {
           "columns": [
             "period",
@@ -357,11 +357,12 @@
         }
       },
       "traffic": {
-        "query_sha256": "a70c3d90411d2afa77d723b23d14cdfa010c5872d0084a32dba390d5190085dc",
+        "query_sha256": "273d74c2d47f6534a99fe39b082e27ca2f9451d13080a9e81ea8e8a4e11127c1",
         "data": {
           "columns": [
             "period",
             "path",
+            "channel",
             "source",
             "sessions",
             "pageviews"
@@ -370,6 +371,7 @@
             [
               "current",
               "/start",
+              "Referral",
               "search.example",
               6,
               7
@@ -381,7 +383,7 @@
         }
       },
       "dimensions": {
-        "query_sha256": "dd94b690057b10f4c8d3ee9a621916e40bece71afb7d1273198db4a4db6fce53",
+        "query_sha256": "e3ad1ff16a56090368ba69e96ff4894efc48c9ed0e923dbe27b09cfa2973408e",
         "data": {
           "columns": [
             "kind",
@@ -397,11 +399,6 @@
             [
               "paths",
               "/start",
-              7
-            ],
-            [
-              "sources",
-              "search.example",
               7
             ]
           ],

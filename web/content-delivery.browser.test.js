@@ -5,7 +5,7 @@ import { chromium } from "playwright";
 
 test("system approval keeps repository adaptation instead of direct Markdown publishing", async () => {
   const app = await fs.readFile("src/tin_lite/static/app.js", "utf8");
-  const helpers = ["repositoryDeliveryAvailable", "decisionApprovalHtml"].map(name => app.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}`, "m"))[0]).join("\n");
+  const helpers = ["repositoryDeliveryAvailable", "isProposal", "discardButtonHtml", "decisionApprovalHtml"].map(name => app.match(new RegExp(`^function ${name}\\([\\s\\S]*?^}`, "m"))[0]).join("\n");
   // Without adaptation (publishPreview() is null), a draft keeps its Markdown choices.
   const render = new Function("isContentDraftReview", "connectedRepository", "escapeHtml", "publishPreview", `${helpers}\nreturn decisionApprovalHtml;`)(() => true, () => "owner/site", text => text, () => null);
   assert.match(render({id: "draft"}, {}), /Publish now/);
@@ -76,7 +76,10 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await page.locator('[data-read-draft="draft-one"]').click();
     assert.deepEqual(await page.evaluate(() => opened), ["draft-one"]);
     assert.equal(await page.getByRole("link", {name: "Open PR #42 ↗"}).getAttribute("href"), "https://github.com/owner/site/pull/42");
-    await page.getByRole("button", {name: "Retry delivery →"}).click();
+    // Each draft's row has its own "Retry", next to the status line that says what failed.
+    const retryDelivery = page.locator('[data-retry-delivery="draft-three"]');
+    assert.equal(await retryDelivery.textContent(), "Retry");
+    await retryDelivery.click();
     assert.match(await page.evaluate(() => writes.at(-1).path), /\/content-drafts\/draft-three\/delivery\/retry$/);
     if (!await page.locator("[data-delivery-disclosure]").evaluate(d => d.open)) await page.getByText("Article delivery · GitHub PR", {exact: true}).click();
     await page.getByLabel("New article files", {exact: true}).fill("future/{slug}.md");
@@ -113,7 +116,9 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await page.getByText("Drafts and pull requests · 3", {exact: true}).click();
     await page.getByRole("button", {name: "Refresh delivery status"}).click();
     await page.getByText("Drafts and pull requests · 3", {exact: true}).click();
-    await page.getByRole("button", {name: "Try adaptation again →", exact: true}).click();
+    const retryAdaptation = page.locator('[data-retry-adaptation="failed-adaptation"]');
+    assert.equal(await retryAdaptation.textContent(), "Retry");
+    await retryAdaptation.click();
     const retried = await page.evaluate(() => writes.at(-1));
     assert.equal(JSON.parse(retried.body).inputs.retry_run_id, "failed-adaptation");
     assert.notEqual(retried.headers["Idempotency-Key"], prepared.headers["Idempotency-Key"]);

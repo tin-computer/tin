@@ -20,7 +20,8 @@ async def dispatch_reviews(runtime, settings):
             if row["coordinator_run_id"]:
                 coordinator = await runtime.database.get_run(row["coordinator_run_id"])
                 handle = runtime.temporal.get_workflow_handle(coordinator.temporal_workflow_id)
-                if row["action"] == "cancel":
+                # A declined proposal ends its waiting run the same way a stopped revision does.
+                if row["action"] in {"cancel", "decline"}:
                     try:
                         await handle.cancel()
                     except RPCError as exc:
@@ -54,7 +55,8 @@ async def dispatch_reviews(runtime, settings):
                 "WHERE id=$1 AND dispatch_state<>'received'",
                 row["id"],
                 "received"
-                if row["action"] in {"approve", "cancel"} or not row["coordinator_run_id"]
+                if row["action"] in {"approve", "cancel", "decline"}
+                or not row["coordinator_run_id"]
                 else "dispatched",
             )
         except Exception:

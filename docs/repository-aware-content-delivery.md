@@ -78,7 +78,7 @@ The confirmed result is separately receipted and shown on the content card/Activ
 the failed adaptation's historical status is not rewritten as success.
 
 An attempt with no accepted patch may be explicitly retried as a **new metered
-adaptation**, using “Try adaptation again” on the content card or `retry_run_id`
+adaptation**, using “Retry” on that draft’s row of the content card or `retry_run_id`
 through MCP (internal attempt context, not a revision selector). A saved
 patch or any prior provider delivery receipt prevents that fresh purchase until the
 existing effect is reconciled. Changed destination content requires fresh review;

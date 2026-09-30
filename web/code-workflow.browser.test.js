@@ -124,14 +124,14 @@ test("social code workflow uses ordinary project file or text inputs without sou
     page.on("pageerror",error=>errors.push(error.message));
     await page.goto(`${base}/?project=project#workflows`);
     await page.getByRole("button",{name:"Add workflows"}).click();
-    await page.getByRole("button",{name:"Setup",exact:true}).click();
+    await page.getByRole("button",{name:"Set up",exact:true}).click();
     assert.equal(await page.locator("[data-approved-source-picker]").count(),0);
     assert.equal(await page.locator("[name='input:article_path']").count(),1);
     assert.equal(await page.locator("textarea[name='input:article_text']").count(),1);
     await page.locator("[name='input:article_path']").fill("reports/PUBLIC_ARTICLE.md");
     await page.getByText("Setup ready to run.", {exact:true}).waitFor();
     if (process.env.TIN_CODE_SCREENSHOTS) await page.screenshot({path:`${process.env.TIN_CODE_SCREENSHOTS}/project-files-inputs.png`,fullPage:true});
-    await page.getByRole("button",{name:"Finish setup and run now"}).click();
+    await page.getByRole("button",{name:"Set up and run now"}).click();
     await page.getByText("Workflow added and started.").waitFor();
     assert.equal(reads.some(value=>value.includes("workflow-sources")),false);
     assert.equal(writes.length,2);
