@@ -4252,7 +4252,13 @@ async def _choose_content_delivery(
             # An answer page or public article is adapted to the site (a metered run).
             adapt=adapt_on_approval(getattr(request.app.state, "settings", None), run),
         )
-    except (LookupError, ValueError, ProjectFileError, IntegrationError) as exc:
+    except (
+        LookupError,
+        ValueError,
+        ProjectFileError,
+        IntegrationError,
+        SideEffectConflictError,
+    ) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
