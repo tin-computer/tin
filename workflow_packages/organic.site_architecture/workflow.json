@@ -3,17 +3,19 @@
   "definition": {
     "key": "organic.site_architecture",
     "title": "Plan the site's page tree and redirects",
-    "description": "Read your connected repository's routes and navigation, work out how many clicks each page sits from the home page, and weigh that against a year of Search Console clicks and the traffic snapshot's visits. Get a page tree, URL and navigation rules, and, when URLs must change, the exact redirects: the next technical fix asks about each one and adds the ones you agree to in one pull request. Weekly follow-ups after a change compare clicks with the saved baseline. Plans only; changes nothing itself.",
+    "description": "Plan the site's page tree, URL and navigation rules from live data: the latest organic audit's crawl sample and findings, a year of Search Console clicks, the traffic snapshot's visits and Page decisions. One model call names and groups the sections; code computes the rest. When URLs must change, it lists the exact redirects: the next technical fix asks about each one and adds the ones you agree to in one pull request. Follow-ups after a change compare clicks with the saved baseline. It does not read the repository: possible orphans come from the audit's crawl sample, and click depth is not measured. Plans only; changes nothing itself.",
     "version": "1.0.0",
-    "executor": "codex.procedure",
+    "executor": "workflow.code",
     "system": "organic-traffic",
-    "schedule_modes": ["on_demand"],
+    "schedule_modes": [
+      "on_demand"
+    ],
     "prerequisites": [
       {
         "kind": "run",
         "level": "recommended",
         "workflow": "organic.audit",
-        "reason": "The audit's crawl supplies orphans, click depth on the live site, cannibalization and the sitemap."
+        "reason": "The audit's crawl sample (at most 100 pages) supplies possible orphans, pages that compete for one search and the sitemap size."
       },
       {
         "kind": "artifact",
@@ -28,30 +30,34 @@
         "path": "analytics/traffic-snapshot.json",
         "producer": "organic.traffic_snapshot",
         "reason": "The snapshot's visits per landing page keep a page with visits but no search clicks from being moved without a redirect."
-      },
-      {
-        "kind": "artifact",
-        "level": "recommended",
-        "path": "wiki/INDEX.md",
-        "section": "### Code map",
-        "producer": "product.code_map",
-        "reason": "The Code map points at the routes, layouts and navigation components in the repository."
       }
     ],
     "input_schema": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "project_id": {"type": "string", "format": "uuid"},
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
         "mode": {
           "type": "string",
-          "enum": ["plan", "follow_up"],
+          "enum": [
+            "plan",
+            "follow_up"
+          ],
           "default": "plan",
           "title": "Plan, or follow up after a change"
         },
         "planned_change": {
           "type": "string",
-          "enum": ["none", "redesign", "url_change", "platform_move", "domain_move"],
+          "enum": [
+            "none",
+            "redesign",
+            "url_change",
+            "platform_move",
+            "domain_move"
+          ],
           "default": "none",
           "title": "Change you are planning"
         },
@@ -76,33 +82,51 @@
         "key_pages": {
           "type": "array",
           "maxItems": 10,
-          "items": {"type": "string", "minLength": 1, "maxLength": 300},
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
           "title": "Key pages (optional)",
           "description": "Leave empty to use home, pricing, signup and the most clicked feature pages."
         }
       },
-      "required": ["project_id"]
+      "required": [
+        "project_id"
+      ]
     },
     "integration_requirements": [
-      {"provider_key": "infra.github", "capabilities": ["contents.read"], "required": true},
-      {"provider_key": "analytics.gsc", "capabilities": ["search_analytics.read"], "required": true}
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": [
+          "search_analytics.read"
+        ],
+        "required": true
+      }
     ],
-    "procedure": {
-      "prompt_path": "PROMPT.md",
-      "skills_path": "skills",
-      "skill_files": [
-        "skills/site-architecture/SKILL.md",
-        "skills/site-architecture/MEASUREMENT.md"
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "architecture.py"
       ],
-      "entry_skill": "site-architecture",
-      "workspace": {
-        "kind": "github.repository",
-        "provider_key": "infra.github",
-        "capabilities": ["contents.read"]
+      "timeout_seconds": 60,
+      "model_routes": {
+        "sections": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 20000,
+          "max_output_tokens": 2048
+        }
       },
-      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
       "services": {
-        "gsc": {"provider_key": "analytics.gsc", "max_calls": 5, "max_response_bytes": 64000}
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 3,
+          "max_response_bytes": 64000
+        }
       },
       "output": {
         "kind": "project.artifact",
