@@ -72,6 +72,8 @@ from tin_lite.workflows import (
     StyleCaptureWorkflow,
     VisibilityAuditWorkflow,
     WeeklyBriefWorkflow,
+    XPublishWorkflow,
+    XStyleWorkflow,
     registered_workflow_implementations,
     registered_workflows,
 )
@@ -502,6 +504,8 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         ContentDraftDeliveryWorkflow,
         ProjectCodexExecution,
         StyleCaptureWorkflow,
+        XStyleWorkflow,
+        XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -528,6 +532,8 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
     ]
     assert registered_workflow_implementations() == {
         "style.capture": StyleCaptureWorkflow,
+        "social.x_style": XStyleWorkflow,
+        "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,

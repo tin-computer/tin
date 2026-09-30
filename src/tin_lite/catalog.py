@@ -504,76 +504,6 @@ class BuiltinWorkflow:
 
 BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
-        id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
-        key=x_style.KEY,
-        title="Learn my X writing style",
-        description=(
-            "Learn from up to 50 of your own public X posts, favoring recent writing, "
-            "or use samples you supply. Review the proposed guide before future X drafts use it."
-        ),
-        executor=x_style.KEY,
-        version_label="1.0.0",
-        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
-        model_route=x_style.ROUTE,
-        input_schema={
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "project_id": {"type": "string", "format": "uuid"},
-                "supplied_samples": {
-                    "type": "string",
-                    "maxLength": 32000,
-                    "default": "",
-                    "title": "Your writing samples",
-                    "description": "Optional; otherwise samples your connected public X account.",
-                    "x-tin-ui": {"control": "textarea", "order": 10},
-                },
-                "source_path": {
-                    "type": "string",
-                    "maxLength": 512,
-                    "default": "",
-                    "title": "Samples in project Files",
-                },
-                "account_id": {
-                    "type": "string",
-                    "pattern": "^(|[0-9]{1,19})$",
-                    "default": "",
-                    "title": "X account ID",
-                    "description": "Optional for samples; connected sampling uses your account.",
-                },
-                "preferences": {
-                    "type": "string",
-                    "maxLength": 4000,
-                    "default": "",
-                    "title": "Writing preferences",
-                    "x-tin-ui": {"control": "textarea", "order": 20},
-                },
-                "direction": {
-                    "type": "string",
-                    "maxLength": 2000,
-                    "default": "",
-                    "title": "Anything to change?",
-                    "x-tin-ui": {"control": "textarea", "order": 30},
-                },
-            },
-            "required": ["project_id"],
-        },
-    ),
-    BuiltinWorkflow(
-        id=x_posts.WORKFLOW_ID,
-        key=x_posts.KEY,
-        title="Publish an approved X post",
-        description="Publish the exact post and media confirmed through Tin's X preview.",
-        executor=x_posts.KEY,
-        version_label="1.0.0",
-        schedule_modes=("on_demand",),
-        system=ORGANIC_TRAFFIC_SYSTEM,
-        agent_only=True,
-        input_schema=x_posts.INPUT_SCHEMA,
-    ),
-    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000027"),
         key=organic_system.KEY,
         title="Run the organic traffic system",
@@ -802,6 +732,76 @@ BUILTIN_WORKFLOWS = (
             },
             "required": ["project_id", "source_path"],
         },
+    ),
+    BuiltinWorkflow(
+        id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
+        key=x_style.KEY,
+        title="Learn my X writing style",
+        description=(
+            "Learn from up to 50 of your own public X posts, favoring recent writing, "
+            "or use samples you supply. Review the proposed guide before future X drafts use it."
+        ),
+        executor=x_style.KEY,
+        version_label="1.0.0",
+        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand",),
+        model_route=x_style.ROUTE,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "supplied_samples": {
+                    "type": "string",
+                    "maxLength": 32000,
+                    "default": "",
+                    "title": "Your writing samples",
+                    "description": "Optional; otherwise samples your connected public X account.",
+                    "x-tin-ui": {"control": "textarea", "order": 10},
+                },
+                "source_path": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "default": "",
+                    "title": "Samples in project Files",
+                },
+                "account_id": {
+                    "type": "string",
+                    "pattern": "^(|[0-9]{1,19})$",
+                    "default": "",
+                    "title": "X account ID",
+                    "description": "Optional for samples; connected sampling uses your account.",
+                },
+                "preferences": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "default": "",
+                    "title": "Writing preferences",
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to change?",
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+            },
+            "required": ["project_id"],
+        },
+    ),
+    BuiltinWorkflow(
+        id=x_posts.WORKFLOW_ID,
+        key=x_posts.KEY,
+        title="Publish an approved X post",
+        description="Publish the exact post and media confirmed through Tin's X preview.",
+        executor=x_posts.KEY,
+        version_label="1.0.0",
+        schedule_modes=("on_demand",),
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        agent_only=True,
+        input_schema=x_posts.INPUT_SCHEMA,
     ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),

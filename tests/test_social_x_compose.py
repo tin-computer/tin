@@ -13,6 +13,7 @@ import pytest
 from tin_lite.code_models import request_contract
 from tin_lite.community import REPOSITORY_ROOT
 from tin_lite.workflow_code import validate_code_definition, validate_code_result
+from tin_lite.x_posts import validate_draft
 from tin_lite.x_text import weighted_length
 
 ROOT = REPOSITORY_ROOT / "workflow_packages" / "social.x_compose"
@@ -279,11 +280,39 @@ def test_weighted_counter_common_and_adversarial_cases():
     assert weighted_length("e\u0301") == 1  # NFC
     assert weighted_length("https://example.com/" + "a" * 500 + ".") == 24
     assert weighted_length("http://bad_host.example.com") > 23
-    assert weighted_length("example.com") == len("example.com")
+    assert weighted_length("example.com") == 23
+    assert weighted_length("https://x.xyz") >= 23
+    assert weighted_length("tin.computer") == 23
+    assert weighted_length("x" * 267 + " https://x.xyz") > 280
+    assert weighted_length("x" * 269 + " tin.computer") > 280
     unknown = "https://verylongsubdomain.example.completely/a" * 8
-    assert weighted_length(unknown) == len(unknown)
+    assert weighted_length(unknown) >= len(unknown)
+    false_prefix = "https://verylongsubdomain.com.invalid"
+    assert weighted_length(false_prefix) >= len(false_prefix)
     punctuated = "https://example.com/short,not-url-text"
-    assert weighted_length(punctuated) == 23 + len(",not-url-text")
+    assert weighted_length(punctuated) >= 23 + len(",not-url-text")
+    assert weighted_length("https://example.com,https://x.xyz") >= 47
     assert weighted_length("1️⃣") >= 2
     assert weighted_length("👨‍👩‍👧‍👦") >= 2
     assert weighted_length("🇺🇸") >= 2
+
+
+@pytest.mark.parametrize("tail", ["https://x.xyz", "tin.computer"])
+def test_trusted_draft_rejects_short_url_or_bare_domain_overflow(tail):
+    draft = {
+        "schema_version": "tin.social.x_draft.v1",
+        "account_id": "",
+        "posts": [
+            {
+                "id": "p1",
+                "text": "x" * 267 + " " + tail,
+                "readiness": "ready",
+                "support": [],
+                "editor_notes": "",
+                "attachments": [],
+                "missing_assets": [],
+            }
+        ],
+    }
+    with pytest.raises(ValueError, match="character limit"):
+        validate_draft(draft)

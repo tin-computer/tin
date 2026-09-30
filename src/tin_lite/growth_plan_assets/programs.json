@@ -612,7 +612,10 @@
     "outreach.awesome_submit": "Submit to awesome lists",
     "outreach.awesome_lists": "Get your product into the awesome lists that will actually accept it",
     "outreach.community_threads": "Find threads where people ask for what you make",
-    "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read"
+    "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read",
+    "social.x_style": "Learn my X writing style",
+    "social.x_publish": "Publish an approved X post",
+    "social.x_compose": "Draft a post for X"
   },
   "workflow_scope": {
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
@@ -663,6 +666,9 @@
     "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",
     "outreach.awesome_lists": "For a public product or repository, reads the growth plan and Code map, finds curated GitHub awesome lists that are alive and whose written rules the product meets, ranks them and prepares one exact entry and pull request text per list; keeps history and never re-recommends a list; never submits (Submit to awesome lists sends what the founder approves).",
     "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
-    "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone."
+    "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone.",
+    "social.x_style": "Sample up to 50 of the connected account’s own public X posts, favoring recent writing, or read supplied samples. Propose an X writing guide for review before adopting it in project Files. Does not draft or publish posts.",
+    "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
+    "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation."
   }
 }
