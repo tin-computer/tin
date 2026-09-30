@@ -84,12 +84,14 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     await page.getByLabel("Minimum cents", {exact:true}).fill("2000");
     await page.waitForResponse(response => response.url().endsWith("/workflow-setup"));
     const editedChecks = setupCount();
-    liveRuns = [{id:"live-run", workflow_id:"code", workflow_name:"custom.report", status:"running", created_at:"2026-09-30T12:00:00Z"}];
+    liveRuns = [{id:"live-run", project_workflow_id:"saved", workflow_id:"code", workflow_name:"custom.report", status:"running", created_at:"2026-09-30T12:00:00Z", progress_percent:25}];
+    configured = {...configured,last_run_id:"live-run",last_run_status:"running"};
     await page.evaluate(() => pollRuns());
     assert.equal(setupCount(), editedChecks, "a changed run must preserve the setup check");
     assert.equal(await page.evaluate(() => window.testOpenForm === document.querySelector(".system-config-form")), true);
     assert.equal(await page.getByLabel("Minimum cents", {exact:true}).inputValue(), "2000");
     assert.equal(await page.getByLabel("Minimum cents", {exact:true}).evaluate(input => input === document.activeElement), true);
+    assert.equal(await page.locator(".system-config-form .system-progress").getAttribute("aria-label"),"25% complete");
     await page.locator(".system-config-form").getByLabel("Name", {exact:true}).fill("Renamed report");
     await page.getByRole("button", {name:"On demand", exact:true}).click();
     await page.getByText("Setup ready to run.", {exact:true}).waitFor();
@@ -116,6 +118,7 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     liveRuns = liveRuns.map(run=>({...run,status:"succeeded"}));
     await page.evaluate(() => pollRuns());
     assert.equal(await page.evaluate(() => state.projectWorkflows[0].settings_revision),3);
+    assert.equal(await page.locator(".system-config-form .system-progress").count(),0);
     assert.equal(await page.getByLabel("Minimum cents",{exact:true}).inputValue(),"3000");
     await page.getByRole("button",{name:"Save changes",exact:true}).click();
     await page.getByText("These settings changed elsewhere. The latest version is now shown.",{exact:true}).waitFor();

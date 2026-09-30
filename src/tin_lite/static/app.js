@@ -2032,6 +2032,12 @@ function renderWorkflows({ preserveEditor = false } = {}) {
   const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
   const selection = focused && typeof focused.selectionStart === "number"
     ? [focused.selectionStart, focused.selectionEnd] : null;
+  if (editor?.dataset.projectWorkflowId && state.workflowEditor) {
+    const active = state.runs.filter((run) => run.project_workflow_id === editor.dataset.projectWorkflowId && RUNNING_STATES.has(run.status));
+    if (!active.some((run) => run.id === state.workflowEditor.runId)) {
+      state.workflowEditor.runId = active[0]?.id || null;
+    }
+  }
   const registry = registryWorkflows();
   const projection = workflowSearchProjection(registry);
   const query = projection.query;
@@ -2077,12 +2083,25 @@ function renderWorkflows({ preserveEditor = false } = {}) {
   const replacement = editor && [...main.querySelectorAll(".system-config-form, .workflow-config-form")].find((form) =>
     form.dataset.workflowId === editor.dataset.workflowId &&
     form.dataset.projectWorkflowId === editor.dataset.projectWorkflowId);
-  const placeholder = replacement ? document.createComment("open workflow editor") : null;
-  if (placeholder) replacement.replaceWith(placeholder);
+  const statusSelector = ".system-card-row, .system-running-detail, .system-run-detail, .system-progress";
+  const freshStatus = replacement?.matches(".system-workflow-card")
+    ? [...replacement.children].filter((node) => node.matches(statusSelector)) : [];
+  const placeholder = replacement ? document.createElement("div") : null;
+  if (placeholder) {
+    // Bind new status controls without rebinding the preserved form or its inputs.
+    placeholder.append(...freshStatus);
+    replacement.replaceWith(placeholder);
+  }
   bindWorkflowResultControls(document);
   bindWorkflowRunControls(main);
   if (state.workflowSection === "activity") bindActivityControls(main, "workflows");
   if (placeholder) {
+    if (freshStatus.length) {
+      [...editor.children].filter((node) => node.matches(statusSelector)).forEach((node) => node.remove());
+      editor.prepend(...freshStatus.filter((node) => !node.matches(".system-progress")));
+      editor.append(...freshStatus.filter((node) => node.matches(".system-progress")));
+      editor.classList.toggle("is-running", replacement.classList.contains("is-running"));
+    }
     placeholder.replaceWith(editor);
     focused?.focus({ preventScroll: true });
     if (selection) focused.setSelectionRange(...selection);
