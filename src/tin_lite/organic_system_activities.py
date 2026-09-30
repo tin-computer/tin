@@ -5,7 +5,6 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid5
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -23,7 +22,7 @@ from tin_lite.organic_system import (
     system_facts,
 )
 from tin_lite.run_reports import publish_run_report
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.schedules import WorkflowSchedule, supported_timezone
 from tin_lite.technical_fix_sources import TechnicalFixSources
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
@@ -51,12 +50,9 @@ async def founder_timezone(database, project_id):
         getattr(await database.get_project(project_id), "timezone", None),
     ]
     for value in candidates:
-        try:
-            if value:
-                ZoneInfo(value)
-                return value
-        except (ZoneInfoNotFoundError, ValueError):
-            continue
+        # Only a zone a new schedule may be saved in; `localtime` and the like fall through.
+        if value and supported_timezone(value):
+            return value
     return "UTC"
 
 

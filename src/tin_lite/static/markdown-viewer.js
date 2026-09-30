@@ -57,7 +57,8 @@
         `markdown · ${documentData.word_count} words · ${documentData.reading_minutes} min`,
     );
     facts.dataset.mobileText = `${documentData.reading_minutes} min`;
-    bar.append(filename, spacer, facts);
+    bar.append(filename, spacer);
+    if (options.factsText !== false) bar.append(facts);
     for (const document of (documentData.related_documents || []).slice(0, 3)) {
       // Trusted product context, not links or instructions parsed from Markdown.
       if (typeof document.url !== "string" || !(document.url.startsWith("/?project=") || document.url.startsWith("/file?project="))) continue;

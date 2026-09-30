@@ -113,6 +113,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
     assert state["running"] == [] and state["recent_runs"] == []
@@ -191,6 +192,7 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
 

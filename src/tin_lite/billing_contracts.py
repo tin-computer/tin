@@ -69,7 +69,7 @@ def test_terms(definition):
     their own explicit provider/model contract; only metered executors qualify.
     """
     executor = definition.get("executor")
-    if executor in {"content.plan", "creative.character", "style.capture"}:
+    if executor in {"content.plan", "creative.character", "style.capture", "social.x_style"}:
         kind, maximum = "native_model", 2 * NANOS_PER_DOLLAR
     elif executor == "codex.procedure":
         profile = definition.get("procedure", {}).get("sandbox", {})

@@ -14,11 +14,8 @@ switchboard.
 
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import json
 import re
-import socket
 import time
 from collections import Counter
 from dataclasses import asdict, dataclass, field
@@ -40,6 +37,7 @@ from tin_lite.model_providers import (
     ReasoningEffort,
 )
 from tin_lite.model_usage import model_usage_step
+from tin_lite.organic_audit_fetch import SiteReader, body_text
 from tin_lite.studio_contracts import (
     CHARACTER_EYE_IDS,
     CHARACTER_MOUTH_IDS,
@@ -183,30 +181,16 @@ def _validated_public_url(value: str) -> str:
     return parsed.geturl()
 
 
-async def _require_public_hostname(url: str) -> None:
-    hostname = urlsplit(url).hostname
-    if hostname is None:
-        raise CharacterDesignError("product URL has no hostname")
-    try:
-        addresses = await asyncio.get_running_loop().getaddrinfo(
-            hostname, 443, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM
-        )
-    except OSError as exc:
-        raise CharacterDesignError("product hostname could not be resolved") from exc
-    resolved = {item[4][0] for item in addresses}
-    if not resolved:
-        raise CharacterDesignError("product hostname could not be resolved")
-    for address in resolved:
-        parsed = ipaddress.ip_address(address)
-        if (
-            parsed.is_private
-            or parsed.is_loopback
-            or parsed.is_link_local
-            or parsed.is_multicast
-            or parsed.is_reserved
-            or parsed.is_unspecified
-        ):
-            raise CharacterDesignError("product hostname resolves to a private address")
+async def _read(client: httpx.AsyncClient, resolver: Any, url: str, max_bytes: int) -> dict:
+    """One GET pinned to the public address it was vetted at (the organic audit's reader)."""
+    host = urlsplit(url).hostname or ""
+    async with SiteReader((host,), client=client, resolver=resolver) as reader:
+        response = await reader.get(url, max_bytes=max_bytes)
+    if response["status"] == "non_public_address":
+        raise CharacterDesignError("product hostname resolves to a private address")
+    if response["status"] != "observed":
+        raise CharacterDesignError("product page could not be read")
+    return response
 
 
 class _PageParser(HTMLParser):
@@ -348,59 +332,57 @@ def _palette(page_styles: str, sheets: str, theme_color: str) -> tuple[str, ...]
     return tuple(color for color, _count in counts.most_common(8))
 
 
-async def fetch_product_page(url: str) -> ProductPage:
+async def fetch_product_page(
+    url: str, *, client: httpx.AsyncClient | None = None, resolver: Any = None
+) -> ProductPage:
     """Read one public HTTPS page and its first stylesheets; never a private address."""
     current = _validated_public_url(url)
     requested = current
-    headers = {
-        "Accept": "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0 (compatible; Tin-Lite-Character/1.0)",
-    }
-    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
-        body = ""
-        try:
-            for _hop in range(5):
-                await _require_public_hostname(current)
-                async with client.stream("GET", current, headers=headers) as response:
-                    if response.status_code in {301, 302, 303, 307, 308}:
-                        location = response.headers.get("location")
-                        if not location:
-                            raise CharacterDesignError("product page redirect has no destination")
-                        current = _validated_public_url(urljoin(current, location))
-                        continue
-                    if response.status_code >= 400:
-                        raise CharacterDesignError(
-                            f"product page returned HTTP {response.status_code}"
-                        )
-                    if "html" not in response.headers.get("content-type", "").casefold():
-                        raise CharacterDesignError("product URL did not return HTML")
-                    chunks: list[bytes] = []
-                    size = 0
-                    async for chunk in response.aiter_bytes():
-                        size += len(chunk)
-                        if size > MAX_PAGE_BYTES:
-                            raise CharacterDesignError("product page is too large to read")
-                        chunks.append(chunk)
-                    body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-                    break
-            else:
-                raise CharacterDesignError("product page redirected too many times")
-        except httpx.HTTPError as exc:
-            raise CharacterDesignError("product page could not be read") from exc
+    own_client = client is None
+    client = client or httpx.AsyncClient(
+        trust_env=False,
+        timeout=30,
+        follow_redirects=False,
+        headers={
+            "Accept": "text/html,application/xhtml+xml,text/css;q=0.9,*/*;q=0.8",
+            "User-Agent": "Mozilla/5.0 (compatible; Tin-Lite-Character/1.0)",
+        },
+    )
+    try:
+        for _hop in range(5):
+            response = await _read(client, resolver, current, MAX_PAGE_BYTES)
+            if response["status_code"] in {301, 302, 303, 307, 308}:
+                location = response.get("location")
+                if not location:
+                    raise CharacterDesignError("product page redirect has no destination")
+                current = _validated_public_url(urljoin(current, location))
+                continue
+            if response["status_code"] >= 400:
+                raise CharacterDesignError(f"product page returned HTTP {response['status_code']}")
+            if "html" not in response["content_type"].casefold():
+                raise CharacterDesignError("product URL did not return HTML")
+            if response["truncated"]:
+                raise CharacterDesignError("product page is too large to read")
+            body = body_text(response)
+            break
+        else:
+            raise CharacterDesignError("product page redirected too many times")
         parser = _PageParser()
         parser.feed(body)
         page_styles = "\n".join(parser.style_text)
         sheets = ""
         for href in parser.stylesheets[:MAX_STYLESHEETS]:
-            sheet_url = urljoin(current, href)
             try:
-                sheet_url = _validated_public_url(sheet_url)
-                await _require_public_hostname(sheet_url)
-                sheet = await client.get(sheet_url, headers={"Accept": "text/css"})
-            except (CharacterDesignError, httpx.HTTPError):
+                sheet_url = _validated_public_url(urljoin(current, href))
+                # Streamed and cut at the bound; an oversized sheet is skipped unread.
+                sheet = await _read(client, resolver, sheet_url, MAX_STYLESHEET_BYTES)
+            except CharacterDesignError:
                 continue
-            if sheet.status_code == 200 and len(sheet.content) <= MAX_STYLESHEET_BYTES:
-                sheets += "\n" + sheet.text
+            if sheet["status_code"] == 200 and not sheet["truncated"]:
+                sheets += "\n" + body_text(sheet)
+    finally:
+        if own_client:
+            await client.aclose()
     text = " ".join("".join(parser.text).split())
     if len(text) < 200 and parser.structured:
         # A client-rendered shell: the metadata and structured data are all a plain fetch sees.

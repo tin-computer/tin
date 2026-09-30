@@ -30,6 +30,11 @@ def review_pending(run: Any) -> bool:
 
 
 def document_url(settings: Any, run: Any) -> str:
+    if (getattr(run, "artifact_path", "") or "").startswith(
+        "social/x-drafts/"
+    ) and run.artifact_path.endswith(".json"):
+        query = urlencode({"project": str(run.project_id), "x_draft": run.artifact_path})
+        return f"{dashboard_url(settings)}/files?{query}"
     return f"{dashboard_url(settings)}/document/{run.id}?project={run.project_id}"
 
 

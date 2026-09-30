@@ -37,6 +37,7 @@ from tin_lite.domain import (
     RunStatus,
     RunToolGrant,
     SideEffectConflictError,
+    StaleGenerationError,
     StaleSettingsRevisionError,
     StoppedRunHandle,
     StudioUsage,
@@ -115,7 +116,7 @@ _OUTPUT_REVISION_SQL = """
 
 # Applying decisions stay visible until their uncertain outcome is settled.
 _PENDING_OUTPUT_CONFLICT_SQL = """
-    run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+    run.executor IN ('codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
     AND run.canonical_commit_sha IS NULL
     AND run.retained_output->>'reason' = 'output_conflict'
@@ -123,7 +124,8 @@ _PENDING_OUTPUT_CONFLICT_SQL = """
     AND EXISTS (
         SELECT 1 FROM effect_receipts AS receipt
         WHERE receipt.execution_key = run.id::text || CASE WHEN run.executor='style.capture'
-            THEN ':style_artifact_persist' ELSE ':procedure_artifact_persist' END
+            THEN ':style_artifact_persist' WHEN run.executor='social.x_style'
+            THEN ':x_style_artifact_persist' ELSE ':procedure_artifact_persist' END
           AND receipt.status = 'completed'
           AND receipt.result->'checkpoint' = run.retained_output - 'reason'
           AND receipt.result->'checkpoint'->>'run_id' = run.id::text
@@ -2061,7 +2063,10 @@ class Database:
                     -- A skip names one occurrence of the old calendar; a new one disarms it.
                     skip_scheduled_for = CASE WHEN schedule IS DISTINCT FROM $5::jsonb
                         THEN NULL ELSE skip_scheduled_for END,
-                    status = 'provisioning', last_error = NULL,
+                    -- A pause stands through a settings save, including one that landed
+                    -- after the editor read the row; the sync reads it from this row.
+                    status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'provisioning' END,
+                    last_error = NULL,
                     settings_revision = settings_revision + 1, updated_at = now()
                 WHERE id = $1 AND project_id = $2 AND status <> 'archived'
                   AND settings_revision = $6
@@ -2150,7 +2155,7 @@ class Database:
         await self.pool.execute(
             """
             UPDATE project_workflows
-            SET status = 'failed', last_error = $2, updated_at = now()
+            SET status = 'failed', last_error = $2, next_run_at = NULL, updated_at = now()
             WHERE id = $1 AND status <> 'archived'
             """,
             project_workflow_id,
@@ -2166,7 +2171,7 @@ class Database:
             SET status = $3, next_run_at = CASE WHEN $3 = 'paused' THEN NULL ELSE next_run_at END,
                 last_error = NULL, updated_at = now()
             WHERE id = $1 AND project_id = $2 AND schedule IS NOT NULL
-              AND status IN ('active', 'paused')
+              AND (status IN ('active', 'paused') OR ($3 = 'paused' AND status = 'failed'))
             RETURNING id
             """,
             project_workflow_id,
@@ -2484,11 +2489,16 @@ class Database:
                 if trigger_source == "schedule" and workflow["executor"] == "workflow.code":
                     from tin_lite.schedules import ScheduledWorkflowSkip
 
+                    # An automatic retry of a failed scheduled run is not an occurrence: it
+                    # needs the schedule still active, not the dispatcher's revision fence.
                     if (
                         configured is None
                         or configured["status"] != "active"
                         or configured["schedule"] is None
-                        or configured["settings_revision"] != schedule_settings_revision
+                        or (
+                            retry_of_run_id is None
+                            and configured["settings_revision"] != schedule_settings_revision
+                        )
                     ):
                         raise ScheduledWorkflowSkip("The saved schedule changed before dispatch.")
                     if started_by_clerk_user_id != configured[
@@ -2558,6 +2568,13 @@ class Database:
                     raise RuntimeError(
                         "Open the failed revision and use Retry revision to preserve its feedback."
                     )
+                # The project row lock above serializes admission, so concurrent retries
+                # with different request keys see each other: one retry per failed run.
+                if await conn.fetchval(
+                    "SELECT true FROM workflow_runs WHERE retry_of_run_id = $1 LIMIT 1",
+                    retry_of_run_id,
+                ):
+                    raise RuntimeError("this failed run has already been retried")
             executor = workflow["executor"]
             task_title: str | None = None
             if executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -2664,7 +2681,10 @@ class Database:
                 # autonomy setting will resolve this boolean here, once, when the run starts.
                 review_required = True
             temporal_workflow_id = f"{executor}:{run_id}"
-            thread_id = str(project_workflow_id or workflow_id)
+            # A saved configuration is one lease lineage: a newer generation fences the older.
+            # Ad-hoc runs are independent jobs, so each gets its own lineage; sharing the
+            # workflow id let one run's sandbox attach revoke another run's lease.
+            thread_id = str(project_workflow_id) if project_workflow_id else f"run:{run_id}"
             generation = await conn.fetchval(
                 """
                 SELECT COALESCE(MAX(generation), 0) + 1
@@ -2715,7 +2735,11 @@ class Database:
             )
             assert row is not None
             await self._track_run(run_id, "run_created", conn=conn)
-            if trigger_source == "schedule" and executor == "workflow.code":
+            if (
+                trigger_source == "schedule"
+                and executor == "workflow.code"
+                and retry_of_run_id is None
+            ):
                 from tin_lite.schedules import WorkflowSchedule, next_run_after
 
                 await conn.execute(
@@ -5829,6 +5853,21 @@ class Database:
                 "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
             )
             assert run is not None
+            # A newer generation fences an older one, never the reverse: an older run that
+            # attaches late must not revoke the lease of the run that superseded it.
+            if await conn.fetchval(
+                """
+                SELECT true FROM workflow_runs
+                WHERE project_id = $1 AND thread_id = $2 AND lease_active = true
+                  AND id <> $3 AND generation > $4
+                LIMIT 1
+                """,
+                run["project_id"],
+                run["thread_id"],
+                run_id,
+                run["generation"],
+            ):
+                raise StaleGenerationError("a newer run of this configuration holds the lease")
             await conn.execute(
                 """
                 UPDATE workflow_runs
@@ -6528,6 +6567,25 @@ class Database:
         Every statement is a no-op on replay. Activity goes last so the events written by
         integration disconnects during the same deletion are swept too.
         """
+        # X approval keys outlive an individual run so retries cannot duplicate a post.
+        # Purge the owning project's frozen drafts and delivery metadata with its files.
+        await conn.execute(
+            """WITH approvals AS (
+                SELECT split_part(execution_key, ':', 3) AS id FROM effect_receipts
+                WHERE operation='social.x_publish' AND execution_key LIKE 'x:approved:%'
+                  AND result->>'project_id'=$1::text
+            )
+            DELETE FROM effect_receipts
+            WHERE operation IN ('social.x_publish', 'social.x_style') AND (
+                (execution_key LIKE 'x:preview:%' AND result->>'project_id'=$1::text)
+                OR execution_key LIKE 'x:confirm:' || $1::text || ':%'
+                OR (split_part(execution_key, ':', 2) IN ('approved', 'media', 'post')
+                    AND split_part(execution_key, ':', 3) IN (SELECT id FROM approvals))
+                OR split_part(execution_key, ':', 1) IN (
+                    SELECT id::text FROM workflow_runs WHERE project_id=$1::uuid)
+            )""",
+            str(project_id),
+        )
         statements = (
             "DELETE FROM content_plan_revisions WHERE project_id = $1",
             "DELETE FROM content_plan_batches WHERE project_workflow_id IN "
@@ -6762,6 +6820,9 @@ class Database:
             raise ValueError("Unsupported report result status")
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
+            "social.x_style": ("x_style_ready", "Your X writing guide is ready."),
+            "social.x_draft": ("x_draft_ready", "Your X draft is ready."),
+            "social.x_publish": ("x_post_published", "Your X post is published."),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),
             "organic.audit": ("organic_audit_ready", "Organic visibility audit is ready."),
@@ -6834,6 +6895,39 @@ class Database:
             run_id,
         )
 
+    async def clear_x_style_review_projection(self, run_id: UUID) -> None:
+        await self.pool.execute(
+            """UPDATE workflow_runs
+               SET canonical_commit_sha=NULL, artifact_ref=NULL, artifact_path=NULL,
+                   artifact_title=NULL
+               WHERE id=$1 AND executor='social.x_style' AND review_decision='approved'
+                 AND status='running'
+                 AND artifact_path LIKE 'style/proposals/%-x-writing-style-%'""",
+            run_id,
+        )
+
+    async def complete_x_publish_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+    ) -> None:
+        await self._complete_readonly_report_projection(
+            conn,
+            execution_key=execution_key,
+            run_id=run_id,
+            canonical_commit_sha=canonical_commit_sha,
+            artifact_path=artifact_path,
+            artifact_ref=artifact_ref,
+            summary=summary,
+            workflow_key="social.x_publish",
+        )
+
     async def retain_procedure_output(
         self,
         conn: asyncpg.Connection,
@@ -6850,7 +6944,9 @@ class Database:
         await conn.execute(
             """
             UPDATE workflow_runs SET retained_output = $2::jsonb
-            WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+            WHERE id = $1
+              AND executor IN (
+                  'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
               AND canonical_commit_sha IS NULL
               AND (NOT $3 OR retained_output IS NULL)
             """,
@@ -6869,7 +6965,9 @@ class Database:
     ) -> None:
         updated = await conn.fetchval(
             """UPDATE workflow_runs SET output_resolution = $2::jsonb
-               WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+               WHERE id = $1
+                 AND executor IN (
+                     'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
                  AND status IN ('failed', 'stopped') AND NOT lease_active
                  AND canonical_commit_sha IS NULL
                  AND retained_output->>'reason' = 'output_conflict'
@@ -7469,6 +7567,13 @@ class Database:
         memory_index: str,
     ) -> None:
         async with self.pool.acquire() as conn, conn.transaction():
+            # Same guard as project_success: a stopped, failed or superseded run keeps its
+            # outcome, and its late result does not replace the project's memory pointer.
+            status = await conn.fetchval(
+                "SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if status in {"failed", "stopped", "superseded"}:
+                raise SideEffectConflictError("run cannot complete in its current state")
             updated = await conn.fetchval(
                 """
                 UPDATE projects
@@ -8192,4 +8297,4 @@ def _failure_summary(executor: str) -> str:
     }.get(executor, "Workflow run")
     if executor == PROJECT_TASK_WORKFLOW_NAME:
         return f"{subject} could not finish."
-    return f"{subject} stopped before it finished."
+    return f"{subject} failed before it finished."

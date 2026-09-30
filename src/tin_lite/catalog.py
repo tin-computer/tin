@@ -21,6 +21,9 @@ from tin_lite import (
     paid_ads_monitor,
     style_capture,
     technical_fix,
+    x_draft,
+    x_posts,
+    x_style,
 )
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.code_storage import CodeStorage
@@ -126,6 +129,7 @@ COLD_OUTREACH_SYSTEM = "cold-outreach"
 PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
+X_SYSTEM = "x"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -206,6 +210,7 @@ WORKFLOW_SYSTEMS = (
         name="Paid ads system",
         display_order=5,
     ),
+    WorkflowSystem(id=X_SYSTEM, name="X", display_order=6),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -420,6 +425,12 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+        if self.key == x_draft.KEY:
+            definition["x_draft_policy"] = dict(x_draft.POLICY)
+        if self.key == x_style.KEY:
+            definition["x_style_policy"] = dict(x_style.POLICY)
+            definition["x_style_instructions"] = x_style.INSTRUCTIONS
+            definition["x_style_schema"] = x_style.MODEL_SCHEMA
         if self.key == organic_system.KEY:
             definition["organic_system_policy"] = dict(organic_system.POLICY)
         if self.key == growth_onboarding.KEY:
@@ -726,6 +737,99 @@ BUILTIN_WORKFLOWS = (
             },
             "required": ["project_id", "source_path"],
         },
+    ),
+    BuiltinWorkflow(
+        id=x_draft.WORKFLOW_ID,
+        key=x_draft.KEY,
+        title="Draft for X",
+        description=(
+            "Describe a product update. Tin sets up your voice if needed, then writes a draft."
+        ),
+        executor=x_draft.KEY,
+        version_label="1.0.0",
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        input_schema=x_draft.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
+        key=x_style.KEY,
+        title="Learn my X writing style",
+        description=(
+            "Learn from up to 50 of your own public X posts, favoring recent writing, "
+            "or use samples you supply. Review the proposed guide before future X drafts use it."
+        ),
+        executor=x_style.KEY,
+        version_label="1.0.0",
+        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        model_route=x_style.ROUTE,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "sample_source": {
+                    "type": "string",
+                    "enum": ["auto", "connected", "supplied"],
+                    "default": "auto",
+                    "title": "Learn from",
+                    "description": (
+                        "Use the connected account, supplied samples/preferences, "
+                        "or infer from the supplied inputs."
+                    ),
+                },
+                "supplied_samples": {
+                    "type": "string",
+                    "maxLength": 32000,
+                    "default": "",
+                    "title": "Your writing samples",
+                    "description": "Optional; otherwise samples your connected public X account.",
+                    "x-tin-ui": {"control": "textarea", "order": 10},
+                },
+                "source_path": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "default": "",
+                    "title": "Samples in project Files",
+                },
+                "account_id": {
+                    "type": "string",
+                    "pattern": "^(|[0-9]{1,19})$",
+                    "default": "",
+                    "title": "X account ID",
+                    "description": "Optional for samples; connected sampling uses your account.",
+                },
+                "preferences": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "default": "",
+                    "title": "Writing preferences",
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to change?",
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+            },
+            "required": ["project_id"],
+        },
+    ),
+    BuiltinWorkflow(
+        id=x_posts.WORKFLOW_ID,
+        key=x_posts.KEY,
+        title="Publish an approved X post",
+        description="Publish the exact post and media confirmed through Tin's X preview.",
+        executor=x_posts.KEY,
+        version_label="1.0.0",
+        schedule_modes=("on_demand",),
+        system=X_SYSTEM,
+        agent_only=True,
+        input_schema=x_posts.INPUT_SCHEMA,
     ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
@@ -2390,6 +2494,7 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
+    x_draft.KEY: tuple(x_draft.STEPS.values()),
     organic_system.KEY: tuple(organic_system.STEPS.values()),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
@@ -2445,6 +2550,9 @@ async def sync_builtin_workflows(
         validate_prerequisite_graph(prerequisites)
     except ValueError as exc:
         raise RuntimeError(f"built-in workflow prerequisites are invalid: {exc}") from exc
+    for parent, children in PARENT_CHILD_KEYS.items():
+        if parent in prepared and (missing := set(children) - prepared.keys()):
+            raise RuntimeError(f"workflow {parent} needs selected children: {sorted(missing)}")
     for system in WORKFLOW_SYSTEMS:
         await database.upsert_workflow_system(
             system_id=system.id,
