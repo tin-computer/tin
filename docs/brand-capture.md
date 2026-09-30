@@ -75,6 +75,8 @@ and describes each destination as new or carried forward unchanged. “Use docum
 the exact reviewed pair. The [reviewed-document harness](reviewed-project-documents.md)
 provides atomic adoption, destination conflict checks and retry recovery. Editing either
 proposal or destination during review requires a new decision; neither file is partially applied.
+In Decisions the pair is approved with “Approve guide”, or turned down with “Discard”: the run
+ends as declined, the proposals stay readable in Files, and the current files are unchanged.
 
 MCP discovery includes preparation metadata and `get_brand_guide(project_id)`, which checks
 current files without a model call. Incomplete starts return that preparation path.

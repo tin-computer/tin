@@ -10,9 +10,39 @@ import math
 import re
 import statistics
 
-VERSION = "reusable-v1"
+VERSION = "reusable-v2"
 KEY = re.compile(r"[A-Za-z_$][A-Za-z0-9_$]{0,63}\Z")
+HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+\Z")
 RESERVED = {"Unknown", "Ambiguous", "Other"}
+NO_PERSON = "00000000-0000-0000-0000-000000000000"
+EVIDENCE_MARKER = "<!-- tin-analytics-evidence-v1 -->"
+STATUSES = (
+    "complete",
+    "incomplete",
+    "invalid configuration",
+    "unsupported exclusions",
+    "schema changed",
+)
+# Fixed traffic channels, tested in this order on the lowercased referring domain without a
+# leading "www.". UTM mediums decide paid, email and social before any referrer is read.
+CHANNELS = ("Paid", "Email", "Social", "Direct", "Internal", "AI assistants", "Search", "Referral")
+WWW = r"^www\."
+PAID_MEDIUM = r"^(?:cpc|ppc|cpm|cpv|cpa|paid.*|display|retargeting|ads?)$"
+EMAIL_MEDIUM = r"^(?:e-?mail|newsletter)$"
+SOCIAL_MEDIUM = r"^(?:social|social[-_ ]?media|organic[-_ ]?social|sm)$"
+AI_DOMAINS = (
+    r"(?:^|\.)(?:chatgpt\.com|chat\.openai\.com|perplexity\.ai|claude\.ai"
+    r"|gemini\.google\.com|copilot\.microsoft\.com)$"
+)
+SEARCH_DOMAINS = (
+    r"^(?:(?:search|m)\.)?(?:google|bing|duckduckgo|yahoo|yandex|baidu|ecosia|naver|qwant"
+    r"|startpage|seznam)\.[a-z]{2,3}(?:\.[a-z]{2})?$|^search\.brave\.com$"
+)
+SOCIAL_DOMAINS = (
+    r"(?:^|\.)(?:facebook\.com|fb\.com|instagram\.com|t\.co|twitter\.com|x\.com|linkedin\.com"
+    r"|lnkd\.in|reddit\.com|youtube\.com|youtu\.be|tiktok\.com|pinterest\.com|threads\.net"
+    r"|bsky\.app|mastodon\.social|news\.ycombinator\.com)$"
+)
 
 
 def literal(value):
@@ -23,6 +53,17 @@ def literal(value):
     if type(value) is str and 1 <= len(value) <= 256 and not any(ord(c) < 32 for c in value):
         return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
     raise ValueError("unsupported scalar literal")
+
+
+def regex(expression):
+    """A builder-owned regular expression as a HogQL string literal (never user text)."""
+    if (
+        type(expression) is not str
+        or not 1 <= len(expression) <= 1000
+        or any(ord(c) < 32 for c in expression)
+    ):
+        raise ValueError("unsupported pattern")
+    return "'" + expression.replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def prop(name, source="properties"):
@@ -37,11 +78,30 @@ def prop(name, source="properties"):
 def identity(key):
     if key == "distinct_id":
         return "distinct_id"
+    if key == "person_id":
+        # PostHog's person for the event. identify() merges anonymous and identified
+        # distinct IDs into one person, so browser and server events of one person share it.
+        # An empty or all-zero ID links nothing and counts as a missing key.
+        return f"if(toString(person_id) IN ('',{literal(NO_PERSON)}),NULL,toString(person_id))"
     if type(key) is str and key.startswith("event:"):
         name = key[6:]
         prop(name)
         return f"if(startsWith(JSONExtractRaw(properties,{literal(name)}),'\"'),JSONExtractString(properties,{literal(name)}),NULL)"
-    raise ValueError("identity must be distinct_id or event:<string property>")
+    raise ValueError("identity must be distinct_id, person_id or event:<string property>")
+
+
+def window_hours(key):
+    """The N of a window:<N> chain key (1-168 hours), or None for an identity chain."""
+    if type(key) is str and key.startswith("window:"):
+        if not re.fullmatch(r"[1-9][0-9]{0,2}", key[7:]) or int(key[7:]) > 168:
+            raise ValueError("window chains are window:<1-168 hours>")
+        return int(key[7:])
+    return None
+
+
+def chain(key):
+    # A window chain has no attempt key: each actor is one chain, bounded by the window.
+    return "'window'" if window_hours(key) else identity(key)
 
 
 def nonempty(expr):
@@ -54,21 +114,34 @@ def stable_hash(obj):
     ).hexdigest()
 
 
+def hostnames(values, limit, longest):
+    return (
+        type(values) is list
+        and len(values) <= limit
+        and all(type(h) is str and len(h) <= longest and HOST.fullmatch(h) for h in values)
+        and len(values) == len(set(values))
+    )
+
+
 def validate_hosts(hosts):
-    if (
-        type(hosts) is not list
-        or len(hosts) > 5
-        or any(
-            type(host) is not str
-            or len(host) > 253
-            or not re.fullmatch(
-                r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+", host
-            )
-            for host in hosts
-        )
-        or len(hosts) != len(set(hosts))
-    ):
+    if not hostnames(hosts, 5, 253):
         raise ValueError("website_hosts must contain at most five distinct lowercase hostnames")
+
+
+def validate_domains(domains):
+    # Compiled into every query; the length cap keeps the largest plan inside 8000 bytes.
+    if not hostnames(domains, 10, 63):
+        raise ValueError(
+            "exclude_email_domains must contain at most ten distinct lowercase hostnames"
+        )
+
+
+def exclusion_key(name):
+    """An event property or person:<property> usable as an exclusion or flag field."""
+    if type(name) is not str or name == "distinct_id":
+        raise ValueError("invalid exclusion field")
+    prop(name[7:] if name.startswith("person:") else name)
+    return name
 
 
 def settings(inputs, now=None):
@@ -78,13 +151,27 @@ def settings(inputs, now=None):
         "event_mapping",
         "exclusions",
         "website_hosts",
+        "exclude_email_domains",
+        "internal_flag_property",
     }
     if not isinstance(inputs, dict) or set(inputs) - allowed:
         raise ValueError("unexpected client input")
-    c = dict(reporting_days=7, as_of_utc="", event_mapping="", exclusions="")
+    c = dict(
+        reporting_days=7,
+        as_of_utc="",
+        event_mapping="",
+        exclusions="",
+        exclude_email_domains=[],
+        internal_flag_property="",
+    )
     c.update(inputs)
     hosts = c.get("website_hosts", [])
     validate_hosts(hosts)
+    validate_domains(c["exclude_email_domains"])
+    if type(c["internal_flag_property"]) is not str:
+        raise ValueError("invalid internal_flag_property")
+    if c["internal_flag_property"]:
+        exclusion_key(c["internal_flag_property"])
     if type(c["reporting_days"]) is not int or not 1 <= c["reporting_days"] <= 31:
         raise ValueError("invalid reporting_days")
     for k in ("event_mapping", "exclusions"):
@@ -107,9 +194,31 @@ def settings(inputs, now=None):
     # Date/window changes do not silently replace the semantic mapping. The PostHog project is
     # the one selected in Tin's Integrations; it is never an input or part of a request.
     binding = stable_hash({k: c[k] for k in ("event_mapping", "exclusions")})
-    if hosts:
-        binding = stable_hash({"base": binding, "website_hosts": sorted(hosts)})
+    scoped = {
+        "website_hosts": sorted(hosts),
+        "exclude_email_domains": sorted(c["exclude_email_domains"]),
+        "internal_flag_property": c["internal_flag_property"],
+    }
+    scoped = {k: v for k, v in scoped.items() if v}
+    if scoped:
+        binding = stable_hash({"base": binding, **scoped})
     return c, (prior, current, end), binding
+
+
+def input_exclusions(c):
+    """Rules the structured saved inputs compile to. Every plan carries them unchanged."""
+    rules = []
+    if c.get("exclude_email_domains"):
+        rules.append(
+            {
+                "property": "person:email",
+                "op": "suffix",
+                "value": sorted(c["exclude_email_domains"]),
+            }
+        )
+    if c.get("internal_flag_property"):
+        rules.append({"property": c["internal_flag_property"], "op": "truthy", "value": True})
+    return rules
 
 
 def validate_plan(p):
@@ -127,7 +236,6 @@ def validate_plan(p):
         "path_property",
         "source_property",
         "paths",
-        "sources",
         "category_property",
         "categories",
         "exclusions",
@@ -141,7 +249,8 @@ def validate_plan(p):
     if type(p) is not dict or set(p) != fields or p["version"] != VERSION:
         raise ValueError("unsupported plan shape/version")
     identity(p["actor_key"])
-    identity(p["chain_key"])
+    chain(p["chain_key"])
+    # Traffic attributes each session's entry, so its keys are identities, never a window.
     identity(p["traffic_actor_key"])
     identity(p["traffic_chain_key"])
     if p["actor_key"] == p["chain_key"]:
@@ -154,7 +263,6 @@ def validate_plan(p):
         ("key_events", 1, 4),
         ("error_events", 0, 2),
         ("paths", 0, 8),
-        ("sources", 0, 8),
         ("categories", 0, 8),
     ):
         a = p[k]
@@ -175,7 +283,7 @@ def validate_plan(p):
         or any(type(x) is not str or not 1 <= len(x) <= 120 for x in p["labels"])
     ):
         raise ValueError("invalid labels")
-    for k in ("paths", "sources", "categories"):
+    for k in ("paths", "categories"):
         for value in p[k]:
             safe_dimension(value)
     for k in ("category_property", "path_property", "source_property"):
@@ -197,40 +305,61 @@ def validate_plan(p):
         or any(type(x) is not str or not 1 <= len(x) <= 500 for x in p["semantic_evidence"])
     ):
         raise ValueError("missing semantic evidence")
-    if p["pageview_event"] in p["steps"] + p["key_events"] + p["error_events"] and (
-        p["actor_key"],
-        p["chain_key"],
-    ) != (p["traffic_actor_key"], p["traffic_chain_key"]):
-        raise ValueError("shared pageview event needs consistent identity semantics")
+    # A pageview step may use person/window identities while traffic keeps sessions:
+    # coverage then reports the pageview under both (split_pageview).
     exclusions(p["exclusions"])
     return p
 
 
-def exclusions(items):
-    if type(items) is not list or len(items) > 6:
-        raise ValueError("invalid exclusions")
-    clauses = []
-    for x in items:
-        if type(x) is not dict or set(x) != {"property", "value"}:
-            raise ValueError("invalid exclusion")
-        name = x["property"]
-        value = x["value"]
+def split_pageview(p):
+    funnel_keys = (p["actor_key"], p["chain_key"])
+    traffic_keys = (p["traffic_actor_key"], p["traffic_chain_key"])
+    return p["pageview_event"] in p["steps"] and funnel_keys != traffic_keys
+
+
+def raw_field(name):
+    exclusion_key(name)
+    source = "person.properties" if name.startswith("person:") else "properties"
+    key = name[7:] if name.startswith("person:") else name
+    return f"JSONExtractRaw({source},{literal(key)})"
+
+
+def exclusion_clause(rule):
+    """One {property, op, value} rule. A row whose field is missing stays included."""
+    if type(rule) is not dict or set(rule) != {"property", "op", "value"}:
+        raise ValueError("invalid exclusion")
+    name, op, value = rule["property"], rule["op"], rule["value"]
+    if op == "eq":
+        # Exact and type-preserving: true, "true" and 1 are three different values.
         literal(value)
-        if type(name) is not str:
-            raise ValueError("invalid exclusion field")
         if name == "distinct_id":
             if type(value) is not str:
                 raise ValueError("distinct_id exclusion must be text")
-            expression = "distinct_id"
-            expected = literal(value)
-        else:
-            source = "person.properties" if name.startswith("person:") else "properties"
-            key = name[7:] if name.startswith("person:") else name
-            prop(key)
-            expression = f"JSONExtractRaw({source},{literal(key)})"
-            expected = literal(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
-        clauses.append(f"NOT coalesce({expression}={expected},false)")
-    return " AND ".join(clauses) or "true"
+            return f"NOT coalesce(distinct_id={literal(value)},false)"
+        expected = literal(json.dumps(value, ensure_ascii=False, separators=(",", ":")))
+        return f"NOT coalesce({raw_field(name)}={expected},false)"
+    if op == "suffix":
+        # The field ends in @domain or .domain (subdomains), case-insensitively.
+        if not value:
+            raise ValueError("suffix exclusions need one to ten domains")
+        validate_domains(value)
+        escaped = [d.replace(".", "\\.").replace("-", "\\-") for d in value]
+        expression = "(?:^|[@.])(?:" + "|".join(escaped) + ")$"
+        field = exclusion_field(exclusion_key(name))
+        return f"NOT coalesce(match(lower(toString({field})),{regex(expression)}),false)"
+    if op == "truthy":
+        # A flag set as true, "true" (any case) or 1. False, 0 and missing stay included.
+        if value is not True:
+            raise ValueError("truthy exclusions take the value true")
+        return f"NOT coalesce(lower({raw_field(name)}) IN ('true','\"true\"','1'),false)"
+    raise ValueError("exclusion op must be eq, suffix or truthy")
+
+
+def exclusions(items):
+    # Six rules translated from the founder's prose plus the two structured inputs.
+    if type(items) is not list or len(items) > 8:
+        raise ValueError("invalid exclusions")
+    return " AND ".join(exclusion_clause(x) for x in items) or "true"
 
 
 def timestamp(x):
@@ -281,27 +410,33 @@ def inventory(p, w):
 
 def coverage(p, w):
     a, b, c = w
-    actor = identity(p["actor_key"])
-    chain = identity(p["chain_key"])
+    actor = funnel_actor = identity(p["actor_key"])
+    chain_key = funnel_chain = chain(p["chain_key"])
     if p["pageview_event"]:
         ev = literal(p["pageview_event"])
         actor = f"if(event={ev},toString({identity(p['traffic_actor_key'])}),toString({actor}))"
-        chain = f"if(event={ev},toString({identity(p['traffic_chain_key'])}),toString({chain}))"
+        chain_key = (
+            f"if(event={ev},toString({identity(p['traffic_chain_key'])}),toString({chain_key}))"
+        )
     keys = sorted(
         set(
             [x["property"] for x in p["exclusions"]]
             + [x for x in (p["category_property"], p["path_property"], p["source_property"]) if x]
         )
     )
-    # Each identity/property expression appears once, in the inner SELECT, so the query stays
-    # within Tin's 8000-byte HogQL bound with six exclusions and five website hosts.
+    # Each identity/property expression appears once, in the inner SELECT. A property is
+    # missing when absent, JSON null or "": reading its raw JSON once keeps the query within
+    # Tin's 8000-byte HogQL bound with eight exclusions and five website hosts.
     inner = [
         "event",
         f"if(timestamp<{timestamp(b)},'prior','current') AS period",
         "timestamp",
         f"toString({actor}) AS actor",
-        f"toString({chain}) AS chain",
-    ] + [f"toString({exclusion_field(k)}) AS f{i}" for i, k in enumerate(keys)]
+        f"toString({chain_key}) AS chain",
+    ] + [
+        f"{'distinct_id' if k == 'distinct_id' else raw_field(k)} AS f{i}"
+        for i, k in enumerate(keys)
+    ]
     has_actor = nonempty("actor")
     eligible = f"{has_actor} AND {nonempty('chain')}"
     fields = [
@@ -315,7 +450,20 @@ def coverage(p, w):
         f"uniqExactIf(tuple(actor,chain),{eligible}) AS chains",
         "min(timestamp) AS first_seen",
         "max(timestamp) AS last_seen",
-    ] + [f"countIf(NOT {nonempty(f'f{i}')}) AS missing_p{i}" for i in range(len(keys))]
+    ] + [
+        f"countIf(f{i}='') AS missing_p{i}"
+        if k == "distinct_id"
+        else f"countIf(f{i} IN ('','null','\"\"')) AS missing_p{i}"
+        for i, k in enumerate(keys)
+    ]
+    if split_pageview(p):
+        # The pageview step's activation identity, beside its traffic identity above.
+        inner += [f"toString({funnel_actor}) AS fa", f"toString({funnel_chain}) AS fc"]
+        has_funnel_actor = nonempty("fa")
+        fields += [
+            f"uniqExactIf(fa,{has_funnel_actor}) AS funnel_actors",
+            f"uniqExactIf(fa,{has_funnel_actor} AND {nonempty('fc')}) AS funnel_eligible_actors",
+        ]
     rows = f"SELECT {','.join(inner)} FROM events WHERE {where(p, a, c, event_list(p))}"
     return (
         "SELECT "
@@ -329,14 +477,14 @@ def trends(p, w):
     a, b, c = w
     hist = c - dt.timedelta(days=90)
     actor = identity(p["actor_key"])
-    chain = identity(p["chain_key"])
+    attempt = chain(p["chain_key"])
     selected = sorted(set(p["key_events"] + p["error_events"]))
     day = f"if(timestamp<{timestamp(a)},toString(toStartOfWeek(toTimeZone(timestamp,'UTC'),1)),toString(toDate(toTimeZone(timestamp,'UTC'))))"
     resolution = f"if(timestamp<{timestamp(a)},'week','day')"
-    return f"SELECT {day} AS day,{resolution} AS resolution,event,count() AS raw,uniqExactIf(toString({actor}),{nonempty(actor)}) AS actors,uniqExactIf(tuple(toString({actor}),toString({chain})),{nonempty(actor)} AND {nonempty(chain)}) AS chains FROM events WHERE {where(p, hist, c, selected)} GROUP BY day,resolution,event ORDER BY day,resolution,event LIMIT 601"
+    return f"SELECT {day} AS day,{resolution} AS resolution,event,count() AS raw,uniqExactIf(toString({actor}),{nonempty(actor)}) AS actors,uniqExactIf(tuple(toString({actor}),toString({attempt})),{nonempty(actor)} AND {nonempty(attempt)}) AS chains FROM events WHERE {where(p, hist, c, selected)} GROUP BY day,resolution,event ORDER BY day,resolution,event LIMIT 601"
 
 
-def funnel_ctes(p, w):
+def funnel_ctes(p, w, category=True):
     validate_plan(p)
     steps = p["steps"]
     n = len(steps)
@@ -344,13 +492,20 @@ def funnel_ctes(p, w):
         raise ValueError("funnel unavailable")
     a, b, c = w
     actor = identity(p["actor_key"])
-    chain = identity(p["chain_key"])
+    hours = window_hours(p["chain_key"])
+    attempt = chain(p["chain_key"])
+    # Only the breakdown reads the category; the funnel query leaves it out to save bytes.
     cat = (
         bucket(prop(p["category_property"]), p["categories"])
-        if p["category_property"]
+        if p["category_property"] and category
         else "'Unknown'"
     )
-    e = f"e AS (SELECT toString({actor}) AS actor,toString({chain}) AS attempt,event,timestamp AS t,if(timestamp<{timestamp(b)},'prior','current') AS period,{cat} AS category FROM events WHERE {where(p, a, c, steps)} AND {nonempty(actor)} AND {nonempty(chain)})"
+    keyed = nonempty(actor) if hours else f"{nonempty(actor)} AND {nonempty(attempt)}"
+    e = f"e AS (SELECT toString({actor}) AS actor,toString({attempt}) AS attempt,event,timestamp AS t,if(timestamp<{timestamp(b)},'prior','current') AS period,{cat} AS category FROM events WHERE {where(p, a, c, steps)} AND {keyed})"
+    # Identity chains start at the attempt's first step-1 event. A window chain tries every
+    # step-1 event as a start (arrayJoin) and keeps later steps within N hours of it.
+    start = "arrayJoin(a1)" if hours else "arrayElement(a1,1)"
+    within = f" AND dateDiff('second',t1,x)<={hours * 3600}" if hours else ""
     parts = [
         e,
         "b AS (SELECT DISTINCT actor,attempt,event,t,period FROM e)",
@@ -360,11 +515,11 @@ def funnel_ctes(p, w):
             for i, ev in enumerate(steps, 1)
         )
         + " FROM b GROUP BY period,actor,attempt)",
-        "s1 AS (SELECT *,arrayElement(a1,1) AS t1,1 AS depth1 FROM stages WHERE length(a1)>0)",
+        f"s1 AS (SELECT *,{start} AS t1,1 AS depth1 FROM stages WHERE length(a1)>0)",
     ]
     for i in range(2, n + 1):
         parts += [
-            f"f{i} AS (SELECT *,arrayFilter(x -> depth{i - 1}={i - 1} AND x>t{i - 1},a{i}) AS later{i} FROM s{i - 1})",
+            f"f{i} AS (SELECT *,arrayFilter(x -> depth{i - 1}={i - 1} AND x>t{i - 1}{within},a{i}) AS later{i} FROM s{i - 1})",
             f"s{i} AS (SELECT *,arrayElement(later{i},1) AS t{i},if(length(later{i})>0,{i},depth{i - 1}) AS depth{i} FROM f{i})",
         ]
     times = ",".join(f"t{i}" for i in range(1, n + 1))
@@ -378,7 +533,7 @@ def funnel_ctes(p, w):
 
 def funnel(p, w):
     n = len(p["steps"])
-    parts = funnel_ctes(p, w)
+    parts = funnel_ctes(p, w, category=False)
     pairs = list(
         dict.fromkeys([(1, i) for i in range(2, n + 1)] + [(i - 1, i) for i in range(2, n + 1)])
     )
@@ -434,17 +589,39 @@ def traffic(p, w):
     actor = identity(p["traffic_actor_key"])
     session = identity(p["traffic_chain_key"])
     path = bucket(prop(p["path_property"]), p["paths"])
-    source = bucket(prop(p["source_property"]), p["sources"])
+    ref = prop(p["source_property"])
+    hosts = sorted({re.sub(r"^www\.", "", h) for h in p.get("_website_hosts", [])})
+
+    def domain(expr):
+        return f"ifNull(replaceRegexpOne(lower(toString({expr})),{regex(WWW)},''),'')"
+
+    internal = "dom=own" + (" OR dom IN (" + ",".join(map(literal, hosts)) + ")" if hosts else "")
+    # The builder, not the agent, classifies every entry. See CHANNELS for the order.
+    channel = (
+        f"multiIf(match(med,{regex(PAID_MEDIUM)}),'Paid',"
+        f"match(med,{regex(EMAIL_MEDIUM)}),'Email',"
+        f"match(med,{regex(SOCIAL_MEDIUM)}),'Social',"
+        "no_ref,'Unknown',dom IN ('','$direct'),'Direct',"
+        f"{internal},'Internal',"
+        f"match(dom,{regex(AI_DOMAINS)}),'AI assistants',"
+        f"match(dom,{regex(SEARCH_DOMAINS)}),'Search',"
+        f"match(dom,{regex(SOCIAL_DOMAINS)}),'Social','Referral')"
+    )
+    first = "t=first_t"
+    pair = f"uniqExactIf(tuple(channel,dom),{first})=1"
     # Traffic requires this key's semantics to be session, not attempt. The skill enforces it.
     parts = [
-        f"v AS (SELECT if(timestamp<{timestamp(b)},'prior','current') AS period,toString({actor}) AS actor,toString({session}) AS session,timestamp AS t,{path} AS path,{source} AS source FROM events WHERE {where(p, a, c, [p['pageview_event']])} AND {nonempty(actor)} AND {nonempty(session)})",
+        f"v0 AS (SELECT if(timestamp<{timestamp(b)},'prior','current') AS period,toString({actor}) AS actor,toString({session}) AS session,timestamp AS t,{path} AS path,{domain(ref)} AS dom,isNull({ref}) AS no_ref,{domain(prop('$host'))} AS own,ifNull(lower(toString({prop('utm_medium')})),'') AS med FROM events WHERE {where(p, a, c, [p['pageview_event']])} AND {nonempty(actor)} AND {nonempty(session)})",
+        f"v AS (SELECT *,{channel} AS channel FROM v0)",
         "ordered AS (SELECT *,min(t) OVER(PARTITION BY period,actor,session) AS first_t FROM v)",
-        "entries AS (SELECT period,actor,session,if(uniqExactIf(path,t=first_t)=1,anyIf(path,t=first_t),'Ambiguous') AS entry_path,if(uniqExactIf(source,t=first_t)=1,anyIf(source,t=first_t),'Ambiguous') AS entry_source,count() AS pageviews FROM ordered GROUP BY period,actor,session)",
+        f"entries AS (SELECT period,actor,session,if(uniqExactIf(path,{first})=1,anyIf(path,{first}),'Ambiguous') AS entry_path,if({pair},anyIf(channel,{first}),'Ambiguous') AS entry_channel,if({pair},anyIf(dom,{first}),'') AS entry_dom,count() AS pageviews FROM ordered GROUP BY period,actor,session)",
+        # Referral domains are named by entry sessions across both periods; the rest are Other.
+        "doms AS (SELECT dom,row_number() OVER(ORDER BY n DESC,dom) AS rank FROM (SELECT entry_dom AS dom,count() AS n FROM entries WHERE entry_channel='Referral' AND match(entry_dom,'^[a-z][a-z0-9.-]{0,62}$') AND NOT match(entry_dom,'[0-9]{5}') GROUP BY entry_dom))",
     ]
     return (
         "WITH "
         + ",".join(parts)
-        + " SELECT period,entry_path AS path,entry_source AS source,count() AS sessions,sum(pageviews) AS pageviews FROM entries GROUP BY period,entry_path,entry_source ORDER BY period,entry_path,entry_source LIMIT 243"
+        + " SELECT e.period AS period,e.entry_path AS path,e.entry_channel AS channel,if(e.entry_channel='Referral',if(ifNull(d.rank,0) BETWEEN 1 AND 8,e.entry_dom,'Other'),e.entry_channel) AS source,count() AS sessions,sum(e.pageviews) AS pageviews FROM entries e LEFT JOIN doms d ON e.entry_dom=d.dom GROUP BY period,path,channel,source ORDER BY period,path,channel,source LIMIT 400"
     )
 
 
@@ -467,6 +644,9 @@ def request(c, step, p, w):
     validate_hosts(hosts)
     if hosts and p.get("pageview_event", "$pageview") not in ("", "$pageview"):
         raise ValueError("website_hosts currently scopes the standard $pageview event only")
+    # Structured exclusion inputs are compiled by the builder, never left to the agent.
+    if any(rule not in p.get("exclusions", []) for rule in input_exclusions(c)):
+        raise ValueError("plan exclusions must include input_exclusions(settings)")
     scoped = {**p, "_website_hosts": hosts}
     sql = builders[step](scoped, w)
     if step == "coverage":
@@ -639,6 +819,10 @@ def validate_coverage(rows, events, w, property_keys):
         for i, _ in enumerate(property_keys):
             if count(r["missing_p" + str(i)]) > raw:
                 raise ValueError("invalid property coverage")
+        if "funnel_actors" in r and not (
+            count(r["funnel_eligible_actors"]) <= count(r["funnel_actors"]) <= raw
+        ):
+            raise ValueError("invalid coverage counts")
         if raw == 0:
             raise ValueError("empty grouped coverage row")
         lo, hi = (w[0], w[1]) if k[0] == "prior" else (w[1], w[2])
@@ -717,17 +901,25 @@ def validate_breakdown(rows, p, current_funnel):
 
 
 def validate_traffic(rows, p, cov):
-    seen = set()
+    seen, named = set(), set()
     totals = {x: [0, 0] for x in ("prior", "current")}
     for r in rows:
-        k = (r["period"], r["path"], r["source"])
+        k = (r["period"], r["path"], r["channel"], r["source"])
         if (
             k in seen
             or k[0] not in totals
             or k[1] not in set(p["paths"]) | RESERVED
-            or k[2] not in set(p["sources"]) | RESERVED
+            or k[2] not in set(CHANNELS) | {"Unknown", "Ambiguous"}
         ):
             raise ValueError("invalid traffic bucket")
+        # Only Referral rows name a domain; every other row repeats its channel.
+        if k[2] != "Referral" and k[3] != k[2]:
+            raise ValueError("invalid traffic source")
+        if k[2] == "Referral" and k[3] != "Other":
+            if not re.fullmatch(r"[a-z][a-z0-9.-]{0,62}", k[3]):
+                raise ValueError("invalid referring domain")
+            safe_dimension(k[3])
+            named.add(k[3])
         seen.add(k)
         n = count(r["sessions"])
         v = count(r["pageviews"])
@@ -735,11 +927,26 @@ def validate_traffic(rows, p, cov):
             raise ValueError("sessions exceed pageviews")
         totals[k[0]][0] += n
         totals[k[0]][1] += v
+    if len(named) > 8:
+        raise ValueError("too many named referring domains")
     for period, (n, v) in totals.items():
         r = cov.get((period, p["pageview_event"]), {})
         if n != r.get("chains", 0) or v != r.get("eligible_rows", 0):
             raise ValueError("traffic/coverage mismatch")
     return totals
+
+
+def traffic_summary(rows):
+    """Entry sessions and their pageviews by channel, named referrer and landing path."""
+    out = {x: {"channels": {}, "referrers": {}, "paths": {}} for x in ("prior", "current")}
+    for r in rows:
+        keys = [("channels", r["channel"]), ("paths", r["path"])]
+        if r["channel"] == "Referral":
+            keys.append(("referrers", r["source"]))
+        for kind, key in keys:
+            sessions, pageviews = out[r["period"]][kind].get(key, (0, 0))
+            out[r["period"]][kind][key] = [sessions + r["sessions"], pageviews + r["pageviews"]]
+    return out
 
 
 def fisher(a, b, c, d):
@@ -779,23 +986,34 @@ def screen(rows, plan):
     }
 
 
-def reference_funnel(rows, steps):
+def reference_funnel(rows, steps, window_seconds=None):
     # Synthetic oracle only: rows=(period,actor,attempt,event,numeric_time).
     # Exclusions and UTC half-open boundaries must already have been applied.
+    # With window_seconds, attempts are ignored: every step-1 event may start a chain and
+    # later steps count only within that many seconds of it.
     groups = {}
     for period, actor, attempt, event, t in rows:
+        if window_seconds is not None:
+            attempt = "window"
         if actor is None or attempt is None or actor == "" or attempt == "":
             continue
         groups.setdefault((period, actor, attempt), set()).add((event, t))
     chosen = {}
     for (period, actor, attempt), events in groups.items():
-        times = []
-        for ev in steps:
-            valid = sorted(t for e, t in events if e == ev and (not times or t > times[-1]))
-            if not valid:
-                break
-            times.append(valid[0])
-        if times:
+        starts = sorted(t for e, t in events if e == steps[0])
+        for start in starts if window_seconds is not None else starts[:1]:
+            times = [start]
+            for ev in steps[1:]:
+                valid = sorted(
+                    t
+                    for e, t in events
+                    if e == ev
+                    and t > times[-1]
+                    and (window_seconds is None or t - start <= window_seconds)
+                )
+                if not valid:
+                    break
+                times.append(valid[0])
             rank = (-len(times), tuple(times), attempt)
             if (period, actor) not in chosen or rank < chosen[(period, actor)][0]:
                 chosen[(period, actor)] = (rank, times)
@@ -886,13 +1104,27 @@ def reconcile_coverage(cov, inventory_rows, p, w):
     return cov
 
 
+def funnel_coverage(cov, period, event, key):
+    # A split pageview step reports its activation identity in funnel_* columns.
+    r = cov.get((period, event), {})
+    return r.get("funnel_" + key, r.get(key, 0))
+
+
 def reconcile_funnel(rows, p, w, cov):
     totals = validate_funnel(rows, p, w)
     for period, nums in totals.items():
         for i, ev in enumerate(p["steps"]):
-            eligible = cov.get((period, ev), {}).get("eligible_actors", 0)
+            eligible = funnel_coverage(cov, period, ev, "eligible_actors")
             if nums[i] > eligible or (i == 0 and nums[i] != eligible):
                 raise ValueError("funnel/coverage mismatch")
+        # Actors did the final step and others started the funnel, yet no chain joined them:
+        # the identity keys do not link these events. Report it; never show it as 0%.
+        finished = funnel_coverage(cov, period, p["steps"][-1], "actors")
+        if nums[0] and finished and not nums[-1]:
+            raise ValueError(
+                f"unjoinable identity: in the {period} window {nums[0]} actors started the "
+                f"funnel and {finished} did its final step, but none joined a chain"
+            )
     # Daily zero-fill is valid only after successful table/schema/coverage reconciliation.
     present = {(r["period"], r["day"]): r for r in rows}
     a, b, c = w
@@ -1027,7 +1259,9 @@ def query_columns(step, p):
             "chains",
             "first_seen",
             "last_seen",
-        ] + ["missing_p" + str(i) for i in range(len(keys))], 41
+        ] + ["missing_p" + str(i) for i in range(len(keys))] + (
+            ["funnel_actors", "funnel_eligible_actors"] if split_pageview(p) else []
+        ), 41
     if step == "trends":
         return ["day", "resolution", "event", "raw", "actors", "chains"], 601
     if step == "funnel":
@@ -1036,7 +1270,7 @@ def query_columns(step, p):
             f"median_d{x}_{y}" for x, y in median_pairs(n)
         ] + ["order_violations", "duplicate_choices"], 63
     if step == "traffic":
-        return ["period", "path", "source", "sessions", "pageviews"], 243
+        return ["period", "path", "channel", "source", "sessions", "pageviews"], 400
     if step == "breakdown":
         return ["category", "total", "converted"], 12
     if step == "dimensions":
@@ -1056,7 +1290,7 @@ def safe_dimension(value):
 
 
 def validate_dimensions(rows, p):
-    result = {k: [] for k in ("categories", "paths", "sources")}
+    result = {k: [] for k in ("categories", "paths")}
     seen = set()
     for r in rows:
         kind, value = r["kind"], r["value"]
@@ -1102,13 +1336,13 @@ def error_signals(series, plan, funnel_totals):
 def dimensions(p, w):
     # Label discovery uses volume, never conversion, and exports no raw identifiers. One SELECT
     # (Tin's gateway refuses UNION): each event row yields a [kind, value] pair per supported
-    # dimension, and the eight highest-volume safe values per kind are kept.
+    # dimension, and the eight highest-volume safe values per kind are kept. Traffic sources
+    # are not discovered here: traffic() classifies channels and names referrers itself.
     pairs, selected = [], set()
     a, b, c = w
     for kind, key, events in [
         ("categories", p["category_property"], p["steps"][:1]),
         ("paths", p["path_property"], [p["pageview_event"]]),
-        ("sources", p["source_property"], [p["pageview_event"]]),
     ]:
         if not key or not all(events):
             continue
@@ -1126,7 +1360,7 @@ def dimensions(p, w):
 
 
 def public_pin(pin):
-    """Keep exclusions comparable without publishing their supplied scalar values."""
+    """Keep exclusions comparable without publishing their values, domains included."""
     copy = json.loads(json.dumps(pin))
     for rule in copy["plan"]["exclusions"]:
         rule["value"] = {"sha256": stable_hash(rule["value"])}
@@ -1139,7 +1373,8 @@ def restore_pin(pin, binding, rules):
     exclusions(rules)
     copy = json.loads(json.dumps(pin))
     expected = [
-        {"property": r["property"], "value": {"sha256": stable_hash(r["value"])}} for r in rules
+        {"property": r["property"], "op": r["op"], "value": {"sha256": stable_hash(r["value"])}}
+        for r in rules
     ]
     if copy.get("plan", {}).get("exclusions") != expected:
         raise ValueError("previous exclusions mismatch")
@@ -1152,6 +1387,47 @@ def safe_sql(sql, rules):
     # Remove complete exclusion clauses, rather than accidentally rewriting event literals.
     exclusions(rules)
     for rule in rules:
-        sql = sql.replace(exclusions([rule]), "[exclusion " + stable_hash(rule) + "]")
+        sql = sql.replace(exclusion_clause(rule), "[exclusion " + stable_hash(rule) + "]")
     return sql
+
+
+def request_record(request, rules, outcome, message="", data=None):
+    """One executed call for the evidence requests list. outcome is ok, refused (Tin's tool
+    error) or invalid (table() or a validator rejected the response)."""
+    if outcome not in ("ok", "refused", "invalid"):
+        raise ValueError("outcome must be ok, refused or invalid")
+    record = {
+        "step": request["step"],
+        "operation": request["operation"],
+        "outcome": outcome,
+        "message": " ".join(str(message).split())[:500],
+    }
+    if request["operation"] == "query.hogql":
+        record["query"] = safe_sql(request["arguments"]["query"], rules)
+    if data is not None:
+        record.update({k: data.get(k) for k in ("columns", "rows", "has_more", "truncated")})
+    return record
+
+
+def render_evidence(status, reason, fields):
+    """The closing evidence block. Tin checks it (analytics-brief.v1) before publishing."""
+    reason = " ".join(str(reason).split())
+    if status not in STATUSES or (status == "complete") == bool(reason) or len(reason) > 180:
+        raise ValueError("status must be a REPORT.md status; only non-complete ones take a reason")
+    wanted = {
+        "binding",
+        "generated_at",
+        "windows",
+        "state",
+        "inventory_scope",
+        "requests",
+        "derived",
+        "limitations",
+    }
+    if set(fields) != wanted:
+        raise ValueError("evidence fields differ from REPORT.md")
+    body = {"status": status, "status_reason": reason, "provider": "analytics.posthog", **fields}
+    fence = "`" * 3
+    text = json.dumps(body, separators=(",", ":"), ensure_ascii=False, default=str)
+    return f"{EVIDENCE_MARKER}\n{fence}json\n{text}\n{fence}\n"
 ```

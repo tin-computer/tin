@@ -88,15 +88,16 @@ def as_answer_page(run):
 
 
 @pytest.mark.asyncio
-async def test_a_waiting_revision_is_named_on_the_decision_and_blocks_approval(publication_db):
+async def test_a_waiting_revision_replaces_the_older_copy_in_decisions(publication_db):
     db = publication_db
     draft = await saved_draft(db)
     task_id = await revising_task(db, draft.project_id)
-    decision = await draft_decision(db, draft)
-    assert decision["revision"]["state"] == "waiting"
-    assert decision["revision"]["run_id"] == str(task_id)
-    assert decision["revision"]["title"] == "Revise answer page draft"
-    assert decision["version_saved_at"] == draft.review_requested_at
+    # Only the newer version is listed and counted; the older copy waits out of sight.
+    listed = await db.list_pending_decisions(project_id=draft.project_id)
+    assert [item["run_id"] for item in listed] == [task_id]
+    summary = await db.get_project_system_summary(project_id=draft.project_id)
+    assert summary["waiting_count"] == 1
+    assert (await db.output_revision(run_id=draft.id))["state"] == "waiting"
     for delivery in (None, "github_commit", "github_pr", "none"):
         conflict = await approval_conflict(db, as_answer_page(draft), delivery)
         assert conflict and "“Revise answer page draft”" in conflict

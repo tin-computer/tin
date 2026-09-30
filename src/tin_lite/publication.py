@@ -18,8 +18,15 @@ if TYPE_CHECKING:
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+# not_published: a finished result Tin kept as a readable diagnostic and will not publish.
 OUTPUT_REASONS = frozenset(
-    {"publication_pending", "reconciliation_pending", "output_conflict", "execution_interrupted"}
+    {
+        "publication_pending",
+        "reconciliation_pending",
+        "output_conflict",
+        "execution_interrupted",
+        "not_published",
+    }
 )
 RETAINED_OUTPUT_EXECUTORS = frozenset({"codex.procedure", "style.capture", "workflow.code"})
 

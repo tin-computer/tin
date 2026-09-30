@@ -16,6 +16,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tin_lite import analytics_brief
 from tin_lite.answer_page import (
     AnswerPageDrafter,
     AnswerPageSource,
@@ -2248,12 +2249,16 @@ class TinActivities:
             evidence_path=evidence_path,
         )
         artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
+        from tin_lite.content_delivery import review_line
+
         return await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
+            # The decision card says what the page answers; Activity keeps the review notice.
+            explanation=review_line(content) or "",
         )
 
     @activity.defn(name="record_answer_page_approval")
@@ -3948,7 +3953,11 @@ class TinActivities:
                     conn,
                     execution_key=execution_key,
                     error_message=(
-                        str(exc)
+                        # A brief that measured nothing fails with its own plain reason.
+                        exc.message
+                        if isinstance(exc, ApplicationError)
+                        and exc.type == analytics_brief.MEASURED_NOTHING
+                        else str(exc)
                         if isinstance(exc, ApplicationError)
                         and exc.type in {"OutputConflictError", "PublicationPendingError"}
                         else _safe_failure(exc)
@@ -4099,6 +4108,23 @@ class TinActivities:
                 or proof.get("themes") != ["light", "dark"]
             ):
                 raise ValueError("Diagram publication has no matching trusted visual check")
+        analytics = None
+        if procedure.output_validator == analytics_brief.VALIDATOR:
+            analytics = analytics_brief.read(content)
+            if analytics.measured_nothing:
+                # Keep the diagnostic readable on the run; a brief with no measurement is
+                # never published to Files and never reported as a success.
+                await self._db.retain_procedure_output(
+                    conn,
+                    run_id=run.id,
+                    checkpoint=checkpoint.to_dict(),
+                    reason="not_published",
+                )
+                raise ApplicationError(
+                    analytics_brief.failure(analytics),
+                    type=analytics_brief.MEASURED_NOTHING,
+                    non_retryable=True,
+                )
         await self._db.retain_procedure_output(
             conn,
             run_id=run.id,
@@ -4143,6 +4169,8 @@ class TinActivities:
                             f"{procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
+                if analytics is not None and analytics_brief.summary(analytics):
+                    result["summary"] = analytics_brief.summary(analytics)
                 if procedure.review_revision_context is not None:
                     from tin_lite.article_review import change_summary
 
@@ -4203,12 +4231,12 @@ class TinActivities:
         if path.casefold().endswith((".md", ".markdown")):
             # A document's own heading names it better than its file name, and its first
             # paragraph says what the reviewer is about to read.
-            from tin_lite.content_delivery import display_title, summary_line
+            from tin_lite.content_delivery import display_title, review_line
 
             raw = await self._storage.read_canonical_artifact(
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
-            artifact_title, lede = display_title(raw), summary_line(raw)
+            artifact_title, lede = display_title(raw), review_line(raw)
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")

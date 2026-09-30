@@ -204,9 +204,12 @@ names keep `reports/ANSWER_PAGE.md`. A later page with the same date and title g
 eight characters of its run ID after the slug, so it never replaces the earlier file; a retry
 reuses the path its own evidence names. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
-approval from the draft reader resumes and completes it. Workflows presents every live gate through
-one needs-you queue banner and one matching filter count; completed reviews remain historical
-Activity events rather than permanent stages on finished rows. Report and memory workflows do not
+approval from the draft reader resumes and completes it. The menu's Decisions badge, the Decisions
+list and the project line's "need you" count the same items: runs with something to approve, not a
+task asking a question or a reviewed task that changed nothing. A decision saved before outputs
+carried their heading is named once from its pinned file when Decisions is listed, a few per
+request; an output with no heading is titled by its workflow and day. Completed reviews remain
+historical Activity events rather than permanent stages on finished rows. Report and memory workflows do not
 pause for review. The workflow does not edit or publish the customer's website, create an E2B
 sandbox, or add a provider credential path.
 

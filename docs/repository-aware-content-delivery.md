@@ -82,7 +82,7 @@ The confirmed result is separately receipted and shown on the content card/Activ
 the failed adaptation's historical status is not rewritten as success.
 
 A failed attempt whose PR never opened may be replaced by a **new metered adaptation**:
-Prepare PR, “Retry” on the content card or `retry_run_id` through MCP (internal attempt
+Prepare PR, “Retry” on that draft’s row of the content card or `retry_run_id` through MCP (internal attempt
 context, not a revision selector). "Never opened" means GitHub refused the request before
 writing anything (for example because another open PR changed a shared file, as delivery
 refused before September 29) or never received it. A saved patch alone no longer blocks this;

@@ -1,9 +1,9 @@
 {
-  "provenance": "Fabricated inline event CTEs executed through PostHog HogQL on 2026-09-21 and 2026-09-22; no customer data. On 2026-09-24 the coverage and dimensions builders were restructured for Tin's analytics.posthog HogQL guard (one SELECT, at most 8000 bytes); their hashes were updated and the recorded aggregates kept, pending live requalification of those two queries.",
+  "provenance": "Fabricated inline event CTEs executed through PostHog HogQL on 2026-09-21 and 2026-09-22; no customer data. On 2026-09-24 the coverage and dimensions builders were restructured for Tin's analytics.posthog HogQL guard (one SELECT, at most 8000 bytes). On 2026-09-29 the reusable-v2 builders changed the coverage and traffic text, and the input_exclusions, channels, identified and identified_sessions cases were added. Unchanged queries keep their PostHog responses; changed and new ones were executed on embedded ClickHouse (chdb) over the listed events, matched the recorded rows where the columns did not change, and await live requalification.",
   "cases": {
     "six": {
       "plan": {
-        "version": "reusable-v1",
+        "version": "reusable-v2",
         "actor_key": "event:account_id",
         "actor_label": "accounts",
         "chain_key": "event:job_id",
@@ -35,7 +35,6 @@
         "path_property": "",
         "source_property": "",
         "paths": [],
-        "sources": [],
         "category_property": "",
         "categories": [],
         "exclusions": [],
@@ -159,7 +158,7 @@
     },
     "empty": {
       "plan": {
-        "version": "reusable-v1",
+        "version": "reusable-v2",
         "actor_key": "event:account_id",
         "actor_label": "accounts",
         "chain_key": "event:job_id",
@@ -185,7 +184,6 @@
         "path_property": "",
         "source_property": "",
         "paths": [],
-        "sources": [],
         "category_property": "",
         "categories": [],
         "exclusions": [],
@@ -233,7 +231,7 @@
     },
     "exclusions": {
       "plan": {
-        "version": "reusable-v1",
+        "version": "reusable-v2",
         "actor_key": "event:account_id",
         "actor_label": "accounts",
         "chain_key": "event:job_id",
@@ -259,12 +257,12 @@
         "path_property": "",
         "source_property": "",
         "paths": [],
-        "sources": [],
         "category_property": "",
         "categories": [],
         "exclusions": [
           {
             "property": "is_test",
+            "op": "eq",
             "value": true
           }
         ],
@@ -357,7 +355,7 @@
           }
         },
         "coverage": {
-          "query_sha256": "17a4116f1cd8722a27e5117f6911239b08178f96fc60b1161b19909a0cdc9c5a",
+          "query_sha256": "1db08bda8e7912ad88b959c7902969c7493f559284c5310cdf3390bb4d0fdf39",
           "data": {
             "columns": [
               "event",
@@ -396,7 +394,7 @@
     },
     "mixed": {
       "plan": {
-        "version": "reusable-v1",
+        "version": "reusable-v2",
         "actor_key": "event:account_id",
         "actor_label": "accounts",
         "chain_key": "event:job_id",
@@ -423,9 +421,6 @@
         "source_property": "$referring_domain",
         "paths": [
           "/start"
-        ],
-        "sources": [
-          "search.example"
         ],
         "category_property": "",
         "categories": [],
@@ -783,7 +778,7 @@
       "empty": false,
       "responses": {
         "coverage": {
-          "query_sha256": "57b6c551256eb0cbef274b5aec2e78d2dba9679decf989d803577de22dc883f6",
+          "query_sha256": "04f58b126e857826935b099a5f5d582001775af079caa09f0ae54431a8648914",
           "data": {
             "columns": [
               "event",
@@ -863,11 +858,12 @@
           }
         },
         "traffic": {
-          "query_sha256": "a70c3d90411d2afa77d723b23d14cdfa010c5872d0084a32dba390d5190085dc",
+          "query_sha256": "273d74c2d47f6534a99fe39b082e27ca2f9451d13080a9e81ea8e8a4e11127c1",
           "data": {
             "columns": [
               "period",
               "path",
+              "channel",
               "source",
               "sessions",
               "pageviews"
@@ -876,9 +872,1794 @@
               [
                 "current",
                 "/start",
+                "Referral",
                 "search.example",
                 6,
                 7
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        }
+      }
+    },
+    "input_exclusions": {
+      "inputs": {
+        "as_of_utc": "2026-01-12",
+        "exclude_email_domains": [
+          "example.test"
+        ],
+        "internal_flag_property": "is_internal"
+      },
+      "plan": {
+        "version": "reusable-v2",
+        "actor_key": "event:account_id",
+        "actor_label": "accounts",
+        "chain_key": "event:job_id",
+        "chain_label": "attempts",
+        "steps": [
+          "Workspace created",
+          "Invite sent",
+          "Report viewed"
+        ],
+        "labels": [
+          "Created a workspace",
+          "Invited a teammate",
+          "Viewed a report"
+        ],
+        "key_events": [
+          "Workspace created",
+          "Report viewed"
+        ],
+        "error_events": [
+          "job_failed"
+        ],
+        "pageview_event": "",
+        "path_property": "",
+        "source_property": "",
+        "paths": [],
+        "category_property": "",
+        "categories": [],
+        "exclusions": [
+          {
+            "property": "person:email",
+            "op": "suffix",
+            "value": [
+              "example.test"
+            ]
+          },
+          {
+            "property": "is_internal",
+            "op": "truthy",
+            "value": true
+          }
+        ],
+        "semantic_evidence": [
+          "Synthetic documented event and identity semantics."
+        ],
+        "traffic_actor_key": "distinct_id",
+        "traffic_chain_key": "event:$session_id"
+      },
+      "events": [
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "0",
+          "properties": {
+            "account_id": "0",
+            "job_id": "0"
+          },
+          "person_properties": {
+            "email": "team@example.test"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "1",
+          "properties": {
+            "account_id": "1",
+            "job_id": "1"
+          },
+          "person_properties": {
+            "email": "dev@eng.example.test"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "2",
+          "properties": {
+            "account_id": "2",
+            "job_id": "2"
+          },
+          "person_properties": {
+            "email": "Founder@Example.Test"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "3",
+          "properties": {
+            "account_id": "3",
+            "job_id": "3"
+          },
+          "person_properties": {
+            "email": "user@notexample.test"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "4",
+          "properties": {
+            "account_id": "4",
+            "job_id": "4"
+          },
+          "person_properties": {
+            "email": "user@example.test.example.net"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "5",
+          "properties": {
+            "account_id": "5",
+            "job_id": "5"
+          },
+          "person_properties": {}
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "6",
+          "properties": {
+            "account_id": "6",
+            "job_id": "6",
+            "is_internal": "true"
+          },
+          "person_properties": {
+            "email": "a@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "7",
+          "properties": {
+            "account_id": "7",
+            "job_id": "7",
+            "is_internal": true
+          },
+          "person_properties": {
+            "email": "b@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "8",
+          "properties": {
+            "account_id": "8",
+            "job_id": "8",
+            "is_internal": 1
+          },
+          "person_properties": {
+            "email": "c@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "9",
+          "properties": {
+            "account_id": "9",
+            "job_id": "9",
+            "is_internal": "TRUE"
+          },
+          "person_properties": {
+            "email": "d@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "10",
+          "properties": {
+            "account_id": "10",
+            "job_id": "10",
+            "is_internal": false
+          },
+          "person_properties": {
+            "email": "e@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "11",
+          "properties": {
+            "account_id": "11",
+            "job_id": "11",
+            "is_internal": "false"
+          },
+          "person_properties": {
+            "email": "f@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "12",
+          "properties": {
+            "account_id": "12",
+            "job_id": "12",
+            "is_internal": 0
+          },
+          "person_properties": {
+            "email": "g@example.org"
+          }
+        },
+        {
+          "timestamp": "2026-01-05T00:00:01Z",
+          "event": "Workspace created",
+          "distinct_id": "13",
+          "properties": {
+            "account_id": "13",
+            "job_id": "13",
+            "is_internal": "1"
+          },
+          "person_properties": {
+            "email": "h@example.org"
+          }
+        }
+      ],
+      "empty": false,
+      "responses": {
+        "inventory": {
+          "query_sha256": "81fcc1c2bcedd76707b2546ec48f7ec78ec39b7321d38f8e5db6e0a9f10988a7",
+          "data": {
+            "columns": [
+              "event",
+              "observed",
+              "prior",
+              "current",
+              "first_seen",
+              "last_seen",
+              "total_event_types"
+            ],
+            "results": [
+              [
+                "Workspace created",
+                7,
+                0,
+                7,
+                "2026-01-05T00:00:01Z",
+                "2026-01-05T00:00:01Z",
+                1
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        },
+        "coverage": {
+          "query_sha256": "d76b395fad30e9155fe91ba94e33baec6749c7661bc5c78a44e65d9cefce2145",
+          "data": {
+            "columns": [
+              "event",
+              "period",
+              "raw",
+              "actor_rows",
+              "eligible_rows",
+              "actors",
+              "eligible_actors",
+              "chains",
+              "first_seen",
+              "last_seen",
+              "missing_p0",
+              "missing_p1"
+            ],
+            "results": [
+              [
+                "Workspace created",
+                "current",
+                7,
+                7,
+                7,
+                7,
+                7,
+                7,
+                "2026-01-05T00:00:01Z",
+                "2026-01-05T00:00:01Z",
+                3,
+                1
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        }
+      }
+    },
+    "channels": {
+      "inputs": {
+        "as_of_utc": "2026-01-12",
+        "website_hosts": [
+          "docs.example.com",
+          "example.com",
+          "www.example.com"
+        ]
+      },
+      "plan": {
+        "version": "reusable-v2",
+        "actor_key": "distinct_id",
+        "actor_label": "browser identities",
+        "chain_key": "event:$session_id",
+        "chain_label": "sessions",
+        "steps": [],
+        "labels": [],
+        "key_events": [
+          "$pageview"
+        ],
+        "error_events": [],
+        "pageview_event": "$pageview",
+        "path_property": "$pathname",
+        "source_property": "$referring_domain",
+        "paths": [
+          "/start"
+        ],
+        "category_property": "",
+        "categories": [],
+        "exclusions": [],
+        "semantic_evidence": [
+          "Synthetic documented event and identity semantics."
+        ],
+        "traffic_actor_key": "distinct_id",
+        "traffic_chain_key": "event:$session_id"
+      },
+      "events": [
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:00:00Z",
+          "distinct_id": "v01",
+          "properties": {
+            "$session_id": "s01",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:01:00Z",
+          "distinct_id": "v02",
+          "properties": {
+            "$session_id": "s02",
+            "$host": "example.com",
+            "$referring_domain": "",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:02:00Z",
+          "distinct_id": "v03",
+          "properties": {
+            "$session_id": "s03",
+            "$host": "example.com",
+            "$referring_domain": "WWW.Google.com",
+            "$pathname": "/pricing"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:03:00Z",
+          "distinct_id": "v04",
+          "properties": {
+            "$session_id": "s04",
+            "$host": "example.com",
+            "$referring_domain": "chatgpt.com"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:04:00Z",
+          "distinct_id": "v05",
+          "properties": {
+            "$session_id": "s05",
+            "$host": "example.com",
+            "$referring_domain": "www.Perplexity.ai",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:05:00Z",
+          "distinct_id": "v06",
+          "properties": {
+            "$session_id": "s06",
+            "$host": "example.com",
+            "$referring_domain": "t.co",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:06:00Z",
+          "distinct_id": "v07",
+          "properties": {
+            "$session_id": "s07",
+            "$host": "example.com",
+            "$referring_domain": "news.ycombinator.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:07:00Z",
+          "distinct_id": "v08",
+          "properties": {
+            "$session_id": "s08",
+            "$host": "example.com",
+            "$referring_domain": "www.example.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:08:00Z",
+          "distinct_id": "v09",
+          "properties": {
+            "$session_id": "s09",
+            "$host": "example.com",
+            "$referring_domain": "docs.example.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:09:00Z",
+          "distinct_id": "v10",
+          "properties": {
+            "$session_id": "s10",
+            "$host": "example.com",
+            "$referring_domain": "GitHub.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:10:00Z",
+          "distinct_id": "v11",
+          "properties": {
+            "$session_id": "s11",
+            "$host": "example.com",
+            "$referring_domain": "github.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:11:00Z",
+          "distinct_id": "v12",
+          "properties": {
+            "$session_id": "s12",
+            "$host": "example.com",
+            "$referring_domain": "a-news.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:12:00Z",
+          "distinct_id": "v13",
+          "properties": {
+            "$session_id": "s13",
+            "$host": "example.com",
+            "$referring_domain": "b-blog.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:13:00Z",
+          "distinct_id": "v14",
+          "properties": {
+            "$session_id": "s14",
+            "$host": "example.com",
+            "$referring_domain": "c-forum.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:14:00Z",
+          "distinct_id": "v15",
+          "properties": {
+            "$session_id": "s15",
+            "$host": "example.com",
+            "$referring_domain": "d-docs.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:15:00Z",
+          "distinct_id": "v16",
+          "properties": {
+            "$session_id": "s16",
+            "$host": "example.com",
+            "$referring_domain": "e-wiki.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:16:00Z",
+          "distinct_id": "v17",
+          "properties": {
+            "$session_id": "s17",
+            "$host": "example.com",
+            "$referring_domain": "f-list.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:17:00Z",
+          "distinct_id": "v18",
+          "properties": {
+            "$session_id": "s18",
+            "$host": "example.com",
+            "$referring_domain": "g-site.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:18:00Z",
+          "distinct_id": "v19",
+          "properties": {
+            "$session_id": "s19",
+            "$host": "example.com",
+            "$referring_domain": "h-page.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:19:00Z",
+          "distinct_id": "v20",
+          "properties": {
+            "$session_id": "s20",
+            "$host": "example.com",
+            "$referring_domain": "9news.test",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:20:00Z",
+          "distinct_id": "v21",
+          "properties": {
+            "$session_id": "s21",
+            "$host": "example.com",
+            "utm_medium": "cpc",
+            "$referring_domain": "l.facebook.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:21:00Z",
+          "distinct_id": "v22",
+          "properties": {
+            "$session_id": "s22",
+            "$host": "example.com",
+            "utm_medium": "Email",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T10:22:00Z",
+          "distinct_id": "v23",
+          "properties": {
+            "$session_id": "s23",
+            "$host": "example.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T11:00:00Z",
+          "distinct_id": "v10",
+          "properties": {
+            "$session_id": "s10",
+            "$host": "www.example.com",
+            "$referring_domain": "example.com",
+            "$pathname": "/pricing"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T09:00:00Z",
+          "distinct_id": "v24",
+          "properties": {
+            "$session_id": "s24",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T09:00:00Z",
+          "distinct_id": "v24",
+          "properties": {
+            "$session_id": "s24",
+            "$host": "example.com",
+            "$referring_domain": "github.com",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T10:00:00Z",
+          "distinct_id": "v25",
+          "properties": {
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-01T10:00:00Z",
+          "distinct_id": "v26",
+          "properties": {
+            "$session_id": "s26",
+            "$host": "www.example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T11:00:00Z",
+          "distinct_id": "v27",
+          "properties": {
+            "$session_id": "s27",
+            "$host": "other-site.test",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        }
+      ],
+      "empty": false,
+      "responses": {
+        "coverage": {
+          "query_sha256": "38281aadc9cd38aecf5c454f3ec6cf7559bc5f48061ba2019acfaef07b52dc98",
+          "data": {
+            "columns": [
+              "event",
+              "period",
+              "raw",
+              "actor_rows",
+              "eligible_rows",
+              "actors",
+              "eligible_actors",
+              "chains",
+              "first_seen",
+              "last_seen",
+              "missing_p0",
+              "missing_p1"
+            ],
+            "results": [
+              [
+                "$pageview",
+                "current",
+                27,
+                27,
+                26,
+                25,
+                24,
+                24,
+                "2026-01-06T10:00:00Z",
+                "2026-01-07T10:00:00Z",
+                1,
+                2
+              ],
+              [
+                "$pageview",
+                "prior",
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                "2026-01-01T10:00:00Z",
+                "2026-01-01T10:00:00Z",
+                0,
+                0
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        },
+        "traffic": {
+          "query_sha256": "d97481bac5b74c638288f3587243cab1fa05e903ae8721461fa4625e55fd6553",
+          "data": {
+            "columns": [
+              "period",
+              "path",
+              "channel",
+              "source",
+              "sessions",
+              "pageviews"
+            ],
+            "results": [
+              [
+                "current",
+                "/start",
+                "AI assistants",
+                "AI assistants",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Ambiguous",
+                "Ambiguous",
+                1,
+                2
+              ],
+              [
+                "current",
+                "/start",
+                "Direct",
+                "Direct",
+                2,
+                2
+              ],
+              [
+                "current",
+                "/start",
+                "Email",
+                "Email",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Internal",
+                "Internal",
+                2,
+                2
+              ],
+              [
+                "current",
+                "/start",
+                "Paid",
+                "Paid",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "Other",
+                2,
+                2
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "a-news.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "b-blog.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "c-forum.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "d-docs.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "e-wiki.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "f-list.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "g-site.test",
+                1,
+                1
+              ],
+              [
+                "current",
+                "/start",
+                "Referral",
+                "github.com",
+                2,
+                3
+              ],
+              [
+                "current",
+                "/start",
+                "Social",
+                "Social",
+                2,
+                2
+              ],
+              [
+                "current",
+                "/start",
+                "Unknown",
+                "Unknown",
+                1,
+                1
+              ],
+              [
+                "current",
+                "Other",
+                "Search",
+                "Search",
+                1,
+                1
+              ],
+              [
+                "current",
+                "Unknown",
+                "AI assistants",
+                "AI assistants",
+                1,
+                1
+              ],
+              [
+                "prior",
+                "/start",
+                "Direct",
+                "Direct",
+                1,
+                1
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        }
+      },
+      "expected_current": {
+        "channels": {
+          "AI assistants": [
+            2,
+            2
+          ],
+          "Ambiguous": [
+            1,
+            2
+          ],
+          "Direct": [
+            2,
+            2
+          ],
+          "Email": [
+            1,
+            1
+          ],
+          "Internal": [
+            2,
+            2
+          ],
+          "Paid": [
+            1,
+            1
+          ],
+          "Referral": [
+            11,
+            12
+          ],
+          "Search": [
+            1,
+            1
+          ],
+          "Social": [
+            2,
+            2
+          ],
+          "Unknown": [
+            1,
+            1
+          ]
+        },
+        "referrers": {
+          "a-news.test": [
+            1,
+            1
+          ],
+          "b-blog.test": [
+            1,
+            1
+          ],
+          "c-forum.test": [
+            1,
+            1
+          ],
+          "d-docs.test": [
+            1,
+            1
+          ],
+          "e-wiki.test": [
+            1,
+            1
+          ],
+          "f-list.test": [
+            1,
+            1
+          ],
+          "g-site.test": [
+            1,
+            1
+          ],
+          "github.com": [
+            2,
+            3
+          ],
+          "Other": [
+            2,
+            2
+          ]
+        }
+      }
+    },
+    "identified": {
+      "plan": {
+        "version": "reusable-v2",
+        "actor_key": "person_id",
+        "actor_label": "people",
+        "chain_key": "window:24",
+        "chain_label": "24-hour chains",
+        "steps": [
+          "$pageview",
+          "signup_completed"
+        ],
+        "labels": [
+          "Visited the site",
+          "Signed up"
+        ],
+        "key_events": [
+          "$pageview",
+          "signup_completed"
+        ],
+        "error_events": [],
+        "pageview_event": "$pageview",
+        "path_property": "$pathname",
+        "source_property": "$referring_domain",
+        "paths": [
+          "/start"
+        ],
+        "category_property": "",
+        "categories": [],
+        "exclusions": [],
+        "semantic_evidence": [
+          "Synthetic documented event and identity semantics."
+        ],
+        "traffic_actor_key": "distinct_id",
+        "traffic_chain_key": "event:$session_id"
+      },
+      "events": [
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-05T10:00:00Z",
+          "distinct_id": "anon-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "$session_id": "s-1",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-05T10:05:00Z",
+          "distinct_id": "anon-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "$session_id": "s-1",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-05T10:30:00Z",
+          "distinct_id": "user-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T09:00:00Z",
+          "distinct_id": "anon-2",
+          "person_id": "22222222-2222-4222-8222-222222222222",
+          "properties": {
+            "$session_id": "s-2",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-07T12:00:00Z",
+          "distinct_id": "user-2",
+          "person_id": "22222222-2222-4222-8222-222222222222",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T08:00:00Z",
+          "distinct_id": "anon-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "$session_id": "s-3a",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-08T08:00:00Z",
+          "distinct_id": "anon-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "$session_id": "s-3b",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-08T09:00:00Z",
+          "distinct_id": "user-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-07T07:00:00Z",
+          "distinct_id": "user-4",
+          "person_id": "44444444-4444-4444-8444-444444444444",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T07:30:00Z",
+          "distinct_id": "anon-4",
+          "person_id": "44444444-4444-4444-8444-444444444444",
+          "properties": {
+            "$session_id": "s-4",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-09T12:00:00Z",
+          "distinct_id": "anon-5",
+          "person_id": "55555555-5555-4555-8555-555555555555",
+          "properties": {
+            "$session_id": "s-5",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-09T13:00:00Z",
+          "distinct_id": "anon-6",
+          "person_id": null,
+          "properties": {
+            "$session_id": "s-6",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-01T10:00:00Z",
+          "distinct_id": "anon-7",
+          "person_id": "77777777-7777-4777-8777-777777777777",
+          "properties": {
+            "$session_id": "s-7",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-01T11:00:00Z",
+          "distinct_id": "user-7",
+          "person_id": "77777777-7777-4777-8777-777777777777",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-04T23:00:00Z",
+          "distinct_id": "anon-8",
+          "person_id": "88888888-8888-4888-8888-888888888888",
+          "properties": {
+            "$session_id": "s-8",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-05T01:00:00Z",
+          "distinct_id": "user-8",
+          "person_id": "88888888-8888-4888-8888-888888888888",
+          "properties": {
+            "plan": "free"
+          }
+        }
+      ],
+      "empty": false,
+      "expected_ordered": {
+        "prior": [
+          2,
+          1
+        ],
+        "current": [
+          5,
+          2
+        ]
+      },
+      "responses": {
+        "coverage": {
+          "query_sha256": "1834bca01818c4f8d8dfbe68dc081d26f8e3887c94fc02240f8afc64fa5fb2b3",
+          "data": {
+            "columns": [
+              "event",
+              "period",
+              "raw",
+              "actor_rows",
+              "eligible_rows",
+              "actors",
+              "eligible_actors",
+              "chains",
+              "first_seen",
+              "last_seen",
+              "missing_p0",
+              "missing_p1",
+              "funnel_actors",
+              "funnel_eligible_actors"
+            ],
+            "results": [
+              [
+                "$pageview",
+                "current",
+                8,
+                8,
+                8,
+                6,
+                6,
+                7,
+                "2026-01-05T10:00:00Z",
+                "2026-01-09T13:00:00Z",
+                0,
+                0,
+                5,
+                5
+              ],
+              [
+                "$pageview",
+                "prior",
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                "2026-01-01T10:00:00Z",
+                "2026-01-04T23:00:00Z",
+                0,
+                0,
+                2,
+                2
+              ],
+              [
+                "signup_completed",
+                "current",
+                5,
+                5,
+                5,
+                5,
+                5,
+                5,
+                "2026-01-05T01:00:00Z",
+                "2026-01-08T09:00:00Z",
+                5,
+                5,
+                5,
+                5
+              ],
+              [
+                "signup_completed",
+                "prior",
+                1,
+                1,
+                1,
+                1,
+                1,
+                1,
+                "2026-01-01T11:00:00Z",
+                "2026-01-01T11:00:00Z",
+                1,
+                1,
+                1,
+                1
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        },
+        "funnel": {
+          "query_sha256": "ce9b45fe8918c763d90aa9644c3b7cbedb74420a02f43fdcd34fba2f97d0e036",
+          "data": {
+            "columns": [
+              "period",
+              "day",
+              "n1",
+              "n2",
+              "median_d1_2",
+              "order_violations",
+              "duplicate_choices"
+            ],
+            "results": [
+              [
+                "current",
+                "2026-01-05",
+                1,
+                1,
+                1800,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-06",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-07",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-08",
+                1,
+                1,
+                3600,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-09",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "prior",
+                "2026-01-01",
+                1,
+                1,
+                3600,
+                0,
+                0
+              ],
+              [
+                "prior",
+                "2026-01-04",
+                1,
+                0,
+                null,
+                0,
+                0
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        },
+        "traffic": {
+          "query_sha256": "273d74c2d47f6534a99fe39b082e27ca2f9451d13080a9e81ea8e8a4e11127c1",
+          "data": {
+            "columns": [
+              "period",
+              "path",
+              "channel",
+              "source",
+              "sessions",
+              "pageviews"
+            ],
+            "results": [
+              [
+                "current",
+                "/start",
+                "Direct",
+                "Direct",
+                7,
+                8
+              ],
+              [
+                "prior",
+                "/start",
+                "Direct",
+                "Direct",
+                2,
+                2
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        }
+      }
+    },
+    "identified_sessions": {
+      "plan": {
+        "version": "reusable-v2",
+        "actor_key": "distinct_id",
+        "actor_label": "browser identities",
+        "chain_key": "event:$session_id",
+        "chain_label": "sessions",
+        "steps": [
+          "$pageview",
+          "signup_completed"
+        ],
+        "labels": [
+          "Visited the site",
+          "Signed up"
+        ],
+        "key_events": [
+          "$pageview",
+          "signup_completed"
+        ],
+        "error_events": [],
+        "pageview_event": "$pageview",
+        "path_property": "$pathname",
+        "source_property": "$referring_domain",
+        "paths": [
+          "/start"
+        ],
+        "category_property": "",
+        "categories": [],
+        "exclusions": [],
+        "semantic_evidence": [
+          "Synthetic documented event and identity semantics."
+        ],
+        "traffic_actor_key": "distinct_id",
+        "traffic_chain_key": "event:$session_id"
+      },
+      "events": [
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-05T10:00:00Z",
+          "distinct_id": "anon-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "$session_id": "s-1",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-05T10:05:00Z",
+          "distinct_id": "anon-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "$session_id": "s-1",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-05T10:30:00Z",
+          "distinct_id": "user-1",
+          "person_id": "11111111-1111-4111-8111-111111111111",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T09:00:00Z",
+          "distinct_id": "anon-2",
+          "person_id": "22222222-2222-4222-8222-222222222222",
+          "properties": {
+            "$session_id": "s-2",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-07T12:00:00Z",
+          "distinct_id": "user-2",
+          "person_id": "22222222-2222-4222-8222-222222222222",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-06T08:00:00Z",
+          "distinct_id": "anon-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "$session_id": "s-3a",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-08T08:00:00Z",
+          "distinct_id": "anon-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "$session_id": "s-3b",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-08T09:00:00Z",
+          "distinct_id": "user-3",
+          "person_id": "33333333-3333-4333-8333-333333333333",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-07T07:00:00Z",
+          "distinct_id": "user-4",
+          "person_id": "44444444-4444-4444-8444-444444444444",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-07T07:30:00Z",
+          "distinct_id": "anon-4",
+          "person_id": "44444444-4444-4444-8444-444444444444",
+          "properties": {
+            "$session_id": "s-4",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-09T12:00:00Z",
+          "distinct_id": "anon-5",
+          "person_id": "55555555-5555-4555-8555-555555555555",
+          "properties": {
+            "$session_id": "s-5",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-09T13:00:00Z",
+          "distinct_id": "anon-6",
+          "person_id": null,
+          "properties": {
+            "$session_id": "s-6",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-01T10:00:00Z",
+          "distinct_id": "anon-7",
+          "person_id": "77777777-7777-4777-8777-777777777777",
+          "properties": {
+            "$session_id": "s-7",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-01T11:00:00Z",
+          "distinct_id": "user-7",
+          "person_id": "77777777-7777-4777-8777-777777777777",
+          "properties": {
+            "plan": "free"
+          }
+        },
+        {
+          "event": "$pageview",
+          "timestamp": "2026-01-04T23:00:00Z",
+          "distinct_id": "anon-8",
+          "person_id": "88888888-8888-4888-8888-888888888888",
+          "properties": {
+            "$session_id": "s-8",
+            "$host": "example.com",
+            "$referring_domain": "$direct",
+            "$pathname": "/start"
+          }
+        },
+        {
+          "event": "signup_completed",
+          "timestamp": "2026-01-05T01:00:00Z",
+          "distinct_id": "user-8",
+          "person_id": "88888888-8888-4888-8888-888888888888",
+          "properties": {
+            "plan": "free"
+          }
+        }
+      ],
+      "empty": false,
+      "expected_ordered": {
+        "prior": [
+          2,
+          0
+        ],
+        "current": [
+          6,
+          0
+        ]
+      },
+      "responses": {
+        "coverage": {
+          "query_sha256": "78b5298efd02426ec87f07e13f6c854ba19306a34921d7cd89fe91138e8d5c4c",
+          "data": {
+            "columns": [
+              "event",
+              "period",
+              "raw",
+              "actor_rows",
+              "eligible_rows",
+              "actors",
+              "eligible_actors",
+              "chains",
+              "first_seen",
+              "last_seen",
+              "missing_p0",
+              "missing_p1"
+            ],
+            "results": [
+              [
+                "$pageview",
+                "current",
+                8,
+                8,
+                8,
+                6,
+                6,
+                7,
+                "2026-01-05T10:00:00Z",
+                "2026-01-09T13:00:00Z",
+                0,
+                0
+              ],
+              [
+                "$pageview",
+                "prior",
+                2,
+                2,
+                2,
+                2,
+                2,
+                2,
+                "2026-01-01T10:00:00Z",
+                "2026-01-04T23:00:00Z",
+                0,
+                0
+              ],
+              [
+                "signup_completed",
+                "current",
+                5,
+                5,
+                0,
+                5,
+                0,
+                0,
+                "2026-01-05T01:00:00Z",
+                "2026-01-08T09:00:00Z",
+                5,
+                5
+              ],
+              [
+                "signup_completed",
+                "prior",
+                1,
+                1,
+                0,
+                1,
+                0,
+                0,
+                "2026-01-01T11:00:00Z",
+                "2026-01-01T11:00:00Z",
+                1,
+                1
+              ]
+            ],
+            "hasMore": null,
+            "error": null,
+            "query_status": null
+          }
+        },
+        "funnel": {
+          "query_sha256": "eb1fd811a4269e0ecc71e322b63c7b15d3fba64ec8b9f91641d3a85e6a8d9463",
+          "data": {
+            "columns": [
+              "period",
+              "day",
+              "n1",
+              "n2",
+              "median_d1_2",
+              "order_violations",
+              "duplicate_choices"
+            ],
+            "results": [
+              [
+                "current",
+                "2026-01-05",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-06",
+                2,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-07",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "current",
+                "2026-01-09",
+                2,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "prior",
+                "2026-01-01",
+                1,
+                0,
+                null,
+                0,
+                0
+              ],
+              [
+                "prior",
+                "2026-01-04",
+                1,
+                0,
+                null,
+                0,
+                0
               ]
             ],
             "hasMore": null,

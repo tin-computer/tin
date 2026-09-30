@@ -100,7 +100,7 @@ Tin ships 34 built-in workflows. Every workflow also takes a `project_id`; requi
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
-| Product analytics brief<br>`product.analytics_brief` | A recurring PostHog brief: ordered activation, event trends, traffic, error signals and a supported breakdown, with reproducible evidence. | `reporting_days`, `as_of_utc`, `event_mapping`, `exclusions`, `website_hosts` | `reports/analytics/{run_id}.md` |
+| Product analytics brief<br>`product.analytics_brief` | A recurring PostHog brief: ordered activation, event trends, traffic, error signals and a supported breakdown, with reproducible evidence. | `reporting_days`, `as_of_utc`, `event_mapping`, `exclusions`, `website_hosts`, `exclude_email_domains`, `internal_flag_property` | `reports/analytics/{run_id}.md` |
 | Check if a buyer would trust your checkout (human review)<br>`qa.buyer_trust` | Run before launch or after a signup walkthrough: get a fixed-rule PASS, FAIL or UNVERIFIED verdict on whether a careful buyer would trust your site and checkout, with ranked fixes handed to Improve site health or to you. Public GET requests only; it never signs in, submits forms, changes your site or claims CVE coverage. | **`product_url`**, `depth`, `notes` | `reports/BUYER_TRUST.md` |
 
 ## Creative studio
