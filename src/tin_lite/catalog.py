@@ -935,7 +935,7 @@ BUILTIN_WORKFLOWS = (
             "No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1160,7 +1160,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.4.0",
+        version_label="1.5.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",

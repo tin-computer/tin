@@ -405,12 +405,38 @@ pages for "semrush alternative" with 33 pattern pages holding 53% of impressions
 clicks; `/alternatives/moz` at position 8.5 and `/compare/ai-tools-for-startups` at 5.8
 with no clicks; an indexable `/sign-in` ranking 1.5 for the brand with an old title, no H1
 and a canonical to `/`; `/nl/` pages declaring `lang="en"` without hreflang; indexable
-`/offer/` pages in the sitemap; and `/about` missing from the sitemap. No live provider or
-production run has been made with v10.
+`/offer/` pages in the sitemap; and `/about` missing from the sitemap. v10 has since been
+deployed and run in production.
 
-## 0.5 — more angles and one AI measure (organic-audit-v10, continued)
+## 0.7 — more angles, one AI measure and per-question review (organic-audit-v11)
 
-v10 is not deployed yet, so these additions keep its policy name and findings schema 3.
+v10 is deployed, so these additions live in a new pinned policy, `organic-audit-v11`
+(catalog organic.audit 0.7.0), with findings schema 3. A run pinned to v10 keeps exactly
+v10: its policy, AI instructions and schemas are unchanged (tests freeze their digests),
+and every addition below is read from v11-only policy keys (`site_angles`,
+`answer_ladder`, `unsearched_answers`, `access_check_pages`, `url_inspection_max_urls`,
+`content_review_pages`, `decay_min_previous_clicks`, `max_redirect_hops`,
+`cannibalization_min_impressions`, `min_panel_questions`). Under v10 Tin makes none of
+the new reads, runs none of the new checks, saves v10's page facts and evidence shape,
+and asks PageSpeed for performance only.
+
+### Per-question panel review
+
+A production v10 audit measured no AI visibility because the reviewer rejected each
+drafted panel over one ambiguous question (a generic "review work before it ships"
+constraint), and v10 discards the whole panel. Under v11:
+
+- The review (`PanelReview`) judges the identity as a whole and each question on its own.
+  `accepted: false` still rejects the panel (identity, aliases or evidence); otherwise
+  `rejected_questions` names each question not to ask, by number, with a reason.
+- Tin drops those questions and keeps the panel when at least three remain
+  (`min_panel_questions`). The panel records `dropped_questions`, its digest covers exactly
+  the questions asked, and the report lists them under "Questions dropped in review".
+- Fewer than three remaining (`panel_questions_too_few`), or a review naming a question
+  the panel does not have or naming one twice (`panel_review_invalid`), redrafts through
+  the existing recovery attempt with the review as the correction.
+- The panel prompt anchors every question, including the constraint question, to the
+  product's own category, never to a quality any tool could claim.
 
 ### What else Tin reads
 

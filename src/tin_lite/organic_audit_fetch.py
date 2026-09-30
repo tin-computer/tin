@@ -26,6 +26,7 @@ from tin_lite.organic_audit_site import (
     BROWSER_AGENT,
     CRAWLER_AGENTS,
     FETCH_AGENT,
+    V11_PAGE_FACTS,
     html_facts,
     parse_robots,
     parse_sitemap,
@@ -272,11 +273,12 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
                     total += parsed["total"]
                     urls.extend(parsed["entries"])
         files.append(entry)
-    result["llms_txt"], result["http_home"], result["missing_page"] = await asyncio.gather(
-        _read_llms_txt(reader, origin),
-        _read_http_home(reader, origin),
-        _read_missing_page(reader, origin, policy),
-    )
+    if policy.get("site_angles"):  # v11: three more reads of the audited site.
+        result["llms_txt"], result["http_home"], result["missing_page"] = await asyncio.gather(
+            _read_llms_txt(reader, origin),
+            _read_http_home(reader, origin),
+            _read_missing_page(reader, origin, policy),
+        )
     result["sitemaps"] = {
         "referenced_in_robots": bool(robots.get("sitemaps")),
         "files": files[: policy["max_sitemap_files"] + 1],
@@ -395,6 +397,9 @@ async def read_pages(
                 return
             response = await reader.get(url, max_bytes=policy["max_page_bytes"])
             record = _page_record(url, response, reader)
+            if not policy.get("site_angles"):
+                # v10 saves the page facts it saved before v11 widened the reader.
+                record = {k: v for k, v in record.items() if k not in V11_PAGE_FACTS}
             if record.get("fetch") == "redirect" and policy.get("max_redirect_hops"):
                 record["redirect"] = await follow_redirects(
                     reader, url, record, hops=policy["max_redirect_hops"]
@@ -541,12 +546,16 @@ def pagespeed_summary(payload: dict) -> dict:
             "tbt_ms": lab("total-blocking-time"),
             "performance_score": _number(score),
         },
-        "lighthouse": lighthouse_summary(payload),
     }
 
 
-async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
-    """One PageSpeed Insights run (mobile). Google fetches the page; Tin sends only the URL."""
+async def read_pagespeed(url: str, api_key: str, *, client=None, lighthouse: bool = True) -> dict:
+    """One PageSpeed Insights run (mobile). Google fetches the page; Tin sends only the URL.
+
+    `lighthouse` also asks for the SEO, accessibility and best-practice categories (v11); v10
+    asks for performance only.
+    """
+    categories = LIGHTHOUSE_CATEGORIES if lighthouse else LIGHTHOUSE_CATEGORIES[:1]
     own = client is None
     client = client or httpx.AsyncClient(trust_env=False, timeout=60, follow_redirects=False)
     try:
@@ -557,7 +566,7 @@ async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
                 params=[
                     ("url", url),
                     ("strategy", "mobile"),
-                    *(("category", name) for name in LIGHTHOUSE_CATEGORIES),
+                    *(("category", name) for name in categories),
                 ],
                 headers={"X-Goog-Api-Key": api_key},
             ) as response:
@@ -568,7 +577,10 @@ async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
                     body.extend(chunk)
                     if len(body) > MAX_PAGESPEED_BYTES:
                         return {"status": "unavailable", "reason": "response_too_large"}
-        return {"status": "observed", **pagespeed_summary(json.loads(body))}
+        summary = pagespeed_summary(json.loads(body))
+        if lighthouse:
+            summary["lighthouse"] = lighthouse_summary(json.loads(body))
+        return {"status": "observed", **summary}
     except (httpx.HTTPError, OSError, TimeoutError, ValueError, TypeError, AttributeError):
         return {"status": "unavailable", "reason": "provider_request_failed"}
     finally:

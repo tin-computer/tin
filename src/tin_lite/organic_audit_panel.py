@@ -13,7 +13,9 @@ from tin_lite.organic_audit import audit_policy, canonical_json, digest, questio
 from tin_lite.organic_audit_ai import (
     AuditValidationError,
     BuyerPanel,
+    PanelReview,
     PanelValidation,
+    apply_review,
     payload,
     validate_panel,
 )
@@ -324,20 +326,29 @@ async def prepare_panel(activities, run_id):
                                 interpretation.get("reason", "panel_review_rejected")
                             )
                         review_data["blind_interpretation"] = interpretation["value"]["text"]
+                    # v11 reviews each question, so one ambiguous question no longer sinks
+                    # the panel; v10 and older accept or reject the panel as a whole.
+                    per_question = policy.get("min_panel_questions")
                     judgment = await activities._model(
                         run_id,
                         f"panel_validation{suffix}",
                         payload(
                             stage="validate",
                             data=review_data,
-                            schema=PanelValidation,
+                            schema=PanelReview if per_question else PanelValidation,
                             market=scope["market"],
                             search=False,
                             policy_version=policy_version,
                         ),
                         search=False,
                     )
-                    if judgment["status"] == "completed":
+                    if judgment["status"] == "completed" and per_question:
+                        panel, reason = apply_review(
+                            candidate,
+                            PanelReview.model_validate_json(judgment["value"]["text"]),
+                            min_questions=per_question,
+                        )
+                    elif judgment["status"] == "completed":
                         checked = PanelValidation.model_validate_json(judgment["value"]["text"])
                         if checked.accepted:
                             panel, reason = candidate, None

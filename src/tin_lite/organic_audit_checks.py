@@ -15,6 +15,7 @@ from tin_lite.organic_audit_site import (
     AI_SEARCH_CRAWLERS,
     FETCH_AGENT,
     GOOGLE_AGENT,
+    ai_crawlers,
     client_rendered,
     crawler_stances,
     is_ad_landing_url,
@@ -87,8 +88,11 @@ class SiteView:
         crawl_pages: list[dict],
         search_pages: list[dict],
         search_queries: list[dict],
+        angles: bool = True,
     ) -> None:
         self.host, self.hosts = host, hosts
+        # Audit policy v11's added checks; a run pinned to v10 keeps v10's findings.
+        self.angles = angles
         files = site.get("files") or {}
         self.site_status = files.get("status", "not_collected")
         self.robots = files.get("robots") or {
@@ -363,8 +367,9 @@ def _robots_findings(view: SiteView, host: str, important: dict[str, str]) -> li
         )
     if status != "observed":
         return findings
-    stances = crawler_stances(robots)
-    closed = [row for row in stances if row["agent"] in AI_SEARCH_CRAWLERS]
+    _, search_crawlers = ai_crawlers(view.angles)
+    stances = crawler_stances(robots, angles=view.angles)
+    closed = [row for row in stances if row["agent"] in search_crawlers]
     closed = [row for row in closed if row["stance"] == "blocked"]
     if closed:
         findings.append(
@@ -379,12 +384,18 @@ def _robots_findings(view: SiteView, host: str, important: dict[str, str]) -> li
                     ", ".join(row["agent"] for row in closed)
                     + " cannot fetch the homepage under your robots.txt.",
                     "Training crawlers (GPTBot, ClaudeBot, Google-Extended, Applebot-Extended, "
-                    "CCBot) are a separate choice and can stay blocked.",
+                    "CCBot) are a separate choice and can stay blocked."
+                    if view.angles
+                    else "Training crawlers (GPTBot, ClaudeBot, Google-Extended, CCBot) are a "
+                    "separate choice and can stay blocked.",
                 ],
                 fix=(
                     "If you want AI search answers to cite you, allow "
                     + ", ".join(row["agent"] for row in closed)
                     + " in robots.txt."
+                    if view.angles
+                    else "If you want to be cited in ChatGPT search and Perplexity answers, allow "
+                    "OAI-SearchBot, ChatGPT-User and PerplexityBot in robots.txt."
                 ),
                 priority="high_impact",
                 evidence_kind="site_files",
@@ -812,7 +823,9 @@ def _onpage_findings(view: SiteView, host: str) -> list[dict]:
     findings = []
     pages = [f for f in view.observed() if 200 <= f["status_code"] < 300 and not is_noindex(f)]
     # A page rendered by JavaScript has its own finding; "no H1" would restate it per page.
-    no_h1 = [f for f in pages if f.get("h1_count") == 0 and not client_rendered(f)]
+    no_h1 = [
+        f for f in pages if f.get("h1_count") == 0 and not (view.angles and client_rendered(f))
+    ]
     if no_h1:
         findings.append(
             site_finding(
@@ -990,7 +1003,9 @@ def vital_grade(metric: str, value: float | None) -> str | None:
     return "good" if value < good else "poor" if value >= poor else "needs_improvement"
 
 
-def speed_rows(pagespeed: dict) -> list[dict]:
+def speed_rows(pagespeed: dict, *, angles: bool = True) -> list[dict]:
+    """Core Web Vitals per page. v11 labels site-wide field data apart from the page's own;
+    v10 called both "field"."""
     rows = []
     for item in pagespeed.get("results", []):
         result = item.get("result") or {}
@@ -1005,8 +1020,21 @@ def speed_rows(pagespeed: dict) -> list[dict]:
         }
         if field["lcp_ms"] is None:
             source = "lab"
+        elif not angles:
+            source = "field"
         else:
             source = "site_field" if field.get("origin_fallback") else "page_field"
+        if not angles:
+            rows.append(
+                {
+                    "url": item["url"],
+                    "status": "observed",
+                    "source": source,
+                    "values": values,
+                    "grades": {name: vital_grade(name, value) for name, value in values.items()},
+                }
+            )
+            continue
         rows.append(
             {
                 "url": item["url"],
@@ -1021,8 +1049,8 @@ def speed_rows(pagespeed: dict) -> list[dict]:
     return rows
 
 
-def _speed_findings(pagespeed: dict, host: str) -> list[dict]:
-    rows = [row for row in speed_rows(pagespeed) if row["status"] == "observed"]
+def _speed_findings(pagespeed: dict, host: str, *, angles: bool = True) -> list[dict]:
+    rows = [row for row in speed_rows(pagespeed, angles=angles) if row["status"] == "observed"]
     slow = [
         row
         for row in rows
@@ -1058,7 +1086,7 @@ def _speed_findings(pagespeed: dict, host: str) -> list[dict]:
                     else []
                 ),
                 *(
-                    f"{_path(row['url'])} ({row['source_label']}): "
+                    f"{_path(row['url'])} ({row.get('source_label') or row['source'] + ' data'}): "
                     + ", ".join(
                         show(name, row["values"][name])
                         + (
@@ -1973,6 +2001,14 @@ def important_urls(view: SiteView, home: str) -> dict[str, str]:
 def site_findings(view: SiteView, *, home: str, pagespeed: dict) -> list[dict]:
     if not view.site_collected:
         return []
+    if not view.angles:
+        return [
+            *_robots_findings(view, view.host, important_urls(view, home)),
+            *_sitemap_findings(view, view.host),
+            *_indexation_findings(view, view.host),
+            *_onpage_findings(view, view.host),
+            *_speed_findings(pagespeed, view.host, angles=False),
+        ]
     return [
         *_robots_findings(view, view.host, important_urls(view, home)),
         *_access_findings(view, view.host),
@@ -2001,7 +2037,7 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
     inspected = sum(row.get("status") == "observed" for row in view.inspection.get("results", []))
     speed = [row for row in speed_rows(pagespeed) if row["status"] == "observed"]
     robots_status = view.robots.get("status")
-    return [
+    rows = [
         {
             "check": "robots_txt",
             "status": "observed" if robots_status in {"observed", "missing"} else "unknown",
@@ -2036,8 +2072,13 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
             "check": "structured_data",
             "status": "partial" if structured else "unknown",
             "note": (
-                f"Structured data in the static HTML of {count(len(structured), 'page')} was "
-                "parsed and checked for required fields. "
+                (
+                    f"Structured data in the static HTML of {count(len(structured), 'page')} "
+                    "was parsed and checked for required fields. "
+                    if view.angles
+                    else f"Structured data found in the static HTML of "
+                    f"{count(len(structured), 'page')}. "
+                )
                 if structured
                 else ""
             )
@@ -2085,8 +2126,12 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
         {
             "check": "speed",
             "status": "observed" if speed else "unknown",
-            "note": f"PageSpeed Insights measured {count(len(speed), 'page')}, with Lighthouse "
-            "SEO, accessibility and best-practice scores."
+            "note": (
+                f"PageSpeed Insights measured {count(len(speed), 'page')}, with Lighthouse "
+                "SEO, accessibility and best-practice scores."
+                if view.angles
+                else f"PageSpeed Insights measured {count(len(speed), 'page')}."
+            )
             if speed
             else {
                 "not_configured": "PageSpeed Insights is not configured on this deployment.",
@@ -2100,3 +2145,8 @@ def site_check_coverage(view: SiteView, *, pagespeed: dict, search: dict) -> lis
             else "No matching Search Console property, so search checks did not run.",
         },
     ]
+    if view.angles:
+        return rows
+    # v10 had no rendering, crawler-access, URL Inspection or content-review checks.
+    v11_only = {"javascript_rendering", "crawler_access", "url_inspection", "content_review"}
+    return [row for row in rows if row["check"] not in v11_only]

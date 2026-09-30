@@ -294,13 +294,11 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
         name = request.get("text", {}).get("format", {}).get("name")
         if name == "BuyerPanel":
             return response(json.dumps(panel_fixture()))
-        if name == "PanelValidation":
-            return response(
-                json.dumps(
-                    {"accepted": True, "explanation": "All questions are grounded and unbranded."}
-                ),
-                search=False,
-            )
+        if name in {"PanelValidation", "PanelReview"}:
+            value = {"accepted": True, "explanation": "All questions are grounded and unbranded."}
+            if name == "PanelReview":
+                value["rejected_questions"] = []
+            return response(json.dumps(value), search=False)
         if name == "AnswerGrade":
             return response(
                 json.dumps(

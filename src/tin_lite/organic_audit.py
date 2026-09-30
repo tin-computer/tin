@@ -70,7 +70,7 @@ V9_AUDIT_POLICY = {
     "check_applicability": True,
     "respect_sitemap": True,
 }
-AUDIT_POLICY = {
+V10_AUDIT_POLICY = {
     **V9_AUDIT_POLICY,
     "version": "organic-audit-v10",
     # The ceiling for an operator-configured page cap; each run pins its own cap in scope.
@@ -103,6 +103,19 @@ AUDIT_POLICY = {
     # Each buyer job asks at most one question per family (four), so two jobs ask at most
     # eight. The cost ceiling is computed from this bound: 8 x 3 answers, like 12 x 2 before.
     "max_questions": 8,
+}
+# v11 keeps v10 and adds the audit angles. v10 is deployed, so none of this may change a run
+# pinned to it: every addition below is read from the pinned policy, never assumed.
+AUDIT_POLICY = {
+    **V10_AUDIT_POLICY,
+    "version": "organic-audit-v11",
+    # New site reads and checks: llms.txt, the plain-HTTP homepage, a made-up URL, redirect
+    # hops, crawler access, page basics, structured data, answer-engine and trust signals,
+    # accessibility and Lighthouse categories.
+    "site_angles": True,
+    # A validated panel keeps its accepted questions when the validator rejects a few, as
+    # long as this many remain; fewer means a new draft.
+    "min_panel_questions": 3,
     # Site and search evidence beyond the page facts. Translations of one page do not
     # compete, and a search needs this many impressions before two pages count as competing.
     "cannibalization_min_impressions": 10,
@@ -143,6 +156,7 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "low_ctr_min_impressions",
         "pagespeed_max_urls",
         "finding_format",
+        "site_angles",
         "cannibalization_min_impressions",
         "decay_min_previous_clicks",
         "decay_drop_share",
@@ -163,6 +177,7 @@ PANEL_PREPARATION_POLICY_KEYS = frozenset(
         "max_questions",
         "answer_ladder",
         "unsearched_answers",
+        "min_panel_questions",
     }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
@@ -207,6 +222,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -223,6 +239,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -252,6 +269,10 @@ AUDIT_GAP_REASONS = {
     ),
     "panel_review_rejected": (
         "The proposed buyer questions were not supported by the saved product research."
+    ),
+    "panel_review_invalid": "The question review named a question the panel does not have.",
+    "panel_questions_too_few": (
+        "Too few proposed buyer questions passed review to measure AI visibility."
     ),
     "evidence_too_large": "The answer and its sources exceeded the saved-evidence size limit.",
     "response_invalid": "The response did not match the expected structure.",
@@ -875,6 +896,21 @@ def ai_report_details(ai: dict) -> list[str]:
         )
     if gaps:
         lines.extend(["### Missing evidence", "", *gaps, ""])
+    dropped = (panel or {}).get("dropped_questions") or []
+    if dropped:
+        lines.extend(
+            [
+                "### Questions dropped in review",
+                "",
+                "The reviewer rejected these before any answer was requested; the rest were asked.",
+                "",
+                *(
+                    "- " + " ".join(re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", text).split())
+                    for text in (f"{row['question']} ({row['reason']})" for row in dropped)
+                ),
+                "",
+            ]
+        )
     lines.extend(ladder_report_lines(ai))
     return lines
 
@@ -1321,7 +1357,14 @@ def site_check_documents(
         "spending": spending,
         "search_console": search_console or {"status": "not_available"},
         "search_console_queries": copy.deepcopy(search_queries) or {"status": "not_available"},
-        "search_console_previous": copy.deepcopy(search_previous) or {"status": "not_available"},
+        **(
+            {
+                "search_console_previous": copy.deepcopy(search_previous)
+                or {"status": "not_available"}
+            }
+            if policy.get("decay_min_previous_clicks")
+            else {}
+        ),
         "site": {
             "status": "observed" if site else "not_collected",
             "files": copy.deepcopy(site.get("files")),
@@ -1329,9 +1372,16 @@ def site_check_documents(
             "pages": sorted(site.get("pages", []), key=lambda row: row["url"]),
             "pages_status": site.get("pages_status", "not_collected"),
             "pagespeed": analysis["pagespeed"],
-            "access": site.get("access") or {"status": "not_collected"},
-            "url_inspection": site.get("url_inspection") or {"status": "not_collected"},
-            "content_review": site.get("content_review") or {"status": "not_collected"},
+            # v11's added evidence; a v10 evidence file keeps v10's shape.
+            **(
+                {
+                    "access": site.get("access") or {"status": "not_collected"},
+                    "url_inspection": site.get("url_inspection") or {"status": "not_collected"},
+                    "content_review": site.get("content_review") or {"status": "not_collected"},
+                }
+                if policy.get("site_angles")
+                else {}
+            ),
         },
         "coverage": analysis["coverage"],
     }

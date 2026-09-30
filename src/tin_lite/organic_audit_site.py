@@ -196,10 +196,31 @@ def _example_path(pattern: str) -> str:
     return pattern.rstrip("$").replace("*", "x") or "/"
 
 
-def crawler_stances(robots: dict) -> list[dict]:
+# The crawlers audit policy v10 and older state a stance for; v11 adds the newer ones above.
+V10_AI_CRAWLERS = (
+    "GPTBot",
+    "OAI-SearchBot",
+    "ChatGPT-User",
+    "PerplexityBot",
+    "ClaudeBot",
+    "Google-Extended",
+    "CCBot",
+)
+V10_AI_SEARCH_CRAWLERS = frozenset({"OAI-SearchBot", "ChatGPT-User", "PerplexityBot"})
+
+
+def ai_crawlers(angles: bool = True) -> tuple[tuple[str, ...], frozenset[str]]:
+    """The crawler list and its search crawlers for a pinned policy (v11 when `angles`)."""
+    return (
+        (AI_CRAWLERS, AI_SEARCH_CRAWLERS) if angles else (V10_AI_CRAWLERS, V10_AI_SEARCH_CRAWLERS)
+    )
+
+
+def crawler_stances(robots: dict, *, angles: bool = True) -> list[dict]:
     """How each AI crawler is treated at the site root and whether any path is closed."""
+    crawlers, search_crawlers = ai_crawlers(angles)
     rows = []
-    for agent in AI_CRAWLERS:
+    for agent in crawlers:
         source, rules = robots_group(robots, agent)
         root = path_allowed(rules, "/")
         closed = [
@@ -210,7 +231,7 @@ def crawler_stances(robots: dict) -> list[dict]:
         rows.append(
             {
                 "agent": agent,
-                "kind": "search" if agent in AI_SEARCH_CRAWLERS else "training",
+                "kind": "search" if agent in search_crawlers else "training",
                 "group": source,
                 "stance": "blocked" if not root else "partly_blocked" if closed else "allowed",
                 "closed_paths": sorted(set(closed))[:5],
@@ -678,6 +699,34 @@ def x_robots_directives(values: list[str]) -> list[str]:
             if token:
                 result.append(token[:40])
     return result[:20]
+
+
+# Page facts audit policy v11 added; a run pinned to v10 does not save them.
+V11_PAGE_FACTS = frozenset(
+    {
+        "description_length",
+        "viewport",
+        "open_graph",
+        "images",
+        "images_without_alt",
+        "text_words",
+        "scripts",
+        "mount_point",
+        "headings",
+        "question_headings",
+        "lead",
+        "lists",
+        "tables",
+        "external_links",
+        "dated",
+        "author",
+        "schema_problems",
+        "schema_invalid_blocks",
+        "analytics",
+        "not_found_text",
+        "h1_texts",
+    }
+)
 
 
 def html_facts(body: bytes, *, url: str, charset: str | None, truncated: bool) -> dict:

@@ -180,12 +180,14 @@ def search_findings(
 
     # (a) Two or more pages competing for the same search. Translations of one page are
     # linked with hreflang, not competitors; a search with few impressions is noise.
-    floor = policy.get("cannibalization_min_impressions", 0)
+    # Both rules are v11's (cannibalization_min_impressions); v10 counted every URL.
+    floor = policy.get("cannibalization_min_impressions")
+    page_key = translation_key if floor is not None else (lambda url: url)
     competing = {
         query: sorted(entries.values(), key=lambda e: (-e["impressions"], e["url"]))
         for query, entries in groups.items()
-        if len({translation_key(e["url"]) for e in entries.values() if e["impressions"] > 0}) >= 2
-        and sum(e["impressions"] for e in entries.values()) >= floor
+        if len({page_key(e["url"]) for e in entries.values() if e["impressions"] > 0}) >= 2
+        and sum(e["impressions"] for e in entries.values()) >= (floor or 0)
     }
     if competing:
         ranked = sorted(
@@ -451,7 +453,7 @@ def search_findings(
 
 def _decay_findings(host: str, current: dict[str, dict], previous: dict | None, policy: dict):
     """(e) Pages that lost a large share of their clicks since the previous window."""
-    if not previous or not previous.get("pages"):
+    if not previous or not previous.get("pages") or not policy.get("decay_min_previous_clicks"):
         return []
     before: dict[str, dict] = {}
     for row in previous["pages"]:

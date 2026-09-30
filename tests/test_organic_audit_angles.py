@@ -28,6 +28,7 @@ from tin_lite.organic_audit_checks import SiteView, site_findings, speed_rows
 from tin_lite.organic_audit_content import review_pages, validate_review
 from tin_lite.organic_audit_fetch import (
     follow_redirects,
+    lighthouse_summary,
     pagespeed_summary,
     read_crawler_access,
     read_pages,
@@ -321,7 +322,8 @@ def pagespeed_payload(*, origin_fallback: bool) -> dict:
 
 
 def test_site_wide_field_data_is_labelled_and_lighthouse_categories_are_reported():
-    summary = pagespeed_summary(pagespeed_payload(origin_fallback=True))
+    payload = pagespeed_payload(origin_fallback=True)
+    summary = {**pagespeed_summary(payload), "lighthouse": lighthouse_summary(payload)}
     assert summary["lighthouse"]["scores"] == {
         "seo": 0.75,
         "accessibility": 0.95,

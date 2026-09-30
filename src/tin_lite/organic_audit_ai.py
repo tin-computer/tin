@@ -20,6 +20,7 @@ from tin_lite.organic_audit import (
     V7_AUDIT_POLICY,
     V8_AUDIT_POLICY,
     V9_AUDIT_POLICY,
+    V10_AUDIT_POLICY,
     audit_policy,
     canonical_json,
     digest,
@@ -253,6 +254,22 @@ when the lead and headings carry no concrete facts, numbers or examples. Do not 
 dates, authors, sources or headings; those are measured separately. Return exactly one
 entry per supplied page, copying its path exactly. Return JSON matching the schema.
 """,
+    # v11 keeps a panel when a few questions fail review: the reviewer names them.
+    "panel": V7_AI_CONTRACT["panel"]
+    + """
+Every question, including the constraint question, must be one a buyer of THIS product's
+category would ask. Anchor the constraint question to the core category and outcome (for
+example, a requirement the category must meet), never to a quality any tool could claim,
+such as reviewing work before it ships or ease of use.
+""",
+    "validate": V7_AI_CONTRACT["validate"]
+    + """
+Judge the identity and each question separately. Set accepted to false only when the
+target identity, aliases or evidence fail; then the whole panel is redrafted. Otherwise
+set accepted to true and list in rejected_questions each question that must not be
+asked, by its number, with the specific reason. Leave rejected_questions empty when every
+question is acceptable. Tin asks the remaining questions if enough remain.
+""",
 }
 
 
@@ -306,6 +323,19 @@ class PanelValidation(StrictModel):
     explanation: str = Field(min_length=10, max_length=1000)
 
 
+class RejectedQuestion(StrictModel):
+    number: int = Field(ge=1, le=12)
+    reason: str = Field(min_length=10, max_length=500)
+
+
+class PanelReview(StrictModel):
+    """v11's panel review: the identity as a whole, and each question on its own."""
+
+    accepted: bool
+    rejected_questions: list[RejectedQuestion] = Field(max_length=12)
+    explanation: str = Field(min_length=10, max_length=1000)
+
+
 class AnswerJudgment(StrictModel):
     mentioned: bool
     mention_quote: str = Field(max_length=2000)
@@ -347,7 +377,10 @@ V9_AI_SCHEMAS = {
 }
 AI_SCHEMAS = {
     **V9_AI_SCHEMAS,
-    **{model.__name__: model.model_json_schema() for model in (AnswerGrade, ContentReview)},
+    **{
+        model.__name__: model.model_json_schema()
+        for model in (AnswerGrade, ContentReview, PanelReview)
+    },
 }
 
 
@@ -500,6 +533,7 @@ def read_response(
                 V7_AUDIT_POLICY,
                 V8_AUDIT_POLICY,
                 V9_AUDIT_POLICY,
+                V10_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             and len(completed) == policy["max_tool_calls"]
@@ -571,6 +605,40 @@ def validate_panel(observation: dict, host: str, *, aliases: tuple[str, ...] = (
         value["host"] = host
         value["site_hosts"] = list(dict.fromkeys((host, *aliases)))
     return {**value, "sha256": digest(value), "planned_observations": len(seen) * 2}
+
+
+def apply_review(
+    candidate: dict, review: PanelReview, *, min_questions: int
+) -> tuple[dict | None, str | None]:
+    """The panel a v11 review leaves: the candidate minus the questions it rejects.
+
+    A rejected identity, a review naming a question the panel does not have, or too few
+    remaining questions leave no panel, with a Tin-owned reason for the redraft.
+    """
+    if not review.accepted:
+        return None, "panel_review_rejected"
+    questions = candidate["questions"]
+    numbers = [item.number for item in review.rejected_questions]
+    if len(set(numbers)) != len(numbers) or any(n > len(questions) for n in numbers):
+        return None, "panel_review_invalid"
+    rejected = {item.number: item.reason for item in review.rejected_questions}
+    kept = [q for index, q in enumerate(questions, 1) if index not in rejected]
+    if len(kept) < min_questions:
+        return None, "panel_questions_too_few"
+    if not rejected:
+        return candidate, None
+    value = {
+        key: item
+        for key, item in candidate.items()
+        if key not in {"sha256", "planned_observations"}
+    }
+    value["questions"] = kept
+    value["dropped_questions"] = [
+        {"question": questions[number - 1]["question"], "reason": reason}
+        for number, reason in sorted(rejected.items())
+    ]
+    answers = candidate["repetitions"] + (1 if candidate.get("unsearched") else 0)
+    return {**value, "sha256": digest(value), "planned_observations": len(kept) * answers}, None
 
 
 def found_in_answer(observation: dict, panel: dict, *, mentioned: bool) -> bool:
