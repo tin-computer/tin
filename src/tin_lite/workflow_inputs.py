@@ -5,6 +5,7 @@ import math
 import re
 from copy import deepcopy
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from jsonschema import Draft202012Validator, FormatChecker
@@ -84,6 +85,42 @@ def validate_input_schema(schema: dict[str, Any]) -> None:
                 )
 
 
+WORKFLOW_FORMAT_CHECKER = FormatChecker()
+_URI_UNSAFE = re.compile(r"[\s\x00-\x1f\x7f]")
+
+
+@WORKFLOW_FORMAT_CHECKER.checks("uri", raises=ValueError)
+def _is_web_uri(value: object) -> bool:
+    """A workflow "uri" is an http(s) URL with a host.
+
+    jsonschema only checks "uri" when the optional rfc3987 package is installed, which Tin
+    does not ship, so without this any text (javascript:, a bare word) was admitted.
+    """
+    if not isinstance(value, str):
+        return True
+    if _URI_UNSAFE.search(value):
+        return False
+    parsed = urlsplit(value)
+    return parsed.scheme.lower() in {"http", "https"} and bool(parsed.hostname)
+
+
+def _reject_nul(value: Any, location: str = "") -> None:
+    """Postgres jsonb cannot store U+0000, so it is refused here rather than at insert."""
+    label = f"workflow input {location}" if location else "workflow input"
+    if isinstance(value, str):
+        if "\x00" in value:
+            raise WorkflowInputError(f"{label}: text cannot contain NUL characters")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            name = f"{location}.{key}" if location else str(key)
+            if "\x00" in str(key):
+                raise WorkflowInputError("workflow input names cannot contain NUL characters")
+            _reject_nul(item, name)
+    elif isinstance(value, list | tuple):
+        for index, item in enumerate(value):
+            _reject_nul(item, f"{location}.{index}" if location else str(index))
+
+
 def normalize_workflow_inputs(
     *,
     schema: dict[str, Any],
@@ -93,6 +130,7 @@ def normalize_workflow_inputs(
     """Bind project identity, apply top-level defaults, and validate user inputs."""
     validate_input_schema(schema)
     normalized = deepcopy(inputs or {})
+    _reject_nul(normalized)
     if "project_id" in normalized:
         raise WorkflowInputError("project_id is bound by Tin and cannot be supplied as input")
     properties = schema["properties"]
@@ -101,7 +139,7 @@ def normalize_workflow_inputs(
             normalized[name] = deepcopy(field["default"])
     candidate = {"project_id": str(project_id), **normalized}
     try:
-        Draft202012Validator(schema, format_checker=FormatChecker()).validate(candidate)
+        Draft202012Validator(schema, format_checker=WORKFLOW_FORMAT_CHECKER).validate(candidate)
     except ValidationError as exc:
         location = ".".join(str(part) for part in exc.absolute_path)
         label = f"workflow input {location}" if location else "workflow input"
