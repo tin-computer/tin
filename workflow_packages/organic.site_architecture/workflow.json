@@ -8,7 +8,8 @@
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": [
-      "on_demand"
+      "on_demand",
+      "weekly"
     ],
     "prerequisites": [
       {
