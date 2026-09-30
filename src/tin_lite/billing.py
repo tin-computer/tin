@@ -240,7 +240,7 @@ class BillingService:
     async def require_project(self, conn, project_id, actor):
         row = await conn.fetchrow(
             """SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
-               WHERE p.id=$1 AND m.clerk_user_id=$2""",
+               WHERE p.id=$1 AND m.clerk_user_id=$2 AND p.deleted_at IS NULL""",
             project_id,
             actor,
         )
@@ -305,9 +305,13 @@ class BillingService:
         if not policy.per_run_nanos or not policy.monthly_nanos or policy.schedule_max_nanos == 0:
             raise BillingError("invalid_limits", "Spending limits must be positive.", 422)
         async with self.db.pool.acquire() as conn, conn.transaction():
+            # Limits are a workspace wallet control: its billing admin sets them for every
+            # live project in the workspace, as the Billing page lists them.
             workspace_id = await conn.fetchval(
-                "SELECT workspace_id FROM projects WHERE id=$1", project_id
+                "SELECT workspace_id FROM projects WHERE id=$1 AND deleted_at IS NULL", project_id
             )
+            if workspace_id is None:
+                raise LookupError("project not found")
             await self.require_admin(conn, workspace_id, actor, lock=True)
             old = await conn.fetchrow(
                 "SELECT * FROM billing_project_policies WHERE project_id=$1", project_id
@@ -1446,14 +1450,22 @@ class BillingService:
                 bool(admin),
                 project_id,
             )
+            # An admin reads the whole wallet. Each row says whose it is: this project, another
+            # project (named only to its members, like run IDs), or the workspace itself.
             transactions = await conn.fetch(
-                """SELECT id, kind, amount_nanos, balance_after_nanos, created_at,
-                    CASE WHEN project_id=$2 THEN run_id ELSE NULL END AS run_id
-                   FROM billing_ledger WHERE workspace_id=$1 AND ($3 OR project_id=$2)
-                   ORDER BY id DESC LIMIT 100""",
+                """SELECT l.id, l.kind, l.amount_nanos, l.balance_after_nanos, l.created_at,
+                    CASE WHEN l.project_id=$2 THEN l.run_id ELSE NULL END AS run_id,
+                    CASE WHEN l.project_id IS NULL THEN 'workspace'
+                         WHEN l.project_id=$2 THEN 'project' ELSE 'other_project' END AS scope,
+                    CASE WHEN l.project_id=$2 OR EXISTS (SELECT 1 FROM project_memberships m
+                        WHERE m.project_id=l.project_id AND m.clerk_user_id=$4)
+                      THEN l.project_id ELSE NULL END AS project_id
+                   FROM billing_ledger l WHERE l.workspace_id=$1 AND ($3 OR l.project_id=$2)
+                   ORDER BY l.id DESC LIMIT 100""",
                 project["workspace_id"],
                 project_id,
                 bool(admin),
+                actor,
             )
             spent = await conn.fetchval(
                 """SELECT COALESCE(-sum(amount_nanos),0) FROM billing_ledger WHERE project_id=$1
@@ -1495,6 +1507,8 @@ class BillingService:
                         "amount_usd": usd(t["amount_nanos"]),
                         "balance_after_usd": usd(t["balance_after_nanos"]) if admin else None,
                         "run_id": str(t["run_id"]) if t["run_id"] else None,
+                        "scope": t["scope"],
+                        "project_id": str(t["project_id"]) if t["project_id"] else None,
                         "created_at": t["created_at"].isoformat(),
                     }
                     for t in transactions
