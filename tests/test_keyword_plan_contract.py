@@ -183,7 +183,7 @@ async def test_http_mcp_stop_membership_fence_and_deduplication(publication_db, 
     ) as client:
         url = f"/api/workflows/runs/{run.id}/stop-keyword-plan"
         assert (await client.post(url)).status_code == 404
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool("stop_keyword_plan", {"run_id": str(run.id)})
         token.subject = "user_auditor"
         assert (await client.post(url)).json()["status"] == "stopped"

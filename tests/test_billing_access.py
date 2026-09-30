@@ -2,11 +2,13 @@
 
 from uuid import uuid4
 
+import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from test_billing import ACTOR, fund
 from test_billing import billed as billed
 from test_incremental_billing import direct
+from test_private_workflows import app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.billing_contracts import ProjectSpendingPolicy
@@ -19,6 +21,45 @@ async def refusal(server, tool, arguments):
         await server.call_tool(tool, arguments)
     assert not isinstance(error.value, UnexpectedToolError), repr(error.value.__cause__)
     return str(error.value)
+
+
+async def test_another_projects_run_reads_like_a_missing_run(billed, monkeypatch):
+    f = billed
+    await fund(f)
+    run = await direct(f)
+    server = mcp(f, monkeypatch, actor=STRANGER)
+    for tool in (
+        "get_run",
+        "get_run_usage",
+        "get_run_charge",
+        "read_run_output",
+        "stop_procedure",
+        "stop_organic_audit",
+        "get_workflow_review",
+        "approve_workflow_run",
+    ):
+        foreign = await refusal(server, tool, {"run_id": str(run.id)})
+        missing = await refusal(server, tool, {"run_id": str(uuid4())})
+        assert foreign == missing, tool
+        assert "project not found" not in foreign, tool
+    assert (await refusal(server, "get_run", {"run_id": str(run.id)})).endswith(
+        ": not_found: run not found"
+    )
+    for proposal_tool in ("approve_paid_ads_proposal", "discard_paid_ads_proposal"):
+        assert (await refusal(server, proposal_tool, {"proposal_id": str(uuid4())})).endswith(
+            ": not_found: proposal not found"
+        )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f, actor=STRANGER)), base_url="https://tin.test"
+    ) as client:
+        for path in ("/api/workflows/runs/{}", "/api/workflows/runs/{}/charge"):
+            foreign = await client.get(path.format(run.id))
+            missing = await client.get(path.format(uuid4()))
+            assert foreign.status_code == missing.status_code == 404
+            assert foreign.json() == missing.json()
+            assert "project" not in foreign.json()["detail"]
+    # The member still reads it.
+    assert structured(await mcp(f, monkeypatch).call_tool("get_run", {"run_id": str(run.id)}))
 
 
 async def test_a_deleted_project_has_no_billing_surface(billed):
@@ -37,7 +78,7 @@ async def test_a_deleted_project_has_no_billing_surface(billed):
     )
     with pytest.raises(LookupError, match="project not found"):
         await f.billing.overview(f.project.id, ACTOR)
-    with pytest.raises(LookupError, match="project not found"):
+    with pytest.raises(LookupError, match="run not found"):
         await f.billing.run_charge(run.id, ACTOR)
     with pytest.raises(LookupError, match="project not found"):
         await f.billing.quote(

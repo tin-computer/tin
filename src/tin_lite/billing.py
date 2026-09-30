@@ -1366,7 +1366,11 @@ class BillingService:
             )
             if not row:
                 raise LookupError("run not found")
-            await self.require_project(conn, row["project_id"], actor)
+            try:
+                await self.require_project(conn, row["project_id"], actor)
+            except LookupError:
+                # The same answer as a missing run: never confirm another project's run.
+                raise LookupError("run not found") from None
             budget = await conn.fetchrow(
                 "SELECT * FROM billing_run_budgets WHERE run_id=$1", run_id
             )

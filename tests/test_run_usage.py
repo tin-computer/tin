@@ -429,7 +429,7 @@ async def test_http_mcp_parity_and_membership_before_usage_read(publication_db, 
         transport=httpx.ASGITransport(app=app(f, "user_outsider")), base_url="http://test"
     ) as client:
         assert (await client.get(f"/api/workflows/runs/{run.id}/usage")).status_code == 404
-    with pytest.raises(ToolError, match="project not found"):
+    with pytest.raises(ToolError, match="not_found: run not found"):
         await mcp(f, monkeypatch, "user_outsider").call_tool(
             "get_run_usage", {"run_id": str(run.id)}
         )

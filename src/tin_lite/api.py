@@ -4338,7 +4338,10 @@ async def _run_from_postgres(
     user: AuthContext,
 ) -> WorkflowRun:
     run = await request.app.state.runtime.database.get_run(run_id)
-    if run is None:
+    if run is None or not await request.app.state.runtime.database.has_project_access(
+        project_id=run.project_id, clerk_user_id=user.clerk_user_id
+    ):
+        # A missing run and another project's run read the same.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     await _require_project_access(run.project_id, request, user)
     return run

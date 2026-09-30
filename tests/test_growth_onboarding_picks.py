@@ -208,7 +208,9 @@ async def test_picks_need_a_run_that_is_waiting(publication_db, monkeypatch):
 async def test_picks_need_project_access(publication_db, monkeypatch):
     h = await harness(publication_db, monkeypatch)
     h.token.subject = OUTSIDER
-    assert "project not found" in await refused(h, "record_onboarding_picks", **picks_args(h))
+    assert "not_found: run not found" in await refused(
+        h, "record_onboarding_picks", **picks_args(h)
+    )
 
 
 async def test_approval_waits_for_the_picks_on_both_surfaces(publication_db, monkeypatch):

@@ -1016,6 +1016,7 @@ def create_mcp_app(
         token: AccessToken,
         *,
         tool_name: str,
+        missing: str = "project not found",
     ) -> None:
         clerk_user_id = token.subject
         assert clerk_user_id is not None
@@ -1024,13 +1025,21 @@ def create_mcp_app(
             clerk_user_id=clerk_user_id,
         )
         if not allowed:
-            raise ToolError("not_found: project not found")
+            raise ToolError(f"not_found: {missing}")
         await runtime().database.record_mcp_usage(
             project_id=project_id,
             clerk_user_id=clerk_user_id,
             oauth_client_id=token.client_id,
             tool_name=tool_name,
         )
+
+    async def require_run(run_id: UUID, token: AccessToken, *, tool_name: str) -> Any:
+        """The caller's run. A missing run and another project's run read the same."""
+        run = await runtime().database.get_run(run_id)
+        if run is None:
+            raise ToolError("not_found: run not found")
+        await require_project(run.project_id, token, tool_name=tool_name, missing="run not found")
+        return run
 
     from tin_lite.billing_mcp import register_billing_tools
 
@@ -2080,10 +2089,11 @@ def create_mcp_app(
     async def stop_content_plan(run_id: str) -> dict[str, Any]:
         """Stop new planning/publication work; accepted model requests may still incur costs."""
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if not run or run.executor != "content.plan":
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_content_plan"
+        )
+        if run.executor != "content.plan":
             raise LookupError("Content plan run not found.")
-        await require_project(run.project_id, token, tool_name="stop_content_plan")
         return await stop_content_run(
             runtime=runtime(),
             project_id=run.project_id,
@@ -2427,10 +2437,7 @@ def create_mcp_app(
         """Stop future audit work. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_organic_audit")
+        await require_run(parsed, token, tool_name="stop_organic_audit")
         try:
             stopped = await stop_organic_audit_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2444,10 +2451,7 @@ def create_mcp_app(
         """Stop future paid-ads research. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_assessment")
+        await require_run(parsed, token, tool_name="stop_paid_ads_assessment")
         try:
             stopped = await stop_paid_ads_assessment_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2462,10 +2466,7 @@ def create_mcp_app(
         created stays paused in Google Ads."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_launch")
+        await require_run(parsed, token, tool_name="stop_paid_ads_launch")
         try:
             stopped = await stop_paid_ads_launch_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2479,10 +2480,7 @@ def create_mcp_app(
         """Stop today's Google Ads check. Changes already applied stand."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_monitor")
+        await require_run(parsed, token, tool_name="stop_paid_ads_monitor")
         try:
             stopped = await stop_paid_ads_monitor_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2510,8 +2508,13 @@ def create_mcp_app(
         parsed = _mcp_uuid(proposal_id, field="proposal_id")
         proposal = await runtime().database.get_paid_ads_proposal(parsed)
         if proposal is None:
-            raise ToolError("proposal not found")
-        await require_project(proposal["project_id"], token, tool_name="approve_paid_ads_proposal")
+            raise ToolError("not_found: proposal not found")
+        await require_project(
+            proposal["project_id"],
+            token,
+            tool_name="approve_paid_ads_proposal",
+            missing="proposal not found",
+        )
         try:
             row = await approve_paid_ads_proposal_service(
                 runtime=runtime(), proposal_id=parsed, clerk_user_id=token.subject
@@ -2527,8 +2530,13 @@ def create_mcp_app(
         parsed = _mcp_uuid(proposal_id, field="proposal_id")
         proposal = await runtime().database.get_paid_ads_proposal(parsed)
         if proposal is None:
-            raise ToolError("proposal not found")
-        await require_project(proposal["project_id"], token, tool_name="discard_paid_ads_proposal")
+            raise ToolError("not_found: proposal not found")
+        await require_project(
+            proposal["project_id"],
+            token,
+            tool_name="discard_paid_ads_proposal",
+            missing="proposal not found",
+        )
         try:
             row = await discard_paid_ads_proposal_service(
                 runtime=runtime(), proposal_id=parsed, clerk_user_id=token.subject
@@ -2542,10 +2550,7 @@ def create_mcp_app(
         """Stop future keyword research. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_keyword_plan")
+        await require_run(parsed, token, tool_name="stop_keyword_plan")
         try:
             stopped = await stop_keyword_plan_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2613,10 +2618,7 @@ def create_mcp_app(
         token = await caller()
         clerk_user_id = token.subject
         assert clerk_user_id is not None
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run")
+        run = await require_run(_mcp_uuid(run_id, field="run_id"), token, tool_name="get_run")
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
         selected_sources = await selected_run_sources(
@@ -2715,10 +2717,7 @@ def create_mcp_app(
         from tin_lite.run_usage import read_run_usage
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run_usage")
+        run = await require_run(_mcp_uuid(run_id, field="run_id"), token, tool_name="get_run_usage")
         return await read_run_usage(database=runtime().database, run=run)
 
     async def _organic_system_facts(run):
@@ -2734,11 +2733,10 @@ def create_mcp_app(
         from tin_lite.organic_system_control import stop_system
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_organic_system"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_organic_system")
             return await stop_system(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, ValueError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
@@ -2754,11 +2752,10 @@ def create_mcp_app(
         from tin_lite.procedure_control import stop_procedure as stop
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_procedure"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_procedure")
             return await stop(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
@@ -2769,11 +2766,10 @@ def create_mcp_app(
         from tin_lite.organic_system_control import stop_technical
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_technical_fix"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_technical_fix")
             return await stop_technical(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, ValueError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
@@ -2787,10 +2783,9 @@ def create_mcp_app(
         This is read-only. It does not apply a conflict, approve output, or retry a run.
         """
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="read_run_output")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="read_run_output"
+        )
         project = await runtime().database.get_project(run.project_id)
         if project is None:
             raise LookupError("project not found")
@@ -2831,10 +2826,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="compare_run_output")
+        await require_run(parsed_run_id, token, tool_name="compare_run_output")
         try:
             return await runtime().output_resolution.compare(run_id=parsed_run_id)
         except OutputResolutionError as exc:
@@ -2853,10 +2845,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run_output_resolution")
+        await require_run(parsed_run_id, token, tool_name="get_run_output_resolution")
         assert token.subject is not None
         try:
             return await runtime().output_resolution.status(
@@ -2889,10 +2878,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="resolve_run_output")
+        await require_run(parsed_run_id, token, tool_name="resolve_run_output")
         request = OutputResolutionRequest(
             request_id=_mcp_uuid(request_id, field="request_id"),
             action=action,
@@ -3126,10 +3112,7 @@ def create_mcp_app(
         clerk_user_id = token.subject
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_outreach_campaign")
+        await require_run(parsed_run_id, token, tool_name="get_outreach_campaign")
         campaign = await runtime().database.get_outreach_campaign_projection(parsed_run_id)
         if campaign is None:
             raise LookupError("campaign not found")
@@ -3163,10 +3146,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_request_id = _mcp_uuid(request_id, field="request_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="revise_email_campaign")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="revise_email_campaign")
         try:
             revision = await request_email_campaign_revision(
                 database=runtime().database,
@@ -3191,10 +3173,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_revision_id = _mcp_uuid(revision_id, field="revision_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="approve_email_campaign_revision")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="approve_email_campaign_revision")
         try:
             updated = await runtime().database.approve_email_campaign_revision(
                 run_id=parsed_run_id,
@@ -3221,10 +3202,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_revision_id = _mcp_uuid(revision_id, field="revision_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="discard_email_campaign_revision")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="discard_email_campaign_revision")
         try:
             updated = await runtime().database.discard_email_campaign_revision(
                 run_id=parsed_run_id,
@@ -3253,10 +3233,9 @@ def create_mcp_app(
         from tin_lite.workflow_reviews import WorkflowReviews
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_workflow_review")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="get_workflow_review"
+        )
         return jsonable_encoder(
             await WorkflowReviews(runtime=runtime(), settings=settings).view(run.id, token.subject)
         )
@@ -3281,10 +3260,9 @@ def create_mcp_app(
         from tin_lite.workflow_reviews import WorkflowReviews
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="request_workflow_changes")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="request_workflow_changes"
+        )
         try:
             revised = await WorkflowReviews(runtime=runtime(), settings=settings).request_changes(
                 run_id=run.id,
@@ -3369,10 +3347,9 @@ def create_mcp_app(
         token = await caller()
         clerk_user_id = token.subject
         assert clerk_user_id is not None
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="approve_workflow_run")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="approve_workflow_run"
+        )
         from tin_lite.review_revisions import approval_conflict
         from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
@@ -3533,10 +3510,7 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_request_id = _mcp_uuid(request_id, field="request_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="record_onboarding_picks")
+        run = await require_run(parsed_run_id, token, tool_name="record_onboarding_picks")
         from tin_lite.growth_onboarding_control import onboarding_run
 
         try:
@@ -3580,11 +3554,8 @@ def create_mcp_app(
         parsed_request_id = (
             _mcp_uuid(request_id, field="request_id") if request_id is not None else None
         )
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise ToolError("run not found")
+        await require_run(parsed_run_id, token, tool_name="send_project_task_message")
         try:
-            await require_project(run.project_id, token, tool_name="send_project_task_message")
             result = await project_task_control.send_project_task_message(
                 runtime=runtime(),
                 run_id=parsed_run_id,
@@ -3612,10 +3583,9 @@ def create_mcp_app(
         clerk_user_id = token.subject
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="stop_email_campaign")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="stop_email_campaign")
         if run.status is RunStatus.STOPPED:
             return {"id": run_id, "status": RunStatus.STOPPED.value}
         stopped = await runtime().database.stop_email_campaign(run_id=parsed_run_id)
