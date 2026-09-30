@@ -258,6 +258,8 @@ async def test_guide_revision_keeps_original_gate_and_approval_pins_revised_copy
     await dispatch_reviews(f.runtime, f.settings)
     handle.signal.assert_awaited_once_with("approve")
     await f.style_activities.record_approval(str(original.id))
+    replay = await f.reviews.approve(run_id=original.id, actor=ACTOR, token=view["review_token"])
+    assert replay.review_decision == "approved" and replay.artifact_path is None
     await f.style_activities.publish(str(original.id))
     assert RULE in current(f, x_style.GUIDE_PATH).decode()
     assert (await f.db.get_run(original.id)).status.value == "succeeded"

@@ -222,9 +222,17 @@ class XFeedback:
 
         from tin_lite.workflow_review_store import insert_command
 
-        run = await self.source(run_id, actor)
+        run = await self.db.get_run(UUID(str(run_id)))
+        if not run or not await self.db.has_project_access(
+            project_id=run.project_id, clerk_user_id=actor
+        ):
+            raise LookupError("Review not found.")
         if run.executor != x_style.KEY:
             raise ReviewConflict("Preview and explicitly confirm an X post to publish it.")
+        # Adoption briefly clears the proposal projection. Retrying its already
+        # accepted approval still succeeds while the guide is being saved.
+        if run.review_decision == "approved":
+            return run
         async with self.db.pool.acquire() as conn, conn.transaction():
             await conn.execute("SELECT id FROM projects WHERE id=$1 FOR UPDATE", run.project_id)
             run = await self.db.get_run(run.id, conn=conn)
