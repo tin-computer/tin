@@ -48,6 +48,18 @@ CONNECTED_ACCOUNT_EXECUTORS = {
 }
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
+# A billing_run_budgets row's liability() in SQL: committed usage, plus the execution fee
+# once anything is committed, rounded up to cents and capped at the run's maximum.
+_COMMITTED_LIABILITY_SQL = """LEAST(maximum_nanos,
+    ((committed_nanos + CASE WHEN committed_nanos>0
+      THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
+      + 9999999) / 10000000) * 10000000)"""
+# The admitted estimate of a per-call run that can still buy work (begin_operation needs a
+# 'reserved' root). A root awaiting reconciliation ('pending') cannot, so only its
+# committed liability remains.
+_UNSTARTED_ESTIMATE_SQL = """CASE WHEN status='reserved'
+    THEN COALESCE((terms->'estimate'->>'amount_nanos')::bigint, maximum_nanos) ELSE 0 END"""
+
 
 def project_limit_message(policy, estimate, usage) -> str | None:
     """Name the one project limit that blocks admission, or None when none does."""
@@ -689,16 +701,18 @@ class BillingService:
             "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
         )
         period = datetime.now(UTC).date().replace(day=1)
+        # Per-call funding reserves nothing here, so a run that can still spend counts at
+        # the larger of its admitted estimate and its committed liability. Otherwise any
+        # number of parallel starts pass before their first paid call and then fail mid-work.
+        # begin_operation keeps checking actual commitments for runs already admitted.
         usage = await conn.fetchrow(
-            """SELECT COALESCE(sum(CASE WHEN status='settled'
+            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
                                         AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
                                         THEN charged_nanos
                                       WHEN status<>'settled'
                                         AND terms->>'funding'='per_operation_v1'
-                                        THEN LEAST(maximum_nanos,
-                                          ((committed_nanos + CASE WHEN committed_nanos>0
-                                            THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
-                                            + 9999999) / 10000000) * 10000000)
+                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
+                                                      {_COMMITTED_LIABILITY_SQL})
                                       WHEN status<>'settled' THEN maximum_nanos
                                       ELSE 0 END),0) AS exposure,
                       count(*) FILTER(WHERE status<>'settled' AND EXISTS (
@@ -707,18 +721,29 @@ class BillingService:
                         WHERE child.root_run_id=b.root_run_id
                           AND (r.status NOT IN ('succeeded','failed','stopped')
                                OR r.lease_active))) AS active
-               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",
+               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
             run["project_id"],
             period,
         )
         if limit := project_limit_message(policy, estimate, usage):
             raise BillingError("project_limit", limit, 402)
-        if account["balance_nanos"] - account["reserved_nanos"] < estimate:
+        # reserved_nanos already holds each per-call run's committed liability; add the
+        # rest of the estimates of runs that can still spend from this wallet.
+        unstarted = await conn.fetchval(
+            f"""SELECT COALESCE(sum(GREATEST(
+                     {_UNSTARTED_ESTIMATE_SQL} - {_COMMITTED_LIABILITY_SQL}, 0)),0)
+               FROM billing_run_budgets WHERE workspace_id=$1 AND run_id=root_run_id
+                 AND status='reserved' AND terms->>'funding'='per_operation_v1'""",  # noqa: S608 — static SQL, no caller text
+            account["workspace_id"],
+        )
+        available = account["balance_nanos"] - account["reserved_nanos"] - unstarted
+        if available < estimate:
             raise BillingError(
                 "insufficient_funds",
                 f"This workflow is estimated at up to ${usd(estimate)}. "
-                f"Available credits: ${usd(account['balance_nanos'] - account['reserved_nanos'])}. "
-                "Add credits before starting.",
+                f"Available credits: ${usd(max(available, 0))}"
+                + (f" after ${usd(unstarted)} set aside for runs in progress" if unstarted else "")
+                + ". Add credits before starting.",
                 402,
             )
         await conn.execute(

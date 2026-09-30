@@ -81,8 +81,9 @@ audit, keyword research, planning, optional technical fix, and, for the current 
 continuation, drafting and optional delivery. The pinned definition and inputs determine
 the total in `service_pricing.py`; there is no separate orchestration charge. Project
 limits and the available balance must
-cover the configured estimate; neither is raised automatically. No whole-run
-amount is removed from available credits at admission.
+cover the configured estimate, alongside the estimates of runs already admitted
+that have not settled; neither is raised automatically. No whole-run amount is
+removed from available credits at admission.
 
 Model requests reserve a conservative input/output/cache-write/search envelope
 before dispatch. Tool requests use the existing trusted workflow's per-step
