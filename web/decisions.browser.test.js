@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted} = {}) {
+async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -37,6 +37,7 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
   ];
   const integrations = [{key: "infra.github", name: "GitHub", badge: "GH", description: "Repositories", unlocks: [], configured: true, status: "available", connection_id: null}];
   const writes = [];
+  const runReads = [];
   const runs = [task, report];
   if (release) {
     // A release announcement, as saved now (with its heading and first line) or by an older version.
@@ -122,7 +123,13 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
     if (url.pathname === "/api/projects") return send([project]);
     if (url.pathname.endsWith("/publish-preview")) return send(adapted ?? {adapt: false});
     if (/\/api\/projects\/[^/]+\/workflows$/.test(url.pathname)) return send([{id: "saved", workflow_key: "research.deep_dive", status: "active"}]);
-    if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(runs);
+    if (/\/api\/projects\/[^/]+\/runs$/.test(url.pathname)) return send(olderDraft ? runs.filter(run => run.workflow_name !== "content.answer_page") : runs);
+    const requestedRun = runs.find(run => url.pathname === `/api/workflows/runs/${run.id}`);
+    if (requestedRun) {
+      runReads.push(requestedRun.id);
+      if (unavailableDraft) {response.statusCode = 503; return send({detail: "Temporarily unavailable"});}
+      return send(requestedRun);
+    }
     if (url.pathname.endsWith("/decisions")) return send(decisions);
     if (url.pathname.endsWith("/integrations")) return send(integrations);
     if (url.pathname.endsWith("/infra.github/options")) return send([{id: "repo-1", label: "example/site"}]);
@@ -138,8 +145,44 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
     response.writeHead(404).end();
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
-  return {server, task, writes, base: `http://127.0.0.1:${server.address().port}`};
+  return {server, task, writes, runReads, base: `http://127.0.0.1:${server.address().port}`};
 }
+
+test("an older pending draft loads its run outside recent history on first load and polling", async () => {
+  const {server, base, runReads, writes} = await serve({olderDraft: true, adapted: {adapt: true, mode: "github_pr"}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    const card = page.locator(".decision-detail-card");
+    await card.waitFor({timeout: 5000});
+    await page.waitForFunction(() => !document.querySelector('[data-apply-decision]')?.disabled);
+    assert.equal(await card.getByRole("button", {name: "Publish", exact: true}).count(), 1);
+    assert.equal(runReads.length, 1);
+    await page.evaluate(async () => {clearTimeout(state.pollTimer); await pollRuns(); clearTimeout(state.pollTimer);});
+    assert.equal(runReads.length, 2);
+    assert.equal(await card.getByRole("button", {name: "Publish", exact: true}).count(), 1);
+    assert.equal(await page.locator(".view-error").count(), 0);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
+});
+
+test("an unavailable older run leaves Decisions readable with approval disabled", async () => {
+  const {server, base, writes} = await serve({olderDraft: true, unavailableDraft: true, adapted: {adapt: false}});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    const card = page.locator(".decision-detail-card");
+    await card.waitFor({timeout: 5000});
+    assert.equal(await card.locator('[data-apply-decision]').isDisabled(), true);
+    assert.match(await card.innerText(), /run could not load/);
+    assert.equal(await page.locator(".view-error").count(), 0);
+    assert.deepEqual(writes, []);
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally {await browser.close(); server.close();}
+});
 
 async function open(browser, base, url) {
   const errors = [];

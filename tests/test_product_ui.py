@@ -612,10 +612,10 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
         in api_source
     )
     assert (
-        "state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !runs.length"
+        "state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !allRuns.length"
         in script
     )
-    assert '!runs.length ? "locked" : "ready"' in script
+    assert '!allRuns.length ? "locked" : "ready"' in script
     # Lock routing, including the agent connection exception, is exercised in Chromium
     # by web/lock-page.browser.test.js rather than matching one rendering branch here.
     assert "function renderLockPage()" in script
