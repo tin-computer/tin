@@ -66,6 +66,15 @@ def choice_key(run_id):
     return f"{delivery_key(run_id)}:choice"
 
 
+def remember_request_id(run_id, mode, settings_revision):
+    """One settings save per approval attempt at one project revision.
+
+    A retry at the same revision replays the save; a later attempt, after a stale head or
+    after the founder picked another delivery, is a new request rather than a conflict.
+    """
+    return uuid5(NAMESPACE_URL, f"tin:delivery-choice:{run_id}:{mode}:{settings_revision}")
+
+
 def approval_label(mode):
     return "Approve & publish" if mode == "github_commit" else "Approve & open PR"
 
@@ -638,7 +647,7 @@ class ContentDelivery:
                 project_id=run.project_id,
                 program_id=program_id,
                 settings=chosen,
-                request_id=uuid5(NAMESPACE_URL, f"tin:delivery-choice:{run.id}:{mode}"),
+                request_id=remember_request_id(run.id, mode, configured["revision"]),
                 expected_revision=configured["revision"],
                 actor=actor,
             )
@@ -706,7 +715,7 @@ class ContentDelivery:
                 project_id=run.project_id,
                 program_id=program_id,
                 settings=chosen,
-                request_id=uuid5(NAMESPACE_URL, f"tin:delivery-choice:{run.id}:{mode}"),
+                request_id=remember_request_id(run.id, mode, configured["revision"]),
                 expected_revision=configured["revision"],
                 actor=actor,
             )

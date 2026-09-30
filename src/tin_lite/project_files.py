@@ -5,12 +5,12 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tin_lite.code_storage import CodeStorage
+from tin_lite.code_storage import CodeStorage, ProjectStateChangedError
 from tin_lite.db import Database
 from tin_lite.domain import Project, SideEffectConflictError
 
@@ -108,8 +108,10 @@ def safe_project_file_path(path: str) -> bool:
         or "\x00" in path
     ):
         return False
-    parts = PurePosixPath(path).parts
-    if not parts or any(part in {"", ".", ".."} for part in parts):
+    # Split the raw string: PurePosixPath collapses "a//b", "./a", "a/./b" and "a/", which
+    # code.storage does not, so a path that only looks safe after normalizing is refused.
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
         return False
     for part in parts:
         lowered = part.casefold()
@@ -121,6 +123,15 @@ def safe_project_file_path(path: str) -> bool:
         ):
             return False
     return True
+
+
+def safe_project_search_path(path: str) -> bool:
+    """A search scope: a project file or directory, never git pathspec magic like :(icase)."""
+    return (
+        isinstance(path, str)
+        and not path.startswith(":")
+        and safe_project_file_path(path.removesuffix("/"))
+    )
 
 
 def normalize_project_file_mutations(
@@ -305,21 +316,8 @@ class ProjectFileService:
                     message=normalized_message,
                     changes=normalized,
                 )
-            except ValueError:
-                # Nothing was committed; do not leave the request looking in flight.
-                await self._database.fail_project_file_change(
-                    project_id=project.id, request_id=request_id, error_code="invalid"
-                )
-                raise
-            except RuntimeError as exc:
-                await self._database.fail_project_file_change(
-                    project_id=project.id,
-                    request_id=request_id,
-                    error_code="stale_revision" if "changed" in str(exc) else "storage_failed",
-                )
-                if "changed" in str(exc):
-                    raise StaleProjectRevisionError(str(exc)) from exc
-                raise
+            except Exception as exc:
+                await self._fail(project_id=project.id, request_id=request_id, exc=exc)
             await self._database.complete_project_file_change(
                 project_id=project.id,
                 request_id=request_id,
@@ -381,15 +379,8 @@ class ProjectFileService:
                     expected_head_sha=expected_revision,
                     request_id=str(request_id),
                 )
-            except RuntimeError as exc:
-                await self._database.fail_project_file_change(
-                    project_id=project.id,
-                    request_id=request_id,
-                    error_code="stale_revision" if "current" in str(exc) else "storage_failed",
-                )
-                if "current" in str(exc):
-                    raise StaleProjectRevisionError(str(exc)) from exc
-                raise
+            except Exception as exc:
+                await self._fail(project_id=project.id, request_id=request_id, exc=exc)
             await self._database.complete_project_file_change(
                 project_id=project.id,
                 request_id=request_id,
@@ -407,6 +398,25 @@ class ProjectFileService:
                 changed_paths=changed_paths,
                 operation="revert",
             )
+
+    async def _fail(self, *, project_id: UUID, request_id: UUID, exc: Exception) -> NoReturn:
+        """Record why a change did not land, by exception type, and raise it for the caller.
+
+        Every failure is recorded, so no request is left looking in flight; a retry with the
+        same request ID starts again, and storage reconciles a commit that did land.
+        """
+        if isinstance(exc, ValueError):
+            error_code = "invalid"
+        elif isinstance(exc, ProjectStateChangedError):
+            error_code = "stale_revision"
+        else:
+            error_code = "storage_failed"
+        await self._database.fail_project_file_change(
+            project_id=project_id, request_id=request_id, error_code=error_code
+        )
+        if error_code == "stale_revision":
+            raise StaleProjectRevisionError(str(exc)) from exc
+        raise exc
 
     @staticmethod
     def _replay(
