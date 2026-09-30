@@ -1,0 +1,35 @@
+{
+ "kind": "pagespeedonline#result",
+ "id": "https://tiny-startup.example/",
+ "loadingExperience": {
+  "initial_url": "https://tiny-startup.example/"
+ },
+ "lighthouseResult": {
+  "requestedUrl": "https://tiny-startup.example/",
+  "finalDisplayedUrl": "https://tiny-startup.example/",
+  "lighthouseVersion": "12.8.2",
+  "fetchTime": "2026-09-30T18:04:40.001Z",
+  "audits": {
+   "largest-contentful-paint": {
+    "numericValue": 1502.0
+   },
+   "cumulative-layout-shift": {
+    "numericValue": 0
+   },
+   "total-blocking-time": {
+    "numericValue": 40.0
+   },
+   "first-contentful-paint": {
+    "numericValue": 902.0
+   },
+   "speed-index": {
+    "numericValue": 1320.0
+   }
+  },
+  "categories": {
+   "performance": {
+    "score": 0.97
+   }
+  }
+ }
+}
