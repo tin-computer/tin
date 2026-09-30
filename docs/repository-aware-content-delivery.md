@@ -198,16 +198,19 @@ asks the founder once per page type instead of letting each adaptation pick a fo
 
 - **The question.** While `content/page-routes.json` has no route for the page's type,
   the publish preview (MCP `get_run` `delivery_preview`) and the MCP approval response carry
-  `ask_the_founder`: the question, a suggested route (`/answers/{slug}` for answer pages,
-  `/blog/{slug}` for articles) and how to suggest one from the site's existing routes, and
-  the `save_page_route` call to make with the founder's answer. The coding agent reads the
-  codebase, so it suggests the site's own folder when there is one.
+  `ask_the_founder`: the question in the founder's words ("Where on your site should pages
+  that answer buyer questions go?"), how to suggest a route, and the `save_page_route` call
+  to make with the answer. The coding agent reads the codebase, so it suggests the folder
+  the site's articles already use (`/blog`, `/guides`, `/learn`, `/resources`), and
+  `/blog/{slug}` when there is none. Google's URL guidance asks for words in the audience's
+  language, so the agent never suggests a Tin term such as "answers".
 - **The answer.** `save_page_route(project_id, page_type, route, request_id)` commits the
   route to `content/page-routes.json` (`page_routes.py`). A route is a lowercase site path
-  that ends in one `{slug}`, with at most three folders, such as `/answers/{slug}`. Types
+  that ends in one `{slug}`, with at most three folders, such as `/blog/{slug}`. Types
   are `answer_page` and `article`.
 - **At approval.** The choice receipt pins the saved route, and the adaptation's
-  `direction` input tells it to publish at exactly that route, adding one minimal route
+  `direction` input tells it to publish at exactly that route, with a slug of three to five
+  words naming the page's main search term, adding one minimal route
   once if the site does not serve it yet (`content.deliver` 1.3.0 skill, step 3). Runs
   approved before a route was saved keep choosing their own route.
 - **Merging.** With a commit-to-main setting, Tin merges the adaptation's PR when it adds
