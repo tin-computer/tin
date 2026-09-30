@@ -1,0 +1,79 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.competitor_intercept",
+    "title": "Find competitor complaints and draft replies",
+    "description": "A founder supplies their product, a competitor name, and a positioning note; the workflow finds recent public threads where people are frustrated with the competitor and drafts a reply for each one that introduces the founder's product without sounding like an ad.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "competitor_name", "your_product_name", "your_one_liner"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "competitor_name": {
+          "type": "string",
+          "title": "Competitor name",
+          "description": "The product or company people are complaining about.",
+          "minLength": 1,
+          "maxLength": 100,
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "your_product_name": {
+          "type": "string",
+          "title": "Your product name",
+          "description": "What you are offering as an alternative.",
+          "minLength": 1,
+          "maxLength": 100,
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "your_one_liner": {
+          "type": "string",
+          "title": "Your positioning (one sentence)",
+          "description": "What your product does and who it is for. The reply will be grounded in this.",
+          "minLength": 10,
+          "maxLength": 400,
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        },
+        "pain_points": {
+          "type": "array",
+          "title": "Pain points to look for (optional)",
+          "description": "Specific complaints your product addresses, e.g. 'pricing', 'slow support', 'no API'.",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      }
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "score": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 2048
+        },
+        "draft": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 4096
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/COMPETITOR_INTERCEPT.md",
+        "media_type": "text/markdown",
+        "max_bytes": 32000
+      }
+    }
+  }
+}
