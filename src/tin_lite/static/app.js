@@ -249,6 +249,7 @@ const state = {
   filesSearch: "",
   filesDirectory: "",
   filesTree: null,
+  filesByPath: new Map(),
   filesTreeSubscription: null,
   filesUpdated: false,
   fileCache: new Map(),
@@ -1920,6 +1921,11 @@ function bindWorkflowResultControls(root) {
     });
   });
   root.querySelectorAll(".system-config-form").forEach((form) => {
+    // Polling may refresh the saved configuration while this editor stays open.
+    // Save against the revision and schema whose values the user actually edited.
+    form.tinConfiguredWorkflow = state.projectWorkflows.find(
+      (item) => item.id === form.dataset.projectWorkflowId,
+    );
     form.addEventListener("submit", saveSystemWorkflowSettings);
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
@@ -2020,7 +2026,18 @@ function updateWorkflowSearchResults() {
   bindActivityControls(workflowResults, "workflows");
 }
 
-function renderWorkflows() {
+function renderWorkflows({ preserveEditor = false } = {}) {
+  // Background status updates must not recreate inputs or restart their setup checks.
+  const editor = preserveEditor ? main.querySelector(".system-config-form, .workflow-config-form") : null;
+  const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
+  const selection = focused && typeof focused.selectionStart === "number"
+    ? [focused.selectionStart, focused.selectionEnd] : null;
+  if (editor?.dataset.projectWorkflowId && state.workflowEditor) {
+    const active = state.runs.filter((run) => run.project_workflow_id === editor.dataset.projectWorkflowId && RUNNING_STATES.has(run.status));
+    if (!active.some((run) => run.id === state.workflowEditor.runId)) {
+      state.workflowEditor.runId = active[0]?.id || null;
+    }
+  }
   const registry = registryWorkflows();
   const projection = workflowSearchProjection(registry);
   const query = projection.query;
@@ -2063,9 +2080,32 @@ function renderWorkflows() {
     state.workflowSearch = event.target.value;
     updateWorkflowSearchResults();
   });
+  const replacement = editor && [...main.querySelectorAll(".system-config-form, .workflow-config-form")].find((form) =>
+    form.dataset.workflowId === editor.dataset.workflowId &&
+    form.dataset.projectWorkflowId === editor.dataset.projectWorkflowId);
+  const statusSelector = ".system-card-row, .system-running-detail, .system-run-detail, .system-progress";
+  const freshStatus = replacement?.matches(".system-workflow-card")
+    ? [...replacement.children].filter((node) => node.matches(statusSelector)) : [];
+  const placeholder = replacement ? document.createElement("div") : null;
+  if (placeholder) {
+    // Bind new status controls without rebinding the preserved form or its inputs.
+    placeholder.append(...freshStatus);
+    replacement.replaceWith(placeholder);
+  }
   bindWorkflowResultControls(document);
   bindWorkflowRunControls(main);
   if (state.workflowSection === "activity") bindActivityControls(main, "workflows");
+  if (placeholder) {
+    if (freshStatus.length) {
+      [...editor.children].filter((node) => node.matches(statusSelector)).forEach((node) => node.remove());
+      editor.prepend(...freshStatus.filter((node) => !node.matches(".system-progress")));
+      editor.append(...freshStatus.filter((node) => node.matches(".system-progress")));
+      editor.classList.toggle("is-running", replacement.classList.contains("is-running"));
+    }
+    placeholder.replaceWith(editor);
+    focused?.focus({ preventScroll: true });
+    if (selection) focused.setSelectionRange(...selection);
+  }
 }
 
 function systemActivityPace() {
@@ -4102,9 +4142,7 @@ async function saveSystemWorkflowSettings(event) {
   event.preventDefault();
   if (!state.project) return;
   const form = event.currentTarget;
-  const configured = state.projectWorkflows.find(
-    (item) => item.id === form.dataset.projectWorkflowId,
-  );
+  const configured = form.tinConfiguredWorkflow;
   if (!configured) return;
   const submit = event.submitter || form.querySelector("[type=submit]");
   const idleLabel = submit.textContent;
@@ -4972,6 +5010,21 @@ function projectDirectoryCountLabel(path, paths) {
   return `${count} item${count === 1 ? "" : "s"}`;
 }
 
+function projectFileModified(path) {
+  const raw = state.filesByPath.get(path)?.modified_at;
+  const date = raw ? new Date(raw) : null;
+  if (!date || Number.isNaN(date.getTime())) return { text: "—", title: "Last modified date unavailable" };
+  return {
+    text: date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
+    title: `Last modified ${date.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" })}`,
+  };
+}
+
+function projectFileMetadataHtml(path) {
+  const modified = projectFileModified(path);
+  return `<span class="file-modified" title="${escapeHtml(modified.title)}" aria-label="${escapeHtml(modified.title)}">${escapeHtml(modified.text)}</span><span class="file-type">${escapeHtml(projectFileType(path))}</span>`;
+}
+
 function projectFileTreeUnsafeCss() {
   const colorScheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   return `
@@ -5005,8 +5058,8 @@ function projectFileTreeUnsafeCss() {
       flex: 0 0 auto;
     }
     [data-item-section="decoration"] {
-      flex: 0 0 76px;
-      width: 76px;
+      flex: 0 0 204px;
+      width: 204px;
       margin-left: auto;
       font-size: 11px;
     }
@@ -5049,7 +5102,10 @@ function mountProjectFileTree() {
       openProjectFile(path, state.filesSnapshot.revision);
     },
     renderRowDecoration: ({ item }) => {
-      if (item.kind !== "directory") return { text: projectFileType(item.path) };
+      if (item.kind !== "directory") {
+        const modified = projectFileModified(item.path);
+        return { text: `${modified.text} · ${projectFileType(item.path)}`, title: modified.title };
+      }
       return { text: projectDirectoryCountLabel(item.path, paths) };
     },
     unsafeCSS: projectFileTreeUnsafeCss(),
@@ -5143,7 +5199,7 @@ function filesSearchResults(paths, query) {
       return `<button type="button" data-project-file="${escapeHtml(path)}">
         <span>${projectFileIcon(path)}<strong>${highlightFileMatch(filename, query)}</strong></span>
         <code>${escapeHtml(parts.length ? `${parts.join("/")}/` : "Project /")}</code>
-        <small>${escapeHtml(projectFileType(path))}</small>
+        <small class="file-metadata">${projectFileMetadataHtml(path)}</small>
       </button>`;
     }).join("")}</div>`;
 }
@@ -5211,7 +5267,7 @@ function renderFilesDrilldown() {
     <div class="files-drill-rows">${entries.map((entry) => `<button type="button" ${entry.kind === "directory" ? `data-files-directory="${escapeHtml(entry.path)}"` : `data-project-file="${escapeHtml(entry.path)}"`}>
       ${projectFileIcon(entry.path, entry.kind === "directory")}
       ${filesDrillName(entry)}
-      <small>${entry.kind === "directory" ? projectDirectoryCountLabel(entry.path, paths) : escapeHtml(projectFileType(entry.path))}</small>
+      <small class="file-metadata">${entry.kind === "directory" ? projectDirectoryCountLabel(entry.path, paths) : projectFileMetadataHtml(entry.path)}</small>
     </button>`).join("")}</div>`;
   bindProjectFileLinks(container);
   container.querySelectorAll("[data-files-directory]").forEach((button) => {
@@ -5336,9 +5392,10 @@ async function loadProjectFiles({ silent = false, renderWhenReady = true } = {})
   if (!silent) state.filesError = null;
   const previousRevision = state.filesSnapshot?.revision || null;
   try {
-    const snapshot = await api(`/api/projects/${encodeURIComponent(context.projectId)}/files`);
+    const snapshot = await api(`/api/projects/${encodeURIComponent(context.projectId)}/files?include_modified=true`);
     if (!isCurrentProjectContext(context)) return;
     state.filesSnapshot = snapshot;
+    state.filesByPath = new Map(snapshot.files.map((file) => [file.path, file]));
     state.filesError = null;
     if (previousRevision && previousRevision !== snapshot.revision) state.filesUpdated = true;
   } catch (error) {
@@ -6311,10 +6368,10 @@ function runsHaveChanged(previous, next) {
   return next.some((run) => before.get(run.id) !== runFingerprint(run));
 }
 
-function renderPolledRuns({ collectionsChanged }) {
+function renderPolledRuns({ collectionsChanged, summaryChanged }) {
   updateRail();
   if (state.view === "chat") renderChat();
-  if (state.view === "workflows") renderWorkflows();
+  if (state.view === "workflows" && (collectionsChanged || summaryChanged)) renderWorkflows({ preserveEditor: true });
   if (state.view === "activity" && collectionsChanged) renderActivity();
   if (state.view === "decisions" && collectionsChanged) renderDecisions();
   if (state.view === "task" && document.activeElement?.id !== "task-message") renderTask();
@@ -6340,6 +6397,7 @@ async function pollRuns() {
       || JSON.stringify(state.decisions) !== JSON.stringify(decisions);
     state.decisions = decisions;
     state.runs = results;
+    const summaryChanged = JSON.stringify(state.systemSummary) !== JSON.stringify(systemSummary);
     state.systemSummary = systemSummary;
     for (const run of results) {
       if (["succeeded", "failed", "stopped"].includes(run.status)) state.pendingReviewRunIds.delete(run.id);
@@ -6371,7 +6429,7 @@ async function pollRuns() {
       state.projectWorkflows = projectWorkflows;
       state.activityHasMore = state.activity.length === 100;
     }
-    renderPolledRuns({ collectionsChanged });
+    renderPolledRuns({ collectionsChanged, summaryChanged });
   } catch (error) {
     if (generation === state.projectGeneration && state.project?.id === projectId) {
       showToast(`Live status refresh failed: ${error.message}`);
@@ -6452,6 +6510,7 @@ function resetProjectState(project) {
   state.documentCache = new Map();
   state.documentLoadingRunId = null;
   state.filesSnapshot = null;
+  state.filesByPath.clear();
   state.filesLoading = false;
   state.filesError = null;
   state.filesSearch = "";

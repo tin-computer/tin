@@ -91,14 +91,14 @@ export async function serveApp({decisionCount = 4} = {}) {
   return {server, base: `http://127.0.0.1:${server.address().port}`};
 }
 
-export async function openApp(browser, base, {viewport = {width: 1440, height: 900}, url = "/system"} = {}) {
+export async function openApp(browser, base, {viewport = {width: 1440, height: 900}, url = "/system", theme = "light"} = {}) {
   const errors = [];
   const context = await browser.newContext({viewport});
   await context.route("**/*", route => route.request().url().startsWith(base) ? route.continue() : route.abort());
-  await context.addInitScript(() => {
+  await context.addInitScript(theme => {
     window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member", firstName: "QA"}, session: {getToken: async () => "synthetic"}, mountSignIn: () => {}};
-    localStorage.setItem("tin-lite:theme", "light");
-  });
+    localStorage.setItem("tin-lite:theme", theme);
+  }, theme);
   const page = await context.newPage();
   page.on("pageerror", error => errors.push(error.message));
   await page.goto(`${base}${url}${url.includes("?") ? "&" : "?"}project=project`);

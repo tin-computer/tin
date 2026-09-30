@@ -1122,6 +1122,7 @@ class MarkdownDocumentView(BaseModel):
 
 class ProjectFileView(BaseModel):
     path: str
+    modified_at: datetime | None = None
 
 
 class ProjectFilesView(BaseModel):
@@ -2463,11 +2464,13 @@ async def upload_project_media(
 @router.get(
     "/api/projects/{project_id}/files",
     response_model=ProjectFilesView,
+    response_model_exclude_none=True,
 )
 async def list_project_files(
     project_id: UUID,
     request: Request,
     revision: str | None = Query(default=None, pattern=r"^[0-9a-f]{40}$"),
+    include_modified: bool = False,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectFilesView:
     project = await _require_project_access(project_id, request, user)
@@ -2488,10 +2491,17 @@ async def list_project_files(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="project files are not available",
         ) from exc
+    dates = (
+        await request.app.state.runtime.storage.canonical_file_modified_dates(
+            repo_id=project.state_repo_id, revision=resolved_revision
+        )
+        if include_modified
+        else {}
+    )
     return ProjectFilesView(
         project_id=project.id,
         revision=resolved_revision,
-        files=[ProjectFileView(path=path) for path in paths],
+        files=[ProjectFileView(path=path, modified_at=dates.get(path)) for path in paths],
     )
 
 
