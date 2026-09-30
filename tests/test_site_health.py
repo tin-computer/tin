@@ -88,7 +88,9 @@ def test_catalog_pins_github_capabilities_and_codex_procedure() -> None:
     definition = workflow.definition
 
     assert definition["executor"] == "codex.procedure"
-    assert workflow.version_label == "2.2.2"
+    assert workflow.version_label == "2.3.0"
+    # Folded into the technical fix: saved schedules keep running, new setups don't see it.
+    assert workflow.definition["public_discovery"] is False
     assert definition["procedure"]["output"]["kind"] == "github.pull_request"
     assert definition["procedure"]["output"]["allow_no_change"] is True
     assert definition["procedure"]["verification"]["commands"] == ["git diff --check"]

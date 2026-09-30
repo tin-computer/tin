@@ -368,7 +368,9 @@ def test_noindex_pages_with_search_traffic_and_multiple_canonicals():
     )
     found = checks(site_view)
     hidden = found["indexation.noindex_with_search_traffic"]
-    assert hidden["priority"] == "critical" and hidden["urls"] == [f"{BASE}/guide"]
+    # Often deliberate, so a question for the founder rather than a critical failure.
+    assert hidden["priority"] == "quick_win" and hidden["status"] == "review"
+    assert hidden["urls"] == [f"{BASE}/guide"]
     assert found["indexation.multiple_canonicals"]["urls"] == [f"{BASE}/twice"]
     assert "indexation.utility_pages_indexable" not in found
 

@@ -80,6 +80,7 @@ def analyze(
     search_console: dict | None,
     search_queries: dict | None,
     site: dict,
+    search_previous: dict | None = None,
 ) -> dict:
     """All v10 site and search findings plus the coverage summary, from saved evidence."""
     host = scope["host"]
@@ -91,6 +92,7 @@ def analyze(
         crawl_pages=crawl.get("pages", []),
         search_pages=pages,
         search_queries=queries,
+        angles=bool(policy.get("site_angles")),
     )
     cover = coverage(view, site.get("plan"), page_cap=scope.get("page_cap"))
     titles = {}
@@ -110,6 +112,9 @@ def analyze(
                 titles={k: v for k, v in titles.items() if v},
                 policy=policy,
                 brand=brand_terms(host, ai.get("panel")),
+                previous=(search_previous or {}).get("value")
+                if (search_previous or {}).get("status") == "completed"
+                else None,
             )
         )
     pagespeed = site.get("pagespeed") or {"status": "not_collected"}
@@ -310,12 +315,11 @@ def report_lines(
         if area == "authority":
             lines.extend(
                 [
-                    "Not measured in this version: backlinks and brand mentions on other sites "
-                    "are out of scope.",
+                    "Backlinks and brand mentions on other sites are not measured in this "
+                    "version. The sites AI answers cite and your about and contact pages are.",
                     "",
                 ]
             )
-            continue
         if not items:
             lines.extend(["No findings from the checks that ran.", ""])
         for item in items:
@@ -454,7 +458,7 @@ def report_lines(
                         else ""
                     )
                     + f"{' (own group)' if row['group'] == 'named' else ''} |"
-                    for row in crawler_stances(robots)
+                    for row in crawler_stances(robots, angles=analysis["view"].angles)
                 ),
                 "",
             ]
@@ -472,6 +476,45 @@ def report_lines(
             ]
         )
 
+    access = analysis["view"].access
+    if access.get("rows"):
+        agents = list(dict.fromkeys(row["agent"] for row in access["rows"]))
+        lines.extend(
+            [
+                "### What the site returns to each reader",
+                "",
+                "Each page read as a browser and with each AI crawler's user agent. CDNs can "
+                "verify crawlers by IP address, so a difference means likely, not certain.",
+                "",
+                "| Page | " + " | ".join(agents) + " |",
+                "| --- | " + " | ".join("---" for _ in agents) + " |",
+            ]
+        )
+        for url in access.get("pages", []):
+            cells = []
+            for agent in agents:
+                row = next(
+                    (r for r in access["rows"] if r["url"] == url and r["agent"] == agent), {}
+                )
+                cells.append(
+                    str(row["status_code"]) + (" refused" if row.get("status") == "refused" else "")
+                    if row.get("status_code")
+                    else row.get("status", "unknown").replace("_", " ")
+                )
+            lines.append(f"| {md(_path(url, host))} | " + " | ".join(cells) + " |")
+        lines.append("")
+    files = analysis["view"].files
+    llms = files.get("llms_txt") or {}
+    if llms.get("status") in {"observed", "missing"}:
+        lines.extend(
+            [
+                "llms.txt: "
+                + ("published." if llms["status"] == "observed" else "not published.")
+                + " It is a proposed convention; no major assistant has confirmed it reads it.",
+                "",
+            ]
+        )
+
     speed = speed_rows(analysis["pagespeed"])
     if speed:
         lines.extend(
@@ -483,7 +526,7 @@ def report_lines(
                 continue
             values, grades = row["values"], row["grades"]
             lines.append(
-                f"| {md(_path(row['url'], host))} | {row['source']} | "
+                f"| {md(_path(row['url'], host))} | {row['source_label']} | "
                 + _grade_cell(grades, "lcp_ms", f"{(values['lcp_ms'] or 0) / 1000:.1f} s")
                 + " | "
                 + _grade_cell(grades, "inp_ms", f"{values['inp_ms'] or 0:.0f} ms")
@@ -492,6 +535,90 @@ def report_lines(
                 + " |"
             )
         lines.append("")
+        scored = [row for row in speed if row["status"] == "observed" and row.get("lighthouse")]
+        if scored:
+            lines.extend(
+                [
+                    "Google Lighthouse scores (mobile), out of 100:",
+                    "",
+                    "| Page | SEO | Accessibility | Best practices |",
+                    "| --- | ---: | ---: | ---: |",
+                    *(
+                        f"| {md(_path(row['url'], host))} | "
+                        + " | ".join(
+                            str(round(score * 100)) if score is not None else "unknown"
+                            for score in (
+                                row["lighthouse"]["scores"].get(name)
+                                for name in ("seo", "accessibility", "best-practices")
+                            )
+                        )
+                        + " |"
+                        for row in scored
+                    ),
+                    "",
+                ]
+            )
+
+    inspection = analysis["view"].inspection
+    if inspection.get("results") and not any(
+        row.get("status") == "observed" for row in inspection["results"]
+    ):
+        lines.extend(
+            [
+                "## Google index status",
+                "",
+                "Search Console URL Inspection returned no usable result for the "
+                f"{len(inspection['results'])} key pages asked about.",
+                "",
+            ]
+        )
+    elif inspection.get("results"):
+        lines.extend(
+            [
+                "## Google index status",
+                "",
+                "Search Console URL Inspection for the key pages: Google's own view of each.",
+                "",
+                "| Page | Indexed | Coverage | Last crawled |",
+                "| --- | --- | --- | --- |",
+                *(
+                    f"| {md(_path(row['url'], host))} | "
+                    + (
+                        ("yes" if row.get("indexed") else "no")
+                        if row.get("status") == "observed"
+                        else "unknown"
+                    )
+                    + f" | {md(row.get('coverage_state') or '')} | "
+                    + f"{(row.get('last_crawl_time') or '')[:10]} |"
+                    for row in inspection["results"]
+                ),
+                "",
+            ]
+        )
+
+    review = analysis["view"].content_review
+    if review.get("status") == "completed":
+        lines.extend(
+            [
+                "## Answer-engine readiness of top pages",
+                "",
+                "The pages with the most search impressions, reviewed for how AI answers quote "
+                "pages: a direct answer near the top, question-shaped headings, sections that "
+                "stand alone, specific facts, sources, a date and an author. The direct-answer, "
+                "section and fact judgments come from a model and are hypotheses; the rest is "
+                "measured.",
+                "",
+                "| Page | Main search | Gaps |",
+                "| --- | --- | --- |",
+                *(
+                    f"| {md(_path(row['url'], host))} | {md(row.get('query') or '')} | "
+                    + (md(", ".join(gap.replace("_", " ") for gap in row["gaps"])) or "none")
+                    + " |"
+                    for row in review["pages"]
+                ),
+                "",
+            ]
+        )
 
     lines.extend(["## Technical SEO (provider crawl)", ""])
     crawled = crawl.get("pages", [])

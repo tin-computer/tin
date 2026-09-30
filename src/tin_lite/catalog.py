@@ -476,7 +476,9 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key == "content.public_article":
+        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME}:
+            # Site health is folded into the technical fix: saved configurations and schedules
+            # keep running at their pinned revision, but new setups use the technical fix.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -803,28 +805,29 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
-        title="Fix an audited technical issue",
+        title="Fix what the audit found",
         description=(
-            "Recheck one missing-title or missing-description finding and propose a verified PR. "
-            "Supports exact static HTML and bounded Python-wheel HTML templates. "
-            "Lists unsupported pages separately. "
-            "If no safe repair is available, explain why "
-            "without a PR. Never merges or deploys; GitHub may run its configured PR checks."
+            "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
+            "indexing, the sitemap and robots.txt, redirects and merges, page structure, "
+            "accessibility, structured data, social previews and internal links, in any "
+            "framework. Your coding agent answers the judgment calls first. Copy stays with "
+            "the content workflows, and steps outside the repository are listed. Tin checks "
+            "each finding on the live site after you deploy. Never merges or deploys."
         ),
-        version_label="0.4.1",
+        version_label="0.6.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
                 level="required",
                 workflow=AUDIT_KEY,
                 via_input="audit_run_id",
-                reason="A technical fix repairs one finding from a successful, pinned audit.",
+                reason="A technical fix repairs findings from a successful, pinned audit.",
             ),
         ),
         executor="codex.procedure",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
-        input_schema=technical_fix.INPUT_SCHEMA,
+        input_schema=technical_fix.BATCH_INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=GITHUB_PROVIDER,
@@ -839,11 +842,14 @@ BUILTIN_WORKFLOWS = (
         ),
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / technical_fix.KEY,
-            entry_skill="audit-title-repair",
+            entry_skill="audit-batch-repair",
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-                verification_commands=(technical_fix.CHECK_COMMAND,),
-                repair_policy=technical_fix.POLICY,
+                verification_commands=tuple(
+                    technical_fix.policy_commands(technical_fix.BATCH_POLICY)
+                ),
+                repair_policy=technical_fix.BATCH_POLICY,
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
             ),
         ),
     ),
@@ -1002,7 +1008,7 @@ BUILTIN_WORKFLOWS = (
             "No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1096,12 +1102,13 @@ BUILTIN_WORKFLOWS = (
         key=SITE_HEALTH_WORKFLOW_NAME,
         title="Improve site health",
         description=(
-            "Inspect one public site against its selected GitHub repository, make one bounded "
-            "mechanical improvement, and open a pull request for review. "
-            "When no safe change is justified, save a no-change report without opening a PR."
+            "Retired: use Fix what the audit found, which repairs every finding of an organic "
+            "audit in one pull request. Saved schedules of this workflow keep running: it "
+            "inspects one public site against its GitHub repository, makes one bounded "
+            "mechanical improvement and opens a pull request for review."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.2.2",
+        version_label="2.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         presentation=WorkflowDiagram(
             nodes=(
@@ -1231,8 +1238,11 @@ BUILTIN_WORKFLOWS = (
             WorkflowPrerequisite(
                 kind="run",
                 level="recommended",
-                workflow=VISIBILITY_AUDIT_WORKFLOW_NAME,
-                reason="The latest AI visibility audit supplies the questions the page answers.",
+                workflow=AUDIT_KEY,
+                reason=(
+                    "The latest organic audit's AI buyer questions supply the questions the "
+                    "page answers."
+                ),
             ),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,

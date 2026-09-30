@@ -21,7 +21,7 @@ from pydantic import Field, StrictBool, ValidationError
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
-from tin_lite import analytics, project_task_control, welcome_email
+from tin_lite import analytics, project_task_control, technical_fix, welcome_email
 from tin_lite.analytics import clip
 from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
@@ -120,6 +120,7 @@ from tin_lite.runtime import RuntimeServices
 from tin_lite.schedules import WorkflowSchedule
 from tin_lite.settings import Settings
 from tin_lite.technical_fix_api import TechnicalFixSelection
+from tin_lite.technical_fix_live import live_service
 from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
@@ -1256,10 +1257,14 @@ def create_mcp_app(
         parsed = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed, token, tool_name=tool_name)
         services = runtime()
+        # The catalog's repair policy decides what the preview covers.
+        policy = technical_fix.current_policy()
         return parsed, TechnicalFixSources(
             database=services.database,
             storage=services.storage,
             integrations=services.integrations,
+            supported_checks=technical_fix.supported_checks(policy),
+            batch=technical_fix.batches(policy),
         )
 
     @server.tool(annotations=ToolAnnotations(read_only_hint=True))
@@ -1292,17 +1297,53 @@ def create_mcp_app(
         project_id: str,
         audit_run_id: str,
         audit_revision: str,
-        finding_id: str,
         expected_repository: str,
         repository_serves_site: StrictBool,
+        finding_id: str = "",
+        decisions: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Read-only finding/repository preview. No run, paid compute, branch or PR is created.
+        """Read-only repair preview. No run, paid compute, branch or PR is created.
 
-        repository_serves_site records a member's assertion, not proof of route mapping.
-        A repair run must revalidate and pin its own binding. Content recommendations
-        return content_finding; finding_not_found means the ID is absent from this audit.
+        Under the current policy one technical fix repairs every fixable finding of the audit
+        in one PR. The preview sorts them: plan.repairs (in the PR), decisions_needed (judgment
+        calls), and plan.left_out (copy for the content workflows, manual steps, already fine).
+        Answer each decisions_needed item yourself from the codebase and what you know about
+        the product; ask the founder only the ones you're unsure of. Pass the answers as
+        decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
+        finding_id narrows the preview to one finding. repository_serves_site records a
+        member's assertion; the run pins its own binding.
         """
         parsed, preparation = await technical_fix_service(project_id, "preflight_technical_fix")
+        if preparation.batch_mode:
+            try:
+                preview = await preparation.batch(
+                    project_id=parsed,
+                    audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id"),
+                    audit_revision=audit_revision,
+                    expected_repository=expected_repository,
+                    repository_serves_site=repository_serves_site,
+                    finding_ids=[finding_id] if finding_id else [],
+                    decisions=decisions or [],
+                )
+            except TechnicalFixError as exc:
+                raise ToolError(f"{exc.code}: {exc}") from exc
+            summary = preview["summary"]
+            relay = [
+                f"Tin can fix {summary['fixable']} of this audit's findings in one pull request."
+            ]
+            if summary.get("decisions_needed"):
+                relay.append(
+                    f"{summary['decisions_needed']} more depend on a judgment call; answer "
+                    "them before starting."
+                )
+            if summary.get("copy"):
+                relay.append(
+                    f"{summary['copy']} are copy (titles, descriptions, content), left to the "
+                    "content workflows."
+                )
+            if summary.get("manual"):
+                relay.append(f"{summary['manual']} are manual steps outside the repository.")
+            return {**preview, **_founder_words(relay=relay)}
         try:
             selection = TechnicalFixSelection(
                 audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id"),
@@ -2758,6 +2799,8 @@ def create_mcp_app(
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
             "page_url": await page_url_service(runtime(), settings).view(run, delivery, check=True),
+            # After a technical fix's PR merges: whether the live site still shows the problem.
+            "live_check": await live_service(runtime()).view(run, check=True),
             # Before approval: what Publish does for a page Tin adapts to the site.
             **(
                 {

@@ -42,7 +42,7 @@ sentence that most systems unlock once a site exists, and the outlook says what 
 
 `tin_state.running` lists the project's saved schedules and `tin_state.recent_runs` the last
 runs. When `running` is not empty this plan is an expansion: the systems table's "Current
-status" says what Tin already runs there ("Tin: weekly site-health PR since Sept 11"), the
+status" says what Tin already runs there ("Tin: weekly technical-fix PR since Sept 11"), the
 proposed scope and the systems list are additions on top of what runs (never a system that
 repeats a running schedule), and every outlook starts from the results already in motion.
 Say in the first paragraph, in one sentence, what is already running.
@@ -137,8 +137,10 @@ The organic traffic system is Tin's default. When the business has a live public
 in the US, GB, CA or AU, code makes it the first system Tin suggests, whatever the ranking says,
 and starts its research run once at setup: it audits the site, researches buyer searches, builds
 the content plan and drafts the first article for review, then drafts the next planned article
-each week. AI visibility is part of this system: the weekly check of whether assistants name the
-product and the answer pages sit beside the articles. The other suggestions build around it.
+each week. AI visibility is part of this system: its audit asks a fixed set of buyer questions
+and grades whether assistants find, name and recommend the product, and the answer pages sit
+beside the articles. Never add a separate AI visibility audit next to it. The other suggestions
+build around it.
 Never configure a separate audit or keyword research run next to it: its research run already
 does both.
 
@@ -212,8 +214,8 @@ with access, and what can proceed without it. The agent records what the founder
 explicitly declined, and Tin reads it at setup.
 
 Each system carries, in the block, a `summary` (one sentence in the founder's framing of what
-Tin does for them there: "Tin improves your technical SEO: a weekly site-health pull request you
-merge or close") and an `outlook` with three short sentences, `week`, `month` and `quarter`: the
+Tin does for them there: "Tin improves your technical SEO: a pull request that fixes what the
+audit found, which you merge or close") and an `outlook` with three short sentences, `week`, `month` and `quarter`: the
 likely visible result of that system after one week, one month and three months, estimated from
 this business's evidence and the usual pace of that system. Say what will exist ("three merged
 fixes", "first answer page indexed") and what may move ("impressions on the fixed pages"), hedge

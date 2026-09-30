@@ -732,7 +732,7 @@ def test_pinned_answer_page_suite_carries_the_search_structure_rules():
     suite = pinned_suite(definition, "content.answer_page")
     assert "ANSWER_PLAN_V1" in suite and "ANSWER_SEO_V1" in suite
     assert "ANSWER_REPAIR_V1" in suite and "ANSWER_POSITIONING_V1" in suite
-    # 1.5.0 is taken by the audit follow-up (#219), so positioning ships as 1.6.0.
+    # 1.5.0 recommends the organic audit's v11 questions (#219); 1.6.0 adds positioning.
     assert workflow.version_label == "1.6.0"
 
 
