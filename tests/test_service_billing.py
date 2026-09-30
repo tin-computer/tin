@@ -838,9 +838,15 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
 
     f = billed
     parent = await admit(f, "growth.onboarding")
-    step = f"onboarding:{parent.id}:setup:0:visibility.audit:first"
+    step = f"onboarding:{parent.id}:setup:0:project.weekly_brief:first"
     with pytest.raises(BillingError, match="free setup"):
-        await admit(f, "visibility.audit", {"target": "this project"}, parent=parent, step=step)
+        await admit(
+            f,
+            "project.weekly_brief",
+            {"focus": "Which buyers ask assistants about us?"},
+            parent=parent,
+            step=step,
+        )
     async with f.db.pool.acquire() as conn:
         key = f"onboarding:{parent.id}:approved_plan"
         await f.db.start_effect(conn, execution_key=key, operation="growth.onboarding")
@@ -849,16 +855,22 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
         )
     with pytest.raises(BillingError, match="free setup"):
         await admit(
-            f, "visibility.audit", {"target": "not the approved target"}, parent=parent, step=step
+            f, "project.weekly_brief", {"focus": "not the approved focus"}, parent=parent, step=step
         )
-    child = await admit(f, "visibility.audit", {"target": "this project"}, parent=parent, step=step)
+    child = await admit(
+        f,
+        "project.weekly_brief",
+        {"focus": "Which buyers ask assistants about us?"},
+        parent=parent,
+        step=step,
+    )
     assert (await f.billing.run_charge(child.id, ACTOR))["root_run_id"] == str(parent.id)
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 0
-    workflow = await install(f, "visibility.audit")
+    workflow = await install(f, "project.weekly_brief")
     inputs = normalize_workflow_inputs(
         schema=workflow.definition["input_schema"],
         project_id=f.project.id,
-        inputs={"target": "this project"},
+        inputs={"focus": "Which buyers ask assistants about us?"},
     )
     with pytest.raises(BillingError, match="standing spending"):
         await f.db.create_run(
@@ -871,7 +883,7 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
             definition_commit_sha=workflow.current_commit_sha,
         )
     with pytest.raises(BillingError, match="Add credits"):
-        await admit(f, "visibility.audit", {"target": "this project"})
+        await admit(f, "project.weekly_brief", {"focus": "Which buyers ask assistants about us?"})
 
 
 async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):

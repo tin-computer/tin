@@ -29,6 +29,10 @@ class PublicWorkflow:
     id: UUID
     key: str
     public_mcp: PublicMCPExposure | None = None
+    # False keeps a package registered, so saved configurations and schedules keep running,
+    # while new setups, the organic system and discovery no longer offer it. A maintainer
+    # choice, like registration itself, not a field authors set in the package.
+    public_discovery: bool = True
 
     @property
     def definition_path(self) -> str:
@@ -100,11 +104,13 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         UUID("4bf8c067-1709-427d-a00f-b0b53c871751"),
         "organic.error_surface",
         PublicMCPExposure("start_error_surface_research", destructive=True, open_world=True),
+        public_discovery=False,
     ),
     PublicWorkflow(
         UUID("2136b2ff-7570-40bf-97d3-e37889aea964"),
         "organic.mention_backlinks",
         PublicMCPExposure("start_mention_backlinks", destructive=True, open_world=True),
+        public_discovery=False,
     ),
     PublicWorkflow(
         UUID("7633e65c-d59d-4e96-a3f1-7e082d1cac5b"),
@@ -202,9 +208,13 @@ async def load_public_workflows(*, root: Path | None = None) -> tuple[PackagePub
         # Resources stay at package-relative locations inside the immutable registry commit.
         files = {package.definition_path: raw}
         files.update({path: storage._read(path) for path in source.resource_paths.values()})
+        definition = source.definition
+        if not selection.public_discovery:
+            # Catalog visibility, as for hidden built-ins; the package's files are unchanged.
+            definition = {**definition, "public_discovery": False}
         publications.append(
             PackagePublication(
-                selection.id, selection.key, package.definition_path, source.definition, files
+                selection.id, selection.key, package.definition_path, definition, files
             )
         )
     return tuple(publications)

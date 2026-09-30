@@ -929,11 +929,18 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
         ]["title"]
         for item in PUBLIC_WORKFLOWS
     }
-    assert (
-        titles
-        == {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
-        | public
-    )
+    # Workflows hidden from the organic system and discovery stay registered for saved
+    # configurations, but the plan never names them.
+    hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
+    hidden.add("visibility.audit")
+    assert titles == {
+        key: title
+        for key, title in (
+            {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
+            | public
+        ).items()
+        if key not in hidden
+    }
     assert set(plan.PROGRAMS["workflow_scope"]) == set(titles)
     assert {system["id"] for system in plan.RUBRIC["systems"]} == {row["id"] for row in programs}
     known = {param["id"] for param in plan.RUBRIC["params"]}

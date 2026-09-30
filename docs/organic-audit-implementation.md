@@ -531,7 +531,8 @@ The panel decides the grading, not the run's policy: panels drafted for the ladd
 `unsearched: true`, and an explicit answer completion of an older audit keeps grading the
 way that audit did. Answer pages take their questions from the newest organic or AI
 visibility audit, and Start here no longer suggests a separate AI visibility audit beside
-the organic traffic system. `visibility.audit` stays runnable for saved configurations.
+the organic traffic system. `visibility.audit` is out of discovery and the organic
+system (catalog 1.3.0) but stays runnable for saved configurations.
 
 ### Answer structure of top pages
 

@@ -37,8 +37,8 @@ A procedure writes only its declared output. A weekly package keeps its history 
 
 | Package | Builds on | Hands off to | Onboarding program |
 |---|---|---|---|
-| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Organic search content |
-| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | AI visibility |
+| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Hidden from discovery; saved configurations keep running |
+| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | Hidden from discovery; saved configurations keep running |
 | `competitor.watch` | its last report, keyword plan and ads competitors, Feature map | `content.public_article`, `content.plan`, `research.deep_dive` | Pricing and packaging |
 | `competitor.sunset_rescue` | its earlier reports, competitor-watch reports, onboarding plan, Feature map, Code map, keyword plan | `content.public_article`, `project.task`, `outreach.community_threads` | Pricing and packaging |
 | `qa.buyer_trust` | signup walkthrough, Feature map, onboarding plan | `site.health_improve` (code), founder (policy, host) | Conversion and trust |
@@ -64,7 +64,9 @@ A procedure writes only its declared output. A weekly package keeps its history 
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`
-line each. A new Registry package needs the same.
+line each. A new Registry package needs the same. A package registered with
+`public_discovery=False` in `public_workflows.py` keeps running for saved configurations but
+leaves programs.json and discovery.
 
 ## Code examples
 

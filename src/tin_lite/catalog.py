@@ -497,9 +497,14 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME}:
+        if self.key in {
+            "content.public_article",
+            SITE_HEALTH_WORKFLOW_NAME,
+            VISIBILITY_AUDIT_WORKFLOW_NAME,
+        }:
             # Site health is folded into the technical fix: saved configurations and schedules
             # keep running at their pinned revision, but new setups use the technical fix.
+            # The AI visibility audit is folded into the organic audit's buyer questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -1435,11 +1440,13 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_visibility_audit", destructive=True, open_world=True),
         title="Audit AI visibility",
         description=(
-            "Measure whether Luna finds and recommends a chosen target across five target-blind "
-            "buyer questions, then publish AI_VISIBILITY.md."
+            "Retired: the organic audit measures AI visibility on the buyer prompt panel's "
+            "questions. Saved schedules keep running: measure whether Luna finds and recommends "
+            "a chosen target across five target-blind buyer questions, then publish "
+            "AI_VISIBILITY.md."
         ),
         executor=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         input_schema={
             "type": "object",
