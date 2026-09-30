@@ -19,6 +19,7 @@ from tin_lite.output_resolution import OutputResolutionService
 from tin_lite.project_files import ProjectFileService
 from tin_lite.publication import read_run_output
 from tin_lite.run_service import start_workflow_run
+from tin_lite.workflow_inputs import WorkflowInputError
 from tin_lite.x_style_activities import XStyleActivities
 
 SAMPLES = (
@@ -162,6 +163,38 @@ async def test_x_style_adopts_edited_proposal_and_preserves_receipts(publication
         )
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    ("protected", "account", "message"),
+    [(True, "12345", "public X account"), (False, "67890", "differs from")],
+)
+async def test_connected_source_checks_account_before_admission_with_preferences(
+    publication_db, protected, account, message
+):
+    f = await fixture(publication_db)
+    connection = AsyncMock(
+        return_value=SimpleNamespace(
+            configuration={"protected": protected}, external_account_id=account
+        )
+    )
+    f.runtime.integrations = SimpleNamespace(x=SimpleNamespace(connection=connection))
+    with pytest.raises(WorkflowInputError, match=message):
+        await start_workflow_run(
+            runtime=f.runtime,
+            settings=f.settings,
+            workflow=f.workflow,
+            project_id=f.project.id,
+            started_by_clerk_user_id=ACTOR,
+            start_idempotency_key=str(uuid4()),
+            input_payload={
+                "sample_source": "connected",
+                "preferences": "Keep technical details.",
+                "account_id": "12345",
+            },
+        )
+    connection.assert_awaited_once_with(f.project.id, capability="x.posts.read")
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
 
 
 async def test_x_style_conflict_preserves_later_user_edit(publication_db):

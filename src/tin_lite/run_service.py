@@ -189,7 +189,7 @@ async def start_workflow_run(
             raise WorkflowExecutorUnavailableError(
                 "X style capture requires the native model service."
             )
-        if not any(
+        if normalized_inputs.get("sample_source") == "connected" or not any(
             normalized_inputs.get(k) for k in ("supplied_samples", "source_path", "preferences")
         ):
             connection = await runtime.integrations.x.connection(
