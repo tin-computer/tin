@@ -117,7 +117,7 @@ from tin_lite.run_service import (
     start_workflow_run,
 )
 from tin_lite.runtime import RuntimeServices
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
 from tin_lite.settings import Settings
 from tin_lite.technical_fix_api import TechnicalFixSelection
 from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
@@ -539,10 +539,9 @@ async def _sync_mcp_project_workflow(
             paused=paused,
         )
     except Exception as exc:
-        await runtime.database.project_workflow_failed(
-            project_workflow_id=configured.id,
-            error_message=f"{type(exc).__name__}: schedule synchronization failed",
-        )
+        from tin_lite.project_workflow_operations import sync_failed
+
+        await sync_failed(runtime=runtime, settings=settings, configured=configured, error=exc)
         raise ToolError("Tin could not synchronize this workflow schedule") from exc
 
 
@@ -2244,6 +2243,7 @@ def create_mcp_app(
         try:
             normalized_name = _mcp_project_workflow_name(name)
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
+            require_saveable_schedule(parsed_schedule)
             normalized_inputs = normalize_workflow_inputs(
                 schema=schema,
                 project_id=parsed_project_id,
@@ -2323,6 +2323,7 @@ def create_mcp_app(
                     else None
                 )
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
+            require_saveable_schedule(parsed_schedule, previous=existing.schedule)
             normalized_inputs = normalize_workflow_inputs(
                 schema=existing.input_schema,
                 project_id=parsed_project_id,
@@ -2359,7 +2360,6 @@ def create_mcp_app(
                 settings=settings,
                 configured=configured,
                 previous_schedule=existing.schedule,
-                paused=existing.status == "paused",
             )
         except (
             LookupError,

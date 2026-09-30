@@ -2970,7 +2970,9 @@ async def update_project_workflow(
             revision=existing.definition_commit_sha,
             input_schema=existing.input_schema,
         )
-        _ensure_workflow_schedule_allowed(workflow.definition, payload.schedule)
+        _ensure_workflow_schedule_allowed(
+            workflow.definition, payload.schedule, previous=existing.schedule
+        )
         inputs = normalize_workflow_inputs(
             schema=existing.input_schema,
             project_id=project_id,
@@ -2997,11 +2999,9 @@ async def update_project_workflow(
             workflow_key=existing.workflow_key,
             workflow_title=existing.workflow_title,
         )
+        # Pause state comes from the saved row, which a pause may have changed since `existing`.
         configured = await _sync_project_workflow_schedule(
-            configured,
-            request,
-            previous_schedule=existing.schedule,
-            paused=existing.status == "paused",
+            configured, request, previous_schedule=existing.schedule
         )
     except StaleSettingsRevisionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -3035,10 +3035,14 @@ def _changed_project_workflow_fields(
     return changed
 
 
-def _ensure_workflow_schedule_allowed(definition: dict, schedule: WorkflowSchedule | None) -> None:
+def _ensure_workflow_schedule_allowed(
+    definition: dict, schedule: WorkflowSchedule | None, *, previous: dict | None = None
+) -> None:
+    from tin_lite.schedules import require_saveable_schedule
     from tin_lite.workflow_definitions import ensure_schedule_allowed
 
     ensure_schedule_allowed(definition, schedule)
+    require_saveable_schedule(schedule, previous=previous)
 
 
 @router.post(
@@ -3547,7 +3551,6 @@ async def _sync_project_workflow_schedule(
 ) -> ProjectWorkflow:
     from tin_lite.project_workflow_operations import sync_project_workflow
 
-    database = request.app.state.runtime.database
     try:
         return await sync_project_workflow(
             runtime=request.app.state.runtime,
@@ -3557,9 +3560,13 @@ async def _sync_project_workflow_schedule(
             paused=paused,
         )
     except Exception as exc:
-        await database.project_workflow_failed(
-            project_workflow_id=configured.id,
-            error_message=f"{type(exc).__name__}: schedule synchronization failed",
+        from tin_lite.project_workflow_operations import sync_failed
+
+        await sync_failed(
+            runtime=request.app.state.runtime,
+            settings=request.app.state.settings,
+            configured=configured,
+            error=exc,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,

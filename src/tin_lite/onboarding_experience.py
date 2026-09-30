@@ -26,7 +26,7 @@ from tin_lite.growth_onboarding import (
 from tin_lite.growth_onboarding_activities import repaired_action_inputs
 from tin_lite.integrations import registered_integrations
 from tin_lite.product_urls import dashboard_url
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 
@@ -179,6 +179,7 @@ async def validate_plan(
                         timezone=timezone,
                     )
                     ensure_schedule_allowed(template.definition, schedule)
+                    require_saveable_schedule(schedule)
             except WorkflowInputError as exc:
                 cause = exc.__cause__
                 if isinstance(cause, ValidationError):
