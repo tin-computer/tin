@@ -10,7 +10,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite.code_models import CodeModelError, CodeModels
-from tin_lite.code_project_files import CodeProjectFiles
+from tin_lite.code_project_files import CodeProjectFileError, CodeProjectFiles
 from tin_lite.code_project_files import saved_source as saved_project_files
 from tin_lite.code_services import CodeServiceError, CodeServices
 from tin_lite.e2b_runtime import CodeExecutionError
@@ -250,6 +250,23 @@ class CodeActivities:
             except CodeServiceError as exc:
                 await self.db.fail_effect(conn, execution_key=key, error_message=str(exc))
                 raise ApplicationError(str(exc), non_retryable=True) from None
+            except CodeProjectFileError as exc:
+                # Only a revoked lease escapes the file bridge; say so, not "failed validation".
+                message = (
+                    f"{exc.code}: The run no longer has permission to read project files."
+                    if exc.code == "file_access_revoked"
+                    else f"{exc.code}: A project file request was refused."
+                )
+                await self.db.fail_effect(conn, execution_key=key, error_message=message)
+                raise ApplicationError(message, non_retryable=True) from None
+            except CodeExecutionError as exc:
+                if exc.deterministic:
+                    # The package ran and exited without a valid result. A fresh sandbox runs
+                    # the same code on the same inputs, so another attempt repeats the failure.
+                    await self.db.fail_effect(conn, execution_key=key, error_message=str(exc))
+                    raise ApplicationError(str(exc), non_retryable=True) from None
+                await self._retain_failure(conn, key, str(exc))
+                raise
             except (ValueError, UnicodeError):
                 await self.db.fail_effect(
                     conn,
@@ -262,22 +279,22 @@ class CodeActivities:
             except BaseException as exc:
                 # Retain the failed stage without exposing arbitrary sandbox/provider text.
                 # Temporal still retries; completed model/service receipts are reused.
-                reason = (
-                    str(exc)
-                    if isinstance(exc, CodeExecutionError)
-                    else f"Code workflow failed during {stage} ({type(exc).__name__})."
+                await self._retain_failure(
+                    conn, key, f"Code workflow failed during {stage} ({type(exc).__name__})."
                 )
-                current = await self.db.get_effect(key, conn=conn)
-                if current and current.status == "started":
-                    await self.db.save_effect_progress(
-                        conn,
-                        execution_key=key,
-                        result={**(current.result or {}), "failure_reason": reason},
-                    )
                 raise
             finally:
                 if sandbox_id:
                     await self.sandboxes.kill(sandbox_id)
+
+    async def _retain_failure(self, conn, key, reason):
+        current = await self.db.get_effect(key, conn=conn)
+        if current and current.status == "started":
+            await self.db.save_effect_progress(
+                conn,
+                execution_key=key,
+                result={**(current.result or {}), "failure_reason": reason},
+            )
 
     @activity.defn(name="publish_code_workflow")
     async def publish(self, run_id: str):

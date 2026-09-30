@@ -17,6 +17,7 @@ from e2b import (
     CommandExitException,
     FileType,
     NotFoundException,
+    SandboxException,
     SandboxNotFoundException,
     SandboxQuery,
     TimeoutException,
@@ -41,8 +42,18 @@ SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""
 
 
+def _being_deleted(exc: SandboxException) -> bool:
+    text = str(exc)
+    return text.startswith("409") and "delet" in text.lower()
+
+
 class CodeExecutionError(RuntimeError):
     """A trusted failure description without sandbox output or provider payloads."""
+
+    def __init__(self, message: str, *, deterministic: bool = False) -> None:
+        super().__init__(message)
+        # The package itself exited non-zero: retrying the same code and inputs repeats it.
+        self.deterministic = deterministic
 
 
 CONTEXT_ENV_MAX = 96 * 1024
@@ -369,7 +380,10 @@ class E2BRuntime:
                 if isinstance(exc, CommandExitException)
                 else "the sandbox could not return its result"
             )
-            raise CodeExecutionError(f"Code workflow failed: {reason}.") from None
+            raise CodeExecutionError(
+                f"Code workflow failed: {reason}.",
+                deterministic=isinstance(exc, CommandExitException),
+            ) from None
         finally:
             if sandbox is not None:
                 await self._delete_sandbox(sandbox)
@@ -970,6 +984,11 @@ class E2BRuntime:
         except SandboxNotFoundException:
             await self._observe_sandbox(None, sandbox_id=sandbox_id, absent=True)
             return
+        except SandboxException as exc:
+            # A concurrent kill (two Stops, or Stop racing activity cleanup) already started
+            # deletion; E2B answers 409. That deletion records its own observation.
+            if not _being_deleted(exc):
+                raise
 
     async def _observe_sandbox(self, sandbox, *, sandbox_id=None, ended=False, absent=False):
         if self._usage_database is None:
