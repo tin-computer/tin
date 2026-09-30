@@ -286,9 +286,12 @@ def test_results_compare_28_days_before_and_after_going_live():
     }
     assert not refresh.measurable(live, live + timedelta(days=30))
     assert refresh.measurable(live, live + timedelta(days=31))
-    assert refresh.totals(
-        {"rows": [{"clicks": 10, "impressions": 400, "position": 5.0}]}
-    ) == {"clicks": 10.0, "impressions": 400.0, "ctr": 0.025, "position": 5.0}
+    assert refresh.totals({"rows": [{"clicks": 10, "impressions": 400, "position": 5.0}]}) == {
+        "clicks": 10.0,
+        "impressions": 400.0,
+        "ctr": 0.025,
+        "position": 5.0,
+    }
     table = refresh.results_markdown(
         [
             {

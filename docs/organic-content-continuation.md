@@ -122,3 +122,21 @@ older recipes keep their behaviour.
 Reusing a program also preserves its existing article schedule and any pause or timing edits.
 Tin creates a schedule only when that program has none; concurrent system runs share this
 short save. A paused schedule stays paused and the result says `existing_schedule_paused`.
+
+## Refresh existing pages first (0.5.0)
+
+`organic.traffic_system` 0.5.0 pins policy `organic-traffic-v5`, which adds a weekly page
+refresh (`content.refresh`, see [refreshing existing pages](content-refresh.md)). At the start
+of the draft step, before drafting a new article, the system:
+
+- saves the "Weekly page refresh" workflow on today's weekday at the drafting time, in the
+  founder's time zone, with its first scheduled run a week from today;
+- starts the first refresh itself, right away, as its own child run.
+
+That child run is the schedule's first run, so nothing else runs at the first slot and the next
+refresh comes a week later. The refresh child counts against the system's ceiling. If the
+project already has an active or paused weekly refresh, the system keeps it and starts nothing
+new. A refresh that cannot start (no Temporal, billing refused, a missing prerequisite) never
+blocks the article; `RESULT.md` gains a "Page refresh" section that says what happened. v4 and
+older recipes keep their behaviour, and in-flight runs keep the recipe they pinned. The parent's
+registry revision now carries the exact `content.refresh` definition beside its steps.

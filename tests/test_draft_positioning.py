@@ -98,9 +98,7 @@ async def test_a_new_plan_pins_the_projects_positioning_files(publication_db, mo
     assert "Never narrow, downplay or reframe the product" in flat(system)
 
 
-async def test_a_draft_request_carries_the_brand_and_positioning_files(
-    publication_db, monkeypatch
-):
+async def test_a_draft_request_carries_the_brand_and_positioning_files(publication_db, monkeypatch):
     monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda *args: None)
     f = await fixture(publication_db, monkeypatch, judgment=True)
     f.storage.repo.edit({"brand/BRAND.md": BRAND, "context/positioning.md": NOTE})

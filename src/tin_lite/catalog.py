@@ -518,10 +518,11 @@ BUILTIN_WORKFLOWS = (
             "plan and draft its next article for review. With GitHub connected, adapt the "
             "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
             "Then draft the next planned article each week, one review at a time. "
+            "Before new articles, refresh one existing page now and again each week. "
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.4.0",
+        version_label="0.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -2461,7 +2462,8 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
-    organic_system.KEY: tuple(organic_system.STEPS.values()),
+    # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
+    organic_system.KEY: (*organic_system.STEPS.values(), organic_system.REFRESH_KEY),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
 

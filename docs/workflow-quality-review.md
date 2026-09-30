@@ -13,7 +13,7 @@ Subsequent discussion established these decisions:
 - Keep onboarding smooth. Resolve routine missing evidence within the workflow and ask only questions that change a necessary decision. Do not add a long questionnaire or expose repeated internal failures.
 - Improve the existing workflows; do not create overlapping replacements. Check relevant new integrations before auditing or briefing, but do not confuse connection availability with measured evidence.
 - Distinguish successful empty keyword measurement from a failed or skipped lookup. The former supports conservative low/unproven traffic expectations; the latter does not support a demand conclusion. Do not invent search volumes.
-- Let content planning establish positioning for the buyer. Price can matter, but it is not a universal position. Answer pages should reinforce a supportable argument and verify competitor facts.
+- Take positioning from the project's brand and positioning files; content planning and drafts follow it and never narrow it. Price can matter, but it is not a universal position. Answer pages should reinforce a supportable argument and verify competitor facts.
 - Hide `content.public_article` from public discovery and onboarding recommendations while preserving direct execution, saved configurations, schedules and history.
 - Test Product analytics with the newly authorized PostHog GET/POST access. Keep the added-evidence comparison separate from same-evidence prompt comparisons.
 - Preserve useful memory behavior, explain costs by cause, save partial research early, and defer a proposed workflow/model-optimization field.

@@ -165,6 +165,8 @@ the worst case one run can reach, so a normal run is never refused. Charges stay
 | `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
 | `organic.traffic_system` | $26 ($31 with a technical fix) | $15 ($20); $10 draft-only | $2 keywords + $2 audit + $1 content plan + $5 draft + $5 PR adaptation |
 | `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
+| `organic.traffic_system` 0.5.0 | — | $17.50 ($22.50); $12.50 draft-only | The above plus the first page refresh, $2.50 |
+| `content.refresh` | — | $2.50 | About $0.45 estimated at list price; the ceiling is about five times that |
 
 Keyword policy v6 (`keyword_plan_v6.py`) changes only reservations and the floor; v5 and older
 runs keep theirs. From list prices checked September 29, 2026:
