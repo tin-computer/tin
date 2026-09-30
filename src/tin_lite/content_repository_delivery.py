@@ -508,19 +508,78 @@ async def saved_manifest(database, storage, run):
     return validate_procedure_pull_request(checkpoint, spec=spec)
 
 
+# Settings that reach every page, whatever folder they sit in.
+SITE_WIDE_NAMES = frozenset(
+    {
+        "vercel.json",
+        "netlify.toml",
+        "wrangler.toml",
+        "wrangler.json",
+        "tsconfig.json",
+        "jsconfig.json",
+        "package.json",
+    }
+)
+SITE_WIDE_STEMS = (
+    "middleware.",
+    "next.config.",
+    "astro.config.",
+    "nuxt.config.",
+    "svelte.config.",
+    "vite.config.",
+    "remix.config.",
+    "gatsby-config.",
+)
+
+
+def outside_route(manifest, proof, route):
+    """The patch's files besides the page that don't sit in the chosen route's own folder.
+
+    For `/guides/{slug}` a file serves the route only when its directories include `guides`
+    (`src/app/guides/[slug]/page.tsx`, `content/guides/...`). Root layouts, middleware, host and
+    build settings, shared components and dotfiles reach other pages, so they stay a PR.
+    """
+    folders = [part for part in route.split("{slug}", 1)[0].strip("/").split("/") if part]
+    outside = []
+    for item in manifest.get("files") or []:
+        path = item["path"]
+        if path == proof["article_path"]:
+            continue
+        parts = path.split("/")
+        name = parts[-1]
+        directories = parts[:-1]
+        inside = bool(folders) and any(
+            directories[index : index + len(folders)] == folders
+            for index in range(len(directories) - len(folders) + 1)
+        )
+        if (
+            not inside
+            or any(part.startswith(".") for part in parts)
+            or name in SITE_WIDE_NAMES
+            or name.startswith(SITE_WIDE_STEMS)
+        ):
+            outside.append(path)
+    return outside
+
+
 def merge_rule(manifest, proof, route):
     """Which rule lets Tin merge this patch under a commit-to-main setting, else None.
 
     `page_only`: the approved page alone, the change the Markdown publisher commits today.
     `chosen_route`: the page plus the site code that serves it, when the founder chose where
-    these pages live and the PR puts the page at that route. The copy proof, the five-file
-    limit and the dependency ban still hold; any other site change stays a PR.
+    these pages live, the PR puts the page at that route and every other file sits in that
+    route's own folder. The copy proof, the five-file limit and the dependency ban still
+    hold; any other site change stays a PR.
     """
     from tin_lite.page_routes import matches
 
     if page_only(manifest, proof):
         return "page_only"
-    if route and matches(route, proof.get("public_route")):
+    if (
+        route
+        and matches(route, proof.get("public_route"))
+        and not outside_route(manifest, proof, route)
+    ):
         return "chosen_route"
     return None
 
@@ -575,13 +634,23 @@ async def publish_after_pull_request(
             base = {"pull_request": published["external_url"], "number": number}
             route = (source.get("approval") or {}).get("route")
             rule = merge_rule(manifest, proof, route)
+            from tin_lite.page_routes import matches
+
+            outside = (
+                outside_route(manifest, proof, route)
+                if route and matches(route, proof.get("public_route"))
+                else []
+            )
             if rule is None:
                 result = {
                     **base,
                     "status": "left_open",
                     "reason": (
-                        f"It changes site files besides the page and does not put the page at "
-                        f"your chosen route {route}, so it waits for your review."
+                        f"It also changes {', '.join(outside[:3])}, outside your chosen route "
+                        f"{route}, so it waits for your review."
+                        if outside
+                        else f"It changes site files besides the page and does not put the page "
+                        f"at your chosen route {route}, so it waits for your review."
                         if route
                         else "It changes site files besides the page, so it waits for your review."
                     ),

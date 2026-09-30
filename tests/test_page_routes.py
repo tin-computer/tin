@@ -221,3 +221,51 @@ async def test_site_code_that_misses_the_chosen_route_stays_open(publication_db,
     merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
     assert merge["status"] == "left_open"
     assert "your chosen route /guides/{slug}" in merge["reason"]
+
+
+PAGE = {"path": "content/guides/reliable-ai-work.md", "content": "..."}
+PROOF = {"article_path": PAGE["path"], "public_route": "/guides/reliable-ai-work"}
+
+
+@pytest.mark.parametrize(
+    ("extra", "rule"),
+    [
+        ((), "page_only"),
+        (("src/app/guides/[slug]/page.tsx",), "chosen_route"),
+        (("src/app/guides/[slug]/page.tsx", "src/app/guides/page.tsx"), "chosen_route"),
+        (("src/app/layout.tsx",), None),
+        (("middleware.ts",), None),
+        (("next.config.js",), None),
+        (("vercel.json",), None),
+        (("src/components/Header.tsx",), None),
+        (("src/app/guides/[slug]/page.tsx", "next.config.mjs"), None),
+        (("src/app/guides/.env",), None),
+        (("src/app/guides/middleware.ts",), None),
+    ],
+)
+def test_the_chosen_route_merges_only_files_in_its_own_folder(extra, rule):
+    manifest = {"files": [PAGE, *({"path": path, "content": "x"} for path in extra)]}
+    assert delivery.merge_rule(manifest, PROOF, "/guides/{slug}") == rule
+
+
+def test_a_route_at_the_site_root_merges_nothing_but_the_page():
+    manifest = {"files": [PAGE, {"path": "src/app/[slug]/page.tsx", "content": "x"}]}
+    proof = {**PROOF, "public_route": "/reliable-ai-work"}
+    assert delivery.merge_rule(manifest, proof, "/{slug}") is None
+
+
+async def test_site_code_outside_the_chosen_routes_folder_stays_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    route_file = {"path": "src/app/guides/[slug]/page.tsx", "content": "export default 1;\n"}
+    layout = {"path": "src/app/layout.tsx", "content": "export default 2;\n"}
+    _, child = await adapted_pull_request(
+        f,
+        extra_files=(route_file, layout),
+        route="https://example.com/guides/reliable-ai-work",
+        chosen_route="/guides/{slug}",
+    )
+    await f.activities.deliver_content_draft(str(child.id))
+    f.runtime.integrations.github_merge_pull_request.assert_not_called()
+    merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
+    assert merge["status"] == "left_open"
+    assert "src/app/layout.tsx" in merge["reason"]
