@@ -37,6 +37,7 @@ from tin_lite.domain import (
     RunStatus,
     RunToolGrant,
     SideEffectConflictError,
+    StaleGenerationError,
     StaleSettingsRevisionError,
     StoppedRunHandle,
     StudioUsage,
@@ -2484,11 +2485,16 @@ class Database:
                 if trigger_source == "schedule" and workflow["executor"] == "workflow.code":
                     from tin_lite.schedules import ScheduledWorkflowSkip
 
+                    # An automatic retry of a failed scheduled run is not an occurrence: it
+                    # needs the schedule still active, not the dispatcher's revision fence.
                     if (
                         configured is None
                         or configured["status"] != "active"
                         or configured["schedule"] is None
-                        or configured["settings_revision"] != schedule_settings_revision
+                        or (
+                            retry_of_run_id is None
+                            and configured["settings_revision"] != schedule_settings_revision
+                        )
                     ):
                         raise ScheduledWorkflowSkip("The saved schedule changed before dispatch.")
                     if started_by_clerk_user_id != configured[
@@ -2558,6 +2564,13 @@ class Database:
                     raise RuntimeError(
                         "Open the failed revision and use Retry revision to preserve its feedback."
                     )
+                # The project row lock above serializes admission, so concurrent retries
+                # with different request keys see each other: one retry per failed run.
+                if await conn.fetchval(
+                    "SELECT true FROM workflow_runs WHERE retry_of_run_id = $1 LIMIT 1",
+                    retry_of_run_id,
+                ):
+                    raise RuntimeError("this failed run has already been retried")
             executor = workflow["executor"]
             task_title: str | None = None
             if executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -2664,7 +2677,10 @@ class Database:
                 # autonomy setting will resolve this boolean here, once, when the run starts.
                 review_required = True
             temporal_workflow_id = f"{executor}:{run_id}"
-            thread_id = str(project_workflow_id or workflow_id)
+            # A saved configuration is one lease lineage: a newer generation fences the older.
+            # Ad-hoc runs are independent jobs, so each gets its own lineage; sharing the
+            # workflow id let one run's sandbox attach revoke another run's lease.
+            thread_id = str(project_workflow_id) if project_workflow_id else f"run:{run_id}"
             generation = await conn.fetchval(
                 """
                 SELECT COALESCE(MAX(generation), 0) + 1
@@ -2715,7 +2731,11 @@ class Database:
             )
             assert row is not None
             await self._track_run(run_id, "run_created", conn=conn)
-            if trigger_source == "schedule" and executor == "workflow.code":
+            if (
+                trigger_source == "schedule"
+                and executor == "workflow.code"
+                and retry_of_run_id is None
+            ):
                 from tin_lite.schedules import WorkflowSchedule, next_run_after
 
                 await conn.execute(
@@ -5829,6 +5849,21 @@ class Database:
                 "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
             )
             assert run is not None
+            # A newer generation fences an older one, never the reverse: an older run that
+            # attaches late must not revoke the lease of the run that superseded it.
+            if await conn.fetchval(
+                """
+                SELECT true FROM workflow_runs
+                WHERE project_id = $1 AND thread_id = $2 AND lease_active = true
+                  AND id <> $3 AND generation > $4
+                LIMIT 1
+                """,
+                run["project_id"],
+                run["thread_id"],
+                run_id,
+                run["generation"],
+            ):
+                raise StaleGenerationError("a newer run of this configuration holds the lease")
             await conn.execute(
                 """
                 UPDATE workflow_runs
@@ -7469,6 +7504,13 @@ class Database:
         memory_index: str,
     ) -> None:
         async with self.pool.acquire() as conn, conn.transaction():
+            # Same guard as project_success: a stopped, failed or superseded run keeps its
+            # outcome, and its late result does not replace the project's memory pointer.
+            status = await conn.fetchval(
+                "SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if status in {"failed", "stopped", "superseded"}:
+                raise SideEffectConflictError("run cannot complete in its current state")
             updated = await conn.fetchval(
                 """
                 UPDATE projects
@@ -8192,4 +8234,4 @@ def _failure_summary(executor: str) -> str:
     }.get(executor, "Workflow run")
     if executor == PROJECT_TASK_WORKFLOW_NAME:
         return f"{subject} could not finish."
-    return f"{subject} stopped before it finished."
+    return f"{subject} failed before it finished."

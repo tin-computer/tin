@@ -3504,6 +3504,9 @@ def create_mcp_app(
                 "When get_run shows it done, its quote is Tin's words on what runs and what is "
                 "already there (relay them as given) and its relay the facts to tell in your "
                 "words: what to expect, where to watch, what was left out."
+                if run.executor == GROWTH_ONBOARDING_KEY
+                else "Recorded durably. Tin picks it up within a minute or two; read the run "
+                "again then rather than re-approving."
             ),
             "links": _project_links(settings, run.project_id),
         }
