@@ -12,7 +12,7 @@ description: Adapt one approved article, answer page or public article to an exi
    ambiguity as a prerequisite failure. An answer page or public article has no route yet:
    derive a short kebab-case slug from `title`, under the folder or route the site uses for
    such pages. When `direction` names the route the founder chose (for example
-   `/answers/{slug}`), use exactly that route, and add it as in step 5 if the site does not
+   `/blog/{slug}`), use exactly that route, and add it as in step 5 if the site does not
    serve it yet. A new page must not overwrite an existing one; add a short suffix instead.
 4. For Markdown-native sites preserve `article` exactly below existing/configured site
    frontmatter. Map `page_metadata` onto the site's own fields (for example `title` and

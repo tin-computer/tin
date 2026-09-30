@@ -52,7 +52,7 @@ async def routes_fixture(db, monkeypatch):
 
 
 @pytest.mark.parametrize(
-    "route", ["/answers/{slug}", "/{slug}", "/resources/guides/{slug}", "/blog/2026/{slug}"]
+    "route", ["/blog/{slug}", "/{slug}", "/resources/guides/{slug}", "/blog/2026/{slug}"]
 )
 def test_a_route_is_a_lowercase_site_path_ending_in_one_slug(route):
     assert PageRoutes.model_validate({"routes": {"answer_page": route}}).routes == {
@@ -63,13 +63,13 @@ def test_a_route_is_a_lowercase_site_path_ending_in_one_slug(route):
 @pytest.mark.parametrize(
     "route",
     [
-        "answers/{slug}",  # not a site path
-        "/Answers/{slug}",  # uppercase
-        "/answers/{slug}/amp",  # {slug} must end it
+        "guides/{slug}",  # not a site path
+        "/Guides/{slug}",  # uppercase
+        "/guides/{slug}/amp",  # {slug} must end it
         "/a/b/c/d/{slug}",  # more than three folders
         "/{slug}{slug}",
-        "https://example.com/answers/{slug}",
-        "/answers/",
+        "https://example.com/guides/{slug}",
+        "/guides/",
     ],
 )
 def test_other_routes_are_refused(route):
@@ -78,12 +78,12 @@ def test_other_routes_are_refused(route):
 
 
 def test_a_public_address_matches_only_the_chosen_route():
-    assert matches("/answers/{slug}", "https://example.com/answers/reliable-ai-work")
-    assert matches("/answers/{slug}", "/answers/reliable-ai-work/")
-    assert not matches("/answers/{slug}", "https://example.com/blog/reliable-ai-work")
-    assert not matches("/answers/{slug}", "https://example.com/answers/a/b")
-    assert not matches("/answers/{slug}", None)
-    assert "/answers/{slug}" in direction("/answers/{slug}")
+    assert matches("/guides/{slug}", "https://example.com/guides/reliable-ai-work")
+    assert matches("/guides/{slug}", "/guides/reliable-ai-work/")
+    assert not matches("/guides/{slug}", "https://example.com/blog/reliable-ai-work")
+    assert not matches("/guides/{slug}", "https://example.com/guides/a/b")
+    assert not matches("/guides/{slug}", None)
+    assert "/guides/{slug}" in direction("/guides/{slug}")
 
 
 async def test_the_route_is_saved_once_per_project_and_per_page_type(publication_db, monkeypatch):
@@ -95,11 +95,11 @@ async def test_the_route_is_saved_once_per_project_and_per_page_type(publication
         saved = await service.save(
             project_id=f.project.id,
             kind="answer_page",
-            route="/answers/{slug}",
+            route="/guides/{slug}",
             request_id=request,
             actor=ACTOR,
         )
-    assert saved["routes"] == {"answer_page": "/answers/{slug}"}
+    assert saved["routes"] == {"answer_page": "/guides/{slug}"}
     await service.save(
         project_id=f.project.id,
         kind="article",
@@ -109,9 +109,9 @@ async def test_the_route_is_saved_once_per_project_and_per_page_type(publication
     )
     current = await service.read(f.project.id)
     assert current["path"] == PATH
-    assert current["routes"] == {"answer_page": "/answers/{slug}", "article": "/blog/{slug}"}
+    assert current["routes"] == {"answer_page": "/guides/{slug}", "article": "/blog/{slug}"}
     run = await answer_page(f)
-    assert await service.route_for(run) == "/answers/{slug}"
+    assert await service.route_for(run) == "/guides/{slug}"
 
 
 async def test_until_a_route_is_chosen_the_agent_asks_the_founder(publication_db, monkeypatch):
@@ -120,7 +120,9 @@ async def test_until_a_route_is_chosen_the_agent_asks_the_founder(publication_db
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     assert preview["route"] is None
     ask = preview["ask_the_founder"]
-    assert ask["suggestion"] == "/answers/{slug}"
+    assert ask["suggestion"] == "/blog/{slug}"
+    assert ask["question"] == "Where on your site should pages that answer buyer questions go?"
+    assert "never a Tin term such as answers" in ask["how_to_suggest"]
     assert ask["then"] == {
         "name": "save_page_route",
         "arguments": {"page_type": "answer_page", "route": "<the route the founder confirmed>"},
@@ -135,14 +137,14 @@ async def test_until_a_route_is_chosen_the_agent_asks_the_founder(publication_db
             {
                 "project_id": str(f.project.id),
                 "page_type": "answer_page",
-                "route": "/answers/{slug}",
+                "route": "/guides/{slug}",
                 "request_id": str(uuid4()),
             },
         )
     )
-    assert saved["routes"] == {"answer_page": "/answers/{slug}"}
+    assert saved["routes"] == {"answer_page": "/guides/{slug}"}
     after = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    assert after["route"] == "/answers/{slug}" and "ask_the_founder" not in after
+    assert after["route"] == "/guides/{slug}" and "ask_the_founder" not in after
 
 
 async def test_the_agent_cannot_save_a_route_that_is_not_a_site_path(publication_db, monkeypatch):
@@ -153,7 +155,7 @@ async def test_the_agent_cannot_save_a_route_that_is_not_a_site_path(publication
             {
                 "project_id": str(f.project.id),
                 "page_type": "answer_page",
-                "route": "https://example.com/answers/{slug}",
+                "route": "https://example.com/guides/{slug}",
                 "request_id": str(uuid4()),
             },
         )
@@ -167,7 +169,7 @@ async def test_approval_pins_the_route_and_tells_the_adaptation(publication_db, 
     await PageRouteService(database=f.db, storage=f.storage).save(
         project_id=f.project.id,
         kind="answer_page",
-        route="/answers/{slug}",
+        route="/guides/{slug}",
         request_id=uuid4(),
         actor=ACTOR,
     )
@@ -176,12 +178,12 @@ async def test_approval_pins_the_route_and_tells_the_adaptation(publication_db, 
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     child = await f.db.get_run((await children(f, run))[0]["id"])
-    assert child.input["direction"] == direction("/answers/{slug}")
+    assert child.input["direction"] == direction("/guides/{slug}")
     source = await delivery.saved_source(f.db, child.id)
     assert source["approval"] == {
         "mode": "github_commit",
         "requested_by": ACTOR,
-        "route": "/answers/{slug}",
+        "route": "/guides/{slug}",
     }
 
 
@@ -189,12 +191,12 @@ async def test_a_pull_request_that_adds_the_chosen_route_merges_when_clean(
     publication_db, monkeypatch
 ):
     f = await fixture(publication_db, monkeypatch)
-    route_file = {"path": "src/app/answers/[slug]/page.tsx", "content": "export default 1;\n"}
+    route_file = {"path": "src/app/guides/[slug]/page.tsx", "content": "export default 1;\n"}
     run, child = await adapted_pull_request(
         f,
         extra_files=(route_file,),
-        route="https://example.com/answers/reliable-ai-work",
-        chosen_route="/answers/{slug}",
+        route="https://example.com/guides/reliable-ai-work",
+        chosen_route="/guides/{slug}",
     )
     integrations = f.runtime.integrations
     integrations.github_pull_request_merge_state.return_value = clean()
@@ -212,10 +214,10 @@ async def test_site_code_that_misses_the_chosen_route_stays_open(publication_db,
         f,
         extra_files=(route_file,),
         route="https://example.com/blog/reliable-ai-work",
-        chosen_route="/answers/{slug}",
+        chosen_route="/guides/{slug}",
     )
     await f.activities.deliver_content_draft(str(child.id))
     f.runtime.integrations.github_merge_pull_request.assert_not_called()
     merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
     assert merge["status"] == "left_open"
-    assert "your chosen route /answers/{slug}" in merge["reason"]
+    assert "your chosen route /guides/{slug}" in merge["reason"]

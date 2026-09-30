@@ -25,10 +25,16 @@ PAGE_TYPES: dict[UUID, PageType] = {
     ANSWER_PAGE_WORKFLOW_ID: "answer_page",
     PUBLIC_ARTICLE_WORKFLOW_ID: "article",
 }
-NOUNS: dict[str, str] = {"answer_page": "answer pages", "article": "articles"}
-# What the agent suggests when the site has no route for such pages yet.
-SUGGESTED: dict[str, str] = {"answer_page": "/answers/{slug}", "article": "/blog/{slug}"}
-# Lowercase path segments ending in one {slug}: /answers/{slug}, /resources/guides/{slug}.
+# How a founder would call these pages. "Answer page" is Tin's name, not a reader's.
+NOUNS: dict[str, str] = {
+    "answer_page": "pages that answer buyer questions",
+    "article": "articles",
+}
+# The fallback suggestion when the site has no content folder yet. URLs should use words in
+# the audience's language (Google's URL structure guidance), and a site's articles and
+# question pages usually live under /blog, so both page types default there.
+SUGGESTED: dict[str, str] = {"answer_page": "/blog/{slug}", "article": "/blog/{slug}"}
+# Lowercase path segments ending in one {slug}: /blog/{slug}, /resources/guides/{slug}.
 ROUTE = re.compile(r"/(?:[a-z0-9][a-z0-9-]{0,39}/){0,3}\{slug\}")
 SLUG = r"[a-z0-9][a-z0-9-]{0,119}"
 
@@ -43,7 +49,7 @@ class PageRoutes(BaseModel):
         for route in routes.values():
             if not ROUTE.fullmatch(route):
                 raise ValueError(
-                    "Use a site path that ends in {slug}, such as /answers/{slug}: lowercase "
+                    "Use a site path that ends in {slug}, such as /blog/{slug}: lowercase "
                     "letters, digits and hyphens, at most three folders."
                 )
         return routes
@@ -66,10 +72,11 @@ def matches(pattern: str, address: str | None) -> bool:
 def direction(pattern: str) -> str:
     """The adaptation's routing instruction for a route the founder chose."""
     return (
-        f"The founder chose where these pages live: {pattern}, with {{slug}} a short "
-        "kebab-case slug from the title. Publish the page at exactly that route and give it "
-        "on the Public URL line. If the site has no route that renders pages there yet, add "
-        "one minimal route for exactly that pattern."
+        f"The founder chose where these pages live: {pattern}. Make {{slug}} three to five "
+        "lowercase, hyphenated words from the title that name its main search term, without "
+        "filler words such as the, a, of or how. Publish the page at exactly that route and "
+        "give it on the Public URL line. If the site has no route that renders pages there "
+        "yet, add one minimal route for exactly that pattern."
     )
 
 
@@ -77,13 +84,15 @@ def ask_the_founder(kind: PageType, host: str | None) -> dict[str, Any]:
     """The one question a coding agent asks before the first page of this type publishes."""
     noun = NOUNS[kind]
     return {
-        "question": f"Where on the site should Tin publish {noun}?",
+        "question": f"Where on your site should {noun} go?",
         "suggestion": SUGGESTED[kind],
         "how_to_suggest": (
-            f"Look at the site's existing routes first. If it already shows {noun} or similar "
-            "pages under a folder (for example /blog/{slug} or /guides/{slug}), suggest that "
-            f"folder; otherwise suggest {SUGGESTED[kind]}. Say the suggestion in one line "
-            + (f"with the full address on {host}, " if host else "")
+            "Look at the site's existing routes first and suggest the folder its articles "
+            "already use, such as /blog, /guides, /learn or /resources, so these pages sit "
+            f"with related content. If it has none, suggest {SUGGESTED[kind]}. Use a word "
+            "the site's readers would use; never a Tin term such as answers. Say the "
+            "suggestion in one line "
+            + (f"with a full example address on {host}, " if host else "with an example address, ")
             + "and ask the founder to confirm or name another."
         ),
         "then": {

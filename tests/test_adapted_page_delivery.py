@@ -764,7 +764,7 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     ask = preview.pop("ask_the_founder")
-    assert ask["question"] == "Where on the site should Tin publish answer pages?"
+    assert ask["question"] == "Where on your site should pages that answer buyer questions go?"
     assert preview == {
         "adapt": True,
         "label": "Publish",
