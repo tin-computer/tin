@@ -237,13 +237,41 @@ async def test_plausible_but_unusable_model_plan_is_rejected(change, message):
     assert len(ctx.calls) == 1
 
 
-async def test_oversized_context_and_style_fail_before_paid_call():
+def onboarding_plan(size=22_000):
+    """Start here writes a plan this long on every onboarded project."""
+    section = "## Channel\n\n" + CONTEXT + "\n\n"
+    return ("# Growth plan\n\n" + section * (size // len(section) + 1))[:size]
+
+
+async def test_long_onboarding_plan_gives_way_to_a_shorter_source():
     module, definition = package()
     spec = validate_code_definition(definition)
-    ctx = Context({"context/product-marketing.md": "a" * 14_001}, spec)
-    with pytest.raises(ValueError, match="context limit"):
-        await module.run(ctx, inputs(context_text=CONTEXT))
-    assert ctx.calls == []
+    ctx = Context(
+        {"reports/GROWTH_ONBOARDING_PLAN.md": onboarding_plan(), "BRAND.md": CONTEXT}, spec
+    )
+    await module.run(ctx, inputs())
+    assert ctx.calls[0]["data"]["context_source"] == "BRAND.md"
+    ctx = Context({"reports/GROWTH_ONBOARDING_PLAN.md": onboarding_plan()}, spec)
+    await module.run(ctx, inputs(context_text=CONTEXT))
+    assert ctx.calls[0]["data"]["context_source"] == "Supplied product context"
+
+
+async def test_long_onboarding_plan_alone_is_read_to_the_context_limit():
+    module, definition = package()
+    plan = onboarding_plan()
+    ctx = Context({"reports/GROWTH_ONBOARDING_PLAN.md": plan}, validate_code_definition(definition))
+    result = await module.run(ctx, inputs())
+    data = ctx.calls[0]["data"]
+    assert data["context_source"] == "reports/GROWTH_ONBOARDING_PLAN.md (first part)"
+    assert len(data["product_context"]) <= module.MAX_CONTEXT_CHARS
+    assert plan.startswith(data["product_context"])
+    assert plan[len(data["product_context"])] == "\n"  # cut at a line, not mid-sentence
+    assert result["path"] == "social/PLAN.md"
+
+
+async def test_oversized_style_fails_before_paid_call():
+    module, definition = package()
+    spec = validate_code_definition(definition)
     ctx = Context({"BRAND.md": CONTEXT, module.STYLE_PATH: "s" * 10_001}, spec)
     with pytest.raises(ValueError, match="Writing-style guide"):
         await module.run(ctx, inputs())
