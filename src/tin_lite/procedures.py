@@ -1015,11 +1015,19 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         if output.get("provider_key") != provider_key:
             raise ValueError("procedure workspace and output providers must match")
         output_max_files = output.get("max_files")
+        files_limit = MAX_PROCEDURE_PULL_REQUEST_FILES
+        if output.get("repair_policy"):
+            from tin_lite import technical_fix
+
+            # A batch repair collects every fixable audit finding into one pull request.
+            files_limit = max(
+                files_limit, technical_fix.POLICY_MAX_FILES.get(output["repair_policy"], 0)
+            )
         if (
             not isinstance(output_max_files, int)
             or isinstance(output_max_files, bool)
             or output_max_files < 1
-            or output_max_files > MAX_PROCEDURE_PULL_REQUEST_FILES
+            or output_max_files > files_limit
         ):
             raise ValueError("Codex procedure pull-request max_files is invalid")
         if output_max_bytes > MAX_PROCEDURE_PULL_REQUEST_BYTES:
@@ -1068,7 +1076,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or definition.get("key") != technical_fix.KEY
             or result_kind != GITHUB_PULL_REQUEST_RESULT
             or verification_commands != technical_fix.policy_commands(repair_policy)
-            or output_max_files > 3
+            or output_max_files > technical_fix.POLICY_MAX_FILES.get(repair_policy, 3)
         ):
             raise ValueError("Unsupported technical repair policy")
     allow_no_change = output.get("allow_no_change", False)

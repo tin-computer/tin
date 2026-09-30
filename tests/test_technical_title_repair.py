@@ -40,6 +40,7 @@ def pinned_definition(policy=technical_fix.POLICY):
         next(row for row in BUILTIN_WORKFLOWS if row.key == technical_fix.KEY).definition
     )
     definition["procedure"]["output"]["repair_policy"] = policy
+    definition["procedure"]["output"]["max_files"] = technical_fix.POLICY_MAX_FILES.get(policy, 3)
     definition["procedure"]["verification"]["commands"] = technical_fix.policy_commands(policy)
     return definition
 

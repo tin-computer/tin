@@ -225,7 +225,41 @@ async def start_workflow_run(
             )
         except ValueError as exc:
             raise WorkflowInputError(str(exc)) from exc
-    if workflow.key == technical_fix.KEY:
+    if workflow.key == technical_fix.KEY and technical_fix.batches(
+        technical_fix.definition_policy(workflow.definition)
+    ):
+        from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
+
+        try:
+            preview = await TechnicalFixSources(
+                database=runtime.database,
+                storage=runtime.storage,
+                integrations=runtime.integrations,
+                supported_checks=technical_fix.supported_checks(technical_fix.BATCH_POLICY),
+                batch=True,
+            ).batch(
+                project_id=project_id,
+                audit_run_id=UUID(normalized_inputs["audit_run_id"]),
+                audit_revision=normalized_inputs["audit_revision"],
+                expected_repository=normalized_inputs["expected_repository"],
+                repository_serves_site=normalized_inputs["repository_serves_site"],
+                finding_ids=normalized_inputs.get("finding_ids") or [],
+                decisions=normalized_inputs.get("decisions") or [],
+            )
+        except TechnicalFixError as exc:
+            raise WorkflowInputError(str(exc)) from exc
+        if not preview["plan"]["repairs"]:
+            waiting = len(preview["decisions_needed"])
+            raise WorkflowInputError(
+                "Nothing in this audit is ready to fix"
+                + (
+                    f": {waiting} finding{'s' if waiting != 1 else ''} wait for a decision. "
+                    "Answer preflight_technical_fix's decisions_needed and pass them as decisions."
+                    if waiting
+                    else "; its findings are copy, manual steps or need no change."
+                )
+            )
+    elif workflow.key == technical_fix.KEY:
         from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 
         try:

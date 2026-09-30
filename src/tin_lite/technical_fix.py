@@ -1,9 +1,11 @@
-"""Versioned repair policies for one audit finding at a time; never a merge or a deploy.
+"""Versioned technical repair policies; never a merge or a deploy.
 
 `missing-html-title-v1` through `html-metadata-v3` repair a missing title or description in
-matched static or packaged HTML. `site-fix-v4` adds robots.txt, sitemap and page-tag repairs:
-static files are checked from the diff in the worker, and framework source is bounded by the
-files Tin names and checked on the live site after the founder deploys it.
+matched static or packaged HTML. `site-fix-v4` adds robots.txt, sitemap and page-tag repairs
+for one finding: static files are checked from the diff in the worker, and framework source
+is bounded by the files Tin names and checked on the live site after the founder deploys it.
+`site-fix-v5` repairs every fixable finding of one audit in one pull request, in any
+framework, with judgment calls answered through MCP (technical_repair_plan, technical_batch).
 """
 
 import asyncio
@@ -17,6 +19,8 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from tin_lite import technical_batch as batch_rules
+from tin_lite import technical_repair_plan as repair_plan
 from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit import in_scope_url, public_site
 from tin_lite.technical_metadata_rules import (
@@ -37,8 +41,9 @@ LEGACY_POLICY = "missing-html-title-v1"
 WHOLE_FINDING_POLICY = "html-metadata-v2"
 POLICY = "html-metadata-v3"
 SITE_POLICY = "site-fix-v4"
+BATCH_POLICY = repair_plan.POLICY
 # Policies that may repair only part of a finding and list the pages they left alone.
-PARTIAL_POLICIES = frozenset({POLICY, SITE_POLICY})
+PARTIAL_POLICIES = frozenset({POLICY, SITE_POLICY, BATCH_POLICY})
 LEGACY_CHECK_COMMAND = "python3 /opt/tin-lite/verify-technical-title.py"
 CHECK_COMMAND = (
     "/opt/tin-lite/metadata-venv/bin/python -I /opt/tin-lite/verify-technical-metadata.py"
@@ -50,7 +55,10 @@ POLICY_COMMANDS = {
     WHOLE_FINDING_POLICY: CHECK_COMMAND,
     POLICY: CHECK_COMMAND,
     SITE_POLICY: None,
+    BATCH_POLICY: None,
 }
+# The most files a policy's pull request may change.
+POLICY_MAX_FILES = {BATCH_POLICY: repair_plan.MAX_FILES}
 
 
 def policy_commands(policy):
@@ -68,7 +76,22 @@ def supported_checks(policy):
         return SUPPORTED_CHECKS
     if policy == SITE_POLICY:
         return SUPPORTED_CHECKS | frozenset(site_rules.SITE_FIXES)
+    if policy == BATCH_POLICY:
+        return repair_plan.supported_checks()
     raise ValueError("Unsupported technical repair policy.")
+
+
+def batches(policy):
+    """Whether a policy repairs every fixable finding of an audit in one run."""
+    return policy == BATCH_POLICY
+
+
+def current_policy():
+    """The repair policy new runs pin: the one the shipped catalog declares."""
+    from tin_lite.catalog import BUILTIN_WORKFLOWS
+
+    template = next(row for row in BUILTIN_WORKFLOWS if row.key == KEY)
+    return definition_policy(template.definition)
 
 
 def definition_policy(definition):
@@ -137,6 +160,65 @@ INPUT_SCHEMA = {
         "audit_run_id",
         "audit_revision",
         "finding_id",
+        "expected_repository",
+        "repository_serves_site",
+    ],
+}
+
+
+# site-fix-v5 takes an audit, not one finding: every fixable finding, or the ones listed,
+# with the coding agent's answers to the judgment calls as `finding_id=choice` strings.
+BATCH_INPUT_SCHEMA = {
+    "type": "object",
+    "additionalProperties": False,
+    "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "audit_run_id": {"type": "string", "format": "uuid", "title": "Audit run"},
+        "audit_revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{40}$",
+            "title": "Audit revision",
+        },
+        "finding_ids": {
+            "type": "array",
+            "title": "Only these findings",
+            "description": "Leave empty to fix every finding the audit found that Tin can fix.",
+            "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}$"},
+            "maxItems": repair_plan.MAX_FINDINGS,
+            "uniqueItems": True,
+            "default": [],
+        },
+        "decisions": {
+            "type": "array",
+            "title": "Decisions",
+            "description": "Answers to preflight_technical_fix's decisions_needed, each "
+            "written finding_id=choice.",
+            "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}=.{1,500}$"},
+            "maxItems": repair_plan.MAX_DECISIONS,
+            "default": [],
+        },
+        "expected_repository": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 140,
+            "title": "GitHub owner/repository",
+        },
+        "repository_serves_site": {
+            "type": "boolean",
+            "default": False,
+            "title": "This repository serves the audited website",
+        },
+        "context": {
+            "type": "string",
+            "maxLength": 2000,
+            "default": "",
+            "title": "Additional context",
+        },
+    },
+    "required": [
+        "project_id",
+        "audit_run_id",
+        "audit_revision",
         "expected_repository",
         "repository_serves_site",
     ],
@@ -361,6 +443,8 @@ def validate_manifest(manifest, prepared):
         if files or manifest.get("reason") != "no_safe_patch":
             raise ValueError("No-change results cannot contain changes or claim a repair.")
         return
+    if prepared.get("batch"):
+        return batch_rules.validate(manifest, prepared, None)
     if prepared.get("site_fix"):
         return validate_site_manifest(manifest, prepared)
     if manifest.get("outcome") != "patch" or {f["path"] for f in files} != set(
@@ -479,6 +563,8 @@ def site_report(prepared, *, reason=None, pull_request=None):
 
 
 def report(prepared, *, reason=None, pull_request=None):
+    if prepared.get("batch"):
+        return batch_rules.report(prepared, reason=reason, pull_request=pull_request)
     if prepared.get("site_fix"):
         return site_report(prepared, reason=reason, pull_request=pull_request)
     metadata = "title" if selected_check(prepared) == TITLE_CHECK else "meta description"
