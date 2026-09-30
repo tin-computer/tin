@@ -1094,8 +1094,22 @@ function waitingLabel(value) {
 }
 
 function workflowForRun(run) {
+  if (!run) return null;
   return state.workflows.find((workflow) => workflow.id === run.workflow_id)
     || state.runWorkflows.get(run.workflow_id) || null;
+}
+
+async function includeDecisionRuns(runs, decisions, projectId) {
+  // Recent history is capped; an older run can still need a decision.
+  const known = new Set(runs.map(run => run.id));
+  const missing = [...new Set(decisions.map(decision => decision.run_id))].filter(id => !known.has(id));
+  const older = await Promise.all(missing.map(async id => {
+    try {
+      const run = await api(`/api/workflows/runs/${encodeURIComponent(id)}`);
+      return run?.id === id && run.project_id === projectId ? run : null;
+    } catch { return null; }
+  }));
+  return [...runs, ...older.filter(Boolean)];
 }
 
 async function loadRunWorkflows(runs) {
@@ -4331,6 +4345,7 @@ function publishButtonHtml(decision, preview, blocked) {
 
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
+  if (!run) return `<button class="decision-approval" type="button" data-apply-decision="${id}" disabled>Approve</button>`;
   const revision = decision.revision;
   // A waiting revision must be resolved first: every approval shows it is blocked. Once
   // applied, the older copy may stay in Tin but never be published; the server refuses both.
@@ -4445,6 +4460,7 @@ function decisionDetailHtml(decision) {
       <button class="open-button" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
     </header>
     <div class="decision-detail-body">
+      ${!run ? '<p role="status">This decision’s run could not load. Tin will retry.</p>' : ""}
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
       ${bodyNote ? `<p class="decision-note">${bodyNote}</p>` : ""}
@@ -6146,11 +6162,13 @@ async function pollRuns() {
   const projectId = state.project.id;
   state.pollInFlight = true;
   try {
-    const [results, systemSummary, decisions] = await Promise.all([
+    const [recentRuns, systemSummary, decisions] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(projectId)}/runs?limit=100`),
       api(`/api/projects/${encodeURIComponent(projectId)}/system`),
       api(`/api/projects/${encodeURIComponent(projectId)}/decisions`),
     ]);
+    if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
+    const results = await includeDecisionRuns(recentRuns, decisions, projectId);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const workflowsChanged = await loadRunWorkflows(results);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
@@ -6346,18 +6364,20 @@ async function loadProject(project, { announce = false, integrationReturn = null
       api(`/api/projects/${projectId}/integrations`),
     ]);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
+    const allRuns = await includeDecisionRuns(runs, decisions, project.id);
+    if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     state.workflows = workflows;
     state.projectWorkflows = projectWorkflows;
     state.systemSummary = systemSummary;
-    state.runs = runs;
+    state.runs = allRuns;
     state.activity = activity;
     state.decisions = decisions;
     state.messages = messages.map(chatTurnFromMessage);
     state.integrations = integrations;
-    await loadRunWorkflows(runs);
+    await loadRunWorkflows(allRuns);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     state.activityHasMore = activity.length === 100;
-    state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !runs.length ? "locked" : "ready";
+    state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !allRuns.length ? "locked" : "ready";
     // A callback may arrive in a new tab or from the legacy origin. Let this project
     // finish that connection while keeping its dashboard locked.
     if (state.projectAccess === "locked" && integrationReturn?.projectId === project.id) {
