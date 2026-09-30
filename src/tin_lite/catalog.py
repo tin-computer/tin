@@ -12,6 +12,7 @@ from tin_lite import (
     content_draft,
     content_plan,
     content_plan_editorial,
+    content_refresh,
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
@@ -265,6 +266,17 @@ PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     revision_adapter="content-revision.v1",
 )
 
+CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Changes the title, snippet or opening copy of a live page.",
+    review_label="Review refresh",
+    defer_label="Not now",
+    summary=(
+        "A refresh of one of your pages is ready. Compare each current line with the proposed "
+        "one; after you approve, Tin changes exactly those lines in your site's source."
+    ),
+    queue_clause="Page refresh ready to review",
+)
+
 GROWTH_ONBOARDING_REVIEW_POLICY = HumanReviewPolicy(
     reason="Tin sets up only the systems the founder picked, with the tools they connected.",
     review_label="Set it up",
@@ -506,10 +518,11 @@ BUILTIN_WORKFLOWS = (
             "plan and draft its next article for review. With GitHub connected, adapt the "
             "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
             "Then draft the next planned article each week, one review at a time. "
+            "Before new articles, refresh one existing page now and again each week. "
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.4.0",
+        version_label="0.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -602,7 +615,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -675,6 +688,65 @@ BUILTIN_WORKFLOWS = (
             output_path_template=content_draft.PATH_TEMPLATE,
             output_validator=content_draft.EDITORIAL_VALIDATOR,
             output_max_bytes=80_000,
+            project_skills=(
+                ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=content_refresh.WORKFLOW_ID,
+        key=content_refresh.KEY,
+        title="Refresh an existing page",
+        description=(
+            "Pick the page from your latest audit with the most search impressions at stake: "
+            "searchers see it near the top but rarely click, or it ranks just below the top "
+            "results. Propose a new title, meta description and, where they miss the search, "
+            "H1 and opening answer, in your positioning and voice. After you approve in "
+            "Decisions, Tin changes exactly those lines in your site's source and follows your "
+            "delivery setting. A page waits six weeks after a refresh goes live, and later "
+            "runs report its clicks before and after."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand", "weekly"),
+        review_policy=CONTENT_REFRESH_REVIEW_POLICY,
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="run",
+                workflow="organic.audit",
+                level="recommended",
+                reason="The refresh picks its page from the latest audit's search findings.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=STYLE_PATH,
+                producer=style_capture.KEY,
+                reason="The writing guide shapes expression, not product facts.",
+            ),
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to add?",
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+            },
+            "required": ["project_id"],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / content_refresh.KEY,
+            entry_skill="page-refresh",
+            output_path_template=content_refresh.PATH_TEMPLATE,
+            output_validator=content_refresh.VALIDATOR,
+            output_max_bytes=40_000,
             project_skills=(
                 ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
             ),
@@ -784,7 +856,7 @@ BUILTIN_WORKFLOWS = (
             "Save to My system to prepare weekly batches. Does not write articles or publish."
         ),
         executor=content_plan.KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1154,7 +1226,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.4.0",
+        version_label="1.5.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1323,7 +1395,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -2391,7 +2463,8 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
-    organic_system.KEY: tuple(organic_system.STEPS.values()),
+    # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
+    organic_system.KEY: (*organic_system.STEPS.values(), organic_system.REFRESH_KEY),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
 

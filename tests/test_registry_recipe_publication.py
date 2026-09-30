@@ -52,7 +52,7 @@ async def test_parent_publication_pins_children_on_first_sync_and_child_only_upg
     await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
     first = db.rows[parent.id].current_commit_sha
     for child in catalog.BUILTIN_WORKFLOWS:
-        if child.key not in organic_system.STEPS.values():
+        if child.key not in (*organic_system.STEPS.values(), organic_system.REFRESH_KEY):
             continue
         definition, resources = child.definition_and_files_with_wiki(WIKI)
         assert json.loads(storage.revisions[first][child.definition_path]) == definition

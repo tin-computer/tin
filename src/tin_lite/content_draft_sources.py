@@ -8,6 +8,7 @@ from uuid import UUID
 from tin_lite import content_draft
 from tin_lite.content_draft_progress import check_existing, history, next_item
 from tin_lite.content_plan import plan_path
+from tin_lite.content_plan_sources import positioning_files
 from tin_lite.content_programs import ContentPrograms
 from tin_lite.organic_audit import digest
 from tin_lite.project_files import safe_project_file_path
@@ -273,7 +274,7 @@ class ContentDraftSources:
         receipt = await self.db.get_effect(content_draft.receipt_key(run_id))
         return receipt.result if receipt and receipt.status == "completed" else None
 
-    async def prepare(self, run, *, output_validator=content_draft.VALIDATOR):
+    async def prepare(self, run, *, output_validator=content_draft.VALIDATOR, positioning=False):
         if output_validator not in content_draft.VALIDATORS:
             raise ValueError("Unsupported draft output contract.")
         key = content_draft.receipt_key(run.id)
@@ -406,6 +407,16 @@ class ContentDraftSources:
                     ],
                 }
             )
+            if positioning:
+                # Paths and digests only; the writer reads the files from the pinned checkout.
+                context["positioning"] = [
+                    {key: item[key] for key in ("path", "revision", "sha256")}
+                    for item in await positioning_files(
+                        storage=self.storage,
+                        project=project,
+                        revision=selection["project_revision"],
+                    )
+                ]
             context["frontmatter"] = content_draft.provenance(context)
             if output_validator in content_draft.CLEAN_VALIDATORS:
                 context["output_validator"] = output_validator

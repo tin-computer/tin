@@ -848,7 +848,8 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert "delivery=payload.delivery,\n                remember=payload.remember," in api_source
     # Decisions card: two choices plus Not now and the remember checkbox when GitHub is connected.
     assert (
-        'new Set(["content.generate", "content.public_article", "content.answer_page"])' in script
+        'new Set(["content.generate", "content.public_article", "content.answer_page", '
+        '"content.refresh"])' in script
     )
     assert "function connectedRepository()" in script
     assert "function repositoryDeliveryAvailable(run)" in script

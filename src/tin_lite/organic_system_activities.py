@@ -14,11 +14,13 @@ from tin_lite import technical_fix
 from tin_lite.organic_audit import digest
 from tin_lite.organic_system import (
     KEY,
+    REFRESH_KEY,
     STEPS,
     check_inputs,
     drafts_articles,
     falls_back_to_saved_plan,
     policy_steps,
+    refreshes_pages,
     schedules_articles,
     system_facts,
 )
@@ -117,6 +119,55 @@ def weekly_section(weekly):
     ]
 
 
+def refresh_section(refresh):
+    """The report's account of the page refresh the system started and scheduled."""
+    lines = ["## Page refresh", "", f"Status: {refresh['status']}", ""]
+    if refresh["status"] != "succeeded":
+        return lines + [f"Reason: {refresh['reason'].replace('_', ' ')}.", ""]
+    days = ", ".join(day.capitalize() for day in refresh["weekdays"])
+    first = (refresh.get("next_run_at") or "")[:10]
+    started = (
+        "Tin already refreshes a page each week under an earlier schedule, so it kept that one."
+        if refresh.get("reused")
+        else "Tin started refreshing one page now, before drafting new ones; that run is the "
+        "schedule's first."
+    )
+    return lines + [
+        f"{started} It refreshes the page with the most search impressions at stake every "
+        f"{days} at {refresh['local_time']} ({refresh['timezone']})"
+        + (f", next on {first}." if first else ".")
+        + " Each refresh waits for your review in Decisions, and a page waits six weeks after "
+        "a refresh goes live before it can be refreshed again.",
+        "",
+        f"Saved workflow: `{refresh['project_workflow_id']}`",
+        "",
+    ]
+
+
+def refresh_result(configured):
+    saved = WorkflowSchedule.model_validate(configured.schedule)
+    return {
+        "status": "skipped" if configured.status == "paused" else "succeeded",
+        **({"reason": "existing_schedule_paused"} if configured.status == "paused" else {}),
+        "project_workflow_id": str(configured.id),
+        "weekdays": saved.weekdays,
+        "local_time": saved.local_time,
+        "timezone": saved.timezone,
+        "next_run_at": configured.next_run_at.isoformat() if configured.next_run_at else None,
+    }
+
+
+def refresh_start(now, timezone):
+    """Local midnight a week from today, so the schedule's next run is exactly a week away."""
+    try:
+        zone = ZoneInfo(timezone)
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = ZoneInfo("UTC")
+    local = now.astimezone(zone)
+    midnight = local.replace(hour=0, minute=0, second=0, microsecond=0)
+    return (midnight + WEEKLY_START_DELAY).astimezone(UTC), local.strftime("%A").casefold()
+
+
 def weekly_result(configured):
     saved = WorkflowSchedule.model_validate(configured.schedule)
     return {
@@ -201,6 +252,22 @@ class OrganicSystemActivities:
                         "System child contract is unavailable.", non_retryable=True
                     )
                 definitions[step] = child
+            if refreshes_pages(policy):
+                refresh = json.loads(
+                    await self.storage.read_canonical_artifact(
+                        repo_id="registry/workflows",
+                        commit_sha=run.definition_commit_sha,
+                        path=f"workflows/{REFRESH_KEY}.json",
+                    )
+                )
+                if (
+                    refresh.get("key") != REFRESH_KEY
+                    or refresh.get("executor") != "codex.procedure"
+                ):
+                    raise ApplicationError(
+                        "System child contract is unavailable.", non_retryable=True
+                    )
+                definitions["refresh"] = refresh
             content_delivery = None
             if drafts_articles(policy):
                 from tin_lite.organic_content import pin_destination
@@ -375,6 +442,9 @@ class OrganicSystemActivities:
             raise ApplicationError("System preparation is unavailable.", non_retryable=True)
         if step not in prepared["definitions"] and step != "technical":
             return {"status": "skipped", "reason": "not_in_pinned_recipe"}
+        if step == "draft" and refreshes_pages(prepared["policy"]):
+            # Refreshes come before new pages: the first refresh starts before the draft.
+            await self.first_refresh(run, prepared)
         key = f"traffic:{run_id}:step:{step}"
         async with (
             self.db.effect_lock(f"traffic:{run_id}:control", KEY),
@@ -480,6 +550,117 @@ class OrganicSystemActivities:
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
+
+    async def first_refresh(self, run, prepared):
+        """Save the weekly page refresh and start its first run now, once per system run."""
+        key = f"traffic:{run.id}:refresh"
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result
+            from tin_lite.billing_contracts import BillingError
+            from tin_lite.run_service import WorkflowExecutorUnavailableError
+
+            try:
+                result = await self._first_refresh(run, prepared)
+            except (
+                BillingError,
+                PrerequisiteError,
+                WorkflowExecutorUnavailableError,
+                WorkflowInputError,
+                ValueError,
+                LookupError,
+            ) as exc:
+                # A refresh that cannot start never blocks the article; the report says why.
+                result = {
+                    "status": "blocked",
+                    "reason": "refresh_not_started",
+                    "detail": str(exc)[:300],
+                }
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+            await self.db.complete_effect(conn, execution_key=key, result=result)
+            return result
+
+    async def _first_refresh(self, run, prepared):
+        from tin_lite.project_workflow_operations import sync_project_workflow
+        from tin_lite.run_service import start_workflow_run
+
+        definition = prepared["definitions"].get("refresh")
+        if definition is None:
+            return {"status": "skipped", "reason": "not_in_pinned_recipe"}
+        template = await self.db.get_registry_workflow(REFRESH_KEY)
+        if template is None or template.executor != definition["executor"]:
+            raise ApplicationError("System child executor changed.", non_retryable=True)
+        existing = await self.db.pool.fetchval(
+            "SELECT pw.id FROM project_workflows pw JOIN workflows w ON w.id=pw.workflow_id "
+            "WHERE pw.project_id=$1 AND w.key=$2 AND pw.schedule IS NOT NULL "
+            "AND pw.status IN ('active','paused') AND pw.request_id IS DISTINCT FROM $3 "
+            "ORDER BY pw.created_at, pw.id LIMIT 1",
+            run.project_id,
+            REFRESH_KEY,
+            uuid5(run.id, "weekly-refresh"),
+        )
+        if existing:
+            # An earlier system already refreshes weekly; keep its schedule and its turn.
+            configured = await self.db.get_project_workflow(existing)
+            return {**refresh_result(configured), "reused": True}
+        if self.temporal is None:
+            return {"status": "blocked", "reason": "scheduling_unavailable"}
+        timezone = await founder_timezone(self.db, run.project_id)
+        start_at, weekday = refresh_start(datetime.now(UTC), timezone)
+        schedule = WorkflowSchedule(
+            cadence="weekly",
+            weekdays=[weekday],
+            local_time=run.input.get("article_local_time") or "10:00",
+            timezone=timezone,
+            start_at=start_at,
+        )
+        try:
+            ensure_schedule_allowed(definition, schedule)
+        except WorkflowInputError:
+            return {"status": "blocked", "reason": "weekly_schedule_unsupported"}
+        inputs = normalize_workflow_inputs(
+            schema=definition["input_schema"], project_id=run.project_id, inputs={}
+        )
+        configured = await self.db.create_project_workflow(
+            project_id=run.project_id,
+            workflow_id=template.id,
+            definition_commit_sha=prepared["definition_revision"],
+            name=f"Weekly page refresh — {run.input['site_url']}",
+            inputs=inputs,
+            input_schema=definition["input_schema"],
+            schedule=schedule.model_dump(mode="json"),
+            request_id=uuid5(run.id, "weekly-refresh"),
+            created_by_clerk_user_id=run.started_by_clerk_user_id,
+            pinned_definition=definition,
+        )
+        configured = await sync_project_workflow(
+            runtime=SimpleNamespace(database=self.db, temporal=self.temporal),
+            settings=self.settings,
+            configured=configured,
+        )
+        # The schedule's first run is this one, started now; its next comes a week later.
+        child = await start_workflow_run(
+            runtime=SimpleNamespace(
+                database=self.db,
+                storage=self.storage,
+                integrations=self.integrations,
+                temporal=self.temporal,
+            ),
+            settings=self.settings,
+            workflow=replace(template, definition=definition),
+            project_id=run.project_id,
+            started_by_clerk_user_id=run.started_by_clerk_user_id,
+            start_idempotency_key=f"system:{run.id}:refresh",
+            input_payload=inputs,
+            project_workflow_id=configured.id,
+            definition_commit_sha=prepared["definition_revision"],
+            input_schema=definition["input_schema"],
+            trigger_source=run.trigger_source,
+            trigger_client=run.trigger_client,
+            started_by_oauth_client_id=run.started_by_oauth_client_id,
+            _billing_parent_run_id=run.id if getattr(self.db, "billing", None) else None,
+        )
+        return {**refresh_result(configured), "run_id": str(child.id)}
 
     @activity.defn
     async def organic_system_step_failure(self, payload: dict[str, str]):
@@ -682,6 +863,14 @@ class OrganicSystemActivities:
         fallback = await self.db.get_effect(f"traffic:{run.id}:content_fallback")
         if fallback and fallback.status == "completed" and fallback.result.get("program"):
             lines.extend(fallback_section(fallback.result["program"]))
+        refresh = await self.db.get_effect(f"traffic:{run.id}:refresh")
+        if (
+            refresh
+            and refresh.status == "completed"
+            and refresh.result
+            and refresh.result.get("reason") != "not_in_pinned_recipe"
+        ):
+            lines.extend(refresh_section(refresh.result))
         weekly = facts.get("weekly_articles")
         if weekly and weekly.get("reason") != "not_in_pinned_recipe":
             lines.extend(weekly_section(weekly))
