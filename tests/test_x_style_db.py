@@ -14,6 +14,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import x_style
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.code_storage import CodeStorage
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
 from tin_lite.output_resolution import OutputResolutionService
 from tin_lite.project_files import ProjectFileService
@@ -71,10 +72,29 @@ async def fixture(db, *, source_path=False):
         return await original_read(**kwargs)
 
     async def stage(**kwargs):
-        head = f.storage.repo.head
-        saved = f.storage.repo.edit({kwargs["path"]: kwargs["content"]})
-        f.storage.repo.head = head
-        return saved
+        # Exercise the real executor/path validation; fake only the remote commit.
+        # An untyped staging mock missed X capture falling back to style.capture.
+        files = {}
+
+        async def send():
+            head = f.storage.repo.head
+            saved = f.storage.repo.edit(files)
+            f.storage.repo.head = head
+            return {"commit_sha": saved}
+
+        builder = SimpleNamespace(send=send)
+
+        def add_file(path, content):
+            files[path] = content
+            return builder
+
+        builder.add_file = add_file
+        stager = object.__new__(CodeStorage)
+        stager.procedure_checkpoint_revision = AsyncMock(return_value=None)
+        stager.get_repo = AsyncMock(
+            return_value=SimpleNamespace(create_commit=lambda **options: builder)
+        )
+        return await stager.stage_native_output(**kwargs)
 
     f.storage.read_canonical_artifact = read
     f.storage.stage_native_output = AsyncMock(side_effect=stage)
