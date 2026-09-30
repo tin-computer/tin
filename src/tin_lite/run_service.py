@@ -554,7 +554,8 @@ async def start_workflow_run(
         )
     )
     temporal_options = {}
-    if paid:
+    durable_dispatch = paid or workflow.executor == "social.x_publish"
+    if durable_dispatch:
         from temporalio.common import WorkflowIDReusePolicy
 
         temporal_options["id_reuse_policy"] = WorkflowIDReusePolicy.REJECT_DUPLICATE
@@ -573,9 +574,9 @@ async def start_workflow_run(
     except WorkflowAlreadyStartedError:
         return run
     except Exception as exc:
-        if paid:
+        if durable_dispatch:
             # The committed run/budget is the dispatch intent. A lost acknowledgment
-            # cannot release funds or mark a possibly running execution failed.
+            # cannot release funds or mark a possibly running external delivery failed.
             raise TemporalStartError(run.id, uncertain=True) from exc
         await runtime.database.project_failure(
             run_id=run.id,

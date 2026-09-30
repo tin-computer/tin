@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from temporalio.common import WorkflowIDReusePolicy
 from test_private_workflows import ACTOR, app, mcp
 from test_procedure_publication import publication_db as publication_db
 from test_x_admission import fixture as publish_fixture
@@ -194,3 +195,40 @@ async def test_exact_preview_rejects_changed_text_and_media_before_real_run_admi
             )
             == 1
         )
+
+
+async def test_lost_temporal_ack_retries_dispatch_for_same_approved_run(
+    publication_db, monkeypatch
+):
+    f, client, _ = await setup(publication_db, monkeypatch)
+    put(f, draft())
+    f.runtime.temporal.start_workflow.side_effect = [TimeoutError("lost acknowledgement"), None]
+    base = f"/api/projects/{f.project.id}/x"
+    async with client:
+        preview = await client.post(
+            base + "/preview", json={"path": "social/x/draft.json", "post_id": "p1"}
+        )
+        confirmation = {
+            "preview_token": preview.json()["preview_token"],
+            "request_id": str(uuid4()),
+        }
+        first = await client.post(base + "/publish", json=confirmation)
+        assert first.status_code == 503
+        assert (
+            await f.db.pool.fetchval(
+                "SELECT status FROM workflow_runs WHERE project_id=$1", f.project.id
+            )
+            == "pending"
+        )
+        retry = await client.post(base + "/publish", json=confirmation)
+        assert retry.status_code == 200, retry.text
+    calls = f.runtime.temporal.start_workflow.await_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["id"] == calls[1].kwargs["id"]
+    assert calls[0].kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT count(*) FROM workflow_runs WHERE project_id=$1", f.project.id
+        )
+        == 1
+    )

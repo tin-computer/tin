@@ -281,18 +281,28 @@ class XPosts:
         workflow = await self.db.get_workflow(WORKFLOW_ID)
         if workflow is None:
             raise ValueError("X publishing is not installed; sync the workflow catalog.")
-        run = existing or await start_workflow_run(
-            runtime=self.runtime,
-            settings=self.settings,
-            workflow=workflow,
-            project_id=project_id,
-            started_by_clerk_user_id=approval["actor"],
-            start_idempotency_key=f"x-publish:{approval_id}",
-            input_payload={"approval_id": str(approval_id)},
-            trigger_source="mcp" if client_id and client_id != "browser" else "manual",
-            started_by_oauth_client_id=client_id if client_id != "browser" else None,
-            _x_publication=True,
-        )
+        if approval["actor"] != actor:
+            run = existing
+        else:
+            # Re-enter normal dispatch recovery when creation committed but Temporal's
+            # acknowledgement was lost. Merely returning a pending row would strand it.
+            run = await start_workflow_run(
+                runtime=self.runtime,
+                settings=self.settings,
+                workflow=workflow,
+                project_id=project_id,
+                started_by_clerk_user_id=actor,
+                start_idempotency_key=f"x-publish:{approval_id}",
+                input_payload={"approval_id": str(approval_id)},
+                trigger_source=existing.trigger_source
+                if existing
+                else ("mcp" if client_id and client_id != "browser" else "manual"),
+                trigger_client=existing.trigger_client if existing else None,
+                started_by_oauth_client_id=existing.started_by_oauth_client_id
+                if existing
+                else (client_id if client_id != "browser" else None),
+                _x_publication=True,
+            )
         receipt = await self.db.get_effect(f"{run.id}:x_post")
         result = receipt.result if receipt and receipt.status == "completed" else {}
         return {
