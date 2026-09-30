@@ -107,10 +107,12 @@ def service_terms(definition, *, inputs=None):
                 + CONTENT_PLAN_SHARE_USD
                 + (5 if inputs.get("technical_fix") else 0)
             ) * NANOS_PER_DOLLAR
-            if definition.get("organic_system_policy", {}).get("version") in {
+            version = definition.get("organic_system_policy", {}).get("version")
+            if version in {
                 "organic-traffic-v2",
                 "organic-traffic-v3",
                 "organic-traffic-v4",
+                "organic-traffic-v5",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -118,6 +120,12 @@ def service_terms(definition, *, inputs=None):
                 maximum += (
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
+            if version == "organic-traffic-v5":
+                # v5's first page refresh is a child run; later weekly refreshes are ordinary
+                # scheduled runs with their own funding.
+                from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
+
+                maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]
         kinds = []  # The parent itself never buys a model call.
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []

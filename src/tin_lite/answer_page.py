@@ -17,6 +17,9 @@ SEARCH_STRUCTURE = "answer-seo-v1"
 # A pinned suite carrying this marker gets one repair call, without web search, when the
 # paid draft misses a page check. Older pins fail the run as before.
 REPAIR_MARKER = "ANSWER_REPAIR_V1"
+# A pinned suite carrying this marker also receives the project's brand guide and founder
+# notes as sources, so the page presents the product the way the project does.
+POSITIONING_MARKER = "ANSWER_POSITIONING_V1"
 MAX_SEARCH_CALLS = 4
 MAX_STRUCTURED_SEARCH_CALLS = 12
 MAX_META_TITLE = 60
@@ -48,6 +51,10 @@ class AnswerPageDrafter:
     def __init__(self, *, responses: ResponsesClient, skill_suite: str) -> None:
         self._responses = responses
         self._skill_suite = skill_suite
+
+    @property
+    def reads_positioning(self) -> bool:
+        return POSITIONING_MARKER in self._skill_suite
 
     async def draft(
         self,

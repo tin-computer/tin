@@ -12,6 +12,7 @@ from tin_lite import (
     content_draft,
     content_plan,
     content_plan_editorial,
+    content_refresh,
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
@@ -263,6 +264,17 @@ PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     ),
     queue_clause="Public article draft ready to finish",
     revision_adapter="content-revision.v1",
+)
+
+CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Changes the title, snippet or opening copy of a live page.",
+    review_label="Review refresh",
+    defer_label="Not now",
+    summary=(
+        "A refresh of one of your pages is ready. Compare each current line with the proposed "
+        "one; after you approve, Tin changes exactly those lines in your site's source."
+    ),
+    queue_clause="Page refresh ready to review",
 )
 
 GROWTH_ONBOARDING_REVIEW_POLICY = HumanReviewPolicy(
@@ -601,7 +613,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -674,6 +686,65 @@ BUILTIN_WORKFLOWS = (
             output_path_template=content_draft.PATH_TEMPLATE,
             output_validator=content_draft.EDITORIAL_VALIDATOR,
             output_max_bytes=80_000,
+            project_skills=(
+                ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=content_refresh.WORKFLOW_ID,
+        key=content_refresh.KEY,
+        title="Refresh an existing page",
+        description=(
+            "Pick the page from your latest audit with the most search impressions at stake: "
+            "searchers see it near the top but rarely click, or it ranks just below the top "
+            "results. Propose a new title, meta description and, where they miss the search, "
+            "H1 and opening answer, in your positioning and voice. After you approve in "
+            "Decisions, Tin changes exactly those lines in your site's source and follows your "
+            "delivery setting. A page waits six weeks after a refresh goes live, and later "
+            "runs report its clicks before and after."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand", "weekly"),
+        review_policy=CONTENT_REFRESH_REVIEW_POLICY,
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="run",
+                workflow="organic.audit",
+                level="recommended",
+                reason="The refresh picks its page from the latest audit's search findings.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=STYLE_PATH,
+                producer=style_capture.KEY,
+                reason="The writing guide shapes expression, not product facts.",
+            ),
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to add?",
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+            },
+            "required": ["project_id"],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / content_refresh.KEY,
+            entry_skill="page-refresh",
+            output_path_template=content_refresh.PATH_TEMPLATE,
+            output_validator=content_refresh.VALIDATOR,
+            output_max_bytes=40_000,
             project_skills=(
                 ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
             ),
@@ -783,7 +854,7 @@ BUILTIN_WORKFLOWS = (
             "Save to My system to prepare weekly batches. Does not write articles or publish."
         ),
         executor=content_plan.KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1153,7 +1224,7 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.4.0",
+        version_label="1.5.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1322,7 +1393,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(

@@ -88,9 +88,13 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        ({}, 15),  # keyword $2 + audit $2 + plan $1 + draft $5 + PR adaptation $5
-        ({"content_delivery": "draft_only"}, 10),
-        ({"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"}, 20),
+        # keyword $2 + audit $2 + plan $1 + draft $5 + PR adaptation $5 + first refresh $2.50
+        ({}, 17.5),
+        ({"content_delivery": "draft_only"}, 12.5),
+        (
+            {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
+            22.5,
+        ),
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
@@ -107,4 +111,4 @@ def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
         },
     )
     terms = service_terms(spec.definition, inputs=normalized)
-    assert terms["maximum_nanos"] == dollars * NANOS_PER_DOLLAR
+    assert terms["maximum_nanos"] == int(dollars * NANOS_PER_DOLLAR)
