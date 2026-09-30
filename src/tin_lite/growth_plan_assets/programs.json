@@ -385,12 +385,15 @@
           "project.task",
           "outreach.marketplace_listings",
           "outreach.awesome_lists",
-          "outreach.awesome_submit"
+          "outreach.awesome_submit",
+          "growth.framework_starter"
         ],
-        "integrations": [],
-        "founder_keeps": "marketplace accounts and submissions, and approval of each awesome-list submission; Tin finds the directories and lists and prepares listing copy",
+        "integrations": [
+          "infra.github"
+        ],
+        "founder_keeps": "marketplace accounts and submissions, approval of each awesome-list submission, and merging each starter PR; Tin finds the directories and lists, prepares listing copy and writes framework starters",
         "impact": 0.4,
-        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms, and finds the awesome lists that accept the product and sends the entries the founder approves from their GitHub account; marketplace accounts and submissions are the founder's."
+        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms, and finds the awesome lists that accept the product and sends the entries the founder approves from their GitHub account, and opens a PR with a runnable framework starter developers can clone; marketplace accounts and submissions are the founder's."
       }
     },
     {
@@ -613,6 +616,7 @@
     "social.content_plan": "Plan a sustainable social week",
     "outreach.awesome_submit": "Submit to awesome lists",
     "outreach.awesome_lists": "Get your product into the awesome lists that will actually accept it",
+    "growth.framework_starter": "Add a starter developers can clone",
     "outreach.community_threads": "Find threads where people ask for what you make",
     "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read"
   },
@@ -665,6 +669,7 @@
     "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule.",
     "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",
     "outreach.awesome_lists": "For a public product or repository, reads the growth plan and Code map, finds curated GitHub awesome lists that are alive and whose written rules the product meets, ranks them and prepares one exact entry and pull request text per list; keeps history and never re-recommends a list; never submits (Submit to awesome lists sends what the founder approves).",
+    "growth.framework_starter": "For a product developers integrate (a published SDK, public API, webhooks or embed in the connected repository): opens one unmerged PR adding a small runnable starter for one framework (Next.js, FastAPI, Vite React or Express) under the repository's examples directory, calling only what the repository defines and keeping secrets server-side; says no for products with nothing to integrate and never repeats a framework; never merges, deploys, publishes a package or creates a repository.",
     "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
     "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone."
   }
