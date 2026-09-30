@@ -14,7 +14,12 @@ customer id; Tin's manager account (`TIN_LITE_GOOGLE_ADS_MANAGER_CUSTOMER_ID`, a
 credential minted once against the Google OAuth client) sends a manager invitation
 (`customerClientLinks`, status `PENDING`), and the founder accepts it inside Google Ads under
 Admin, Access and security, Managers. Accepting inside their own account is the proof of
-ownership; Tin stores no Google credential of theirs. The card shows the link state, then
+ownership; Tin stores no Google credential of theirs. The link counts only for the project whose invitation
+created it: the connection records that invitation's `managerLinkId`, the link status must
+match it, and a connect that finds a link or invitation this project didn't send is refused
+and leaves nothing behind. A link that two projects record (possible only for connections
+made before this rule) works for neither until one disconnects, and that disconnect leaves
+the link in place for the other. The card shows the link state, then
 billing and whether any conversion action records data (`configuration.health`). Every
 request runs under the manager token with `login-customer-id` set, is bounded by the adapter in
 `src/tin_lite/google_ads.py` (allowlisted endpoints, fixed GAQL in
