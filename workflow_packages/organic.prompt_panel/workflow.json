@@ -1,0 +1,97 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.prompt_panel",
+    "title": "Choose the buyer questions AI visibility is measured on",
+    "description": "Draft 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. The family weights come from your positioning and your own Search Console searches, not from keyword volume alone. Review it in Decisions; approving freezes it, and the organic audit then measures AI answers on these questions every run so results compare.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "reason": "Approval freezes the panel: the organic audit asks these questions from its next run on.",
+      "review_label": "Review buyer questions",
+      "defer_label": "Not now",
+      "summary": "Check that the first family is the category you sell in and that each prompt sounds like a buyer. Approving freezes the panel for the organic audit.",
+      "queue_clause": "Buyer questions ready to review"
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "brand/BRAND.md",
+        "producer": "brand.capture",
+        "reason": "The brand guide names the product, its category and its competitors, which set the lead family."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map says what the product does, for the adjacent families and the branded fact checks."
+      },
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.keyword_plan",
+        "reason": "The keyword plan supplies the words buyers use; it adds vocabulary, never weight."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "target": {
+          "type": "string",
+          "maxLength": 253,
+          "default": "",
+          "title": "Website domain",
+          "description": "Leave empty to use the organic audit's host."
+        },
+        "seed_keywords": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {"type": "string", "minLength": 1, "maxLength": 200},
+          "title": "Extra seed phrases (optional)"
+        },
+        "competitor_names": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {"type": "string", "minLength": 1, "maxLength": 100},
+          "title": "Competitors to include (optional)"
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": ["search_analytics.read"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/prompt-panel/SKILL.md",
+        "skills/prompt-panel/PANEL.md"
+      ],
+      "entry_skill": "prompt-panel",
+      "workspace": {"kind": "project.state"},
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
+      "services": {
+        "gsc": {"provider_key": "analytics.gsc", "max_calls": 2, "max_response_bytes": 64000}
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/research/prompt-panel/PROMPT_PANEL.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases need fictional Loopwell project states (brand guide, Feature map, optional keyword plan) and a stubbed Search Console; they are not live evidence.",
+    "tests/test_prompt_panel.py checks PANEL.md's weights and checks offline and runs the ordinary case's assertions on a fixture report."
+  ],
+  "cost_drivers": [
+    "One Codex procedure run: the positioning files, the keyword plan (up to about 250 KB) and up to 1,000 Search Console queries in, 36 prompts and up to three check-and-fix rounds out. Unmeasured until qualification."
+  ],
+  "effects": [
+    "Replaces reports/research/prompt-panel/PROMPT_PANEL.md with a draft. Approving it in Decisions freezes it for the organic audit. Never runs prompts against an AI assistant; no send, post, spend, PR or provider change."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Loopwell: a brand guide naming the category, a keyword plan dominated by an adjacent category, and Search Console queries. The core family must lead.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "<!-- prompts.json:start -->",
+          "\"schema\": \"tin.prompt_panel/1\"",
+          "\"role\": \"core\"",
+          "\"weight\": 0.4,",
+          "Status: draft"
+        ],
+        "excludes": ["\"status\": \"frozen\"", "Status: incomplete"]
+      }
+    },
+    {
+      "id": "no_positioning",
+      "description": "No brand guide, Feature map or onboarding plan: the run stops and names the files instead of guessing the category.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped", "brand/BRAND.md"],
+        "excludes": ["<!-- prompts.json:start -->"]
+      }
+    },
+    {
+      "id": "forcing_clause_must_fail",
+      "description": "A draft where one discovery prompt reads \"which project management tool is best for early-stage startups\": the check must catch it and the delivered panel must not contain it.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Checks"],
+        "excludes": ["which project management tool is best for early-stage startups"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "category",
+      "question": "Is F1 the category the positioning says the product sells in, in the buyers' own words, and does it weigh 0.40?"
+    },
+    {
+      "id": "prompts",
+      "question": "Do the prompts read like what people type into an assistant: short, varied, close to real queries, open and plural, with no invented budgets or team sizes?"
+    },
+    {
+      "id": "boundaries",
+      "question": "Does the product appear only in the branded prompts, is every competitor mention flagged, and does the panel stay a draft?"
+    }
+  ]
+}
