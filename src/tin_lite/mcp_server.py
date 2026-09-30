@@ -1429,6 +1429,8 @@ def create_mcp_app(
         Under the current policy one technical fix repairs every fixable finding of the audit
         in one PR. The preview sorts them: plan.repairs (in the PR), decisions_needed (judgment
         calls), and plan.left_out (copy for the content workflows, manual steps, already fine).
+        decisions_needed also holds URL changes Page decisions or a site architecture plan
+        proposed (planned.redirect, planned.noindex); answer them the same way.
         Answer each decisions_needed item yourself from the codebase and what you know about
         the product; ask the founder only the ones you're unsure of. Pass the answers as
         decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
