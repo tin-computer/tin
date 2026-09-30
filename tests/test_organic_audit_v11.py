@@ -255,3 +255,72 @@ async def test_v11_redrafts_when_the_review_rejects_two_of_four():
     correction = json.loads(requests[7]["input"])["correction"]
     assert correction["reason"] == "panel_questions_too_few"
     assert "rejected_questions" in correction["review"]
+
+
+def _site_with_site_wide_speed() -> dict:
+    from test_organic_audit_angles import pagespeed_payload
+    from test_organic_audit_findings import facts as page_facts
+    from test_organic_audit_findings import files
+
+    from tin_lite.organic_audit_fetch import lighthouse_summary, pagespeed_summary
+
+    payload = pagespeed_payload(origin_fallback=True)
+    result = {
+        "status": "observed",
+        **pagespeed_summary(payload),
+        "lighthouse": lighthouse_summary(payload),
+    }
+    return {
+        "files": files(urls=["/"]),
+        "plan": None,
+        "pages": [page_facts("/", h1_count=1)],
+        "pages_status": "complete",
+        "pagespeed": {"status": "completed", "results": [{"url": f"{BASE}/", "result": result}]},
+    }
+
+
+def test_a_v10_report_keeps_the_wording_it_was_released_with():
+    from test_organic_audit_findings import v10_documents
+
+    from tin_lite.organic_audit import V10_AUDIT_POLICY
+
+    _, v10, _, _ = v10_documents(policy=V10_AUDIT_POLICY, site=_site_with_site_wide_speed())
+    _, v11, _, _ = v10_documents(policy=AUDIT_POLICY, site=_site_with_site_wide_speed())
+    released = (
+        "Not measured in this version: backlinks and brand mentions on other sites are out of "
+        "scope."
+    )
+    assert released in v10 and released not in v11
+    assert "The sites AI answers cite" not in v10 and "The sites AI answers cite" in v11
+    # v10 called page and site-wide field data both "field"; v11 tells them apart.
+    assert "| field |" in v10 and "site-wide field data" not in v10
+    assert "site-wide field data" in v11
+
+
+def test_a_malformed_link_is_one_link_not_the_rest_of_the_page():
+    from tin_lite.organic_audit_site import html_facts
+
+    body = (
+        b'<html lang="en"><body><a href="https://[YOUR-DOMAIN]/pricing">Pricing</a>'
+        b"<h1>Plans for small teams</h1><p>One plan for every team that ships weekly.</p>"
+        b'<a href="https://other.example/">Partner</a></body></html>'
+    )
+    facts = html_facts(body, url=f"{BASE}/", charset="utf-8", truncated=False)
+    assert facts["h1_count"] == 1
+    assert facts["external_links"] == 1
+
+
+def test_unclosed_tags_parse_in_linear_time():
+    import time as clock
+
+    from tin_lite.organic_audit_site import html_facts
+
+    # Unclosed paragraphs and stray end tags: scanning a stack of every open tag on each end
+    # tag made this quadratic, seconds per page inside the worker's event loop.
+    body = (
+        "<html><body><div>" + "<p>word " * 40_000 + "</b>" * 40_000 + "</div></body></html>"
+    ).encode()
+    started = clock.monotonic()
+    facts = html_facts(body, url=f"{BASE}/", charset="utf-8", truncated=False)
+    assert clock.monotonic() - started < 2
+    assert facts["h1_count"] == 0
