@@ -1,0 +1,96 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.blog_index",
+    "title": "Build or fix the blog index",
+    "description": "Make every published article reachable within two clicks: trace where your connected repository keeps its posts, then open an unmerged PR for a blog index that lists them from that source, with dates, summaries, categories when there are enough posts, an RSS feed and sitemap dates taken from each post. Uses the route you chose for articles; if none is chosen yet, it asks you once instead. Reports each post's search clicks and impressions. Never merges or deploys.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map points at the post route and where it reads posts."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "analytics/traffic-snapshot.json",
+        "producer": "organic.traffic_snapshot",
+        "reason": "The snapshot adds 28-day visits and first-touch signups per post to the numbers."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "build", "improve", "check"],
+          "default": "auto",
+          "title": "Mode",
+          "description": "Auto builds an index when there is none and improves the one there is; check reports only."
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50,
+          "default": 24,
+          "title": "Posts per page above 100 posts"
+        },
+        "featured": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500},
+          "title": "Posts to feature (optional)",
+          "description": "Leave empty to feature the three with the most search clicks in 90 days."
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "contents.write", "pull_requests.read", "pull_requests.write"],
+        "required": true
+      },
+      {"provider_key": "analytics.gsc", "capabilities": ["search_analytics.read"], "required": true}
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/blog-index/SKILL.md",
+        "skills/blog-index/MEASUREMENT.md",
+        "skills/blog-index/RESULT.md"
+      ],
+      "entry_skill": "blog-index",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "pull_requests.read"]
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
+      "services": {
+        "gsc": {"provider_key": "analytics.gsc", "max_calls": 4, "max_response_bytes": 32000}
+      },
+      "output": {
+        "kind": "github.pull_request",
+        "provider_key": "infra.github",
+        "max_files": 5,
+        "max_bytes": 120000,
+        "receipt_path_template": "reports/blog-index/{run_id}/RESULT.md",
+        "allow_no_change": true
+      },
+      "verification": {
+        "commands": ["git diff --check", "git status --short"]
+      }
+    }
+  }
+}
