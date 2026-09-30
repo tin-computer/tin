@@ -79,14 +79,37 @@ test("Paper-based X reader and editor stay within the screen and use the active 
         const layout = await page.evaluate(() => {
           const reader = document.querySelector(".x-posts-reader");
           const styles = getComputedStyle(reader);
+          const documentView = reader.querySelector(".x-posts-document");
+          const reference = document.createElement("article");
+          reference.className = "markdown-document";
+          reference.style.cssText = "position:absolute;visibility:hidden;pointer-events:none";
+          reference.innerHTML = "<h1>Reader title</h1><div>Reader copy</div>";
+          reader.append(reference);
+          const type = node => {
+            const style = getComputedStyle(node);
+            return [style.fontFamily, style.fontSize, style.fontWeight, style.lineHeight, style.letterSpacing];
+          };
+          const typography = {
+            title: type(documentView.querySelector("h1")), expectedTitle: type(reference.querySelector("h1")),
+            copy: type(documentView.querySelector(".x-posts-copy")), expectedCopy: type(reference.querySelector("div")),
+          };
+          reference.remove();
+          const column = documentView.getBoundingClientRect(), bounds = reader.getBoundingClientRect();
           return {overflow: document.documentElement.scrollWidth > innerWidth,
             background: styles.backgroundColor, expected: getComputedStyle(document.body).backgroundColor,
-            color: styles.color, width: document.querySelector(".x-posts-column").getBoundingClientRect().width};
+            color: styles.color, width: column.width,
+            centered: Math.abs((column.left + column.right) - (bounds.left + bounds.right)) < 2,
+            firstContent: documentView.firstElementChild.tagName,
+            typography};
         });
         assert.equal(layout.overflow, false, `${theme} at ${width}`);
         assert.equal(layout.background, layout.expected);
         assert.notEqual(layout.color, layout.background);
         assert.ok(layout.width <= 680);
+        assert.equal(layout.centered, true, `centered reading column: ${theme} at ${width}`);
+        assert.equal(layout.firstContent, "H1", "the document starts with its title, without an eyebrow");
+        assert.deepEqual(layout.typography.title, layout.typography.expectedTitle);
+        assert.deepEqual(layout.typography.copy, layout.typography.expectedCopy);
         if (process.env.TIN_X_SCREENSHOTS) await page.screenshot({path: `/tmp/tin-x-reader-${theme}-${width}.png`, fullPage: true, animations: "disabled"});
         await page.getByRole("button", {name: "Edit post", exact: true}).click();
         await page.getByRole("button", {name: "Choose from Files", exact: true}).click();
@@ -100,6 +123,7 @@ test("Paper-based X reader and editor stay within the screen and use the active 
     await page.setViewportSize({width: 1440, height: 1000});
     await page.getByRole("button", {name: "Preview post", exact: true}).click();
     await page.locator("[data-x-exact]").waitFor();
+    assert.equal(await page.locator("[data-x-exact].markdown-document > h1:first-child").count(), 1);
     if (process.env.TIN_X_SCREENSHOTS) await page.screenshot({path: "/tmp/tin-x-preview-dark.png", fullPage: true, animations: "disabled"});
     assert.deepEqual(errors, []);
     await context.close();

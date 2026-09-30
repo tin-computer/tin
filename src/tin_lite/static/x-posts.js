@@ -185,6 +185,7 @@
     const i = state.selected;
     const exact = state.preview;
     const editing = state.editing && post;
+    const heading = `<h1>Post ${i + 1}${state.draft?.posts.length > 1 ? ` of ${state.draft.posts.length}` : ""}</h1>`;
     state.root.innerHTML = `<header class="markdown-context-bar x-posts-context">
       <button type="button" class="markdown-return" data-x-close>← ${esc(state.context.returnLabel || "files")}</button>
       <span class="markdown-context-separator" aria-hidden="true"></span>
@@ -194,12 +195,11 @@
         <button type="button" class="x-posts-button" data-x-action="edit" aria-expanded="${!!editing}">${editing ? "Close editing" : "Edit post"}</button>
         ${exact ? `<button type="button" class="x-posts-button is-publish" data-x-action="publish">Publish this exact post</button>` : `<button type="button" class="x-posts-button is-primary" data-x-action="preview" data-post="${i}" data-x-preview>Preview post</button>`}` : ""}
     </header>
-    <div class="x-posts-layout" data-x-body>
+    <div class="markdown-reader-layout x-posts-layout" data-x-body>
       ${state.draft ? `<nav class="x-posts-nav" aria-label="Draft posts">${state.draft.posts.map((item, index) => `<button type="button" data-x-action="select" data-post="${index}" ${i === index ? 'aria-current="true"' : ""}>Post ${index + 1}<span>${esc(statusLabel(item))}</span></button>`).join("")}</nav>` : ""}
       <div class="x-posts-column">
         <p class="x-posts-status" role="status" data-x-status ${state.message ? "" : "hidden"}>${esc(state.message)}</p>
         ${post ? `<section class="x-posts-card" data-x-card="${i}">
-          <div class="x-posts-heading"><span>X · ${exact ? "Ready to publish" : esc(statusLabel(post))}</span><h1>Post ${i + 1}${state.draft.posts.length > 1 ? ` of ${state.draft.posts.length}` : ""}</h1></div>
           ${state.notes ? `<aside class="x-posts-notes" aria-label="Draft notes"><h2>Draft notes</h2>${post.editor_notes ? `<p>${esc(post.editor_notes)}</p>` : ""}
             ${post.missing_assets?.length ? `<p>Resolve these before publishing:</p><ul>${post.missing_assets.map((item, j) => `<li>${esc(item)} <button class="x-posts-link" type="button" data-x-action="resolve-asset" data-post="${i}" data-asset="${j}">Mark resolved</button></li>`).join("")}</ul>` : ""}
             ${post.support?.length ? `<details class="x-posts-support"><summary>Supporting facts · ${post.support.length}</summary>${post.support.map(item => `<p><code>${esc(item.source_path)}</code><br>${esc(item.excerpt)}</p>`).join("")}</details>` : ""}
@@ -215,7 +215,7 @@
               <p class="x-posts-limit">Up to four images (PNG or JPEG, 5 MB each) or one MP4 video (64 MB, 5 minutes).</p>
             </div><footer class="x-posts-editor-actions"><button type="button" class="x-posts-button is-primary" data-x-action="save">Save draft</button></footer>
           </section>` : ""}
-          ${exact ? `<article class="x-posts-exact" data-x-exact aria-label="Exact X preview"><p class="x-posts-account">Posting as <strong>${esc(exact.account?.username || exact.account?.id || "")}</strong></p><div class="x-posts-copy">${esc(exact.text)}</div>${readMedia(exact.attachments, true)}</article>` : `<article class="x-posts-document" aria-label="Post text"><div class="x-posts-copy" data-x-copy>${esc(post.text)}</div>${readMedia(post.attachments)}</article>`}
+          ${exact ? `<article class="markdown-document x-posts-document x-posts-exact" data-x-exact aria-label="Exact X preview">${heading}<p class="x-posts-account">Posting as <strong>${esc(exact.account?.username || exact.account?.id || "")}</strong></p><div class="x-posts-copy">${esc(exact.text)}</div>${readMedia(exact.attachments, true)}</article>` : `<article class="markdown-document x-posts-document" aria-label="Post text">${heading}<div class="x-posts-copy" data-x-copy>${esc(post.text)}</div>${readMedia(post.attachments)}</article>`}
           ${!state.notes && (post.readiness !== "ready" || post.missing_assets?.length) ? `<p class="x-posts-needs">${esc(statusLabel(post))}. <button type="button" class="x-posts-link" data-x-action="notes">Review draft notes</button></p>` : ""}
         </section>
         <footer class="x-posts-footer"><button type="button" class="x-posts-link" data-x-action="reload">Reload saved draft</button><a href="/activity?project=${encodeURIComponent(state.context.projectId)}">View Activity →</a></footer>` : ""}

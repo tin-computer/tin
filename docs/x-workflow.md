@@ -73,10 +73,6 @@ then select **Publish this exact post**. Missing evidence or assets must be reso
 first. A changed post, attachment or account requires a new preview. The reader follows
 the dashboard’s light and dark themes; its URL also works when opened through MCP.
 
-![X draft reader in the dashboard, with synthetic example text](images/x-drafts.png)
-
-![The same X reader using the dashboard’s dark theme](images/x-drafts-dark.png)
-
 The first release accepts:
 
 - Text within the standard 280 weighted-character limit; links and emoji receive X-aware
@@ -107,6 +103,27 @@ the user's publication instruction before calling it. File paths refer to the bo
 the upload handoff uses the browser instead of sending large base64 files through MCP.
 
 ## Verification
+
+### Design references
+
+The source is Page 1 of [thinklikeanagent in Paper](https://app.paper.design/file/01M0TWXA4TWEXQTK664B7997HZ/1-0).
+Workflow setup uses the existing System cards and expanded forms (boards 81 and 94).
+Drafts share the Markdown reader’s centered 680px column and title/body styles from
+board 19, without an eyebrow. Boards 132 and 128 guide the context actions and the
+separate editing panel. Post text stays literal, including line breaks; Markdown
+syntax never changes what will be posted. Fonts come from the dashboard’s shared
+brand setting, including the licensed hosted font and the self-host fallback.
+
+These are exports of the Paper source designs, not screenshots of the X implementation.
+Their example workflows, article copy and actions illustrate the shared components.
+
+![Paper board 94: workflow setup in an expanded System card](images/paper-workflow-setup.png)
+
+![Paper board 132: draft reading and context actions](images/paper-draft-reader.png)
+
+![Paper board 128: an editing panel above the document](images/paper-draft-panel.png)
+
+### Automated and live checks
 
 Offline provider fixtures cover OAuth state, token refresh, account and capability checks,
 media requests and ambiguous writes. Tests with disposable Postgres cover guide approval

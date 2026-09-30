@@ -1,5 +1,6 @@
-/* Paper 132/128: reader context, a 680px document, and editing outside the copy.
-   Use the dashboard's theme aliases so paper and coal follow the same structure. */
+/* Paper 19 supplies the shared Markdown typography and centered reading column;
+   132/128 supply context actions and editing outside the copy. No title eyebrows.
+   The dashboard's font and theme aliases apply in both paper and coal. */
 .x-posts-reader { container: x-reader / inline-size; min-height: 100svh; background: var(--paper-bg); color: var(--ink); font-family: var(--sans); }
 .x-posts-context { min-height: 62px; gap: 16px; }
 .x-posts-context .markdown-filename { min-width: 0; color: var(--ink-secondary); }
@@ -11,22 +12,21 @@
 .x-posts-button:disabled, .x-posts-reader button:disabled { opacity: .5; cursor: default; }
 .x-posts-link { padding: 0; border: 0; background: transparent; color: var(--accent-text); font: 400 13px/20px var(--sans); cursor: pointer; }
 .x-posts-reader button:focus-visible, .x-posts-reader input:focus-visible, .x-posts-reader select:focus-visible, .x-posts-reader textarea:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 3px; }
-.x-posts-layout { display: grid; grid-template-columns: 150px minmax(0, 680px); justify-content: center; align-items: start; gap: 28px; padding: 64px 32px 80px; }
+.x-posts-layout { align-items: start; padding: 64px 0 80px; }
 .x-posts-nav { position: sticky; top: 98px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
 .x-posts-nav button { padding: 0; background: transparent; color: var(--ink-secondary); font: 400 13px/19px var(--sans); text-align: left; cursor: pointer; }
 .x-posts-nav button[aria-current] { color: var(--bermellon-text); font-weight: 700; }
 .x-posts-nav button span { display: block; margin-top: 3px; color: var(--ink-secondary); font-weight: 400; font-size: 12px; }
 .x-posts-column { min-width: 0; }
 .x-posts-status { margin: 0 0 28px; padding: 12px 16px; background: var(--paper-well); border-radius: var(--radius-chip); color: var(--ink-secondary); font: 400 13px/20px var(--sans); overflow-wrap: anywhere; }
-.x-posts-heading { margin-bottom: 28px; }
-.x-posts-heading > span { font: 400 12px/18px var(--mono); color: var(--ink-secondary); }
-.x-posts-heading h1 { margin: 8px 0 0; font: 400 32px/40px var(--sans); letter-spacing: -.02em; }
-.x-posts-copy { white-space: pre-wrap; overflow-wrap: anywhere; font: 400 24px/36px var(--sans); }
+.x-posts-document { padding: 0; }
+/* Preserve exact X text; shared reader styles must not interpret it as Markdown. */
+.x-posts-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
 .x-posts-account { margin: 0 0 20px; color: var(--ink-secondary); font: 400 15px/23px var(--sans); }
 .x-posts-account strong { color: var(--ink); font-weight: 700; }
-.x-posts-editor, .x-posts-notes { margin-bottom: 32px; padding: 24px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
-.x-posts-editor > label, .x-posts-reader h2 { display: block; margin: 0 0 12px; font: 700 17px/23px var(--sans); }
-.x-posts-editor textarea { width: 100%; min-height: 116px; padding: 14px 16px; resize: vertical; border: 1px solid var(--paper-border-strong); border-radius: var(--radius-chip); background: var(--input-bg); color: var(--ink); font: 400 17px/28px var(--sans); }
+.x-posts-editor, .x-posts-notes { margin-bottom: 48px; padding: 24px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
+.x-posts-editor > label, .x-posts-reader h2 { display: block; margin: 0 0 16px; font: 700 17px/22px var(--sans); }
+.x-posts-editor textarea { width: 100%; min-height: 116px; padding: 14px 16px; resize: vertical; border: 1px solid var(--paper-border-strong); border-radius: var(--radius-chip); background: var(--input-bg); color: var(--ink); font: 400 15px/24px var(--sans); }
 .x-posts-editor > small { display: block; margin-top: 8px; color: var(--ink-secondary); font: 400 12px/18px var(--sans); }
 .x-posts-attachments { margin-top: 24px; }
 .x-posts-add { display: flex; flex-wrap: wrap; gap: 12px; }
@@ -62,8 +62,8 @@
 .x-posts-needs { margin-top: 28px; color: var(--ink-secondary); font: 400 13px/20px var(--sans); }
 .x-posts-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--paper-border); }
 .x-posts-footer a { color: var(--accent-text); text-decoration: none; font: 400 13px/20px var(--sans); }
-@container x-reader (max-width: 1000px) {
-  .x-posts-layout { grid-template-columns: minmax(0, 680px); gap: 32px; padding-top: 36px; }
+@container x-reader (max-width: 1100px) {
+  .x-posts-layout { width: min(680px, calc(100% - 64px)); grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 36px; transform: none; }
   .x-posts-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 16px 28px; }
   .x-posts-nav button span { display: none; }
   .x-posts-context { flex-wrap: wrap; gap: 12px; }
@@ -75,9 +75,7 @@
   .x-posts-context .markdown-filename { flex-basis: 65%; font-size: 11px; }
   .x-posts-context > .x-posts-link { margin-right: auto; }
   .x-posts-context .x-posts-button, .x-posts-editor .x-posts-button { min-height: 44px; }
-  .x-posts-layout { padding: 28px 20px 48px; }
-  .x-posts-copy { font-size: 20px; line-height: 30px; }
-  .x-posts-heading h1 { font-size: 28px; line-height: 36px; }
+  .x-posts-layout { width: calc(100% - 40px); padding: 28px 0 48px; }
   .x-posts-editor, .x-posts-notes { padding: 16px; }
   .x-posts-file-picker { grid-template-columns: minmax(0, 1fr); }
   .x-posts-media-actions { grid-column: 1 / -1; }
