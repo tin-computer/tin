@@ -6585,7 +6585,7 @@ class Database:
                   AND result->>'project_id'=$1::text
             )
             DELETE FROM effect_receipts
-            WHERE operation IN ('social.x_publish', 'social.x_style') AND (
+            WHERE operation IN ('social.x_publish', 'social.x_style', 'social.x_revise') AND (
                 (execution_key LIKE 'x:preview:%' AND result->>'project_id'=$1::text)
                 OR execution_key LIKE 'x:confirm:' || $1::text || ':%'
                 OR (split_part(execution_key, ':', 2) IN ('approved', 'media', 'post')

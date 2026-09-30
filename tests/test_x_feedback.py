@@ -375,3 +375,41 @@ async def test_projection_retry_recovers_commit_without_new_model_or_write(
     assert f.storage.repo.writes == writes
     assert (await f.db.get_run(run.id)).status.value == "succeeded"
     assert f.router.generate.await_count == 1
+
+
+async def test_lost_dispatch_is_recovered_without_billing_loop(publication_db):
+    from temporalio.common import WorkflowIDReusePolicy
+
+    from tin_lite.run_service import TemporalStartError
+    from tin_lite.workflows import XFeedbackWorkflow
+
+    f = await setup(publication_db)
+    f.runtime.temporal.start_workflow.side_effect = TimeoutError()
+    with pytest.raises(TemporalStartError) as caught:
+        await request(f)
+    assert "unconfirmed" in str(caught.value)
+    run = await f.db.get_run(caught.value.run_id)
+    assert run.status.value == "pending"
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET created_at=now()-interval '31 seconds' WHERE id=$1", run.id
+    )
+    f.runtime.temporal.start_workflow.side_effect = None
+    await dispatch_reviews(f.runtime, f.settings)
+    call = f.runtime.temporal.start_workflow.await_args
+    assert call.args == (XFeedbackWorkflow.run, str(run.id))
+    assert call.kwargs["id_reuse_policy"] == WorkflowIDReusePolicy.REJECT_DUPLICATE
+    assert (
+        await f.db.pool.fetchval(
+            "SELECT count(*) FROM workflow_runs WHERE executor=$1", x_feedback.KEY
+        )
+        == 1
+    )
+
+
+async def test_project_purge_removes_revision_content_receipts(publication_db):
+    f = await setup(publication_db)
+    run = await request(f)
+    await f.activities.generate(str(run.id))
+    async with f.db.pool.acquire() as conn, conn.transaction():
+        await f.db.purge_project_data(conn, project_id=f.project.id)
+    assert await f.db.get_effect(f"{run.id}:x_feedback_model") is None

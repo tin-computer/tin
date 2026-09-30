@@ -568,7 +568,7 @@ async def start_workflow_run(
         )
     )
     temporal_options = {}
-    durable_dispatch = paid or workflow.executor == "social.x_publish"
+    durable_dispatch = paid or workflow.executor in {"social.x_publish", "social.x_revise"}
     if durable_dispatch:
         from temporalio.common import WorkflowIDReusePolicy
 
