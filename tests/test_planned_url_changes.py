@@ -51,7 +51,7 @@ def architecture(generated="2026-09-20", redirects=None):
         or [
             {"old": "/features", "new": "/product", "status": 308, "reason": "url_change"},
             {"old": "/compare/x-alternatives", "new": "/alternatives/x", "status": 301},
-            {"old": "/tmp", "new": "/", "status": 302},
+            {"old": "/spring-promo", "new": "/", "status": 302},
         ],
     }
     return (
