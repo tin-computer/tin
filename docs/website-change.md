@@ -145,7 +145,7 @@ its folders or name spell it (`src/app/(auth)/sign-in/[[...sign-in]]/page.tsx`,
 
 ### The project setting
 
-The setting lives in `project_protected_paths` (migration 054), not in a project file. Each
+The setting lives in `project_protected_paths` (migration 055), not in a project file. Each
 save appends one revision: the paths, `changed_by_clerk_user_id`, `changed_at` and the
 `request_id`. The newest revision is the setting; the older ones are its history, which
 `get_protected_paths` returns newest first. A trigger refuses any update to a saved revision.
