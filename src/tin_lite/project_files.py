@@ -285,6 +285,7 @@ class ProjectFileService:
         ):
             raise ValueError(f"message must contain 1-{MAX_PROJECT_FILE_MESSAGE_BYTES} UTF-8 bytes")
         normalized = normalize_project_file_mutations(changes)
+        await self._refuse_pending_proposal_edits(project, normalized)
         payload = [item.__dict__ for item in normalized]
         fingerprint = project_file_request_fingerprint(
             operation="commit", expected_revision=expected_revision, payload=payload
@@ -334,6 +335,18 @@ class ProjectFileService:
                 revision=revision,
                 changed_paths=changed_paths,
                 operation="commit",
+            )
+
+    async def _refuse_pending_proposal_edits(self, project: Project, changes) -> None:
+        """A brand or style proposal waiting in Decisions changes only through its revision
+        route, which validates it and records who revised it (capture_revisions.py)."""
+        from tin_lite.capture_revisions import TOOL, pending_owner
+
+        paths = {path for item in changes for path in (item.path, item.new_path) if path}
+        if owner := await pending_owner(self._database, self._storage, project.id, paths):
+            raise ValueError(
+                "This file is a proposal waiting in Decisions. Revise it with "
+                f"{TOOL} (run_id {owner}) so Tin checks it, or approve or discard it there."
             )
 
     async def revert_latest(

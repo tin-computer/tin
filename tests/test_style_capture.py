@@ -20,6 +20,7 @@ from test_procedure_publication import publication_db as publication_db
 from test_project_codex_execution import temporal_env as temporal_env
 
 from tin_lite.billing_contracts import test_terms as billing_test_terms
+from tin_lite.capture_revisions import StyleProposalReview
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import CodeStorage
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
@@ -208,7 +209,7 @@ def test_document_conversion_is_bounded_and_text_only():
             extract_sample(filename, content)
 
 
-async def capture_fixture(db, *, reviewed=True):
+async def capture_fixture(db, *, reviewed=True, revisable=True):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
@@ -217,6 +218,9 @@ async def capture_fixture(db, *, reviewed=True):
     definition = builtin.definition
     if not reviewed:  # A run pinned to the definition from before review.
         definition = {k: v for k, v in definition.items() if k != "human_review"}
+    if not revisable:  # A run pinned to 1.1.0, before agent revisions and bound approval.
+        definition = {k: v for k, v in definition.items() if k != "proposal_revision"}
+        definition["version"] = "1.1.0"
     revision = "d" * 40
     await db.upsert_registry_workflow(
         workflow_id=builtin.id,
@@ -266,8 +270,16 @@ async def capture_fixture(db, *, reviewed=True):
     return f
 
 
+async def accept(f, run):
+    """Approve the version the founder read, as Decisions does (1.2.0)."""
+    reviews = StyleProposalReview(database=f.db, storage=f.storage)
+    view = await reviews.view(run.id, ACTOR)
+    await reviews.approve(run_id=run.id, actor=ACTOR, token=view["review_token"])
+
+
 async def approve(f, run):
     assert await f.activities.propose(str(run.id))
+    await accept(f, run)
     await f.activities.record_approval(str(run.id))
 
 
@@ -307,6 +319,7 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     assert head[STYLE_PATH][1] == b"My current guide\n" and b"provisional" in head[proposal][1]
     decisions = await f.db.list_pending_decisions(project_id=f.project.id)
     assert [d["run_id"] for d in decisions] == [run.id]
+    await accept(f, run)
     for _ in range(2):
         await f.activities.record_approval(str(run.id))
     for _ in range(2):
@@ -330,8 +343,10 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     )
 
 
-async def test_guide_waits_for_approval_and_saves_the_approved_edit(publication_db):
-    f = await capture_fixture(publication_db)
+async def test_guide_pinned_to_1_1_waits_for_approval_and_saves_the_approved_edit(
+    publication_db,
+):
+    f = await capture_fixture(publication_db, revisable=False)
     run = await start(f)
     await f.activities.prepare(str(run.id))
     await f.activities.extract(str(run.id))
@@ -347,8 +362,8 @@ async def test_guide_waits_for_approval_and_saves_the_approved_edit(publication_
     assert head[STYLE_PATH][1] == b"# Writing style\n\nMy corrected guide.\n"
 
 
-async def test_removed_proposal_leaves_the_current_guide(publication_db):
-    f = await capture_fixture(publication_db)
+async def test_removed_proposal_pinned_to_1_1_leaves_the_current_guide(publication_db):
+    f = await capture_fixture(publication_db, revisable=False)
     f.storage.repo.edit({STYLE_PATH: b"My current guide\n"})
     run = await start(f)
     await f.activities.prepare(str(run.id))
@@ -624,6 +639,7 @@ async def test_capture_waits_in_temporal_for_approval_and_replays(publication_db
                 break
             await asyncio.sleep(0.05)
         assert STYLE_PATH not in f.storage.repo.trees[f.storage.repo.head]
+        await accept(f, run)  # The review dispatcher then signals the waiting run.
         await handle.signal("approve")
         await asyncio.wait_for(handle.result(), 30)
         history = await handle.fetch_history()

@@ -4410,6 +4410,11 @@ class TinActivities:
                     applied = await self._db.get_effect(f"{run.id}:procedure_document_apply")
                     if not applied or applied.status != "completed":
                         raise RuntimeError("The approved project documents have not been applied")
+                    from tin_lite.capture_revisions import latest_revision
+
+                    # A pair the founder's agent revised finishes on the revision approved.
+                    if revised := await latest_revision(self._db, run.id):
+                        sha = revised["revision"]
                 artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
                 if path == MEMORY_INDEX_PATH:
                     # A section-owning procedure rewrote project memory; Luna and the memory

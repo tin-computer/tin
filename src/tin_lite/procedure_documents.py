@@ -8,6 +8,9 @@ from tin_lite.brand_contract import VALIDATOR as BRAND_VALIDATOR
 from tin_lite.project_files import credential_findings, safe_project_file_path
 
 MAX_DOCUMENT_BYTES = 64_000
+# A pair declaring this lets the founder's coding agent revise the waiting proposal before
+# approval (capture_revisions.py). Runs pinned without it keep the edit-means-new-run rule.
+AGENT_REVISION = "capture-revision.v1"
 # A run-owned path names its run by identifier, or by a folder people can read in Files.
 RUN_PATH_PLACEHOLDERS = ("{run_id}", "{run_folder}")
 
@@ -36,6 +39,7 @@ class DocumentPair:
     companion_max_bytes: int
     companion_label: str
     destinations: tuple[str, str]
+    agent_revision: bool = False
 
     def resolve(self, run_id, started_at=None):
         return replace(
@@ -100,7 +104,14 @@ def parse_document_pair(output, definition):
     label = companion["label"]
     if not isinstance(label, str) or not label.strip() or len(label) > 80:
         raise ValueError("companion label must contain 1–80 characters")
-    return DocumentPair(paths[1], companion["max_bytes"], label, target_paths)
+    revision = output.get("agent_revision")
+    if revision is not None and (
+        revision != AGENT_REVISION or output.get("validator") != BRAND_VALIDATOR
+    ):
+        raise ValueError("agent revision is declared only by the brand capture pair")
+    return DocumentPair(
+        paths[1], companion["max_bytes"], label, target_paths, agent_revision=revision is not None
+    )
 
 
 def validate_document(content, maximum):

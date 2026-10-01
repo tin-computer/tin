@@ -27,6 +27,7 @@ from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
+from tin_lite.capture_revisions import ProposalFile
 from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
@@ -43,7 +44,7 @@ from tin_lite.content_program_api import (
     stop_content_run,
 )
 from tin_lite.content_programs import ContentPrograms
-from tin_lite.document_handoff import document_handoff
+from tin_lite.document_handoff import document_handoff, document_url
 from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -3217,11 +3218,20 @@ def create_mcp_app(
             "byte_count": len(output.content),
             "truncated": len(content) > 100_000,
             **(
-                document_handoff(settings, run)
+                document_handoff(settings, run, await _capture_proposal(run))
                 if source == "canonical" and output.path == run.artifact_path
                 else {}
             ),
         }
+
+    async def _capture_proposal(run: Any) -> Any:
+        """A waiting 1.2.0 brand or style proposal's revision contract, else None."""
+        from tin_lite.capture_revisions import contract
+        from tin_lite.document_handoff import review_pending
+
+        if not review_pending(run):
+            return None
+        return await contract(runtime().database, runtime().storage, run)
 
     @server.tool()
     async def compare_run_output(run_id: str) -> dict[str, Any]:
@@ -3707,6 +3717,59 @@ def create_mcp_app(
             "result": "Revision accepted; queued for execution.",
         }
 
+    @server.tool()
+    async def revise_capture_proposal(
+        run_id: str,
+        review_token: str,
+        request_id: str,
+        files: list[ProposalFile],
+        note: str = "",
+        client: TriggerClient | None = None,
+    ) -> dict[str, Any]:
+        """Revise a brand.capture or style.capture proposal that waits in Decisions.
+
+        First get_workflow_review: it gives review_token and the proposal files (documents[].path).
+        Send the complete new text of one or both files, not a patch. Tin checks them with the
+        capture's own validators, replaces the proposal files and keeps the run waiting. Only
+        that run's proposal files, only before the founder decides. Reuse request_id to retry.
+        This never approves: the founder still approves or discards it in Decisions.
+        """
+        from tin_lite.capture_revisions import CaptureRevisions, review_view
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="revise_capture_proposal"
+        )
+        services = runtime()
+        result = await CaptureRevisions(
+            database=services.database, storage=services.storage
+        ).revise(
+            run_id=run.id,
+            actor=token.subject,
+            review_token=review_token,
+            request_id=_mcp_uuid(request_id, field="request_id"),
+            files=[item.model_dump() for item in files],
+            note=note,
+            source="mcp",
+            client=client,
+            oauth_client_id=token.client_id,
+        )
+        view = await review_view(services.database, services.storage, run.id, token.subject)
+        url = document_url(settings, run)
+        return {
+            **result,
+            "review_token": view["review_token"],
+            "proposal_revisions": view.get("proposal_revisions"),
+            "review_url": url,
+            **_founder_words(
+                relay=[
+                    f"Tin saved revision {result['revision_number']} of the proposed "
+                    f"{result['proposal']}. It still waits in Decisions, where they approve or "
+                    f"discard it: {url}",
+                ]
+            ),
+        }
+
     async def _adaptation_words(
         run: Any, chosen: dict[str, Any], actor: str
     ) -> tuple[list[str], dict[str, Any] | None]:
@@ -3772,7 +3835,8 @@ def create_mcp_app(
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
         and supply its review_token. Approval applies both declared destinations atomically;
-        delivery and writing-style feedback do not apply to these pairs.
+        delivery and writing-style feedback do not apply to these pairs. A writing style
+        proposal from style.capture 1.2.0 needs its review_token the same way.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -3823,6 +3887,7 @@ def create_mcp_app(
 
                     route_question = ask_the_founder(page_type(run), None)
 
+        from tin_lite.capture_revisions import STYLE_KEY, binds_style_approval
         from tin_lite.reviewed_documents import document_spec
 
         if (
@@ -3831,6 +3896,10 @@ def create_mcp_app(
             or (
                 run.executor == "codex.procedure"
                 and await document_spec(runtime().database, runtime().storage, run)
+            )
+            or (
+                run.executor == STYLE_KEY
+                and await binds_style_approval(runtime().database, runtime().storage, run)
             )
         ):
             approved = await WorkflowReviews(runtime=runtime(), settings=settings).approve(
