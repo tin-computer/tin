@@ -313,7 +313,9 @@ cap the run at $0.20), and each call reserves $0.05 before dispatch. The cost Da
 reports then settles it through `service_pricing` and the credit ledger, exactly as native
 keyword research does; a supplier overrun above the reservation is Tin's loss. A refused
 request (bad arguments, rate limit, Tin's account out of balance) settles at its reported cost,
-usually $0, and later steps can still call. Paid managed services are for `workflow.code`
+usually $0, and later steps can still call. A read Tin can't confirm (a server error, or an
+oversized, malformed or mismatched answer) stays unconfirmed: billing reconciles it rather than
+counting it free, Tin doesn't repeat it, and the run's later service calls stop with a named error. Paid managed services are for `workflow.code`
 packages only; a Codex procedure's session budget funds its own model calls, so procedures
 may bind `managed.pagespeed` but not `managed.dataforseo`.
 

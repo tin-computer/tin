@@ -362,7 +362,9 @@ class CodeServices:
                 # Credits or project limits refused the reservation before anything was sent.
                 async with conn.transaction():
                     await self.db.complete_effect(
-                        conn, execution_key=key, result={**record, "error": "spending_stopped"}
+                        conn,
+                        execution_key=key,
+                        result={**record, "error": "spending_stopped", "message": SPENDING_STOPPED},
                     )
                 raise CodeServiceError(SPENDING_STOPPED) from None
             except ServiceCallRefused as exc:

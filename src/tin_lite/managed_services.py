@@ -701,6 +701,7 @@ class ManagedServices:
         return {**base, "status": "unavailable", "reason": "provider_error", "http_status": status}
 
     async def _dataforseo(self, operation, request, *, execution_key, max_response_bytes):
+        from tin_lite.dataforseo import DataForSEOError
         from tin_lite.keyword_data import DataForSEOTaskError, KeywordData
 
         spec = OPERATIONS[(DATAFORSEO_PROVIDER, operation)]
@@ -717,6 +718,13 @@ class ManagedServices:
             )
         except DataForSEOTaskError as exc:
             raise _refusal(exc.status_code) from None
+        except DataForSEOError:
+            # Sent, but its outcome is unconfirmed: a server error, an oversized or malformed
+            # answer, or one for another request. The read and its cost stay unconfirmed, and
+            # the step is not repeated.
+            raise IntegrationUpstreamError(
+                "DataForSEO's answer could not be confirmed; Tin will not repeat this read."
+            ) from None
         return dataforseo_result(operation, request, task, max_response_bytes=max_response_bytes)
 
 

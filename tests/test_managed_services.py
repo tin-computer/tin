@@ -27,12 +27,13 @@ from test_workflow_code import setup, start
 from tin_lite import managed_services
 from tin_lite.code_activities import CodeActivities
 from tin_lite.code_models import model_terms
-from tin_lite.code_services import OPERATION, CodeServiceError
+from tin_lite.code_services import OPERATION, SPENDING_STOPPED, CodeServiceError
 from tin_lite.connection_records import ServiceArgumentError
 from tin_lite.domain import RunStatus
 from tin_lite.integrations import (
     IntegrationRateLimitedError,
     IntegrationService,
+    IntegrationUpstreamError,
     ServiceCallRefused,
     parse_integration_requirements,
 )
@@ -425,6 +426,29 @@ async def test_dataforseo_refusals_are_known_outcomes(answer, error, code):
     assert caught.value.code == code and "fixture" not in str(caught.value)
 
 
+def another_tag(request):
+    """A complete answer for a different request: DataForSEO echoed another task's tag."""
+    answer = json.loads(dataforseo("dataforseo_serp.json")(request).content)
+    answer["tasks"][0]["data"]["tag"] = "tin-svc-someone-else"
+    return httpx.Response(200, json=answer)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    [
+        lambda r: httpx.Response(503, json={"status_code": 50000}),
+        lambda r: httpx.Response(200, content=b"[" + b" " * 4_000_001 + b"]"),
+        lambda r: httpx.Response(200, json={"status_code": 20000, "tasks": None}),
+        another_tag,
+    ],
+    ids=["server_error", "oversized", "invalid_envelope", "another_tag"],
+)
+async def test_an_unconfirmed_dataforseo_answer_is_an_upstream_error(answer):
+    with pytest.raises(IntegrationUpstreamError) as caught:
+        await call(Provider(advanced=answer), "serp.organic", {"keyword": "crm"})
+    assert "fixture" not in str(caught.value) and "someone" not in str(caught.value)
+
+
 # ---------------------------------------------------------------- declaration and funding
 
 
@@ -730,3 +754,55 @@ async def test_a_refused_dataforseo_read_settles_and_a_later_step_still_runs(bil
         ("observed", 0),
         ("observed", 10_200_000),
     ]
+
+
+async def test_an_unconfirmed_read_stays_unconfirmed_and_is_not_repeated(billed, monkeypatch):
+    f = billed
+    await fund(f)
+    provider = Provider(live=lambda r: httpx.Response(503, json={"status_code": 50000}))
+    calls = [
+        ("dataforseo", "links", "backlinks.summary", {"target": "example.com"}),
+        ("dataforseo", "links", "backlinks.summary", {"target": "example.com"}),
+    ]
+    manifest = definition((DATAFORSEO_PROVIDER, 2))
+    server, code, active, compute = await prepare(
+        f, monkeypatch, manifest, calls, provider, policy="managed-code-model-v1"
+    )
+    run_id = (await start(f, server, active))["id"]
+    await finish(code, run_id)
+    lost, replay = compute.results
+    assert "will not be repeated" in lost["error"]
+    assert "unconfirmed result" in replay["error"]
+    assert len(provider.requests) == 1
+    # Sent and unconfirmed: the receipt and its reservation stay open, never settled as free.
+    receipt = await f.db.pool.fetchrow(
+        "SELECT status FROM effect_receipts WHERE operation=$1", OPERATION
+    )
+    assert receipt["status"] != "completed"
+    operation = await f.db.pool.fetchrow("SELECT status, observed_nanos FROM billing_operations")
+    assert operation["status"] not in {"observed", "settled"}
+    assert operation["observed_nanos"] is None
+
+
+async def test_a_replayed_spending_stop_keeps_its_reason(billed, monkeypatch):
+    f = billed
+    await fund(f)
+    provider = Provider(live=dataforseo("dataforseo_keyword_overview.json"))
+    calls = [
+        ("dataforseo", "volumes", "keywords.overview", {"keywords": ["kanban board"]}),
+        ("dataforseo", "volumes", "keywords.overview", {"keywords": ["kanban board"]}),
+    ]
+    manifest = definition((DATAFORSEO_PROVIDER, 2))
+    server, code, active, compute = await prepare(
+        f, monkeypatch, manifest, calls, provider, policy="managed-code-model-v1"
+    )
+    run_id = (await start(f, server, active))["id"]
+    from tin_lite.billing_contracts import BillingError
+
+    async def refuse(*args, **kwargs):
+        raise BillingError("budget_exhausted", "The run budget is spent.")
+
+    monkeypatch.setattr(f.db.billing, "begin_operation", refuse)
+    await finish(code, run_id)
+    assert compute.results == [{"error": SPENDING_STOPPED}] * 2
+    assert not provider.requests
