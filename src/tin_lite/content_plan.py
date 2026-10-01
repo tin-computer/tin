@@ -9,7 +9,8 @@ from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from tin_lite.organic_audit import canonical_json, digest
 
@@ -49,6 +50,22 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# What content.generate writes for an item. An item without a kind is an article, as every
+# plan before kinds existed was. Tin sets the field; the v1 model schema never offered it.
+ARTICLE, ANSWER, REFRESH = "article", "answer", "refresh"
+KINDS = (ARTICLE, ANSWER, REFRESH)
+Kind = Literal["article", "answer", "refresh"]
+
+
+def item_kind(item: dict) -> str:
+    """The item's kind: an article unless the plan says answer or refresh."""
+    return item.get("kind") or ARTICLE
+
+
+# How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
+KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+
+
 class ContentItem(Strict):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     title: str = Field(min_length=1, max_length=180)
@@ -59,6 +76,16 @@ class ContentItem(Strict):
     source_ids: list[str] = Field(max_length=12)
     verification: list[str] = Field(min_length=1, max_length=8)
     readiness: Literal["needs_verification", "ready", "deferred"]
+    # Hidden from the JSON schema, so the pinned v1 model contract stays byte for byte, and
+    # left out of the file when absent, so older plans and their brief digests are unchanged.
+    kind: SkipJsonSchema[Kind | None] = None
+
+    @model_serializer(mode="wrap")
+    def _without_absent_kind(self, handler):
+        data = handler(self)
+        if data.get("kind") is None:
+            data.pop("kind", None)
+        return data
 
 
 class ContentBatch(Strict):
@@ -101,6 +128,13 @@ class ContentPlan(Strict):
                     raise ValueError("Source and verification fields must be bounded text.")
                 if item.action == "update_page" and not item.destination:
                     raise ValueError("An existing-page update needs its destination URL.")
+                if item.kind == ANSWER and (item.action != "new_page" or item.destination):
+                    raise ValueError(
+                        "An answer page is a new page; it lands at the route the founder "
+                        "chose for answer pages, so it has no destination."
+                    )
+                if item.kind == REFRESH and item.action != "update_page":
+                    raise ValueError("A page refresh updates an existing page at its URL.")
                 if item.destination:
                     url = urlsplit(item.destination)
                     if (
@@ -331,6 +365,11 @@ def render_plan(
                 "",
                 f"Action: {item['action']} · {item['readiness']}",
                 "",
+                *(
+                    [f"Kind: {KIND_LABELS[item['kind']]}", ""]
+                    if item.get("kind") in KIND_LABELS
+                    else []
+                ),
                 f"Destination: {markdown_text(item['destination']) or 'To be decided'}",
                 "",
                 "Verify: " + "; ".join(markdown_text(v) for v in item["verification"]),

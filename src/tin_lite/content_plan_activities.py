@@ -26,7 +26,12 @@ from tin_lite.content_plan import (
     render_plan,
     validate_change,
 )
-from tin_lite.content_plan_sources import context_files, positioning_files, research_sources
+from tin_lite.content_plan_sources import (
+    context_files,
+    page_decision_refreshes,
+    positioning_files,
+    research_sources,
+)
 from tin_lite.content_programs import ContentPrograms, decoded
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
@@ -40,6 +45,18 @@ from tin_lite.workflow_evidence import integration_inventory
 # second (the keyword review's measured pace) takes close to five minutes. The provider's
 # 90-second default stopped production plans before they finished.
 MODEL_TIMEOUT_SECONDS = 300
+
+
+def plan_kinds(research):
+    """The kinds this run's evidence supports: answers need an AI-visibility gap finding and
+    refreshes a page a refresh could fix. Articles are always possible."""
+    rows = research.get("rows", [])
+    kinds = {legacy.ARTICLE}
+    if any(row["data"].get("check_id") == editorial.ANSWER_CHECK for row in rows):
+        kinds.add(legacy.ANSWER)
+    if any(row["source_id"].startswith(editorial.REFRESH_SOURCE_PREFIX) for row in rows):
+        kinds.add(legacy.REFRESH)
+    return kinds
 
 
 class ContentPlanActivities:
@@ -69,6 +86,20 @@ class ContentPlanActivities:
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=value)
         return value
+
+    async def typed_research(self, contract, project, revision):
+        """For a typed (v7) contract: research also lists the pages a refresh could fix."""
+        if not getattr(contract, "TYPED", False):
+            return {}
+        return {
+            "typed": True,
+            "planned": await page_decision_refreshes(
+                storage=self.storage,
+                project=project,
+                revision=revision,
+                today=datetime.now(UTC).date(),
+            ),
+        }
 
     async def page_inventory(self, run, context, *, bind_sources=False):
         saved = await self.saved(run.id, "pages")
@@ -362,7 +393,11 @@ class ContentPlanActivities:
                     ):
                         raise ValueError("A working plan already exists; it was left unchanged.")
                     research = await research_sources(
-                        database=self.db, storage=self.storage, project=project, inputs=run.input
+                        database=self.db,
+                        storage=self.storage,
+                        project=project,
+                        inputs=run.input,
+                        **await self.typed_research(contract, project, head),
                     )
                     plan = empty_plan(program_id, run.input, research["scope"])
                     selected = run.input.get("context_files", [])
@@ -407,6 +442,7 @@ class ContentPlanActivities:
                             storage=self.storage,
                             project=project,
                             inputs=configured.inputs,
+                            **await self.typed_research(contract, project, head),
                         )
                         if amendment
                         else {"sources": original_context["research"]["sources"]}
@@ -482,14 +518,25 @@ class ContentPlanActivities:
                             {
                                 "data": data,
                                 "aliases": aliases,
-                                "schema": editorial.bound_schema(pages, aliases),
+                                "schema": editorial.bound_schema(
+                                    pages,
+                                    aliases,
+                                    schema=contract.MODEL_SCHEMA,
+                                    kinds=plan_kinds(context["research"]),
+                                ),
                             },
                         )
                     data, aliases = prepared["data"], prepared["aliases"]
                     proposed = await self.model(
                         run, data, contract=contract, schema=prepared["schema"]
                     )
-                    plan, quality = editorial.allocate(context, proposed, pages, aliases)
+                    plan, quality = editorial.allocate(
+                        context,
+                        proposed,
+                        pages,
+                        aliases,
+                        typed=getattr(contract, "TYPED", False),
+                    )
                     quality["model_page_text_limit"] = data["model_page_text_limit"]
                 else:
                     proposed = await self.model(run, context, contract=contract)

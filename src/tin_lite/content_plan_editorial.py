@@ -87,6 +87,8 @@ class Portfolio(legacy.Strict):
 
 
 MODEL_SCHEMA = Portfolio.model_json_schema()
+# Contracts v2 to v6 ask for this untyped portfolio; v7 replaces MODEL_SCHEMA below.
+PORTFOLIO_SCHEMA = MODEL_SCHEMA
 V2_POLICY, V2_INSTRUCTIONS = POLICY, INSTRUCTIONS
 POLICY = {**V2_POLICY, "version": "content-editorial-v3", "source_aliases": "readable-v1"}
 INSTRUCTIONS += """
@@ -159,6 +161,52 @@ POLICY = {**V5_POLICY, "version": "content-editorial-v6", "positioning_files": "
 INSTRUCTIONS = V5_INSTRUCTIONS.replace(POSITIONING_OWNER, POSITIONING_FROM_FILES)
 
 
+# v7 (content.plan 0.8.0): one list to write from. Every opportunity names its kind, so the
+# plan schedules answer pages for AI-visibility gaps and refreshes of existing pages beside
+# articles, and content.generate drafts whichever comes next.
+V6_POLICY, V6_INSTRUCTIONS = POLICY, INSTRUCTIONS
+# The audit's finding for buyer questions whose sampled AI answers did not cite the site.
+ANSWER_CHECK = "content.buyer_answer_coverage"
+# Research rows for pages a refresh could fix; Tin writes them, never the model.
+REFRESH_SOURCE_PREFIX = "refresh:"
+MAX_REFRESH_SOURCES = 10
+
+
+class TypedOpportunity(Opportunity):
+    kind: legacy.Kind
+
+
+class TypedPortfolio(legacy.Strict):
+    strategy: str = Field(min_length=1, max_length=3500)
+    gaps: list[str] = Field(max_length=12)
+    excluded: list[str] = Field(max_length=20)
+    opportunities: list[TypedOpportunity] = Field(max_length=81)
+
+
+POLICY = {
+    **V6_POLICY,
+    "version": "content-editorial-v7",
+    "plan_kinds": "typed-v1",
+    "max_refresh_sources": MAX_REFRESH_SOURCES,
+}
+INSTRUCTIONS = (
+    V6_INSTRUCTIONS
+    + f"""
+Every opportunity has a kind; the three share the calendar's capacity, so weigh them against
+each other by evidence. article is the planned piece described above. answer is an AI-visibility
+gap: a buyer question from a cited {ANSWER_CHECK} audit finding, where the sampled AI answers
+did not cite the site. An answer is a new_page with an empty page_id; its title is that buyer
+question in the buyer's words, and its brief says what a direct answer must establish.
+refresh is an existing page from a cited refresh source: searchers see it but rarely click, it
+ranks just below the top results, or a page decision marked it for a refresh. A refresh is an
+update_page with the inspected page_id of exactly that page, and its brief names the searches
+the title, meta description, H1 and opening answer should meet. Never plan a refresh and an
+article update for the same page. Use answer and refresh only with those sources.
+"""
+)
+MODEL_SCHEMA = TypedPortfolio.model_json_schema()
+
+
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
 POSITIONING_DIRECTIVE = re.compile(
@@ -180,35 +228,27 @@ def without_positioning(text):
 
 
 def contract(definition):
-    """Never reinterpret a saved v1 program or accept an edited execution policy."""
-    current = SimpleNamespace(
-        POLICY=POLICY, INSTRUCTIONS=INSTRUCTIONS, MODEL_SCHEMA=MODEL_SCHEMA, ROUTE_KEY=ROUTE_KEY
-    )
-    v2 = SimpleNamespace(
-        POLICY=V2_POLICY,
-        INSTRUCTIONS=V2_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v3 = SimpleNamespace(
-        POLICY=V3_POLICY,
-        INSTRUCTIONS=V3_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v4 = SimpleNamespace(
-        POLICY=V4_POLICY,
-        INSTRUCTIONS=V4_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v5 = SimpleNamespace(
-        POLICY=V5_POLICY,
-        INSTRUCTIONS=V5_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    for module in (legacy, v2, v3, v4, v5, current):
+    """Never reinterpret a saved v1 program or accept an edited execution policy.
+
+    `TYPED` says whether the contract's opportunities carry a kind (v7 and later).
+    """
+
+    def pinned(policy, instructions, schema, typed=False):
+        return SimpleNamespace(
+            POLICY=policy,
+            INSTRUCTIONS=instructions,
+            MODEL_SCHEMA=schema,
+            ROUTE_KEY=ROUTE_KEY,
+            TYPED=typed,
+        )
+
+    current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True)
+    v2 = pinned(V2_POLICY, V2_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v3 = pinned(V3_POLICY, V3_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    for module in (legacy, v2, v3, v4, v5, v6, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY
@@ -249,6 +289,13 @@ def clean_url(url, host):
 def page_candidates(context):
     host = context["research"]["scope"]["host"]
     candidates = [f"https://{host}/"]
+    # Pages a refresh could fix come first, so the bounded inventory reads them; only v7
+    # research has these rows.
+    candidates += [
+        row["data"]["url"]
+        for row in context["research"].get("rows", [])
+        if row["source_id"].startswith(REFRESH_SOURCE_PREFIX)
+    ]
     candidates += [
         item["destination"]
         for batch in context["plan"]["batches"]
@@ -404,9 +451,13 @@ def model_context(context, pages, *, readable_aliases=False):
     return data, aliases
 
 
-def bound_schema(pages, aliases):
-    schema = deepcopy(MODEL_SCHEMA)
-    properties = schema["$defs"]["Opportunity"]["properties"]
+def bound_schema(pages, aliases, schema=PORTFOLIO_SCHEMA, kinds=None):
+    """The pinned contract's schema, bound to this run's pages, sources and (v7) kinds."""
+    schema = deepcopy(schema)
+    definitions = schema["$defs"]
+    properties = (definitions.get("TypedOpportunity") or definitions["Opportunity"])["properties"]
+    if "kind" in properties and kinds is not None:
+        properties["kind"]["enum"] = [kind for kind in legacy.KINDS if kind in kinds]
     properties["page_id"]["enum"] = [""] + [
         p["page_id"] for p in pages["pages"] if p["status"] == "inspected"
     ]
@@ -419,9 +470,15 @@ def bound_schema(pages, aliases):
     return schema
 
 
-def allocate(context, proposed, pages, aliases):
-    portfolio = Portfolio.model_validate(proposed).model_dump()
-    portfolio, consolidations = consolidate_updates(portfolio, pages, context)
+def allocate(context, proposed, pages, aliases, *, typed=False):
+    """Validate the portfolio and place it on the calendar.
+
+    `typed` is the pinned contract's TYPED: v7 opportunities name a kind, which the plan item
+    keeps (articles stay without one, as before kinds existed).
+    """
+    model = TypedPortfolio if typed else Portfolio
+    portfolio = model.model_validate(proposed).model_dump()
+    portfolio, consolidations = consolidate_updates(portfolio, pages, context, model=model)
     if any(not 0 < len(v) <= 900 for v in portfolio["gaps"] + portfolio["excluded"]):
         raise ValueError("Editorial evidence gaps must be bounded nonempty text.")
     plan = deepcopy(context["plan"])
@@ -446,9 +503,11 @@ def allocate(context, proposed, pages, aliases):
         if b["id"] not in context["editable"]
         for item in b["items"]
     }
+    rows = {row["source_id"]: row for row in (context["research"] or {}).get("rows", [])}
     items, decisions, positioning_removed = [], [], 0
     for opportunity in opportunities:
-        item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale"}}
+        item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale", "kind"}}
+        kind = opportunity.get("kind", legacy.ARTICLE)
         if "positioning" in context:
             # Positioning comes from the project's files, so a brief never carries its own.
             brief, removed = without_positioning(item["brief"])
@@ -475,7 +534,13 @@ def allocate(context, proposed, pages, aliases):
             if opportunity["page_id"]:
                 raise ValueError("A new-page brief cannot target an existing page.")
             destination = ""
+        if kind == legacy.ANSWER:
+            check_answer(item, rows)
+        elif kind == legacy.REFRESH:
+            check_refresh(item, destination, rows)
         item.update(destination=destination, readiness="needs_verification")
+        if kind != legacy.ARTICLE:
+            item["kind"] = kind
         items.append(item)
         decisions.append(
             {
@@ -538,7 +603,43 @@ def allocate(context, proposed, pages, aliases):
     ), coverage
 
 
-def consolidate_updates(portfolio, pages, context):
+def check_answer(item, rows):
+    """An answer page answers a buyer question the audit found AI answers missing the site on."""
+    if item["action"] != "new_page":
+        raise ValueError("An answer page is a new page, not an update of an existing one.")
+    if not any(
+        (rows.get(source) or {}).get("data", {}).get("check_id") == ANSWER_CHECK
+        for source in item["source_ids"]
+    ):
+        raise ValueError(
+            "An answer page cites the audit finding whose buyer questions AI answers missed."
+        )
+
+
+def check_refresh(item, destination, rows):
+    """A refresh targets a page the audit or Page decisions marked, and cites that source."""
+    from tin_lite.content_refresh import url_key
+
+    if item["action"] != "update_page":
+        raise ValueError("A page refresh updates an existing page.")
+    wanted = url_key(destination)
+    source = next(
+        (
+            source_id
+            for source_id, row in rows.items()
+            if source_id.startswith(REFRESH_SOURCE_PREFIX) and row["data"]["path"] == wanted
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError(
+            "A page refresh targets a page the audit or Page decisions marked for a refresh."
+        )
+    if source not in item["source_ids"]:
+        item["source_ids"].append(source)
+
+
+def consolidate_updates(portfolio, pages, context, *, model=Portfolio):
     """One URL, one brief; preserve every proposed section/check or fail the size bound.
 
     This is not a semantic merge or a model repair call. Both original proposals remain
@@ -574,9 +675,12 @@ def consolidate_updates(portfolio, pages, context):
             kept[field] += "\n\n" + opportunity[field]
         for field in ("source_ids", "verification"):
             kept[field] = list(dict.fromkeys(kept[field] + opportunity[field]))
+        if "kind" in kept and opportunity["kind"] != kept["kind"]:
+            # An article update rewrites the whole page, so it covers a refresh of it.
+            kept["kind"] = legacy.ARTICLE
         facts.append(
             {"kept_item_id": kept["id"], "merged_item_id": merged_id, "destination": page["url"]}
         )
     proposal["opportunities"] = result
     # No truncation, dropped claims/checks, or relaxation of the editable file contract.
-    return Portfolio.model_validate(proposal).model_dump(), facts
+    return model.model_validate(proposal).model_dump(), facts

@@ -12,7 +12,12 @@ from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, di
 from tin_lite.project_files import safe_project_file_path
 
 
-async def research_sources(*, database, storage, project, inputs):
+async def research_sources(*, database, storage, project, inputs, typed=False, planned=None):
+    """The pinned audit and keyword research as source rows.
+
+    `typed` (content-editorial-v7) adds one row per page a refresh could fix, from the audit's
+    search findings and `planned`, Page decisions' refresh rows (see page_decision_refreshes).
+    """
     sources, loaded = {}, {}
     for kind, executor, prefix, source_paths, limits in (
         ("audit", "organic.audit", "organic", audit_paths, ARTIFACT_LIMITS),
@@ -113,6 +118,8 @@ async def research_sources(*, database, storage, project, inputs):
                 },
             }
         )
+    if typed:
+        rows.extend(refresh_rows(findings, audit, planned))
     return {
         "sources": sources,
         "scope": {
@@ -132,6 +139,31 @@ async def research_sources(*, database, storage, project, inputs):
             "Keyword group and exclusion judgments may be wrong.",
         ],
     }
+
+
+def refresh_rows(findings, evidence, planned=None):
+    """Source rows for the pages a refresh could fix, most impressions at stake first."""
+    from tin_lite.content_plan_editorial import MAX_REFRESH_SOURCES, REFRESH_SOURCE_PREFIX
+    from tin_lite.content_refresh import plan_candidates
+
+    return [
+        {
+            "source_id": REFRESH_SOURCE_PREFIX + digest(page["path"])[:20],
+            "data": {"kind": "refresh_candidate", "title": f"refresh {page['path']}", **page},
+        }
+        for page in plan_candidates(findings, evidence, planned, limit=MAX_REFRESH_SOURCES)
+    ]
+
+
+async def page_decision_refreshes(*, storage, project, revision, today):
+    """Pages a current Page decisions file (organic.content_efficacy) marks for a refresh, as
+    site paths with the audit checks each stands for.
+
+    organic.content_efficacy and its reader (planned_url_changes) arrive with PR #239; until
+    then no project has such a file, so there are none. #239 returns
+    planned_url_changes.refresh_candidates here, the same rows content.refresh reads.
+    """
+    return {}
 
 
 async def context_files(*, storage, project, revision, paths):

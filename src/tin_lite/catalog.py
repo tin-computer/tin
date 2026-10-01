@@ -1087,11 +1087,13 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
         title="Plan upcoming content",
         description=(
-            "Turn an audit and keyword research into an editable two-week to six-month roadmap. "
-            "Save to My system to prepare weekly batches. Does not write articles or publish."
+            "Turn an audit and keyword research into an editable two-week to six-month roadmap: "
+            "new articles, answer pages for buyer questions AI assistants miss you on, and "
+            "refreshes of existing pages. Save to My system to prepare weekly batches. Does not "
+            "write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.7.0",
+        version_label="0.8.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",

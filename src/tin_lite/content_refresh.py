@@ -183,6 +183,45 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
     }
 
 
+def plan_candidates(
+    findings_document: dict, evidence: dict, planned: dict | None = None, *, limit: int = 10
+) -> list[dict]:
+    """Pages a refresh could fix, for content.plan, most search impressions at stake first.
+
+    The same pool content.refresh chooses from: the audit's search findings, plus `planned`,
+    the refresh rows of a current Page decisions file as site paths with the audit checks
+    each stands for. Waiting pages are not removed here; content.generate skips them when it
+    selects the item.
+    """
+    rows = page_rows(evidence)
+    pages = candidates(findings_document)
+    host = (evidence.get("scope") or {}).get("host")
+    for path, checks in (planned or {}).items() if host else ():
+        entry = pages.setdefault(url_key(path), {"url": f"https://{host}{path}", "checks": set()})
+        entry["checks"] |= set(checks) & REFRESH_CHECKS
+        entry["planned"] = True
+    empty = {"clicks": 0.0, "impressions": 0.0, "position": 0.0}
+    ranked = sorted(
+        pages.items(), key=lambda pair: (-rows.get(pair[0], empty)["impressions"], pair[0])
+    )
+    found = []
+    for key, entry in ranked[:limit]:
+        row = rows.get(key, empty)
+        ctr = row["clicks"] / row["impressions"] if row["impressions"] else 0.0
+        found.append(
+            {
+                "url": entry["url"],
+                "path": key,
+                "checks": sorted(entry["checks"]),
+                "metrics": {**row, "ctr": round(ctr, 4)},
+                "searches": top_searches(evidence, key),
+                "body_allowed": bool(entry["checks"] & BODY_CHECKS),
+                **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
+            }
+        )
+    return found
+
+
 # Reading the page as it is today.
 
 
