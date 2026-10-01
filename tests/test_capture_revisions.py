@@ -2,6 +2,7 @@
 brand or style proposal, Tin checks it with the capture's own validators, and approval applies
 exactly the version the founder read. Runs pinned before 1.2.0 keep their old rules."""
 
+import asyncio
 import hashlib
 import json
 from dataclasses import replace
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import asyncpg
 import httpx
 import pytest
 from mcp.server.mcpserver.exceptions import ToolError
@@ -23,6 +25,7 @@ from test_style_capture import start as style_start
 from tin_lite import brand_contract as brand
 from tin_lite.activities import TinActivities
 from tin_lite.capture_revisions import (
+    REVISION_PROJECT_LOCK,
     CaptureRevisions,
     RevisionInvalid,
     RevisionRefused,
@@ -293,6 +296,27 @@ async def test_discard_after_a_revision_leaves_the_current_guide(publication_db)
     assert run.review_decision == "declined" and run.status == RunStatus.STOPPED
     assert head(f, STYLE_PATH) == b"My current guide\n"
     assert EDIT.encode() in head(f, run.artifact_path)  # The proposal stays readable in Files.
+
+
+async def test_a_revision_in_progress_never_deadlocks_with_discard(publication_db):
+    # Discard locks the run, then records its decision, whose reference to the project needs
+    # FOR KEY SHARE on the project row. A revision holding that row FOR UPDATE, then waiting
+    # for the run, deadlocked with it; the revision's lock must let the reference through.
+    f = await waiting_style(publication_db, existing=b"My current guide\n")
+    async with f.db.pool.acquire() as revision, revision.transaction():
+        await revision.execute(REVISION_PROJECT_LOCK, f.run.project_id)
+        run = await asyncio.wait_for(
+            decline_proposal(database=f.db, run_id=f.run.id, actor=ACTOR), timeout=10
+        )
+        assert run.review_decision == "declined"
+        # Approval still waits for the revision, so neither lands between the other's reads.
+        async with f.db.pool.acquire() as approval, approval.transaction():
+            await approval.execute("SET LOCAL lock_timeout = '1s'")
+            with pytest.raises(asyncpg.exceptions.LockNotAvailableError):
+                await approval.execute(
+                    "SELECT id FROM projects WHERE id=$1 FOR UPDATE", f.run.project_id
+                )
+    assert head(f, STYLE_PATH) == b"My current guide\n"
 
 
 async def test_guides_pinned_to_1_1_keep_their_rules(publication_db):

@@ -34,6 +34,10 @@ MAX_NOTE_CHARS = 500
 PROPOSAL_PREFIXES = ("brand/proposals/", "style/proposals/")
 CLIENT_LABELS = {"claude_code": "Claude Code", "codex": "Codex"}
 STALE = "This proposal changed after you opened it. Read it again, then approve."
+# Serializes a revision with approval (FOR UPDATE on the project) and other revisions, but
+# not with the foreign-key checks Discard's review command or a ledger insert make (FOR KEY
+# SHARE). FOR UPDATE here deadlocked with Discard, which locks the run first.
+REVISION_PROJECT_LOCK = "SELECT id FROM projects WHERE id=$1 FOR NO KEY UPDATE"
 EDITED = (
     "A proposed file changed outside Tin's revision route, so it cannot be approved as it is. "
     f"Ask your coding agent to revise it with {TOOL}, or discard it."
@@ -317,7 +321,7 @@ class CaptureRevisions:
         ):
             # Approval and Discard take these row locks too, so a revision never lands
             # between the founder's decision and the run reading the approved version.
-            await conn.execute("SELECT id FROM projects WHERE id=$1 FOR UPDATE", project.id)
+            await conn.execute(REVISION_PROJECT_LOCK, project.id)
             await conn.execute("SELECT id FROM workflow_runs WHERE id=$1 FOR UPDATE", run.id)
             if saved := await self._replay(run.project_id, request_id, request_digest, conn=conn):
                 return self._result(run, saved, proposal, replayed=True)
