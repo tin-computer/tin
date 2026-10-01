@@ -56,11 +56,18 @@ _COMMITTED_LIABILITY_SQL = """LEAST(maximum_nanos,
     ((committed_nanos + CASE WHEN committed_nanos>0
       THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
       + 9999999) / 10000000) * 10000000)"""
-# The admitted estimate of a per-call run that can still buy work (begin_operation needs a
-# 'reserved' root). A root awaiting reconciliation ('pending') cannot, so only its
-# committed liability remains.
-_UNSTARTED_ESTIMATE_SQL = """CASE WHEN status='reserved'
-    THEN COALESCE((terms->'estimate'->>'amount_nanos')::bigint, maximum_nanos) ELSE 0 END"""
+# The admitted estimate of a per-call root (aliased b) that can buy work now. begin_operation
+# needs a 'reserved' root and a pending or running run, so only those count. A root awaiting
+# reconciliation ('pending'), one whose runs have all ended but that has not settled yet, and
+# one whose runs wait on the founder (needs_input, paused) count at their committed liability
+# alone: nothing in them buys a call until a person acts, and each call is then checked
+# against the wallet again.
+_UNSTARTED_ESTIMATE_SQL = """CASE WHEN b.status='reserved' AND EXISTS (
+        SELECT 1 FROM billing_run_budgets tree JOIN workflow_runs tree_run
+          ON tree_run.id=tree.run_id
+        WHERE tree.root_run_id=b.run_id AND tree_run.status IN ('pending','running'))
+    THEN COALESCE((b.terms->'estimate'->>'amount_nanos')::bigint, b.maximum_nanos)
+    ELSE 0 END"""
 
 
 def project_limit_message(policy, estimate, usage) -> str | None:
@@ -266,6 +273,32 @@ class BillingService:
                 "SELECT * FROM billing_accounts WHERE workspace_id=$1 FOR UPDATE", workspace_id
             )
         return account
+
+    async def wallet_credits(self, conn, account):
+        """The one definition of a wallet's held and available credits.
+
+        The start check and the Billing page (get_project_spending) both read it, so a
+        start is never refused with a figure the founder cannot see. reserved_nanos holds
+        committed liabilities and whole session budgets. Per-call funding reserves nothing
+        at admission, so the rest of the estimate of each per-call run that can buy work
+        now is set aside too; otherwise parallel starts all pass before their first paid
+        call and then fail mid-work.
+        """
+        estimates = await conn.fetchval(
+            f"""SELECT COALESCE(sum(GREATEST(
+                     {_UNSTARTED_ESTIMATE_SQL} - {_COMMITTED_LIABILITY_SQL}, 0)),0)
+               FROM billing_run_budgets b WHERE b.workspace_id=$1 AND b.run_id=b.root_run_id
+                 AND b.status='reserved' AND b.terms->>'funding'='per_operation_v1'""",  # noqa: S608 — static SQL, no caller text
+            account["workspace_id"],
+        )
+        unreserved = account["balance_nanos"] - account["reserved_nanos"]
+        # Only credits that exist can be set aside: balance = reserved + set aside + available.
+        set_aside = min(estimates, max(unreserved, 0))
+        return {
+            "reserved": account["reserved_nanos"],
+            "set_aside": set_aside,
+            "available": unreserved - set_aside,
+        }
 
     async def require_spending_actor(self, conn, run, project_id):
         actor = run["started_by_clerk_user_id"]
@@ -717,10 +750,11 @@ class BillingService:
             "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
         )
         period = datetime.now(UTC).date().replace(day=1)
-        # Per-call funding reserves nothing here, so a run that can still spend counts at
-        # the larger of its admitted estimate and its committed liability. Otherwise any
-        # number of parallel starts pass before their first paid call and then fail mid-work.
-        # begin_operation keeps checking actual commitments for runs already admitted.
+        # Per-call funding reserves nothing here, so a run that can buy work now counts at
+        # the larger of its admitted estimate and its committed liability, as in
+        # wallet_credits. Otherwise any number of parallel starts pass before their first
+        # paid call and then fail mid-work. begin_operation keeps checking actual
+        # commitments for runs already admitted.
         usage = await conn.fetchrow(
             f"""SELECT COALESCE(sum(CASE WHEN status='settled'
                                         AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
@@ -743,22 +777,14 @@ class BillingService:
         )
         if limit := project_limit_message(policy, estimate, usage):
             raise BillingError("project_limit", limit, 402)
-        # reserved_nanos already holds each per-call run's committed liability; add the
-        # rest of the estimates of runs that can still spend from this wallet.
-        unstarted = await conn.fetchval(
-            f"""SELECT COALESCE(sum(GREATEST(
-                     {_UNSTARTED_ESTIMATE_SQL} - {_COMMITTED_LIABILITY_SQL}, 0)),0)
-               FROM billing_run_budgets WHERE workspace_id=$1 AND run_id=root_run_id
-                 AND status='reserved' AND terms->>'funding'='per_operation_v1'""",  # noqa: S608 — static SQL, no caller text
-            account["workspace_id"],
-        )
-        available = account["balance_nanos"] - account["reserved_nanos"] - unstarted
-        if available < estimate:
+        credits = await self.wallet_credits(conn, account)
+        if credits["available"] < estimate:
+            set_aside = credits["set_aside"]
             raise BillingError(
                 "insufficient_funds",
                 f"This workflow is estimated at up to ${usd(estimate)}. "
-                f"Available credits: ${usd(max(available, 0))}"
-                + (f" after ${usd(unstarted)} set aside for runs in progress" if unstarted else "")
+                f"Available credits: ${usd(max(credits['available'], 0))}"
+                + (f" after ${usd(set_aside)} set aside for runs in progress" if set_aside else "")
                 + ". Add credits before starting.",
                 402,
             )
@@ -1563,9 +1589,11 @@ class BillingService:
                 ],
             }
             if admin:
+                credits = await self.wallet_credits(conn, account)
                 result.update(
-                    available_usd=usd(account["balance_nanos"] - account["reserved_nanos"]),
-                    reserved_usd=usd(account["reserved_nanos"]),
+                    available_usd=usd(credits["available"]),
+                    reserved_usd=usd(credits["reserved"]),
+                    set_aside_usd=usd(credits["set_aside"]),
                     topup_min_cents=1000,
                     topup_max_cents=100000,
                 )
