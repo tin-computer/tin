@@ -20,7 +20,7 @@ sandbox results return to the trusted server for validation and storage.
 - **Postgres** holds what the product shows. No screen queries the workflow engine.
 - **Integrations** are typed adapters with capability lists. Tokens stay on the switchboard and never enter a sandbox. A procedure that needs your data gets a short-lived grant bound to one run through a separate internal MCP server, for the reads its workflow declared. Every provider call writes a receipt.
 
-Codex execution uses brokered ChatGPT sessions or an API relay according to the execution configuration. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is selected before execution and retained through retries. `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
+New Codex execution runs only through the protected API relay. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is pinned before execution and retained through retries. The pooled ChatGPT login broker is removed: historical runs pinned to it keep their artifacts and billing records but cannot start new compute ([API-only Codex execution](oauth-credential-security.md)). `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
 
 ## One run
 
