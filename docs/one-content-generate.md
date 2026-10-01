@@ -78,6 +78,73 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
   adds `human_review_kinds` for answers and refreshes; Decisions shows each kind's own line.
   Feedback revises the same document for every kind.
 
+## Covered items, the site's page list and refresh upside
+
+Three fixes from the founder's first runs on tin.computer (1 October 2026).
+
+**A draft that writes nothing closes without a review.** Run 1e474e10 found its item already
+covered by an existing page, the right call, yet the run kept `review_required: true` with no
+decision, so it read like a draft waiting in Decisions. Now:
+
+- Finalization clears `review_required` for any validated no-draft result (already covered,
+  brief needs revision, coverage unknown). No approval is manufactured.
+- An already-covered result records the page that covers the brief (`covered_by` on the
+  canonical commit receipt, "Already covered by <page>" in the run summary).
+- Program progress marks the item `covered`, with that page, the reason and the run. The plan
+  editor links the page, and the next manual or weekly draft takes the next item. The plan
+  file itself is unchanged.
+
+**content.plan reads the whole site, not only the pages it inspects.** The 1 October plan's
+page list held the 60 inspected pages and counted 44 more without naming them. One of the 44
+was /learn/ai-visibility-audit, so the plan proposed a guide the site already had. The v7
+contract (content.plan 0.8.0) now builds `site_pages`, one row per normalized path, with every
+source that lists it:
+
+| Source | Where it comes from |
+| --- | --- |
+| `sitemap` | the audit's sitemap read |
+| `search_console` | the audit's Search Console pages with impressions |
+| `crawl` | the audit's crawl and its own page reads (failed reads and 4xx/5xx pages left out) |
+| `tin_published` | pages Tin published itself and then found live (its saved page URL records) |
+| `keywords` | ranking pages in the keyword research |
+
+- **Bounds.** At most 2,000 pages and 200 KB are kept: most Search Console impressions first,
+  then most sources. The rest are counted as `omitted`.
+- **What the run saves.** The list goes to `reports/content-plan/{run}/pages.json` (a 250 KB
+  file bound) beside the evidence. `evidence.json` and PLAN.md say how many pages came from
+  each source.
+- **What the model reads.** Up to 800 paths, with one letter per source. When the bounded
+  input is tight, the list shortens before the planning sources do. Only the inspected pages
+  carry text, and an update still needs one of them.
+- **Dedupe.** Tin leaves out a proposed new page the site already has, recorded under "Already
+  on the site" in PLAN.md (`already_on_site` in the evidence). A page matches by address (the
+  title's slug is a listed page's last path segment), by title (a crawled page's title, without
+  its site name), or, for an article, by topic. A topic match means the page's last path
+  segment has two or more topic words, all in the title, and the title adds at most two more:
+  "How to audit AI visibility for a SaaS brand" matches /learn/ai-visibility-audit, while
+  "AI visibility tools: choose tracking or an actionable audit" does not. Answer pages match by
+  address or title only, since an answer may answer a question an existing page leaves open.
+  Items already in the plan are never dropped.
+
+**Refreshes go where they can help.** content.refresh picked a page at position 53.5 (through
+`aeo.answer_structure`) over /alternatives/moz at position 8.3 with 324 impressions, which the
+same audit listed under `near_page_one`. Its choice sorted by impressions alone. Refresh
+candidates now rank by realistic upside (`content_refresh.upside`):
+
+1. `near_top`: the audit lists the page under `near_page_one` or `low_ctr`, or it ranks at
+   roughly positions 4 to 20.
+2. `possible`: any other page up to position 30, or one without a Search Console position.
+3. `far`: beyond position 30. These come last, so a far page is offered only when no better
+   candidate is left.
+
+Within a tier, more impressions come first. Each candidate carries its `upside` tier and
+reason. content.plan's refresh sources (the ten rows the model may plan a refresh from, which
+also lead the inspected pages) use this order, and the v7 instructions tell the model to plan a
+far page only when nothing nearer is left. content.generate's refresh items carry the same
+`upside` for their page, and the page-refresh skill reads it. content.refresh's own weekly pick
+is unchanged, so its 1.0.0 behavior on main stays as it was; while `organic.traffic_system` 0.5.0
+still starts content.refresh, that pick still sorts by impressions.
+
 ## Retired entry points
 
 `content.answer_page` 1.7.0 and `content.refresh` 1.1.0 get `public_discovery: false` and a
@@ -93,7 +160,7 @@ pages there now.
 | Workflow | On main | Here |
 | --- | --- | --- |
 | `content.generate` | 1.8.0 | 1.9.0 |
-| `content.plan` | 0.7.0 (`content-editorial-v6`) | 0.8.0 (`content-editorial-v7`) |
+| `content.plan` | 0.7.0 (`content-editorial-v6`) | 0.8.0 (`content-editorial-v7`, with the site's page list and the refresh upside order) |
 | `content.answer_page` | 1.6.0 | 1.7.0 |
 | `content.refresh` | 1.0.0 | 1.1.0 |
 
@@ -138,3 +205,8 @@ four conflicts, and needs these changes (checked by a trial merge and the full s
 
 Fixture tests only, on disposable Postgres: synthetic plans, audits, page reads, GitHub and
 model results. No live model, Codex run, repository, website.change merge or deploy was used.
+The follow-up's tests cover a no-draft run closing without a review and marking its item
+covered, the weekly draft moving past it, the page list naming pages the crawl sample missed,
+the dedupe, and a position-8 `near_page_one` page outranking a position-53 page with more
+impressions. Run 1e474e10's row in production keeps the flag it was saved with; only runs that
+finish after a deploy close without it.
