@@ -751,6 +751,9 @@ def authoring_guide(*, settings, project_id):
                     }
                 ],
             },
+            "run_id": "A run knows its own Tin run ID. workflow.code reads ctx['run_id']; a "
+            "codex.procedure's brief ends with a RUN CONTEXT line naming it, and its commands "
+            "read the same value from TIN_RUN_ID. Use it where the output names its run.",
             "notes": "Declare required capabilities; connections alone grant a procedure nothing. "
             "Repository verification runs as the credential-free worker. Project context selection "
             "is not a narrower read permission. Existing PR overlap and result bounds apply.",

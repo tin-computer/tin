@@ -606,7 +606,7 @@ class TinActivities:
                     design = design_api.procedure(creation["timeout_seconds"])
                     creation["context"] = (
                         (existing.result or {}).get("context") if existing else None
-                    ) or design.sandbox_context(inputs=run.input or {})
+                    ) or design.sandbox_context(inputs=run.input or {}, run_id=run.id)
                 await self._db.save_effect_progress(
                     conn, execution_key=execution_key, result=creation
                 )
@@ -3514,6 +3514,7 @@ class TinActivities:
                                 workspace=workspace_context,
                                 identity=identity_context,
                                 payment_card=payment_card,
+                                run_id=run.id,
                             ),
                             output_path=checkpoint_path,
                             output_max_bytes=procedure.output_max_bytes,

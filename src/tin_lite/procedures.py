@@ -337,6 +337,18 @@ class TestIdentityPolicy:
         return {"create": self.create, "reuse": self.reuse}
 
 
+RUN_ID_ENV = "TIN_RUN_ID"
+
+
+def run_context_instruction(run_id: str) -> str:
+    """The brief's run line: the same ID code workflows read as ctx["run_id"]."""
+    return (
+        f"\n\nRUN CONTEXT:\nThis run's Tin run ID is {run_id}. Use it wherever the procedure "
+        "asks for this run's ID, such as a report, a receipt or a file name; never invent one. "
+        f"Commands can also read it from the {RUN_ID_ENV} environment variable."
+    )
+
+
 @dataclass(frozen=True)
 class CodexProcedureSpec:
     prompt_path: str
@@ -471,6 +483,7 @@ class PinnedCodexProcedure:
         workspace: dict[str, Any] | None = None,
         identity: dict[str, str] | None = None,
         payment_card: dict[str, str] | None = None,
+        run_id: UUID | str | None = None,
     ) -> dict[str, Any]:
         output: dict[str, Any] = {
             "kind": self.result_kind,
@@ -517,6 +530,11 @@ class PinnedCodexProcedure:
             "sandbox": self.sandbox.definition(),
             "inputs": {key: value for key, value in inputs.items() if key != "project_id"},
         }
+        if run_id is not None:
+            # Code workflows read ctx["run_id"]; a procedure gets the same ID in its brief and,
+            # through the sandbox, as TIN_RUN_ID for its commands.
+            context["run"] = {"id": str(UUID(str(run_id)))}
+            context["prompt"] += run_context_instruction(context["run"]["id"])
         if self.services:
             context["services"] = [asdict(service) for service in self.services]
             context["prompt"] += (
