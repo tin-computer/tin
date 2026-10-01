@@ -5,6 +5,7 @@ from __future__ import annotations
 import httpx
 
 from tin_lite.organic_audit_fetch import SiteReader
+from tin_lite.organic_audit_site import FETCH_AGENT
 
 PUBLIC_ADDRESS = "93.184.215.14"
 
@@ -54,7 +55,10 @@ class SyntheticSite:
 
     def __init__(self, routes: dict[str, tuple[int, dict, bytes]] | None = None) -> None:
         self.routes = dict(routes or {})
+        # Reads with Tin's own user agent; the browser and AI-crawler comparison reads are
+        # kept apart in `agent_requests` as (url, user agent).
         self.requests: list[str] = []
+        self.agent_requests: list[tuple[str, str]] = []
 
     def page(self, url: str, body: bytes, *, status: int = 200, headers: dict | None = None):
         self.routes[url] = (
@@ -74,8 +78,12 @@ class SyntheticSite:
         self.routes[url] = (status, {"location": location}, b"")
 
     def _handle(self, request: httpx.Request) -> httpx.Response:
-        url = f"https://{request.headers['host']}{request.url.raw_path.decode()}"
-        self.requests.append(url)
+        url = f"{request.url.scheme}://{request.headers['host']}{request.url.raw_path.decode()}"
+        agent = request.headers.get("user-agent", "")
+        if FETCH_AGENT in agent:
+            self.requests.append(url)
+        else:
+            self.agent_requests.append((url, agent))
         status, headers, body = self.routes.get(
             url, (404, {"content-type": "text/html"}, b"<html><body>Not found</body></html>")
         )

@@ -220,7 +220,10 @@ def test_robots_sitemap_and_limits_are_reported_without_inventing_passes(audit):
     assert finding(audit, "sitemap.uniform_lastmod")["impact"] == "low"
     report = audit.report
     assert "| OAI-SearchBot | search | partly blocked: /api/, /app/ |" in report
-    assert "structured data: Structured data found in the static HTML of 1 page." in report
+    assert (
+        "structured data: Structured data in the static HTML of 1 page was parsed and checked "
+        "for required fields." in report
+    )
     assert "speed: PageSpeed Insights is not configured on this deployment." in report
     assert not any("schema" in item["check_id"] for item in audit.inventory["findings"])
 
@@ -270,13 +273,21 @@ def test_one_finding_format_ordered_by_area_with_summary_and_action_plan(audit):
 
 def test_search_console_reads_are_receipted_once_and_scoped(audit):
     calls = audit.integrations.search_console_analytics.await_args_list
-    assert [tuple(call.kwargs["dimensions"]) for call in calls] == [("page",), ("query", "page")]
+    # Pages, queries, then pages for the 28 days before, to find pages losing clicks.
+    assert [tuple(call.kwargs["dimensions"]) for call in calls] == [
+        ("page",),
+        ("query", "page"),
+        ("page",),
+    ]
     assert {call.kwargs["execution_key"].rsplit(":", 2)[-2] for call in calls} == {
         "search_console",
         "search_console_queries",
+        "search_console_previous",
     }
     assert calls[0].kwargs["start_date"] == "2026-08-30"
     assert calls[0].kwargs["end_date"] == "2026-09-26"
+    assert calls[2].kwargs["start_date"] == "2026-08-02"
+    assert calls[2].kwargs["end_date"] == "2026-08-29"
     queries = audit.evidence["search_console_queries"]["value"]
     assert queries["fields"] == ["query", "page", "clicks", "impressions", "position"]
     assert len(queries["queries"]) == len(tin.QUERY_ROWS)
@@ -288,6 +299,8 @@ def test_the_site_is_read_once_per_page_across_duplicate_delivery(audit):
     assert requests.count(f"{tin.BASE}/sitemap.xml") == 1
     assert requests.count(f"{tin.BASE}/sign-in") == 1
     page_reads = [url for url in requests if not url.endswith((".txt", ".xml"))]
+    # The plain-HTTP homepage and a made-up missing page are probes, not page reads.
+    page_reads = [u for u in page_reads if u.startswith("https://") and "missing-page" not in u]
     assert len(page_reads) == len(set(page_reads)) == 100
 
 
@@ -330,7 +343,8 @@ async def test_pagespeed_runs_one_page_per_poll_and_reports_slow_pages():
     item = finding(result, "speed.core_web_vitals")
     assert item["impact"] == "high" and item["urls"] == [f"{tin.BASE}/"]
     assert (
-        "/ (field data): LCP 4.2 s (poor), INP 150 ms (good), CLS 0.02 (good)" in item["evidence"]
+        "/ (field data for this page): LCP 4.2 s (poor), INP 150 ms (good), CLS 0.02 (good)"
+        in item["evidence"]
     )
     assert "psi-test-key" not in json.dumps(result.evidence)
     assert "psi-test-key" not in json.dumps(

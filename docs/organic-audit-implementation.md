@@ -340,8 +340,9 @@ stated as not measured. Earlier finding fields (`id`, `check_id`, `status`, `sev
 
 `findings.json` is schema 3. `evidence_status` keeps its technical-crawl meaning, which
 `organic.technical_fix` recomputes; `coverage_status`, `coverage`, `site_check_coverage`
-and `summary` are new. Technical fix accepts v10 audits and lists site and search findings
-as excluded with an explanation, as it already did for content findings.
+and `summary` are new. Technical fix accepts v10 audits. Under `site-fix-v4` the site
+findings it can repair (robots.txt, sitemap, noindex, canonical, lang, H1) are candidates;
+other site and search findings stay excluded with an explanation, as content findings are.
 
 ### Durable execution and compatibility
 
@@ -390,8 +391,9 @@ compared between runs. From v10:
 - Language is checked against the URL's language prefix, not detected from the content.
 - Search Console omits rare and anonymized queries; query totals are below page totals.
 - These are observations and hypotheses, not ranking guarantees.
-- The growth plan's frozen program copy (`growth_plan_assets/programs.json`) keeps the
-  earlier one-line audit description; it is part of that plan's pinned contract.
+- The growth plan's program copy (`growth_plan_assets/programs.json`) is part of that plan's
+  pinned contract; the 0.5 change below edits it once, so plan runs admitted before a deploy
+  that changes it fail the worker's contract check instead of mixing contracts.
 
 Question-set reuse, three answers per question and the comparison table are covered
 by `tests/test_organic_audit_questions.py`.
@@ -403,5 +405,119 @@ pages for "semrush alternative" with 33 pattern pages holding 53% of impressions
 clicks; `/alternatives/moz` at position 8.5 and `/compare/ai-tools-for-startups` at 5.8
 with no clicks; an indexable `/sign-in` ranking 1.5 for the brand with an old title, no H1
 and a canonical to `/`; `/nl/` pages declaring `lang="en"` without hreflang; indexable
-`/offer/` pages in the sitemap; and `/about` missing from the sitemap. No live provider or
-production run has been made with v10.
+`/offer/` pages in the sitemap; and `/about` missing from the sitemap. v10 has since been
+deployed and run in production.
+
+## 0.7 — more angles, one AI measure and per-question review (organic-audit-v11)
+
+v10 is deployed, so these additions live in a new pinned policy, `organic-audit-v11`
+(catalog organic.audit 0.7.0), with findings schema 3. A run pinned to v10 keeps exactly
+v10: its policy, AI instructions and schemas are unchanged (tests freeze their digests),
+and every addition below is read from v11-only policy keys (`site_angles`,
+`answer_ladder`, `unsearched_answers`, `access_check_pages`, `url_inspection_max_urls`,
+`content_review_pages`, `decay_min_previous_clicks`, `max_redirect_hops`,
+`cannibalization_min_impressions`, `min_panel_questions`). Under v10 Tin makes none of
+the new reads, runs none of the new checks, saves v10's page facts and evidence shape,
+and asks PageSpeed for performance only.
+
+### Per-question panel review
+
+A production v10 audit measured no AI visibility because the reviewer rejected each
+drafted panel over one ambiguous question (a generic "review work before it ships"
+constraint), and v10 discards the whole panel. Under v11:
+
+- The review (`PanelReview`) judges the identity as a whole and each question on its own.
+  `accepted: false` still rejects the panel (identity, aliases or evidence); otherwise
+  `rejected_questions` names each question not to ask, by number, with a reason.
+- Tin drops those questions and keeps the panel when at least three remain
+  (`min_panel_questions`). The panel records `dropped_questions`, its digest covers exactly
+  the questions asked, and the report lists them under "Questions dropped in review".
+- Fewer than three remaining (`panel_questions_too_few`), or a review naming a question
+  the panel does not have or naming one twice (`panel_review_invalid`), redrafts through
+  the existing recovery attempt with the review as the correction.
+- The panel prompt anchors every question, including the constraint question, to the
+  product's own category, never to a quality any tool could claim.
+
+### What else Tin reads
+
+- Each page's HTML facts now include text length, headings (the first eight H2/H3, and how
+  many are phrased as questions), the lead paragraph, meta description length, viewport,
+  Open Graph tags, images without alt text, external links, dates, authors, analytics tags
+  and JSON-LD parsed as JSON and checked for the common types' required fields.
+- Site files add `/llms.txt`, the plain-HTTP homepage (does it redirect to HTTPS?) and a
+  made-up URL that should answer 404.
+- A redirecting page is followed within the audited site, up to five hops, to find loops.
+- The homepage and one selected page are read once as a browser and once with each AI
+  crawler's user agent (GPTBot, OAI-SearchBot, ChatGPT-User, PerplexityBot, ClaudeBot,
+  Claude-SearchBot). A CDN that serves the browser and refuses a crawler likely blocks it;
+  CDNs can verify crawlers by IP address, so the finding says "likely".
+- Search Console adds page rows for the 28 days before the audit window, and URL
+  Inspection for up to ten key pages (the homepage, the pages with the most impressions and
+  pages Tin found noindexed or canonicalized elsewhere), within Google's 2,000-a-day quota.
+- PageSpeed Insights also returns Lighthouse SEO, accessibility and best-practice scores in
+  the same call. Field data for the whole site is labelled site-wide, not the page's own.
+
+### New findings
+
+| Check | What it says |
+| --- | --- |
+| `rendering.content_not_in_html` | Content appears only after JavaScript runs; replaces sitewide "no H1" for those pages |
+| `access.readers_refused` | Bot protection refused Tin's reader; the pages' other checks are unknown |
+| `access.ai_crawlers_refused` | A crawler is refused where a browser is served (likely) |
+| `robots.wildcard_blocks_other_crawlers` | `User-agent: *` closes the site to every crawler it does not name |
+| `robots.ai_search_crawlers_blocked` | Now covers Perplexity-User, Claude-SearchBot, Claude-User and Bingbot too |
+| `indexation.soft_404` | Missing pages answer 200, or pages say "not found" with status 200 |
+| `redirects.loop` | A redirect path returns to an address already in it |
+| `https.http_not_redirected` | The plain-HTTP homepage does not move to HTTPS |
+| `indexation.not_indexed_by_google`, `indexation.google_canonical_differs` | URL Inspection results for key pages |
+| `onpage.title_length`, `onpage.description_length`, `onpage.viewport_missing`, `onpage.image_alt_missing`, `onpage.open_graph_missing` | Page basics |
+| `onpage.accessible_name_missing`, `onpage.form_label_missing` | Accessibility: links or buttons with no text, aria-label, title or image alt, and form fields with no label. These are the checks site health (`site.health_improve`) made on one page, now on every page the audit reads |
+| `schema.invalid` | JSON-LD that does not parse or lacks required fields; missing recommended fields alone are not reported |
+| `aeo.llms_txt_missing` | Low severity; no major assistant has confirmed it reads llms.txt |
+| `aeo.dates_missing`, `trust.author_missing` | Articles without a date or author |
+| `trust.about_contact_missing` | No about or contact page in the sitemap or pages read |
+| `measurement.analytics_inconsistent` | A tag on some pages and not others (a hypothesis: bundled analytics are invisible) |
+| `lighthouse.failed_audits` | Lighthouse scores under 90 with the failing audits |
+| `search.decay` | Pages that lost at least 40% of 10+ clicks since the previous 28 days |
+| `aeo.answer_structure` | The model's review of the top five content pages (see below) |
+| `ai.cited_instead` | The sites AI answers cite when they cite yours in fewer than half |
+
+Cannibalization now treats translations of one page (`/de/pricing` and `/pricing`) as one
+page and needs 10 impressions for a search before two pages count as competing.
+
+A page that is marked noindex but still gets search traffic
+(`indexation.noindex_with_search_traffic`) is a question under v11, not a critical
+failure: a noindex set on the page itself is often deliberate, for example on event
+pages, so the finding asks whether those pages are meant to stay out of search and the
+technical fix asks the founder. v10 still reports it as critical.
+
+### One AI measure
+
+The organic audit now grades answers on the AI visibility audit's ladder: found (named, or
+the site read or cited while answering), mentioned, evaluated against the buyer's needs,
+shortlisted and picked first, and it reports where most answers stop. Each question also
+gets one answer without web search, which shows what the model knows before it searches.
+The judge's evaluation must quote a passage naming the target, like every other grade.
+
+The panel decides the grading, not the run's policy: panels drafted for the ladder carry
+`unsearched: true`, and an explicit answer completion of an older audit keeps grading the
+way that audit did. Answer pages take their questions from the newest organic or AI
+visibility audit, and Start here no longer suggests a separate AI visibility audit beside
+the organic traffic system. `visibility.audit` stays runnable for saved configurations.
+
+### Answer structure of top pages
+
+One text-model call reviews the five content pages with the most impressions, from their
+outline: title, H1, first headings, lead paragraph and top searches. The model judges only
+whether the lead answers the main search (quoting the answering sentence exactly from the
+lead), whether sections stand alone, and whether the page carries specific facts. Dates,
+authors, sources and question-shaped headings come from the measured page facts. A result
+that names a page that was not supplied, or quotes a sentence the lead does not contain,
+is discarded and the review is reported as unavailable.
+
+### Limits
+
+- Crawler comparison, URL Inspection and the content review are offline-tested only.
+- Subdomains are still out of scope. Backlinks, competitor pages and search features are
+  not measured; they need a paid data source.
+
