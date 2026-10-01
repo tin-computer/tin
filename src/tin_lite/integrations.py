@@ -118,6 +118,16 @@ ADS_ALREADY_LINKED = {
     "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER",
     "ManagerLinkError.ALREADY_MANAGED_IN_HIERARCHY",
 }
+ADS_FOREIGN_LINK_MESSAGE = (
+    "Tin already has a manager link or an open invitation for this Google Ads account that this "
+    "project didn't send. If the account is yours, disconnect it in your other Tin project, or "
+    "decline or remove Tin's manager link in Google Ads under Admin, Access and security, "
+    "Managers, then connect it here again."
+)
+ADS_SHARED_LINK_MESSAGE = (
+    "This Google Ads account is also connected to another Tin project. Disconnect it in one of "
+    "them, then refresh the connection in the other."
+)
 GOOGLE_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GOOGLE_IDENTITY_SCOPES = frozenset({"openid", "email", "profile"})
 WORKSPACE_CAPABILITY_SCOPES = {
@@ -1165,16 +1175,7 @@ class IntegrationService:
             installation_id = await self._github_resolve_user_installation(
                 user_token, attempt=attempt
             )
-        access_response = await self._client.get(
-            f"https://api.github.com/user/installations/{installation_id}/repositories",
-            headers=self._github_headers(user_token),
-            params={"per_page": 1},
-        )
-        if access_response.status_code in {401, 403, 404}:
-            raise IntegrationAuthorizationError(
-                "The signed-in GitHub user cannot access that installation"
-            )
-        _provider_json(access_response, provider="GitHub")
+        user_repositories = await self._github_user_repositories(user_token, installation_id)
         response = await self._client.get(
             f"https://api.github.com/app/installations/{installation_id}",
             headers=self._github_headers(await self._github_jwt()),
@@ -1203,6 +1204,7 @@ class IntegrationService:
             ),
             configuration={
                 "selected_repository": None,
+                "user_repositories": user_repositories,
                 "permissions": {
                     "contents": "write",
                     "pull_requests": "write",
@@ -1302,8 +1304,51 @@ class IntegrationService:
         )
         return options
 
+    async def _github_user_repositories(self, user_token: str, installation_id: int) -> list[str]:
+        """The installation's repositories the signed-in person may push to, by their own token.
+
+        Tin reads and changes the selected repository with the installation's token, which
+        reaches every repository the app was installed on. Only repositories the connecting
+        person could change themselves are offered, so connecting never widens their access.
+        """
+        names: list[str] = []
+        for page in range(1, GITHUB_REPOSITORY_PAGE_LIMIT + 1):
+            response = await self._client.get(
+                f"https://api.github.com/user/installations/{installation_id}/repositories",
+                headers=self._github_headers(user_token),
+                params={"per_page": 100, "page": page},
+            )
+            if response.status_code in {401, 403, 404}:
+                raise IntegrationAuthorizationError(
+                    "The signed-in GitHub user cannot access that installation"
+                )
+            payload = _provider_json(response, provider="GitHub")
+            for item in payload.get("repositories", []):
+                if not isinstance(item, dict) or not item.get("full_name"):
+                    continue
+                access = item.get("permissions")
+                if isinstance(access, dict) and any(
+                    access.get(level) is True for level in ("push", "maintain", "admin")
+                ):
+                    names.append(str(item["full_name"]))
+            if not _github_has_next_page(response):
+                break
+        return sorted(set(names), key=str.casefold)
+
     async def github_repositories(self, *, project_id: UUID) -> list[ProviderOption]:
         connection = await self._connection(project_id, GITHUB_PROVIDER)
+        allowed = connection.configuration.get("user_repositories")
+        selected = connection.configuration.get("selected_repository")
+        if not isinstance(allowed, list):
+            # Connected before Tin recorded the person's own access: keep the repository
+            # already chosen, and ask for a reconnect before offering any other.
+            if not isinstance(selected, str) or not selected:
+                raise IntegrationAuthorizationError(
+                    "Reconnect GitHub to choose a repository; Tin now offers only the "
+                    "repositories you can push to"
+                )
+            allowed = [selected]
+        permitted = {name.casefold() for name in allowed if isinstance(name, str)}
         installation_id = _installation_id(connection)
         token = await self._github_installation_token(installation_id)
         execution_key = f"integration:{uuid4()}"
@@ -1333,6 +1378,7 @@ class IntegrationService:
                     break
             else:
                 truncated = True
+            options = [option for option in options if option.id.casefold() in permitted]
             options.sort(key=lambda option: option.label.casefold())
         except IntegrationError:
             await self._database.record_integration_call(
@@ -2657,7 +2703,9 @@ class IntegrationService:
         fingerprint = _sha256(_canonical_json(request_value))
         async with self._database.integration_call_lock(execution_key):
             existing = await self._database.get_integration_call_receipt(execution_key)
-            is_retry = existing is not None
+            # Only an attempt that got as far as the send may have reached Gmail. One that
+            # failed before it, or that Gmail refused outright, sent nothing and may try again.
+            is_retry = existing is not None and existing.status in {"started", "unknown"}
             if existing is not None:
                 if (
                     existing.project_id != project_id
@@ -2674,16 +2722,6 @@ class IntegrationService:
                         **_gmail_send_result(existing.response_summary),
                         "rfc_message_id": rfc_message_id,
                     }
-            await self._database.record_integration_call(
-                execution_key=execution_key,
-                project_id=project_id,
-                run_id=run_id,
-                connection_id=connection.id,
-                provider_key=GOOGLE_WORKSPACE_PROVIDER,
-                capability="gmail.messages.send",
-                request_fingerprint=fingerprint,
-                status="started",
-            )
             access_token = await self._google_access_token(connection)
             recovered = await self._gmail_find_message(
                 access_token=access_token,
@@ -2706,15 +2744,42 @@ class IntegrationService:
                     raise IntegrationDeliveryUnknownError(
                         "Gmail delivery could not be confirmed; Tin will not resend automatically"
                     )
-                try:
-                    response = await self._client.post(
-                        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        json={
-                            "raw": raw,
-                            **({"threadId": thread_id} if thread_id is not None else {}),
-                        },
+                # Recorded right before the send, so a failure getting here sent nothing.
+                await self._database.record_integration_call(
+                    execution_key=execution_key,
+                    project_id=project_id,
+                    run_id=run_id,
+                    connection_id=connection.id,
+                    provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                    capability="gmail.messages.send",
+                    request_fingerprint=fingerprint,
+                    status="started",
+                )
+                response = await self._client.post(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json={
+                        "raw": raw,
+                        **({"threadId": thread_id} if thread_id is not None else {}),
+                    },
+                )
+                if 400 <= response.status_code < 500 and response.status_code != 408:
+                    # Gmail refused the request, so nothing was sent; a later attempt may send.
+                    await self._database.record_integration_call(
+                        execution_key=execution_key,
+                        project_id=project_id,
+                        run_id=run_id,
+                        connection_id=connection.id,
+                        provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                        capability="gmail.messages.send",
+                        request_fingerprint=fingerprint,
+                        status="failed",
+                        error_code=f"gmail_http_{response.status_code}",
                     )
+                    raise IntegrationError(
+                        f"Gmail refused the message (HTTP {response.status_code})"
+                    )
+                try:
                     payload = _provider_json(response, provider="Gmail")
                     recovered = _gmail_send_result(payload)
                     provider_request_id = response.headers.get("x-guploader-uploadid")
@@ -4010,6 +4075,13 @@ class IntegrationService:
         existing = await self._database.get_integration_connection(
             project_id=project_id, provider_key=ADS_PROVIDER
         )
+        # Tin has one manager account, so an existing link or invitation doesn't say which
+        # project asked for it. This project's own earlier invitation is the only proof.
+        own_link_id = (
+            existing.configuration.get("manager_link_id")
+            if existing is not None and existing.external_account_id == account
+            else None
+        )
         if existing is not None and existing.external_account_id not in {None, account}:
             if existing.configuration.get("link_status") == "pending":
                 # The old invitation may have been accepted since Tin last checked it.
@@ -4025,7 +4097,7 @@ class IntegrationService:
             "customer_id": account,
             "manager_customer_id": manager,
             "link_status": "pending",
-            "manager_link_id": None,
+            "manager_link_id": own_link_id,
             "write_opted_in": True,
             "health": {},
             "invited_at": datetime.now(UTC).isoformat(),
@@ -4045,17 +4117,25 @@ class IntegrationService:
         try:
             result = await self.google_ads.client_link(account)
         except GoogleAdsError as exc:
+            already = exc.code in ADS_ALREADY_LINKED
+            adopted = already and own_link_id is not None
             await self._record_ads_call(
                 execution_key=execution_key,
                 connection=connection,
                 capability="account.read",
                 fingerprint=fingerprint,
-                status="completed" if exc.code in ADS_ALREADY_LINKED else "failed",
+                status="completed" if adopted else "failed",
                 response_summary={"code": exc.code},
-                error_code=None if exc.code in ADS_ALREADY_LINKED else exc.code[:120],
+                error_code=None if adopted else exc.code[:120],
             )
-            if exc.code in ADS_ALREADY_LINKED:
+            if adopted:
                 return await self.google_ads_link_status(project_id=project_id)
+            if already:
+                # Someone else's link or invitation: leave no claim on the account here.
+                await self._database.delete_integration_connection(
+                    project_id=project_id, provider_key=ADS_PROVIDER
+                )
+                raise IntegrationAuthorizationError(ADS_FOREIGN_LINK_MESSAGE) from None
             raise IntegrationUpstreamError(
                 ADS_LINK_MESSAGES.get(
                     exc.code,
@@ -4110,14 +4190,20 @@ class IntegrationService:
                 "Google Ads did not answer the link status check. Try again in a minute."
             ) from None
         rows = result.get("rows") or []
+        own_link_id = connection.configuration.get("manager_link_id")
         raw = None
         for row in rows:
             link = row.get("customerClientLink") if isinstance(row, dict) else None
-            if isinstance(link, dict) and isinstance(link.get("status"), str):
+            # Only the link this project's own invitation created speaks for it; another
+            # project's link to the same account is not this project's proof of ownership.
+            if (
+                isinstance(link, dict)
+                and isinstance(link.get("status"), str)
+                and own_link_id is not None
+                and str(link.get("managerLinkId")) == str(own_link_id)
+            ):
                 raw = link
-                # Prefer an active link over stale refused or canceled rows.
-                if link["status"] == "ACTIVE":
-                    break
+                break
         status = ADS_LINK_STATES.get(raw["status"], "pending") if raw else "missing"
         await self._record_ads_call(
             execution_key=execution_key,
@@ -4132,11 +4218,6 @@ class IntegrationService:
         configuration = {
             **dict(connection.configuration),
             "link_status": status,
-            "manager_link_id": (
-                str(raw.get("managerLinkId"))
-                if raw and raw.get("managerLinkId") is not None
-                else connection.configuration.get("manager_link_id")
-            ),
             "link_checked_at": datetime.now(UTC).isoformat(),
         }
         updated = await self._database.update_integration_configuration(
@@ -4169,6 +4250,8 @@ class IntegrationService:
             raise IntegrationAuthorizationError(
                 "Accept Tin's manager request in Google Ads before checking the account"
             )
+        if await self._ads_link_shared(connection):
+            raise IntegrationAuthorizationError(ADS_SHARED_LINK_MESSAGE)
         account = _ads_account(connection)
         reads: dict[str, list] = {}
         for name, query in (
@@ -4232,6 +4315,8 @@ class IntegrationService:
             raise IntegrationAuthorizationError("Google Ads needs attention")
         if connection.configuration.get("link_status") != "active":
             raise IntegrationAuthorizationError("Accept Tin's manager request in Google Ads first")
+        if await self._ads_link_shared(connection):
+            raise IntegrationAuthorizationError(ADS_SHARED_LINK_MESSAGE)
         return _ads_account(connection)
 
     async def google_ads_call(
@@ -4314,11 +4399,30 @@ class IntegrationService:
         )
         return {**result, "customer_id": account}
 
+    async def _ads_link_shared(self, connection: IntegrationConnection) -> bool:
+        """Whether another project's connection records this account's manager link.
+
+        One link proves ownership for one project. Connections made before that was enforced
+        may share a link; then neither may use it, and a disconnect leaves the link in place.
+        """
+        link_id = connection.configuration.get("manager_link_id")
+        others = await self._database.list_integration_connections_by_external_id(
+            provider_key=ADS_PROVIDER, external_account_id=_ads_account(connection)
+        )
+        return any(
+            other.project_id != connection.project_id
+            and other.configuration.get("manager_link_id") in {None, link_id}
+            for other in others
+        )
+
     async def _cancel_google_ads_link(self, connection: IntegrationConnection) -> None:
         """Best effort: the local disconnect is authoritative even when Google is down."""
         link = connection.configuration.get("link_status")
         manager_link_id = connection.configuration.get("manager_link_id")
         if link not in {"pending", "active"} or not manager_link_id:
+            return
+        if await self._ads_link_shared(connection):
+            # Ending the link would cut off the other project too.
             return
         try:
             await self.google_ads.client_link_update(

@@ -115,6 +115,29 @@ Requests are at most 16 KB; each response is bounded to 1–64 KB. Sandboxes rem
 and credential-free. Only the trusted activity invokes the gateway through the existing
 protected E2B controller channel and checks the run, membership, lease and fencing tuple.
 
+### Provider cost estimates
+
+Code workflow setup shows connected-provider charges separately from Tin credits. Search
+Console API requests are [free](https://developers.google.com/webmaster-tools/pricing), so
+Tin reports that directly. Unknown providers get a short per-provider cost note.
+
+Authors may add `provider_cost` to a `code.services` or `procedure.services` binding:
+
+```json
+"provider_cost": {
+  "estimated_usd": "0.03",
+  "basis": "Three requests at $0.01 each on the provider's standard plan.",
+  "pricing_url": "https://provider.example/pricing"
+}
+```
+
+This example is illustrative, not a real provider price. Use the official pricing reference
+and explain per-run volume, plan and other assumptions in `basis` (up to 400 characters).
+Omit the field when there is no defensible estimate. Tin labels supplied numbers as creator
+estimates; they neither change its credit ledger nor enforce a provider spending limit.
+Code workflow setup exposes the same `estimate.external_providers` facts through HTTP and
+MCP. Procedure bindings accept the metadata, but procedure cost displays are not yet connected.
+
 ### Response size and Search Console rows
 
 `max_response_bytes` is measured on the serialized JSON the step receives, and it is what

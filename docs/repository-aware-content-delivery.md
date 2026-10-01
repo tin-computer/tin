@@ -183,8 +183,9 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
   that file at the head Tin read; and GitHub
   reports it `clean` (no conflicts, no failing or pending checks, no required review)
   within about three and a half minutes. Tin then asks GitHub to merge that head only.
-  A PR that adds a route, a component or an index is site code the founder has not
-  reviewed, so it stays open, as does one that conflicts or waits on checks or a review.
+  A PR that adds a route, a component or an index stays open, as does one that conflicts
+  or waits on checks or a review, unless the founder chose where these pages live (below)
+  and the PR puts the page at that route.
   The merge receipt (`content-delivery:{run}:merge`) and Activity say why; a later merge
   by the founder is found by the page URL check as before.
 - **Billing.** The adaptation is an ordinary Codex procedure session charged on actual
@@ -195,3 +196,34 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
   failed with the reason and a pointer to retrying delivery or Prepare PR. Retrying the
   page's delivery tries the same start again; once the adaptation exists, it retries that
   run's saved patch instead.
+
+## Where adapted pages live
+
+Answer pages and public articles have no route until an adaptation gives them one. Tin
+asks the founder once per page type instead of letting each adaptation pick a folder.
+
+- **The question.** While `content/page-routes.json` has no route for the page's type,
+  the publish preview (MCP `get_run` `delivery_preview`) and the MCP approval response carry
+  `ask_the_founder`: the question in the founder's words ("Where on your site should pages
+  that answer buyer questions go?"), how to suggest a route, and the `save_page_route` call
+  to make with the answer. The coding agent reads the codebase, so it suggests the folder
+  the site's articles already use (`/blog`, `/guides`, `/learn`, `/resources`), and
+  `/blog/{slug}` when there is none. Google's URL guidance asks for words in the audience's
+  language, so the agent never suggests a Tin term such as "answers".
+- **The answer.** `save_page_route(project_id, page_type, route, request_id)` commits the
+  route to `content/page-routes.json` (`page_routes.py`). A route is a lowercase site path
+  that ends in one `{slug}`, with at most three folders, such as `/blog/{slug}`. Types
+  are `answer_page` and `article`.
+- **At approval.** The choice receipt pins the saved route, and the adaptation's
+  `direction` input tells it to publish at exactly that route, with a slug of three to five
+  words naming the page's main search term, adding one minimal route
+  once if the site does not serve it yet (`content.deliver` 1.3.0 skill, step 3). Runs
+  approved before a route was saved keep choosing their own route.
+- **Merging.** With a commit-to-main setting, Tin merges the adaptation's PR when it adds
+  only the page (`merge_rule: page_only`), or when the founder chose a route and the PR's
+  `Public URL:` line follows it (`merge_rule: chosen_route`), so the first PR that adds that
+  route can merge too. The exact-copy proof, the five-file limit, the dependency ban, the
+  pinned branch and GitHub's `clean` verdict still apply; a PR that adds site code for any
+  other route stays open and says so. Until a route is chosen, the preview sentence says a
+  commit-to-main setting still opens a pull request for these pages.
+

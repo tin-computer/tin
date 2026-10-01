@@ -1,5 +1,6 @@
 """HTTP and MCP share these delivery settings and durable retry operations."""
 
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -96,23 +97,34 @@ async def publish_preview(*, runtime, settings, run, actor):
     )
     if not repository or not adapt_on_approval(settings, run):
         return {"adapt": False}
+    from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
+
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
         runtime=runtime, settings=settings, run=run, actor=actor, repository=repository
     )
-    page = await page_url_service(runtime, settings).view(run, None)
-    sentence = publish_sentence(mode, route_missing=bool(page and page.get("route_missing")))
+    route = await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
+        run
+    )
+    sentence = publish_sentence(mode, route_missing=route is None)
     # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
     about = about_usd(cost["estimated_usd"]) if cost else None
-    return {
+    preview = {
         "adapt": True,
         "label": "Publish",
         "mode": mode,
         "repository": repository,
+        "route": route,
         "sentence": sentence,
         "cost": cost,
         "footer": f"{sentence} · up to {about}" if about else sentence,
     }
+    if route is None:
+        # Before the first page of this type publishes, the coding agent asks the founder.
+        page = await page_url_service(runtime, settings).view(run, None)
+        host = urlsplit(page["url"]).hostname if page and page.get("url") else None
+        preview["ask_the_founder"] = ask_the_founder(page_type(run), host)
+    return preview
 
 
 async def retry_delivery(*, runtime, settings, project_id, run_id):

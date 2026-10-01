@@ -11,7 +11,9 @@ description: Adapt one approved article, answer page or public article to an exi
    in `item`; for an update, match the specified existing public route uniquely, and treat
    ambiguity as a prerequisite failure. An answer page or public article has no route yet:
    derive a short kebab-case slug from `title`, under the folder or route the site uses for
-   such pages. A new page must not overwrite an existing one; add a short suffix instead.
+   such pages. When `direction` names the route the founder chose (for example
+   `/blog/{slug}`), use exactly that route, and add it as in step 5 if the site does not
+   serve it yet. A new page must not overwrite an existing one; add a short suffix instead.
 4. For Markdown-native sites preserve `article` exactly below existing/configured site
    frontmatter. Map `page_metadata` onto the site's own fields (for example `title` and
    `description`, or `meta_title` and `meta_description` when the site already uses them);

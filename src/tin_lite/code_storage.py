@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -1024,6 +1025,45 @@ class CodeStorage:
         if pinned:
             self._pinned.put(key, tuple(sorted(paths)), sum(len(path) + 64 for path in paths))
         return sorted(paths)
+
+    async def canonical_file_modified_dates(
+        self, *, repo_id: str, revision: str
+    ) -> dict[str, datetime]:
+        """Bulk last-change dates at the same immutable snapshot as the file list.
+
+        Metadata pages reuse the bounded pinned cache. Never infer a file date from
+        the repository HEAD: an unrelated commit must not make every file look new.
+        """
+        if not _is_commit_sha(revision):
+            raise ValueError("file metadata requires a commit SHA")
+        repo = await self.get_repo(repo_id)
+        dates: dict[str, datetime] = {}
+        cursors: set[str] = set()
+        params = {"ref": revision, "limit": "1000"}
+        for _ in range(100):
+            result = await self._publication_json(repo, "files/metadata", **params)
+            commits = result.get("commits", {})
+            for item in result.get("files", []):
+                path = item.get("path")
+                if not isinstance(path, str) or not _safe_repo_path(path):
+                    raise RuntimeError("project state repository returned an unsafe file path")
+                raw = commits.get(item.get("last_commit_sha"), {}).get("date")
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    date = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if date.tzinfo is not None:
+                    dates[path] = date.astimezone(UTC)
+            if not result.get("has_more"):
+                return dates
+            cursor = result.get("next_cursor")
+            if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                raise RuntimeError("project file metadata pagination is incomplete")
+            cursors.add(cursor)
+            params["cursor"] = cursor
+        raise RuntimeError("project file metadata exceeds its page budget")
 
     async def search_canonical_files(
         self,

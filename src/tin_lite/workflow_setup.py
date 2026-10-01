@@ -5,6 +5,7 @@ from tin_lite.billing_contracts import usd
 from tin_lite.code_models import model_terms
 from tin_lite.integrations import IntegrationError, parse_integration_requirements
 from tin_lite.private_workflows import require_private_execution
+from tin_lite.provider_costs import provider_costs
 from tin_lite.workflow_code import approved_article_input, evidence_specs, validate_code_definition
 from tin_lite.workflow_costs import configured_terms
 from tin_lite.workflow_definitions import resolve_execution_contract
@@ -98,15 +99,26 @@ async def code_readiness(
         if spec.metered
         else None
     )
+    # Managed services are Tin's purchases, inside the estimate; only connected ones cost extra.
+    external_costs = provider_costs(
+        workflow.definition,
+        [s for s in spec.services if not managed_services.is_managed(s.provider_key)],
+    )
     estimate = {
         "estimated_usd": usd(terms["maximum_nanos"]) if terms else "0.00",
         "approval_required": False,
         "basis": "conservative_configured_bound" if terms else "included_bounded_compute",
         "policy_id": terms["estimate"]["id"] if terms else "bounded-code-v1",
-        # Managed services are Tin's purchases, inside the estimate; connected ones are not.
-        "external_provider_cost": "unknown"
-        if any(not managed_services.is_managed(s.provider_key) for s in spec.services)
-        else "not_applicable",
+        "external_provider_cost": (
+            "not_applicable"
+            if not external_costs
+            else "unknown"
+            if any(item["status"] == "unknown" for item in external_costs)
+            else "free"
+            if all(item["status"] == "free" for item in external_costs)
+            else "estimated"
+        ),
+        "external_providers": external_costs,
     }
     if spec.model_routes and not getattr(settings, "luna_api_key", None):
         issues.append("The declared managed model service is unavailable.")

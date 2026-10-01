@@ -50,8 +50,8 @@ async def test_unsaved_content_program_names_the_next_calls(publication_db, monk
         "timezone": "Europe/Istanbul",
     }
     UUID(arguments["request_id"])
-    assert found["then"]["name"] == "start_project_workflow"
-    assert found["then"]["arguments"]["project_id"] == str(f.project.id)
+    # Saving the schedule starts the program's first run, so no second start is suggested.
+    assert "starts the program's first run itself" in found["then"]
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 2
 
     # Once the program is saved, the answer is the start call with its id filled in.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import csv
 import io
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime, time
+from datetime import UTC, datetime, time, timedelta
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
+from test_procedure_publication import publication_db  # noqa: F401
 
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.catalog import BUILTIN_WORKFLOWS
@@ -176,9 +177,16 @@ def test_email_send_policy_validates_window_and_timezone() -> None:
 
 
 async def _reserve_in_new_york(
-    monkeypatch, *, now, used_today=0, window=(time(9), time(17))
+    monkeypatch,
+    *,
+    now,
+    used_today=0,
+    window=(time(9), time(17)),
+    revision_pending_since=None,
+    campaign_status="running",
 ) -> tuple[int, list[datetime]]:
     deferred: list[datetime] = []
+    started: list[str] = []
 
     class Connection:
         @asynccontextmanager
@@ -196,7 +204,8 @@ async def _reserve_in_new_york(
                 "send_window_start": window[0],
                 "send_window_end": window[1],
                 "send_timezone": "America/New_York",
-                "revision_pending": False,
+                "campaign_status": campaign_status,
+                "revision_pending_since": revision_pending_since,
             }
 
         async def fetchval(self, query, *args):
@@ -206,6 +215,8 @@ async def _reserve_in_new_york(
         async def execute(self, query, *args):
             if "SET scheduled_for" in query:
                 deferred.append(args[1])
+            if "SET status = 'started'" in query:
+                started.append(args[0])
             return "UPDATE 1"
 
     class Pool:
@@ -220,7 +231,38 @@ async def _reserve_in_new_york(
     wait = await database.reserve_outreach_delivery(
         recipient_id=UUID(int=1), stage="initial", now=now
     )
+    if campaign_status == "stopped":
+        assert not started, "a stopped campaign takes no send slot"
     return wait, deferred
+
+
+@pytest.mark.parametrize(
+    ("pending_for", "wait"),
+    [
+        (timedelta(minutes=1), 60),
+        (timedelta(hours=2), 15 * 60),
+        (timedelta(days=3), 60 * 60),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_pending_revision_waits_longer_the_longer_it_waits(
+    monkeypatch, pending_for, wait
+) -> None:
+    # Checking every minute for as long as a revision waited grew each recipient's history
+    # without bound; a weekend-long review now takes about sixty checks, not thousands.
+    now = datetime(2026, 3, 9, 15, tzinfo=UTC)
+    waited, deferred = await _reserve_in_new_york(
+        monkeypatch, now=now, revision_pending_since=now - pending_for
+    )
+    assert waited == wait
+    assert deferred == [now + timedelta(seconds=wait)]
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_campaign_settles_at_once_without_taking_a_send_slot(monkeypatch):
+    now = datetime(2026, 3, 7, 22, 30, tzinfo=UTC)  # after the window: would otherwise wait
+    waited, deferred = await _reserve_in_new_york(monkeypatch, now=now, campaign_status="stopped")
+    assert waited == 0 and deferred == []
 
 
 @pytest.mark.parametrize(
@@ -562,7 +604,7 @@ def test_campaign_revision_gates_delivery_and_keeps_an_immutable_approval_record
     assert "outreach_campaign_one_pending_revision_idx" in migration
     assert "WHERE status = 'pending'" in migration
     assert "FOR UPDATE OF delivery, campaign" in database_source
-    assert 'if row["revision_pending"]' in database_source
+    assert 'if row["revision_pending_since"] is not None' in database_source
     assert "effective_follow_up_body" in activity_source
     assert "/api/outreach/campaigns/{run_id}/revisions" in api_source
     assert "/revisions/{revision_id}/approve" in api_source
@@ -577,3 +619,56 @@ def test_generic_artifact_download_does_not_force_markdown_media_type() -> None:
     )[0]
     assert "_file_media_type(filename)" in get_artifact_source
     assert 'media_type="text/markdown' not in get_artifact_source
+
+
+def _stopped_campaign_activities():
+    from tin_lite.activities import TinActivities
+
+    recipient = {
+        "campaign_status": "stopped",
+        "campaign_run_id": RUN_ID,
+        "status": "initial_sent",
+        "campaign_input": {"follow_up_body": "Just checking in."},
+        "follow_up_delay_days": 3,
+    }
+    activities = object.__new__(TinActivities)
+    activities._db = SimpleNamespace(  # noqa: SLF001
+        get_email_campaign_recipient=AsyncMock(return_value=recipient),
+        skip_outreach_delivery=AsyncMock(),
+        start_outreach_delivery=AsyncMock(),
+        complete_email_campaign=AsyncMock(return_value=None),
+        project_success=AsyncMock(),
+    )
+    activities._integrations = SimpleNamespace(workspace_send_message=AsyncMock())  # noqa: SLF001
+    return activities
+
+
+@pytest.mark.asyncio
+async def test_a_stopped_campaign_ends_each_recipient_without_sending_or_failing() -> None:
+    activities = _stopped_campaign_activities()
+    recipient_id = UUID(int=7)
+    await activities.send_email_campaign_recipient(
+        {"recipient_id": str(recipient_id), "stage": "follow_up"}
+    )
+    activities._db.skip_outreach_delivery.assert_awaited_once_with(  # noqa: SLF001
+        execution_key=f"{RUN_ID}:email:{recipient_id}:follow_up", reason="campaign_stopped"
+    )
+    activities._db.start_outreach_delivery.assert_not_awaited()  # noqa: SLF001
+    activities._integrations.workspace_send_message.assert_not_awaited()  # noqa: SLF001
+    # No follow-up wait of days for a campaign that will send nothing more.
+    assert await activities.email_campaign_follow_up_delay(str(recipient_id)) == 0
+    # The stopped run keeps its status; nothing is projected as a success.
+    await activities.complete_email_campaign(str(RUN_ID))
+    activities._db.project_success.assert_not_awaited()  # noqa: SLF001
+
+
+@pytest.mark.asyncio
+async def test_the_changed_campaign_queries_run_against_the_migrated_schema(publication_db):  # noqa: F811
+    # The reservation's pending-revision subquery, the skip update and the completion read
+    # run as written against real Postgres, not a fake connection.
+    database = publication_db
+    with pytest.raises(RuntimeError, match="does not exist"):
+        await database.reserve_outreach_delivery(recipient_id=UUID(int=11), stage="initial")
+    await database.skip_outreach_delivery(execution_key="missing", reason="campaign_stopped")
+    with pytest.raises(RuntimeError, match="cannot complete"):
+        await database.complete_email_campaign(run_id=UUID(int=12))

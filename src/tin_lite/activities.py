@@ -2609,6 +2609,14 @@ class TinActivities:
         recipient = await self._db.get_email_campaign_recipient(recipient_id)
         if recipient is None:
             raise RuntimeError("email campaign recipient is unavailable")
+        if recipient["campaign_status"] == "stopped":
+            # The founder stopped the campaign: nothing more is started, and the recipient
+            # ends as it stands instead of failing.
+            await self._db.skip_outreach_delivery(
+                execution_key=f"{recipient['campaign_run_id']}:email:{recipient_id}:{stage}",
+                reason="campaign_stopped",
+            )
+            return
         if recipient["campaign_status"] not in {"approved", "running", "completed"}:
             raise RuntimeError("email campaign is not approved")
         campaign_input = recipient["campaign_input"]
@@ -2715,6 +2723,8 @@ class TinActivities:
         recipient = await self._db.get_email_campaign_recipient(UUID(recipient_id_text))
         if recipient is None:
             raise RuntimeError("email campaign recipient is unavailable")
+        if recipient["campaign_status"] == "stopped":
+            return 0
         campaign_input = recipient["campaign_input"]
         if not str(campaign_input.get("follow_up_body", "")).strip():
             return 0
@@ -2735,6 +2745,8 @@ class TinActivities:
     async def complete_email_campaign(self, run_id_text: str) -> None:
         run_id = UUID(run_id_text)
         campaign = await self._db.complete_email_campaign(run_id=run_id)
+        if campaign is None:
+            return  # Stopped: the run already says so, and nothing is projected as success.
         project = await self._require_project(campaign["project_id"])
         artifact_ref = (
             f"code.storage://{project.state_repo_id}@{campaign['review_commit_sha']}"

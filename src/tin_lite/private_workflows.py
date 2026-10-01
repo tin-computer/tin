@@ -664,7 +664,8 @@ def authoring_guide(*, settings, project_id):
             "Refresh list_workflows. Call start_workflow with its UUID, project_id and inputs; "
             "do not put project_id inside inputs.",
             "Call get_code_workflow_setup for code input, connection and cost readiness. "
-            "Optionally create_project_workflow to save inputs and an eligible code schedule. "
+            "Optionally create_project_workflow to save inputs and an eligible code schedule; "
+            "a saved schedule also runs once right away. "
             "Saves choose the active definition automatically; existing saves/runs do not move.",
             "Code definitions may opt into daily/weekly schedule_modes alongside on_demand. "
             "Schedules use local time/timezone, optional start_at/end_at and selected weekdays. "
@@ -815,6 +816,11 @@ def authoring_guide(*, settings, project_id):
                 "bindings": "code.services maps a name to provider_key, max_calls (1-8) and "
                 "max_response_bytes (1024-64000). Declare matching required "
                 "integration_requirements; at most eight calls total.",
+                "provider_cost": "An optional provider_cost on a service binding has "
+                "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
+                "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
+                "pricing and the workflow's usage bounds; omit when unknown. This is an "
+                "advisory creator estimate, not a Tin credit charge or a provider spending cap.",
                 "custom_api": "await ctx.services.request(service=..., step=..., path=..., "
                 "method='GET', params={}, body=None). Custom API bindings use custom.api.<name> "
                 "and http.read/http.write capabilities. Connection methods must also permit it.",

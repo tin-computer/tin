@@ -82,6 +82,11 @@ METADATA_FIELDS = frozenset(
         "stopped_runs",
         "removed_schedules",
         "agent",
+        # project_workflow_created: identifiers, a flag and a cadence, never workflow inputs.
+        "project_workflow_id",
+        "scheduled",
+        "cadence",
+        "first_for_project",
     }
 )
 

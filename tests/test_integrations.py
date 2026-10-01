@@ -1044,6 +1044,92 @@ async def test_workspace_send_reconciles_ambiguous_delivery_without_resending() 
     assert database.call_receipts["run:recipient:ambiguous"].status == "completed"
 
 
+def _gmail_values(key: str) -> dict:
+    return {
+        "project_id": PROJECT_ID,
+        "run_id": RUN_ID,
+        "execution_key": key,
+        "recipient_email": "ada@example.com",
+        "recipient_name": "Ada Lovelace",
+        "subject": "A precise hello",
+        "body": "Hello Ada.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_after_a_token_failure_is_not_treated_as_a_lost_send() -> None:
+    # The receipt used to be written before the token refresh, so a refresh blip made every
+    # retry look like a send whose answer was lost, and the recipient could never be sent.
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    token_calls = sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, sends
+        if request.url.path == "/token":
+            token_calls += 1
+            if token_calls == 1:
+                return httpx.Response(500, json={"error": "backend_error"})
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            return httpx.Response(200, json={"id": "gmail-message-1", "threadId": "t-1"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError) as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        assert "run:recipient:token" not in database.call_receipts
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+
+    assert sends == 1 and sent["id"] == "gmail-message-1"
+    assert database.call_receipts["run:recipient:token"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_refused_by_gmail_is_a_failure_that_may_be_retried() -> None:
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            if sends == 1:
+                return httpx.Response(429, json={"error": {"code": 429}})
+            return httpx.Response(200, json={"id": "gmail-message-2", "threadId": "t-2"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError, match="refused") as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        receipt = database.call_receipts["run:recipient:refused"]
+        assert receipt.status == "failed" and receipt.error_code == "gmail_http_429"
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+
+    assert sends == 2 and sent["id"] == "gmail-message-2"
+    assert database.call_receipts["run:recipient:refused"].status == "completed"
+
+
 @pytest.mark.asyncio
 async def test_workspace_reply_check_detects_only_external_mail_after_initial_send() -> None:
     database = FakeIntegrationDatabase()
@@ -2894,11 +2980,93 @@ async def test_github_repositories_follow_every_installation_page(monkeypatch):
         )
 
     async with repository_service(monkeypatch, github) as service:
+        service._connection.return_value.configuration["user_repositories"] = names
         options = await service.github_repositories(project_id=PROJECT_ID)
         receipt = service._database.calls[-1]
     assert [option.id for option in options] == names
     assert len(requests) == 2
     assert receipt["response_summary"] == {"count": 150, "truncated": False}
+
+
+def _installation_repositories(names):
+    async def github(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/installation/repositories"
+        return httpx.Response(
+            200,
+            json={
+                "total_count": len(names),
+                "repositories": [{"full_name": name, "private": True} for name in names],
+            },
+        )
+
+    return github
+
+
+async def test_github_repositories_offer_only_what_the_person_can_push_to(monkeypatch):
+    github = _installation_repositories(
+        ["example-org/site", "example-org/billing", "Example-Org/Docs"]
+    )
+    async with repository_service(monkeypatch, github) as service:
+        configuration = service._connection.return_value.configuration
+        configuration["user_repositories"] = ["example-org/docs", "example-org/site"]
+        options = await service.github_repositories(project_id=PROJECT_ID)
+    assert [option.id for option in options] == ["Example-Org/Docs", "example-org/site"]
+
+
+async def test_a_github_connection_from_before_access_was_recorded_keeps_only_its_choice(
+    monkeypatch,
+):
+    github = _installation_repositories(["example-org/site", "example-org/billing"])
+    async with repository_service(monkeypatch, github) as service:
+        options = await service.github_repositories(project_id=PROJECT_ID)
+        assert [option.id for option in options] == ["example-org/site"]
+        service._connection.return_value.configuration["selected_repository"] = None
+        with pytest.raises(IntegrationAuthorizationError, match="Reconnect GitHub"):
+            await service.github_repositories(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_connecting_github_records_the_repositories_the_person_can_push_to(tmp_path):
+    configured, private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    github, _ = _github_write_app(private_key_path)
+    pages = [
+        [
+            {"full_name": "example-org/site", "permissions": {"pull": True, "push": True}},
+            {"full_name": "example-org/billing", "permissions": {"pull": True, "push": False}},
+        ],
+        [
+            {"full_name": "example-org/docs", "permissions": {"pull": True, "maintain": True}},
+            {"full_name": "example-org/secret", "permissions": {"pull": False}},
+        ],
+    ]
+
+    async def user_access(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/user/installations/42/repositories":
+            assert request.headers["authorization"] == "Bearer user-token"
+            page = int(request.url.params["page"])
+            headers = {"link": '<https://api.github.com/x?page=2>; rel="next"'} if page == 1 else {}
+            return httpx.Response(200, headers=headers, json={"repositories": pages[page - 1]})
+        return await github(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(user_access)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GITHUB_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        connection = await service.complete_github(
+            state=state,
+            code="one-time-code",
+            installation_id=42,
+            setup_action="install",
+            clerk_user_id=USER_ID,
+        )
+    assert connection.configuration["user_repositories"] == ["example-org/docs", "example-org/site"]
 
 
 # ---------------------------------------------------------------- Google Ads (ads.google)
@@ -3144,23 +3312,104 @@ async def test_connect_google_ads_sends_the_manager_invitation_and_records_it() 
     assert "Accept it in Google Ads" in database.activities[-1]["summary"]
 
 
+OTHER_ADS_PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000ad")
+
+
+def link_row(link_id: str, status: str) -> dict:
+    return {
+        "customerClientLink": {
+            "resourceName": f"customers/{ADS_MCC}/customerClientLinks/{ADS_CID}~{link_id}",
+            "clientCustomer": f"customers/{ADS_CID}",
+            "managerLinkId": link_id,
+            "status": status,
+        }
+    }
+
+
 @pytest.mark.asyncio
-async def test_connect_google_ads_already_invited_falls_back_to_the_link_status() -> None:
+async def test_connect_google_ads_refuses_a_link_this_project_did_not_invite() -> None:
+    # Another project's accepted link: Google says the account is already managed by Tin.
     backend = AdsBackend()
     backend.link_error = ("managerLinkError", "ALREADY_MANAGED_BY_THIS_MANAGER")
     backend.link_status = "ACTIVE"
     service, database = ads_service(backend)
+    with pytest.raises(IntegrationAuthorizationError, match="didn't send"):
+        await service.connect_google_ads(
+            project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+        )
+    assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+    assert database.calls[-1]["status"] == "failed"
+    assert database.calls[-1]["error_code"] == "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
+    assert not any(
+        "FROM customer_client_link" in body.get("query", "") for _, body, _ in backend.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_google_ads_readopts_its_own_invitation() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    backend.link_error = ("managerLinkError", "ALREADY_INVITED_BY_THIS_MANAGER")
+    backend.link_status = "ACTIVE"
     connection = await service.connect_google_ads(
         project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
     )
     assert connection.configuration["link_status"] == "active"
+    assert connection.configuration["manager_link_id"] == "555"
     assert connection.status == "connected"
-    statuses = [call["status"] for call in database.calls]
-    assert statuses == ["completed", "completed"]
-    assert database.calls[0]["response_summary"] == {
-        "code": "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
-    }
-    assert backend.requests[-1][1]["query"].startswith("SELECT customer_client_link")
+    assert [call["status"] for call in database.calls][-2:] == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_google_ads_link_status_ignores_another_projects_link() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    # This project's invitation (555) was declined; someone else's link (999) is active.
+    backend.link_rows = [link_row("999", "ACTIVE"), link_row("555", "REFUSED")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "refused"
+    assert connection.configuration["manager_link_id"] == "555"
+    backend.link_rows = [link_row("999", "ACTIVE")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "missing"
+    assert connection.status == "needs_attention"
+    with pytest.raises(IntegrationAuthorizationError):
+        await service.google_ads_account(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_a_link_recorded_by_two_projects_fails_closed_and_survives_disconnect() -> None:
+    backend = AdsBackend()
+    backend.link_status = "ACTIVE"
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
+    # A connection made before links were bound to the inviting project shares the link.
+    database.connections[(OTHER_ADS_PROJECT_ID, ADS_PROVIDER)] = IntegrationConnection(
+        **{**connection.__dict__, "id": uuid4(), "project_id": OTHER_ADS_PROJECT_ID}
+    )
+    for project_id in (PROJECT_ID, OTHER_ADS_PROJECT_ID):
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_account(project_id=project_id)
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_health(project_id=project_id)
+    before = len(backend.requests)
+    assert (
+        await service.disconnect(project_id=OTHER_ADS_PROJECT_ID, provider_key=ADS_PROVIDER) is True
+    )
+    assert not any(
+        path.endswith("customerClientLinks:mutate") for path, _, _ in backend.requests[before:]
+    )
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
 
 
 @pytest.mark.asyncio
