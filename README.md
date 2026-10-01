@@ -4,7 +4,7 @@ Open-source marketing system, designed for coding agents.
 
 Why would you invent marketing from first principles when you can use a battle-tested marketing stack in 10 minutes?
 
-Now with [**26+** reliable workflows](docs/workflows.md) you can use right away. 
+Now with [**60** workflows](docs/workflows.md) you can use right away, across organic search, content, social, outreach, product QA, paid ads and creative work.
 
 [Website](https://tin.computer) · [Try it in the browser](https://app.tin.computer)
 
@@ -48,8 +48,8 @@ Use Tin to grow my project like a pro!
 
 - **Work that continues between sessions.** Save a workflow with its inputs and a schedule. Tin handles its timers, retries, and waits for your approval.
 - **Context that carries forward.** Reports, research, and a project wiki live in a git repository. Later runs don't start from scratch.
-- **Workflows you can inspect.** The catalog covers organic growth, content, outreach, product QA, and creative work. Each definition states what it needs, what it produces, and whether it needs review.
-- **Review before delivery.** Read an article, request changes, or approve a campaign. GitHub delivery opens a pull request for you to merge.
+- **Workflows you can inspect.** The catalog covers organic growth, content, social, outreach and listings, product QA, paid ads, and creative work. Each definition states what it needs, what it produces, and whether it needs review.
+- **Review before delivery.** Read an article, request changes, or approve a campaign, an X post or an ad launch. Approved pages reach your site through the delivery setting you choose: a pull request you merge, or a commit to main.
 - **One project across your tools.** Your coding agent and the browser share the same files, run history, and decisions, with the same project permissions.
 - **Workflow evaluation, coming.** Each template gets an eval set and a blind second reader, so the workflows get sharper week after week.
 - **Growth experiment tracking, coming.** Every change becomes an experiment with a before, an after, and a verdict.
@@ -93,10 +93,13 @@ These are the main areas covered by the current catalog. Availability depends on
 | Area | Examples |
 |---|---|
 | Getting started | A growth plan, integration choices, and setup of the work you approve |
-| Organic growth | Site and AI visibility audits, keyword research, content planning, and technical fixes as pull requests |
-| Content | Writing-style capture, researched articles, planned drafts, feedback and revisions, approved article delivery to GitHub |
-| Cold outreach | A shortlist from Gmail and Calendar, then an approved email campaign with paced follow-ups and reply detection |
-| Product QA | Signup walkthroughs, a code map, a feature map, and an audit of the product's features |
+| Organic growth | Site and AI visibility audits, keyword research, content planning, refreshes of pages that rank but rarely get clicked, every fixable audit finding in one pull request, error-message pages, and backlink asks from unlinked mentions |
+| Content | Writing-style and brand capture, researched articles, planned drafts, feedback and revisions, approved pages delivered to your site, release announcements, score quizzes, and starters developers can clone |
+| Social | An X voice learned from your own posts, X drafts published only after you approve the exact post, a weekly social plan, and X and LinkedIn posts from a plan or an article |
+| Outreach and listings | A Gmail and Calendar shortlist with an approved, paced email campaign; who pays and stays from Stripe; community threads, newsletters, talks and podcasts, courses, campus events, integration marketplaces, and awesome lists submitted from your GitHub account after approval |
+| Product QA | Signup walkthroughs, a code map, a feature map, a feature-by-feature audit, a checkout trust check, and a PostHog analytics brief |
+| Paid ads | Whether Google Search ads fit, a campaign launched in your own account after you approve the plan, and daily checks that cut waste and propose changes |
+| Competitors | Pricing and changelog changes, and the users of a tool that is shutting down |
 | Creative work | Diagrams, brand characters, and product demo videos |
 | Project context | A maintained wiki, research reports, and a weekly brief |
 
@@ -112,7 +115,7 @@ A repository says a lot about how a product works. It says less about why custom
 
 Your project can also hold `SKILL.md` files under `.agents/skills/`. Workflows load the skills they declare, such as a writing-style guide. Tin can help extract that guide from samples you select, and you can edit it directly. A skill in your local repository is not automatically available to a hosted run; your agent needs to save the relevant material to the Tin project.
 
-Public articles and planned drafts support feedback in the reader or through MCP. Tell Tin what to change, compare the revision, and approve the version you want. Generation notes stay separate from public copy. With GitHub delivery configured, an approved article can become a pull request; approval does not merge or deploy it.
+Public articles and planned drafts support feedback in the reader or through MCP. Tell Tin what to change, compare the revision, and approve the version you want. Generation notes stay separate from public copy. With GitHub delivery configured, an approved article follows the project's delivery setting: an unmerged pull request, or a commit to main, where Tin merges its own pull request only when it adds nothing but the page and GitHub reports it clean. Technical fixes always wait for you to merge.
 
 ## Connect the services the work needs
 
@@ -121,13 +124,18 @@ Connections belong to projects. A workflow uses specific operations from each in
 | Connection | What it enables | Boundary |
 |---|---|---|
 | Google Search Console | Read search performance for a property you select | Read-only access |
-| GitHub App | Read a selected repository and open a pull request with proposed changes | No merge or push to the base branch; credentials stay on the server |
+| GitHub App | Read a selected repository and open pull requests with proposed changes | Tin merges only its own pull request for approved content, and only under the commit to main delivery setting; credentials stay on the server |
+| GitHub account | Submit the awesome-list entries you approve from your own account | Used only for approved submissions to public repositories |
 | Google Workspace | Research Gmail and Calendar history; send approved campaigns | Reads and sends go through the project's declared capabilities |
+| Google Ads | Launch and look after one Search campaign through Tin's manager account | Nothing is created until you approve the exact plan; budget and bidding changes need your approval |
+| Stripe | Read subscriptions, customers, invoices, prices and charges | Read-only restricted key you create |
+| PostHog | Run bounded queries in one PostHog project you choose | Read-only access |
+| X | Learn your voice from your own posts and publish posts you approve | Publishes only the exact post and media you confirmed |
 | Claude Code, Codex, Cursor | Use Tin through MCP, including files, workflows, and supported review actions | Every call checks the user's project membership |
 
-GitHub and Google tokens stay on the switchboard, Tin's server. Sandbox tools receive the permitted data or access through a grant tied to the run. Product QA can use a separate Tin test identity to sign into the product it is testing.
+Provider tokens and keys stay on the switchboard, Tin's server. Sandbox tools receive the permitted data or access through a grant tied to the run. Product QA can use a separate Tin test identity to sign into the product it is testing.
 
-For data from Google Docs and Drive, analytics providers such as GA4 and PostHog, or advertising platforms, add relevant exports to project files.
+For data from Google Docs and Drive, GA4, or other advertising platforms, add relevant exports to project files.
 
 ## Bring your own workflows
 
@@ -253,7 +261,7 @@ The [engineering reference](docs/engineering.md) covers service configuration, l
 
 The direction is broader coverage with less setup, while keeping the work inspectable.
 
-- **More workflows and connections.** Extend product QA into fixes, add analytics sources, and build out lifecycle marketing and paid ads. These need their own provider and approval rules.
+- **More workflows and connections.** Extend product QA into fixes, add analytics sources such as GA4, take website changes beyond pages, and build out lifecycle marketing and more ad platforms. These need their own provider and approval rules.
 - **Better evaluation.** Build workflow-specific evaluation sets and a calibrated chat evaluation harness. Measure whether the work is useful, as well as whether the run completed.
 - **Experiment tracking.** Record the intended outcome of a change, the metric, and the measurement window, then compare it with what happened.
 - **More control.** Let projects choose which eligible workflow decisions can run automatically. Make private workflow authoring and upgrades easier.
