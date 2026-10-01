@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Stripe data is read through payments.stripe subscriptions.list. Only a complete live-mode read can produce contact candidates or a Stripe ARPU; test-mode and partial reads are excluded.",
+    "A candidate has an active subscription with a positive recurring list price, at least minimum_paid_days after any trial, and a usable email. This is a payment-tenure/status proxy, not invoice-level payment verification or evidence of satisfaction or willingness to refer.",
+    "Gross margin and monthly churn are business inputs because subscription status does not establish either. A supplied net ARPU takes precedence; otherwise ARPU falls back to an input and currency when Stripe cannot provide a complete consistent live sample.",
+    "Gross-profit LTV is monthly ARPU multiplied by gross margin and divided by monthly churn. The total reward-cost ceiling is the lower of the allowed LTV share and current CAC when supplied. Account-credit face value divides that cost ceiling by gross margin.",
+    "One managed model call drafts copy. Stripe customer names and emails are not sent to the model. No email or page is sent or published."
+  ],
+  "cost_drivers": [
+    "One bounded gpt-6-luna call for page and email copy. The configured maximum is one call, 24000 input bytes and 1400 output tokens; observed cost is not claimed by fixture cases.",
+    "At most eight read-only Stripe subscriptions.list calls through the project's restricted connection. Stripe charges and connection costs are outside Tin model accounting."
+  ],
+  "effects": [
+    "Reads projected Stripe subscriptions and expanded customer contact fields through payments.stripe; test-mode or incomplete reads never yield contact candidates.",
+    "Writes reports/growth/REFERRAL_LOOP.md for owner review. Candidate customer names and emails appear only in that report.",
+    "Does not write to Stripe, send email, publish a page, or create a referral link."
+  ],
+  "cases": [
+    {
+      "id": "live_subscription_economics",
+      "description": "Two live active customers qualify by paid tenure, one trialing and one canceled customer do not. Yearly and monthly Stripe MRR average to USD 50.75. With 80% margin, 5% churn, 30% of LTV and USD 40 CAC, the reward ceiling is CAC-limited and the cautious two-sided credit starts at USD 12.50 each.",
+      "inputs": {
+        "gross_margin_percent": 80,
+        "monthly_churn_percent": 5,
+        "current_cac": 40,
+        "currency": "USD",
+        "allowed_ltv_percent": 30,
+        "minimum_paid_days": 90,
+        "max_candidates": 5
+      },
+      "expect": {
+        "contains": [
+          "Estimated gross-profit LTV: USD 812.00",
+          "Current CAC comparison: USD 40.00",
+          "Maximum combined two-sided credit face value: USD 50.00",
+          "USD 12.50 credit for each person",
+          "ada@lovelace.example",
+          "linus@kernel.example",
+          "nothing is sent, published or changed"
+        ],
+        "excludes": ["grace@hopper.example", "margaret@apollo.example"]
+      }
+    },
+    {
+      "id": "stripe_unavailable_fallback",
+      "description": "Stripe refuses the subscription read. Supplied ARPU, currency, margin, churn and existing CAC still produce a conservative recommendation and copy without customer contacts.",
+      "inputs": {
+        "arpu": 100,
+        "currency": "USD",
+        "gross_margin_percent": 80,
+        "monthly_churn_percent": 5,
+        "current_cac": 30,
+        "allowed_ltv_percent": 30
+      },
+      "expect": {
+        "contains": [
+          "Stripe: unavailable; using fallback inputs where supplied",
+          "Monthly ARPU estimate: USD 100.00 (fallback input)",
+          "Estimated gross-profit LTV: USD 1,600.00",
+          "Current CAC comparison: USD 30.00",
+          "USD 9.37 credit for each person",
+          "No Stripe contacts are available"
+        ],
+        "excludes": ["ada@lovelace.example"]
+      }
+    },
+    {
+      "id": "economics_missing",
+      "description": "With Stripe unavailable and no fallback economics, retain the default structure and editable amount placeholder rather than failing or inventing a reward.",
+      "inputs": {},
+      "expect": {
+        "contains": [
+          "No defensible dollar reward is priced in this run",
+          "monthly ARPU and its currency, gross margin, monthly churn",
+          "{{credit_amount}}",
+          "Two-sided account credit"
+        ],
+        "excludes": ["Maximum combined two-sided credit face value:"]
+      }
+    }
+  ],
+  "rubric": [
+    {"id": "economic_integrity", "question": "Does the reward cap follow from the stated ARPU, gross margin, churn, allowed LTV share and CAC, with no invented input?"},
+    {"id": "selection_integrity", "question": "Are listed contacts limited to live active subscribers past the paid-tenure threshold, with tenure clearly described as a proxy rather than satisfaction?"},
+    {"id": "review_boundary", "question": "Are the offer and copy clearly reviewable drafts with no automatic email, page publication or referral-link creation?"}
+  ]
+}

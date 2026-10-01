@@ -1,0 +1,169 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.referral_loop",
+    "title": "Plan a customer referral experiment",
+    "description": "Use paying-customer tenure and the business economics available to set a cautious referral-reward ceiling, then prepare a page concept and customer email for the founder to review.",
+    "executor": "workflow.code",
+    "system": "cold-outreach",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the selected customer candidates, reward economics and draft copy before contacting anyone or publishing a referral page."
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "Use the business and audience context, and check the owner's hard no's before inviting customers."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "Use the captured writing style for the customer email when available."
+      }
+    ],
+    "integration_requirements": [
+      {
+        "provider_key": "payments.stripe",
+        "capabilities": ["subscriptions.read"],
+        "required": false
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "product_name": {
+          "type": "string",
+          "maxLength": 100,
+          "default": "",
+          "title": "Product name (optional)",
+          "x-tin-ui": {"control": "text", "order": 10}
+        },
+        "product_summary": {
+          "type": "string",
+          "maxLength": 1200,
+          "default": "",
+          "title": "What the product does (optional)",
+          "description": "Use a sentence from the Feature map or README when project context is missing.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        },
+        "audience": {
+          "type": "string",
+          "maxLength": 500,
+          "default": "",
+          "title": "Who gets the most value (optional)",
+          "x-tin-ui": {"control": "textarea", "order": 30}
+        },
+        "voice_notes": {
+          "type": "string",
+          "maxLength": 1000,
+          "default": "",
+          "title": "Writing notes (optional)",
+          "x-tin-ui": {"control": "textarea", "order": 40}
+        },
+        "arpu": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1000000,
+          "title": "Monthly revenue per customer (optional override)",
+          "description": "Use when Stripe is unavailable or its listed recurring prices do not reflect collected net revenue. Supply currency too.",
+          "x-tin-ui": {"control": "number", "order": 50}
+        },
+        "currency": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 3,
+          "title": "Currency for fallback ARPU and CAC",
+          "description": "Three-letter code such as USD. Required when fallback ARPU is used.",
+          "x-tin-ui": {"control": "text", "order": 60}
+        },
+        "gross_margin_percent": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "title": "Gross margin (%)",
+          "description": "Use the business's current gross margin. Stripe does not contain delivery costs.",
+          "x-tin-ui": {"control": "number", "order": 70}
+        },
+        "monthly_churn_percent": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 100,
+          "title": "Monthly customer churn (%)",
+          "description": "Use a measured monthly rate when available; Stripe subscription status alone is not treated as a churn rate.",
+          "x-tin-ui": {"control": "number", "order": 80}
+        },
+        "current_cac": {
+          "type": "number",
+          "minimum": 0.01,
+          "maximum": 1000000,
+          "title": "Current acquisition cost per customer (optional)",
+          "description": "If known, enter the current CAC in the same currency as ARPU. It caps the reward-cost comparison.",
+          "x-tin-ui": {"control": "number", "order": 90}
+        },
+        "allowed_ltv_percent": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 100,
+          "default": 30,
+          "title": "Share of gross-profit LTV available for acquisition (%)",
+          "description": "Conservative default: 30%. Adjust to the portion of gross-profit LTV the business permits for acquiring a customer.",
+          "x-tin-ui": {"control": "number", "order": 100}
+        },
+        "minimum_paid_days": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 730,
+          "default": 90,
+          "title": "Minimum paid tenure for a referrer candidate (days)",
+          "x-tin-ui": {"control": "counter", "order": 110}
+        },
+        "max_candidates": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10,
+          "default": 5,
+          "title": "Maximum candidate customers to list",
+          "x-tin-ui": {"control": "counter", "order": 120}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "draft": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 24000,
+          "max_output_tokens": 1400
+        }
+      },
+      "services": {
+        "stripe": {
+          "provider_key": "payments.stripe",
+          "max_calls": 8,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/growth/REFERRAL_LOOP.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}
