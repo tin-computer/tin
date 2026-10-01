@@ -208,27 +208,31 @@ class ContentRefreshSources:
                 continue
             live_at = await self._live_at(row["id"])
             pending = row["status"] in refresh.ACTIVE_STATES
-            open_pull_request = False
+            # Approved but not live yet: undelivered, or a pull request still open (or one
+            # Tin could not check). Either way the page waits, so it is never refreshed and
+            # paid for twice. An approval that never reaches the site stops blocking after
+            # the same six weeks a live refresh waits.
+            waiting = False
             if live_at is None and not pending and row["review_decision"] == "approved":
                 delivered = await self.db.get_effect(delivery_key(row["id"]))
                 result = (delivered.result or {}) if delivered else {}
-                if delivered and delivered.status == "completed" and result.get("commit"):
+                completed = delivered is not None and delivered.status == "completed"
+                if completed and result.get("commit"):
                     live_at = _time(result.get("delivered_at"))
-                elif (
-                    delivered
-                    and delivered.status == "completed"
-                    and type(result.get("number")) is int
-                    and self.integrations is not None
-                    and checks < refresh.MAX_PR_CHECKS
-                ):
-                    checks += 1
-                    state = await self.integrations.github_pull_request_state(
-                        project_id=run.project_id,
-                        repository=result["repository"],
-                        number=result["number"],
-                    )
-                    live_at = _time(state.get("merged_at")) if state.get("merged") else None
-                    open_pull_request = state.get("state") == "open" and live_at is None
+                elif completed and type(result.get("number")) is int:
+                    if self.integrations is not None and checks < refresh.MAX_PR_CHECKS:
+                        checks += 1
+                        state = await self.integrations.github_pull_request_state(
+                            project_id=run.project_id,
+                            repository=result["repository"],
+                            number=result["number"],
+                        )
+                        live_at = _time(state.get("merged_at")) if state.get("merged") else None
+                        waiting = state.get("state") == "open" and live_at is None
+                    else:
+                        waiting = True
+                else:
+                    waiting = now - row["created_at"] < refresh.WAIT
                 if live_at is not None:
                     await self._save_live(row["id"], live_at)
             items.append(
@@ -238,7 +242,7 @@ class ContentRefreshSources:
                     "path": page["path"],
                     "live_at": live_at.isoformat() if live_at else None,
                     "blocks": pending
-                    or open_pull_request
+                    or waiting
                     or (live_at is not None and now - live_at < refresh.WAIT),
                 }
             )

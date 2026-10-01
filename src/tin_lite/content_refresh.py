@@ -50,7 +50,8 @@ MAX_PAGE_PARAGRAPHS = 12
 MAX_PAGE_BYTES = 2_000_000
 MAX_SEARCHES = 6
 MAX_RESULTS_SHOWN = 5
-MAX_PR_CHECKS = 5
+# Every earlier refresh with an unmerged pull request is checked (at most 50 are read).
+MAX_PR_CHECKS = 50
 # Where a project's positioning lives: the brand guide's direction, founder notes, project
 # memory and the Start here plan. The procedure reads them from its pinned checkout.
 POSITIONING_PATHS = ("brand/BRAND.md", "wiki/INDEX.md", "reports/GROWTH_ONBOARDING_PLAN.md")

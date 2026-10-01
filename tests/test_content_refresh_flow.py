@@ -215,6 +215,31 @@ async def test_an_open_or_pending_refresh_keeps_its_page_waiting(publication_db)
     f.integrations.github_pull_request_state.assert_awaited_once()
 
 
+async def test_an_approved_refresh_not_yet_delivered_keeps_its_page_waiting(publication_db):
+    f = await fixture(publication_db)
+    stale = await earlier(f, "/guides/setup")  # Approved; its delivery has not happened yet.
+    run = await refresh_run(f)
+    context = await f.sources.prepare(run)
+    assert context["page"]["path"] == "/pricing"
+    # An approval that never reaches the site stops holding the page after six weeks.
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET created_at=$2 WHERE id=$1", stale.id, NOW - timedelta(weeks=7)
+    )
+    assert (await f.sources.prepare(await refresh_run(f)))["page"]["path"] == "/guides/setup"
+
+
+async def test_every_open_refresh_pull_request_keeps_its_page_waiting(publication_db):
+    f = await fixture(publication_db)
+    # The oldest of six open pull requests is the setup guide's.
+    await earlier(f, "/guides/setup", pull_request=40)
+    for number in range(41, 46):
+        await earlier(f, f"/blog/post-{number}", pull_request=number)
+    run = await refresh_run(f)
+    context = await f.sources.prepare(run)
+    assert context["page"]["path"] == "/pricing"
+    assert f.integrations.github_pull_request_state.await_count == 6
+
+
 async def test_nothing_due_reports_and_finishes_without_compute_or_review(
     publication_db, monkeypatch
 ):
