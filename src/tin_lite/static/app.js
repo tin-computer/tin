@@ -230,6 +230,9 @@ const state = {
   messages: [],
   integrations: [],
   decisions: [],
+  // Proposed website changes and open judgment calls wait in Decisions beside run reviews.
+  websiteChanges: [],
+  judgmentCalls: [],
   view: viewFromLocation(),
   documentRoute: documentRouteFromLocation(),
   taskRoute: taskRouteFromLocation(),
@@ -1212,7 +1215,8 @@ function updateRail() {
     (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
   ).length;
   workflowCount.textContent = runningCount ? String(runningCount) : "";
-  decisionCount.textContent = state.decisions.length ? String(state.decisions.length) : "";
+  const waiting = decisionItems().length;
+  decisionCount.textContent = waiting ? String(waiting) : "";
   updateAgentRail();
 }
 
@@ -4428,9 +4432,34 @@ function mountArticleFeedback(host, runId, reader = false, documentContext = {})
   });
 }
 
+// Everything that waits for the founder: run reviews, then proposed website changes, then the
+// judgment calls a coding agent will answer with the next website change run.
+function decisionItems() {
+  const changes = state.websiteChanges.map((change) => ({
+    id: `change:${change.change_id}`, kind: "website_change", title: change.title, created_at: change.proposed_at, change,
+  }));
+  const calls = state.judgmentCalls.map((call) => ({
+    id: `question:${call.id}`, kind: "judgment_call", title: call.question, created_at: call.recorded_at, call,
+  }));
+  return [...state.decisions, ...changes, ...calls];
+}
+
+async function fetchWebsiteChanges(projectId) {
+  const id = encodeURIComponent(projectId);
+  const [changes, questions] = await Promise.all([
+    api(`/api/projects/${id}/website-changes?status=pending`).catch(() => []),
+    api(`/api/projects/${id}/website-changes/questions`).catch(() => ({ questions: [] })),
+  ]);
+  return {
+    changes: Array.isArray(changes) ? changes : [],
+    questions: Array.isArray(questions?.questions) ? questions.questions : [],
+  };
+}
+
 function selectedDecision() {
-  if (!state.decisions.length) return null;
-  return state.decisions.find((item) => item.id === state.decisionId) || state.decisions[0];
+  const items = decisionItems();
+  if (!items.length) return null;
+  return items.find((item) => item.id === state.decisionId) || items[0];
 }
 
 function sameText(left, right) {
@@ -4646,19 +4675,103 @@ function decisionListTitle(item) {
   return String(item.title || "").replace(/^Review:\s*/, "");
 }
 
+const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index" };
+
+// What the change does, in one line: the audit's repair, the planned move, or the plan's summary.
+function websiteChangeSummary(change) {
+  const detail = change.detail || {};
+  const planned = detail.planned;
+  if (planned) {
+    return change.kind === "redirect"
+      ? `Redirect ${planned.from} to ${planned.to}.`
+      : `Keep ${planned.from} out of search (noindex).`;
+  }
+  if (change.source === "blog_index") return detail.summary || `A blog index at ${detail.route || change.paths?.[0] || ""}.`;
+  const decided = detail.decision ? ` Decision: ${detail.decision}.` : "";
+  return detail.change ? `Tin ${detail.change}.${decided}` : change.title;
+}
+
+function websiteChangeDetailHtml(item) {
+  const change = item.change;
+  const files = change.detail?.files || [];
+  const paths = change.paths || [];
+  return `<article class="decision-detail-card website-change-card" data-change-id="${escapeHtml(change.change_id)}">
+    <header>
+      <span class="decision-workflow-mark">W</span>
+      <span><strong>${escapeHtml(change.title)}</strong><code title="${escapeHtml(change.change_id)}">${escapeHtml(`${CHANGE_SOURCES[change.source] || change.source} · ${change.kind}`)}</code></span>
+    </header>
+    <div class="decision-detail-body">
+      <p class="decision-summary">${escapeHtml(websiteChangeSummary(change))}</p>
+      ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
+      ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
+      ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
+      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
+    </div>
+    <footer>
+      <button class="decision-discard" type="button" data-change-action="decline">Decline</button>
+      <button class="decision-approval" type="button" data-change-action="approve">Approve</button>
+    </footer>
+  </article>`;
+}
+
+function judgmentCallDetailHtml(item) {
+  const call = item.call;
+  return `<article class="decision-detail-card judgment-call-card">
+    <header>
+      <span class="decision-workflow-mark">?</span>
+      <span><strong>${escapeHtml(call.question)}</strong><code title="${escapeHtml(call.id)}">${escapeHtml(`Judgment call · ${CHANGE_SOURCES[call.source] || call.source}`)}</code></span>
+    </header>
+    <div class="decision-detail-body">
+      ${call.finding?.issue ? `<p class="decision-summary">${escapeHtml(call.finding.issue)}</p>` : ""}
+      <ul class="judgment-options" aria-label="Options">${(call.options || []).map((option) => `<li${option.value === call.suggestion ? ' class="is-suggested"' : ""}><strong>${escapeHtml(option.label)}</strong>${option.value === call.suggestion ? '<span class="judgment-suggested">Tin suggests</span>' : ""}</li>`).join("")}</ul>
+      ${call.why ? `<p class="decision-note">${escapeHtml(call.why)}</p>` : ""}
+      <p class="decision-note">Your coding agent answers this with the next website change run, and asks you when it is unsure.</p>
+    </div>
+  </article>`;
+}
+
+async function decideWebsiteChange(item, button) {
+  const context = currentProjectContext();
+  const action = button.dataset.changeAction;
+  const buttons = [...main.querySelectorAll("[data-change-action]")];
+  buttons.forEach((each) => { each.disabled = true; });
+  try {
+    await api(`/api/projects/${encodeURIComponent(context.projectId)}/website-changes/${encodeURIComponent(item.change.change_id)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: window.crypto.randomUUID(), content_sha256: item.change.content_sha256 }),
+    });
+    if (!isCurrentProjectContext(context)) return;
+    state.websiteChanges = state.websiteChanges.filter((change) => change.change_id !== item.change.change_id);
+    state.decisionId = null;
+    render();
+    showToast(action === "decline"
+      ? "Declined. Tin won't make this change or propose it again."
+      : item.change.protected
+        ? "Approved. It touches a protected page, so its pull request waits for your merge."
+        : "Approved. Tin publishes it with the next website change run.");
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    buttons.forEach((each) => { each.disabled = false; });
+    showToast(`Could not record your decision: ${error.message}`);
+  }
+}
+
 function renderDecisions() {
   disposeDocument();
   const decision = selectedDecision();
   if (decision && state.decisionId !== decision.id) state.decisionId = decision.id;
+  const items = decisionItems();
+  const detail = decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
+    : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision) : decisionDetailHtml(decision);
   main.innerHTML = `<section class="product-view decisions-view">
     <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
-    ${state.decisions.length ? `<div class="decisions-layout">
-      <div class="decision-list">${state.decisions.map((item) => `<button class="decision-list-item ${item.id === decision.id ? "is-active" : ""}" type="button" data-decision-id="${escapeHtml(item.id)}">
+    ${items.length ? `<div class="decisions-layout">
+      <div class="decision-list">${items.map((item) => `<button class="decision-list-item ${item.id === decision.id ? "is-active" : ""}" type="button" data-decision-id="${escapeHtml(item.id)}">
         <span class="activity-marker is-needs-you" aria-hidden="true"></span>
         <span><strong>${escapeHtml(decisionListTitle(item))}</strong></span>
         <code>${escapeHtml(waitingLabel(item.created_at))}</code>
       </button>`).join("")}</div>
-      ${decisionDetailHtml(decision)}
+      ${detail}
     </div>` : '<div class="decisions-empty"><strong>Nothing needs you.</strong><span>When a workflow needs review or an answer, it will appear here.</span><button class="button-secondary" type="button" data-open-system>Open System</button></div>'}
   </section>`;
   main.querySelectorAll("[data-decision-id]").forEach((button) => {
@@ -4680,8 +4793,11 @@ function renderDecisions() {
     navigate("integrations");
   });
   main.querySelector("[data-output-compare]")?.addEventListener("click", () => openOutputComparison(decision.run_id, "decisions"));
+  main.querySelectorAll("[data-change-action]").forEach((button) => {
+    button.addEventListener("click", (event) => decideWebsiteChange(decision, event.currentTarget));
+  });
   bindPageUrls();
-  if (decision && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
+  if (decision?.run_id && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
 }
@@ -6384,10 +6500,11 @@ async function pollRuns() {
   const projectId = state.project.id;
   state.pollInFlight = true;
   try {
-    const [recentRuns, systemSummary, decisions] = await Promise.all([
+    const [recentRuns, systemSummary, decisions, websiteChanges] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(projectId)}/runs?limit=100`),
       api(`/api/projects/${encodeURIComponent(projectId)}/system`),
       api(`/api/projects/${encodeURIComponent(projectId)}/decisions`),
+      fetchWebsiteChanges(projectId),
     ]);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const results = await includeDecisionRuns(recentRuns, decisions, projectId);
@@ -6395,8 +6512,11 @@ async function pollRuns() {
     const workflowsChanged = await loadRunWorkflows(results);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const collectionsChanged = workflowsChanged || runsHaveChanged(state.runs, results)
-      || JSON.stringify(state.decisions) !== JSON.stringify(decisions);
+      || JSON.stringify(state.decisions) !== JSON.stringify(decisions)
+      || JSON.stringify([state.websiteChanges, state.judgmentCalls]) !== JSON.stringify([websiteChanges.changes, websiteChanges.questions]);
     state.decisions = decisions;
+    state.websiteChanges = websiteChanges.changes;
+    state.judgmentCalls = websiteChanges.questions;
     state.runs = results;
     const summaryChanged = JSON.stringify(state.systemSummary) !== JSON.stringify(systemSummary);
     state.systemSummary = systemSummary;
@@ -6503,6 +6623,8 @@ function resetProjectState(project) {
   state.runs = [];
   state.activity = [];
   state.decisions = [];
+  state.websiteChanges = [];
+  state.judgmentCalls = [];
   state.messages = [];
   state.integrations = [];
   state.billing = null;
@@ -6577,7 +6699,7 @@ async function loadProject(project, { announce = false, integrationReturn = null
     return [];
   });
   try {
-    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, messages, integrations] = await Promise.all([
+    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, messages, integrations, websiteChanges] = await Promise.all([
       api(`/api/workflows?project_id=${projectId}`),
       api(`/api/projects/${projectId}/workflows`),
       api(`/api/projects/${projectId}/system`),
@@ -6586,6 +6708,7 @@ async function loadProject(project, { announce = false, integrationReturn = null
       decisionsRequest,
       api(`/api/projects/${projectId}/chat/messages?limit=100`),
       api(`/api/projects/${projectId}/integrations`),
+      fetchWebsiteChanges(projectId),
     ]);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     const allRuns = await includeDecisionRuns(runs, decisions, project.id);
@@ -6596,6 +6719,8 @@ async function loadProject(project, { announce = false, integrationReturn = null
     state.runs = allRuns;
     state.activity = activity;
     state.decisions = decisions;
+    state.websiteChanges = websiteChanges.changes;
+    state.judgmentCalls = websiteChanges.questions;
     state.messages = messages.map(chatTurnFromMessage);
     state.integrations = integrations;
     await loadRunWorkflows(allRuns);
