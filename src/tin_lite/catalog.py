@@ -1240,8 +1240,9 @@ BUILTIN_WORKFLOWS = (
             "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
             "Search Console queries, check up to 100 public pages by default, chosen by "
             "search impressions and URL section, and see whether AI answers mention, cite, "
-            "or recommend your business. Get prioritized findings with evidence and fixes. "
-            "No GitHub required."
+            "or recommend your business, in the ChatGPT and Gemini apps, Google AI Mode and "
+            "AI Overviews, and the Claude and Perplexity API models. Get prioritized findings "
+            "with evidence and fixes. No GitHub required."
         ),
         executor=AUDIT_KEY,
         version_label="0.9.0",

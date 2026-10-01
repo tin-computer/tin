@@ -108,6 +108,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "organic_poll_crawl",
         "organic_prepare",
         "organic_prepare_panel",
+        "organic_prepare_ai_engines",
         "organic_project",
         "organic_publish",
         "organic_start_crawl",

@@ -177,13 +177,14 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
     assert view["available_usd"] == "9.75" and view["reserved_usd"] == "0.00"
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
     charge = await f.billing.run_charge(run.id, ACTOR)
-    assert charge["estimated_usd"] == "2.00" and charge["charged_usd"] == "0.25"
+    # $2 for the audit's own calls and $1 for its six AI engines (organic-audit-v13).
+    assert charge["estimated_usd"] == "3.00" and charge["charged_usd"] == "0.25"
     assert charge["released_usd"] is None  # Never imply a $2 upfront hold existed.
 
 
 async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
     f = billed
-    with pytest.raises(BillingError, match=r"estimated at up to \$2.00") as error:
+    with pytest.raises(BillingError, match=r"estimated at up to \$3.00") as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0

@@ -150,7 +150,7 @@ V12_AUDIT_POLICY = {
     # the summary can count inbound internal links and click depth from the homepage.
     "max_internal_links": 250,
 }
-# v13 keeps v12 and asks the buyer prompt panel.
+# v13 keeps v12, asks the buyer prompt panel and measures its questions on six AI engines.
 # v11 and v12 may be deployed, so a run pinned to either never reads these keys.
 AUDIT_POLICY = {
     **V12_AUDIT_POLICY,
@@ -159,6 +159,27 @@ AUDIT_POLICY = {
     # the drafted questions, allocated to its families by weight within max_questions. The
     # founder decided the panel needs no review.
     "prompt_panel": True,
+    # The same questions on each answer engine through DataForSEO (tin_lite.ai_answers):
+    # ChatGPT and Gemini as their apps answer, Google AI Mode and AI Overviews, and the
+    # Claude and Perplexity API models on the live endpoint. Answers from the apps and from
+    # the API models are labelled apart. ChatGPT answers as the app does, without a forced
+    # web search (the founder's decision).
+    "ai_engines": [
+        "chatgpt",
+        "gemini",
+        "google_ai_mode",
+        "google_ai_overview",
+        "claude",
+        "perplexity",
+    ],
+    "ai_engines_priority": "standard",
+    # The LLM Scraper's standard queue can take 45 minutes.
+    "ai_engines_deadline_seconds": 2700,
+    # The ceiling passed to the measurement: at most this, and never more than the audit's
+    # own spending limit has left. Questions that don't fit are not asked. At the pinned
+    # per-request prices one question on the six engines costs at most $0.0776, so eight
+    # cost at most $0.63.
+    "ai_engines_max_cost_usd": "1.00",
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -209,6 +230,16 @@ PANEL_PREPARATION_POLICY_KEYS = frozenset(
         "unsearched_answers",
         "min_panel_questions",
         "prompt_panel",
+    }
+)
+# The engine measurement runs after the audit's own answers and never changes how they are
+# requested or graded, so an explicit answer completion may ignore these too.
+AI_ENGINE_POLICY_KEYS = frozenset(
+    {
+        "ai_engines",
+        "ai_engines_priority",
+        "ai_engines_deadline_seconds",
+        "ai_engines_max_cost_usd",
     }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
@@ -1552,6 +1583,11 @@ def site_check_documents(
             findings_sha256=digest(inventory),
             evidence_sha256=inventory["evidence_sha256"],
         )
+    engine_lines = []
+    if policy.get("ai_engines"):
+        from tin_lite.organic_audit_engines import report_lines as engine_report_lines
+
+        engine_lines = engine_report_lines(ai.get("engines"))
     for evidence_limit in (8, 3, 1):
         lines = report_lines(
             scope=scope,
@@ -1564,7 +1600,7 @@ def site_check_documents(
             search_queries=search_queries,
             site=site,
             complete=complete,
-            ai_details=ai_report_details(ai),
+            ai_details=ai_report_details(ai) + engine_lines,
             evidence_limit=evidence_limit,
         )
         lines.extend(

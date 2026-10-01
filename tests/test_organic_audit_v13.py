@@ -1,4 +1,4 @@
-"""Audit policy v13 asks the buyer prompt panel; runs pinned to v11 or v12 are unchanged.
+"""Audit policy v13 asks the buyer prompt panel and six AI engines; v11 and v12 are unchanged.
 
 v11 and v12 are on main and may deploy at any time, so everything v13 adds is read from
 v13-only policy keys. Offline only.
@@ -15,6 +15,7 @@ from test_prompt_panel import audit_with, panel_row, published
 
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import (
+    AI_ENGINE_POLICY_KEYS,
     AUDIT_POLICY,
     PANEL_PREPARATION_POLICY_KEYS,
     V11_AUDIT_POLICY,
@@ -64,13 +65,25 @@ async def test_a_v12_run_reads_and_writes_exactly_what_it_did_before_v13():
     )
 
 
-def test_v13_is_the_default_and_adds_the_panel_to_v12():
+def test_v13_is_the_default_and_adds_the_panel_and_the_engines_to_v12():
     assert AUDIT_POLICY["version"] == V13 and audit_policy() is AUDIT_POLICY
     assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V12_AUDIT_POLICY.items() if k != "version"},
         "prompt_panel": True,
+        "ai_engines": [
+            "chatgpt",
+            "gemini",
+            "google_ai_mode",
+            "google_ai_overview",
+            "claude",
+            "perplexity",
+        ],
+        "ai_engines_priority": "standard",
+        "ai_engines_deadline_seconds": 2700,
+        "ai_engines_max_cost_usd": "1.00",
     }
     assert "prompt_panel" in PANEL_PREPARATION_POLICY_KEYS
+    assert set(AUDIT_POLICY) - set(V12_AUDIT_POLICY) - {"prompt_panel"} == AI_ENGINE_POLICY_KEYS
     # The same answers and grading as v12, so an answer completion may cross them.
     assert ai_contract(V13) == ai_contract(V12) and ai_schemas(V13) == ai_schemas(V12)
     assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {

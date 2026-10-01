@@ -604,12 +604,13 @@ The page tree (`organic.site_architecture`) can read click depth and inbound lin
 traffic snapshot can take the per-page checks from it instead of globbing
 `reports/organic-audit/*/findings.json`. Those workflows need a change of their own to do so.
 
-## 0.9 — the buyer prompt panel (organic-audit-v13)
+## 0.9 — the buyer prompt panel and six AI engines (organic-audit-v13)
 
-v11 and v12 are on main and may deploy at any time, so the panel hook is a new pinned
+v11 and v12 are on main and may deploy at any time, so these changes are a new pinned
 policy, `organic-audit-v13` (catalog organic.audit 0.9.0). It keeps v12 and adds
-`prompt_panel`. Runs pinned to v11 or v12 draft their own questions exactly as before;
-tests freeze v12's policy and the files a synthetic v12 run writes.
+`prompt_panel` and the `ai_engines` keys. Runs pinned to v11 or v12 draft their own
+questions and ask no engine, exactly as before; tests freeze v12's policy and the files a
+synthetic v12 run writes, and a workflow history recorded on main still replays.
 
 ### The buyer prompt panel
 
@@ -630,3 +631,34 @@ panel's questions instead of drafting its own (`prompt_panel`):
   only when it asked exactly this panel; a new panel starts a new baseline.
   `refresh_questions` still drafts a new set. Without a usable panel the audit drafts its
   own questions, as v12 does.
+
+### Six AI engines
+
+The audit's own answers come from one model with web search. v13 also asks the same frozen
+questions on six answer engines through DataForSEO ([AI answers](ai-answers-dataforseo.md)):
+
+| Engine | Measurement | What it shows |
+|---|---|---|
+| ChatGPT, Gemini | `consumer_app_answer` | The app's answer and sources. ChatGPT is not forced to search, so it answers as the app does. |
+| Google AI Mode, AI Overview | `consumer_app_answer` | Google's AI answer and references; an Overview only when Google shows one. |
+| Claude, Perplexity | `api_model_answer` | The vendor's API model on the live endpoint, with web search. Not claude.ai or perplexity.ai. |
+
+- **When:** after the brand checks, before publication. The workflow step is behind the
+  `organic-audit-ai-engines-v1` patch; `organic_prepare_ai_engines` returns no stage for
+  earlier policies, so their runs ask nothing.
+- **Cost ceiling:** `ai_engines_max_cost_usd` ($1), cut to what the audit's own limit has
+  left, and reserved in the audit's budget ledger. One question on all six engines costs at
+  most $0.0776, so eight cost at most $0.62. Questions that don't fit are not asked, one per
+  buyer job in turn so every job keeps a question, and the report names the ones left out.
+  The audit's billing maximum is $2 plus this ceiling for v13 runs.
+- **What it reports:** AUDIT.md shows the apps and the API models in separate tables:
+  answered, mentioned, cited your site, named first and cost per engine, and the answers
+  missing with why. `evidence.json` keeps every answer (at most 4,000 characters) and up to
+  ten cited URLs under `ai_visibility.engines`. SUMMARY.json and LATEST.json get
+  `ai_engines`: one row per engine (`engine`, `measurement`, `model`, `asked`, `answered`,
+  `mentioned`, `cited`, `recommended_first`, `cost_usd`), with no answers or URLs, so the
+  summary stays under 64 KB.
+- **When it does not run:** an answer completion, an audit without questions, or a ceiling
+  that fits no question is reported as not measured with its reason. A measurement that
+  fails leaves the audit to publish without it, and the report says it did not finish;
+  answers already bought stay in receipts and are billed.

@@ -133,6 +133,18 @@ class OrganicAuditActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
         return result
 
+    async def _exposure(self, conn, run_id: str, scope: dict, ledger: dict) -> Decimal:
+        """What the run has spent or reserved: billing's observation when the policy says so."""
+        exposure = sum((Decimal(value) for value in ledger.values()), Decimal(0))
+        billing = getattr(self.db, "billing", None)
+        if billing is not None and audit_policy(
+            scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])
+        ).get("runtime_budget"):
+            observed = await billing.run_operation_exposure(conn, UUID(run_id))
+            if observed is not None:
+                exposure = Decimal(observed) / 1_000_000_000
+        return exposure
+
     async def _reserve(self, run_id: str, stage: str, amount: str) -> bool:
         scope = await self._result(run_id, "scope")
         key = self.key(run_id, "budget")
@@ -140,20 +152,31 @@ class OrganicAuditActivities:
             ledger = dict(existing.result or {}) if existing else {}
             if stage in ledger:
                 return True
-            exposure = sum((Decimal(value) for value in ledger.values()), Decimal(0))
-            billing = getattr(self.db, "billing", None)
-            if billing is not None and audit_policy(
-                scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])
-            ).get("runtime_budget"):
-                observed = await billing.run_operation_exposure(conn, UUID(run_id))
-                if observed is not None:
-                    exposure = Decimal(observed) / 1_000_000_000
+            exposure = await self._exposure(conn, run_id, scope, ledger)
             if exposure + Decimal(amount) > Decimal(scope["max_cost_usd"]):
                 return False
             ledger[stage] = amount
             await self.db.start_effect(conn, execution_key=key, operation="organic.audit")
             await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
         return True
+
+    async def _reserve_fitting(self, run_id: str, stage: str, choose) -> Decimal | None:
+        """Reserve `choose(left)` for one stage, where `left` is what the audit's limit has
+        left; None reserves nothing. A stage reserves once, and a retry gets that amount."""
+        scope = await self._result(run_id, "scope")
+        key = self.key(run_id, "budget")
+        async with self.db.effect_lock(key, "organic.audit") as (conn, existing):
+            ledger = dict(existing.result or {}) if existing else {}
+            if stage in ledger:
+                return Decimal(ledger[stage])
+            exposure = await self._exposure(conn, run_id, scope, ledger)
+            amount = choose(Decimal(scope["max_cost_usd"]) - exposure)
+            if amount is None:
+                return None
+            ledger[stage] = str(amount)
+            await self.db.start_effect(conn, execution_key=key, operation="organic.audit")
+            await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
+        return amount
 
     async def _paid(
         self, run_id: str, stage: str, request: dict, amount: str, call, *, recover=None
@@ -1251,6 +1274,77 @@ class OrganicAuditActivities:
         )
 
     @activity.defn
+    async def organic_prepare_ai_engines(self, run_id: str) -> str | None:
+        """organic-audit-v13: save this run's questions for ai_answers_measure.
+
+        Returns the measurement's stage, or None when the pinned policy measures no engines
+        or there is nothing to ask within the ceiling; the plan saved here says why. The
+        prompts and brand stay in receipts, so Temporal carries only the stage name.
+        """
+        policy = audit_policy(await self._policy_version(run_id))
+        if not policy.get("ai_engines"):
+            return None
+        saved = await self._result(run_id, "ai_engines")
+        if saved is None:
+            await self._active(run_id)
+            plan, request = await self._engine_plan(run_id, policy)
+            if request is not None:
+                from tin_lite.ai_answers_activities import save_request
+
+                await save_request(self.db, run_id=run_id, stage=plan["stage"], inputs=request)
+            saved = await self._save(run_id, "ai_engines", plan)
+        return saved.get("stage")
+
+    async def _engine_plan(self, run_id: str, policy: dict) -> tuple[dict, dict | None]:
+        from tin_lite import organic_audit_engines as engines
+        from tin_lite.ai_answers import AIAnswersRequest
+
+        scope = await self._result(run_id, "scope")
+        panel = await self._result(run_id, "panel")
+        plan = {
+            "status": "not_measured",
+            "stage": None,
+            "engines": list(policy["ai_engines"]),
+            "questions": len((panel or {}).get("questions") or []),
+            "asked": 0,
+        }
+        if scope.get("completion"):
+            return {**plan, "reason": "answer_completion"}, None
+        ordered = engines.question_order(panel) if panel else []
+        if not panel or panel.get("status") != "completed" or not ordered:
+            return {**plan, "reason": "no_question_panel"}, None
+        cap = Decimal(policy["ai_engines_max_cost_usd"])
+        try:
+            AIAnswersRequest.from_inputs(
+                engines.request_inputs(panel, scope, policy, [t for _, t in ordered], cap)
+            )
+        except ValueError:
+            return {**plan, "reason": "panel_not_measurable"}, None
+        each = engines.per_question_usd(policy)
+
+        def fit(left: Decimal) -> Decimal | None:
+            fitting = min(len(ordered), int(min(cap, left) // each)) if left > 0 else 0
+            return each * fitting if fitting else None
+
+        reserved = await self._reserve_fitting(run_id, "ai_engines", fit)
+        if reserved is None:
+            return {**plan, "reason": "cost_ceiling"}, None
+        asked = ordered[: int(reserved / each)]
+        plan = {
+            **plan,
+            "status": "planned",
+            "reason": None,
+            "stage": engines.STAGE,
+            "asked": len(asked),
+            "question_indexes": [index for index, _ in asked],
+            "not_asked": sorted(index for index, _ in ordered[len(asked) :]),
+            "max_cost_usd": str(reserved),
+            "priority": policy["ai_engines_priority"],
+        }
+        request = engines.request_inputs(panel, scope, policy, [t for _, t in asked], reserved)
+        return plan, request
+
+    @activity.defn
     async def organic_publish(self, run_id: str) -> None:
         key = self.key(run_id, "publish")
         async with self.db.effect_lock(key, "organic.audit") as (conn, existing):
@@ -1288,6 +1382,14 @@ class OrganicAuditActivities:
                         )
                     }
                 ai["brand_checks"] = await self._result(run_id, "brand_checks")
+                if audit_policy(policy_version).get("ai_engines"):
+                    from tin_lite.ai_answers_activities import read_result
+                    from tin_lite.organic_audit_engines import STAGE, results
+
+                    ai["engines"] = results(
+                        await self._result(run_id, "ai_engines"),
+                        await read_result(self.db, run_id=run_id, stage=STAGE),
+                    )
                 # Only v10 question sets carry an answer count and can be reused or compared.
                 if (
                     panel
