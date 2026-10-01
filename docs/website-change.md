@@ -404,10 +404,14 @@ two never open two pull requests for the same page.
 
 ## What comes next
 
-- **The recipe rewrite**: the organic traffic system's weekly loop should run website.change
-  for each source: `audit` (instead of organic.technical_fix's technical step), `planned`,
-  `blog_index` and the approved pages (`content_draft`), with the system's
-  `expected_repository` and `repository_serves_site`. Judgment calls go through
+- **The traffic system's writer steps (done, `organic-traffic-v6`)**: the technical step starts
+  website.change `source: audit` and the delivery step starts it for the approved draft,
+  instead of organic.technical_fix and content.deliver. v5 pins are unchanged.
+- **The recipe rewrite**, after #239 and #267 merge: the set-up step (style, brand, code map
+  and the founder's approval), a prerequisite-chained weekly loop that runs website.change
+  for each source (`audit`, `planned`, `blog_index` and the approved pages) with the
+  system's `expected_repository` and `repository_serves_site`, the traffic snapshot, page
+  decisions, the page tree, and typed content.generate items. Judgment calls go through
   `preflight_website_change`; approvals come from Decisions or MCP.
 - **Later**: the approval path starts website.change instead of content.deliver.
 
