@@ -158,7 +158,9 @@ async def test_no_draft_completes_once_without_review_or_delivery_and_is_readabl
         await activities.commit_codex_procedure_artifact(str(run.id))
     current = await f.db.get_run(run.id)
     assert current.status.value == "succeeded"
-    assert current.review_required and current.review_decision is None
+    # Nothing was drafted, so the run closes without a review instead of looking like a draft
+    # that waits for one (run 1e474e10 kept review_required with no decision).
+    assert not current.review_required and current.review_decision is None
     assert current.review_requested_at is None
     assert not current.lease_active
     assert f.storage.repo.writes == writes
@@ -183,6 +185,7 @@ async def test_no_draft_completes_once_without_review_or_delivery_and_is_readabl
         assert len(response.json()["related_documents"]) == 1
     result = structured(await mcp(f, monkeypatch).call_tool("get_run", {"run_id": str(run.id)}))
     assert result["status"] == "succeeded" and result["review_decision"] is None
+    assert result["review_required"] is False
     sources = await f.service.discover(project_id=f.project.id, program_id=f.configured.id)
     item = next(i for i in sources["items"] if i["id"] == context["item"]["id"])
     assert not item["available"] and item["can_rewrite"]
@@ -191,9 +194,20 @@ async def test_no_draft_completes_once_without_review_or_delivery_and_is_readabl
     if outcome == "already_covered":
         assert sources["next"]["item_id"] != item["id"]
         assert sources["progress"]["already_covered"] == 1
+        # The run records the page that covers the brief, and the plan item says it is covered.
+        assert current.progress_summary.startswith("Already covered by https://example.com/docs:")
+        published = await f.db.get_effect(f"{run.id}:procedure_canonical_commit")
+        assert published.result["covered_by"] == "https://example.com/docs"
+        assert item["draft"]["covered_by"] == "https://example.com/docs"
+        assert item["covered"] == {
+            "page": "https://example.com/docs",
+            "reason": judgment(context)["rationale"],
+            "run_id": str(run.id),
+        }
     else:
         assert sources["next"]["item_id"] == item["id"]
         assert not sources["next"]["available"]
+        assert item["covered"] is None and item["draft"]["covered_by"] is None
     # A changed brief is eligible again. The editable plan never stores execution state.
     read = await f.service.programs.read(project_id=f.project.id, program_id=f.configured.id)
     amended = read["plan"]
@@ -286,3 +300,56 @@ async def test_assessment_never_advertises_or_attempts_automatic_pr_delivery():
     service = ContentDelivery(database=db, storage=None, integrations=SimpleNamespace())
     assert await service.status(run) is None
     assert await service.deliver(run.id) is None
+
+
+async def test_the_next_weekly_draft_moves_past_an_already_covered_item(
+    publication_db, monkeypatch
+):
+    # Run 1e474e10: content.generate found its item already covered. The item is marked
+    # covered with the page that covers it, and the next weekly occurrence drafts the item
+    # after it instead of waiting on a review that nothing needs.
+    from test_scheduled_planned_drafts import occurrence, weekly
+
+    monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda *args: None)
+    f = await fixture(publication_db, monkeypatch, judgment=True)
+    activities, run, context, _ = await prepared(f, "already_covered")
+    assert not await activities.request_codex_procedure_review(str(run.id))
+    await activities.project_codex_procedure_result(str(run.id))
+    covered = context["item"]["id"]
+    # A second planned article, after the covered one.
+    read = await f.service.programs.read(project_id=f.project.id, program_id=f.configured.id)
+    plan = read["plan"]
+    first = next(i for b in plan["batches"] for i in b["items"] if i["id"] == covered)
+    plan["batches"][-1]["items"].append(
+        {
+            **first,
+            "id": "topic_after",
+            "title": "Recover an interrupted messaging setup",
+            "intent": "Developer resuming an interrupted setup",
+            "action": "new_page",
+            "destination": "",
+        }
+    )
+    f.storage.repo.edit({plan_path(f.configured.id): canonical_json(plan)})
+    configured, common, pause = await weekly(f)
+    dispatched = await common.dispatch_scheduled_workflow(occurrence(configured))
+    selected = (await f.db.get_effect(content_draft.selection_key(dispatched["run_id"]))).result
+    assert selected["mode"] == "next" and selected["item"]["id"] == "topic_after"
+    pause.assert_not_awaited()
+
+
+async def test_a_covered_run_saved_before_covered_by_still_names_its_page(
+    publication_db, monkeypatch
+):
+    monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda *args: None)
+    f = await fixture(publication_db, monkeypatch, judgment=True)
+    activities, run, context, _ = await prepared(f, "already_covered")
+    await activities.project_codex_procedure_result(str(run.id))
+    # Runs published before this change have no covered_by; the judgment still names the page.
+    await f.db.pool.execute(
+        "UPDATE effect_receipts SET result = result - 'covered_by' WHERE execution_key=$1",
+        f"{run.id}:procedure_canonical_commit",
+    )
+    sources = await f.service.discover(project_id=f.project.id, program_id=f.configured.id)
+    item = next(i for i in sources["items"] if i["id"] == context["item"]["id"])
+    assert item["covered"]["page"] == "https://example.com/docs"
