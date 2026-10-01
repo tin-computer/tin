@@ -69,9 +69,7 @@ SHARED_TOOLS = {
     "stop_paid_ads_launch": (False, True, False),
     "stop_paid_ads_monitor": (False, True, False),
     "stop_email_campaign": (False, True, False),
-    "stop_technical_fix": (False, True, False),
-    "list_technical_fix_sources": (True, False, False),
-    "get_technical_fix_source": (True, False, False),
+    # organic.technical_fix is hidden; only its read-only preview stays, for older clients.
     "preflight_technical_fix": (True, False, False),
 }
 
@@ -104,8 +102,9 @@ PUBLIC_DESCRIPTIONS = {
         "Preview repairs from the exact saved audit without starting a run or creating a PR. "
         "Inspect plan.repairs, decisions_needed and plan.left_out; ask the user about "
         "uncertain judgment calls. Pass decisions as finding_id=choice strings to this "
-        "preview and start_technical_fix. An optional finding_id limits the preview to one "
-        "finding; use inputs.finding_ids on the start tool for the same selection. "
+        "preview. Kept for older clients: this plugin no longer starts technical fixes, "
+        "which Tin now makes through website.change. An optional finding_id limits the "
+        "preview to one finding. "
         "repository_serves_site records the user's assertion. This is not live site verification."
     ),
 }

@@ -298,9 +298,10 @@ and stops a fortnight after the merge.
 
 It stays registered for pinned site-fix-v5 runs and saved schedules, byte for byte as on main
 except its catalog flag: 0.6.1 sets `public_discovery: false`, so new setups don't see it, and
-it left the growth plan's program lists and onboarding copy. `preflight_technical_fix` keeps
-working for older clients, and so does the public plugin's `start_technical_fix`. The
-organic traffic system's technical step still starts it on its pinned definition.
+it left the growth plan's program lists and onboarding copy. The public ChatGPT plugin no
+longer starts, stops or lists technical fixes; `preflight_technical_fix` keeps working there
+and in Tin's MCP for older clients. The organic traffic system's technical step still starts
+it on its pinned definition.
 
 ## How content.deliver relates
 

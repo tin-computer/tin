@@ -213,31 +213,18 @@ async def test_saved_configuration_uses_existing_pinned_contract(fixture):
     f.start.assert_not_called()
 
 
-async def test_old_single_finding_saved_repair_is_not_retargeted_to_batch_repair(fixture):
-    from tin_lite.technical_fix import INPUT_SCHEMA
-
-    f = fixture
-    entry = next(w for w in published_workflows().values() if w.key == "organic.technical_fix")
-    f.db.get_workflow.return_value = workflow(entry)
-    saved = SimpleNamespace(
-        id=uuid4(),
-        project_id=f.project,
-        workflow_id=entry.id,
-        input_schema=INPUT_SCHEMA,
-        definition_commit_sha="historical-single-finding-revision",
-    )
-    f.db.get_project_workflow.return_value = saved
-    with pytest.raises(ToolError, match="unsupported"):
-        await f.server.call_tool(
-            "start_technical_fix",
-            {
-                "project_id": str(f.project),
-                "request_id": str(uuid4()),
-                "project_workflow_id": str(saved.id),
-            },
-        )
-    f.start.assert_not_called()
-    assert saved.definition_commit_sha == "historical-single-finding-revision"
+async def test_the_hidden_technical_fix_has_no_public_tools_but_its_preview(fixture):
+    # organic.technical_fix is hidden: new technical fixes go through website.change, which
+    # this plugin does not expose. Older clients keep the read-only preview.
+    assert "organic.technical_fix" not in {w.key for w in published_workflows().values()}
+    names = {tool.name for tool in await fixture.server.list_tools()}
+    assert "preflight_technical_fix" in names
+    assert not names & {
+        "start_technical_fix",
+        "stop_technical_fix",
+        "list_technical_fix_sources",
+        "get_technical_fix_source",
+    }
 
 
 @pytest.mark.parametrize(
@@ -595,13 +582,6 @@ async def test_revision_delegates_the_exact_review_token_and_retry_key(fixture, 
 # fields rather than manufacturing inputs from the schema under test.
 ADDED_INPUTS = {
     "style.capture": {"source_path": "style/sources/approved-samples.md"},
-    "organic.technical_fix": {
-        "audit_run_id": str(uuid4()),
-        "audit_revision": "a" * 40,
-        "finding_ids": ["oa_" + "b" * 20],
-        "expected_repository": "fixture/product",
-        "repository_serves_site": True,
-    },
     "social.content_plan": {"hours_per_week": 2, "platforms": "linkedin"},
     "social.post_batch": {"mode": "repurpose", "article_path": "content/sample.md"},
     "brand.capture": {"product_url": "https://product.example", "include_repository": False},
@@ -634,7 +614,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 47
+    assert len(entries) == 46
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
@@ -643,6 +623,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
         "content.deliver",
         "website.change",
+        "organic.technical_fix",
         "content.refresh",
         "social.x_revise",
         "social.x_draft",
@@ -654,7 +635,6 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     }
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id in entries} | {
         "style.capture",
-        "organic.technical_fix",
     } == ADDED_INPUTS.keys()
     assert "growth.free_tool" not in {w.key for w in entries.values()}
     assert all(not w.key.startswith(("example.", "custom.")) for w in entries.values())
@@ -755,8 +735,13 @@ async def test_technical_preflight_uses_existing_selection_and_redacts_binding_i
     f = fixture
     from tin_lite.technical_fix_sources import TechnicalFixSources
 
-    selection = dict(ADDED_INPUTS["organic.technical_fix"])
-    selection["finding_id"] = selection.pop("finding_ids")[0]
+    selection = {
+        "audit_run_id": str(uuid4()),
+        "audit_revision": "a" * 40,
+        "finding_id": "oa_" + "b" * 20,
+        "expected_repository": "fixture/product",
+        "repository_serves_site": True,
+    }
     f.runtime.storage = SimpleNamespace()
     f.runtime.integrations = SimpleNamespace()
     preview = AsyncMock(

@@ -1070,7 +1070,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
-        public_mcp=PublicMCPExposure("start_technical_fix", destructive=True, open_world=True),
+        # Hidden (public_discovery: false): the public plugin no longer starts it either.
         title="Fix what the audit found",
         description=(
             "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
