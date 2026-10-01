@@ -55,7 +55,7 @@ def tin_state():
         "recent_runs": [],
         "workflows": [
             workflow("visibility.audit", "Audit AI visibility", required=("target",)),
-            workflow("content.answer_page", "Draft answer page"),
+            workflow("competitor.watch", "Watch competitors"),
             workflow(
                 "organic.audit",
                 "Audit organic search",
@@ -613,12 +613,12 @@ async def test_the_organic_traffic_system_leads_and_starts_its_research_once():
 
 
 async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
-    def answer_pages_only(value, user):
+    def competitor_watch_only(value, user):
         return {
             **value,
             "workflows": [
                 {
-                    "key": "content.answer_page",
+                    "key": "competitor.watch",
                     "mode": "weekly",
                     "weekdays": ["tuesday"],
                     "local_time": "10:00",
@@ -628,12 +628,12 @@ async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
         }
 
     state = with_research_run(tin_state())
-    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": answer_pages_only})
+    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": competitor_watch_only})
     result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
     plan.validate_plan(result["plan"], state)
 
     lead = block_of(result["plan"])[0]
-    assert [w["key"] for w in lead["workflows"]] == [plan.DEFAULT_RUN, "content.answer_page"]
+    assert [w["key"] for w in lead["workflows"]] == [plan.DEFAULT_RUN, "competitor.watch"]
     # Without a model-written buyer context, code takes it from the facts it can cite.
     assert lead["workflows"][0]["inputs"]["buyer_context"] == (
         "Acme Forms sells a form builder for clinics."
@@ -1463,7 +1463,7 @@ async def test_a_refused_plan_says_why_and_never_points_to_files(monkeypatch):
     # Nothing in this project is configurable without the model, so even the fallback is empty.
     db, activities, run = receipts_fixture(monkeypatch, declines_everything())
     for w in db.receipts[f"{run.id}:plan_context"].result["tin_state"]["workflows"]:
-        if w["key"] == "content.answer_page":
+        if w["key"] == "competitor.watch":
             w["required_inputs"] = ["question"]
     with pytest.raises(ApplicationError, match="final check: the plan offers no system") as exc:
         await activities.write(str(run.id))

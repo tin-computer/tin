@@ -9,16 +9,20 @@ applier changes in the site's source after approval. Articles draft exactly as b
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import httpx
 import pytest
 from test_content_draft import fixture as draft_fixture
 from test_content_draft import start
 from test_content_editorial_judgment import judgment, judgment_notes
 from test_content_plan import item
 from test_content_refresh import EVIDENCE, GOOD, PAGE, PAGE_TSX, audit, document, finding
+from test_private_workflows import ACTOR as PRIVATE_ACTOR
+from test_private_workflows import app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
 from test_technical_title_repair import archive
 
@@ -38,6 +42,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.organic_audit import audit_paths, canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
+from tin_lite.run_service import start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
 
 ACTOR = "user_test"
@@ -556,3 +561,111 @@ async def test_an_approved_refresh_applies_only_the_exact_replacements(
             database=f.db, storage=f.storage, project_id=f.project.id, source_run_id=run.id
         )
     assert str(run.id) not in json.dumps(await approved_article.discover(f.db, f.project.id))
+
+
+# The retired entry points: hidden from discovery, still runnable for pinned runs and schedules.
+
+# Digests of each retired definition (without its version, description and discovery flag)
+# and its procedure files, as content.refresh 1.0.0 and content.answer_page 1.6.0 shipped.
+RETIRED = {
+    "content.refresh": (
+        "1.1.0",
+        "d4059a9cf5d9adcccc01e8e50287f734454c4fadb703e1d7eeca52d531e4b0db",
+    ),
+    "content.answer_page": (
+        "1.7.0",
+        "223f64f3aec7c8a2a8b2a2d14d9043570e6b859f263f3588d9ab8f70012f5bdc",
+    ),
+}
+
+
+def contract_digest(key):
+    definition, files = spec(key).definition_and_resource_files()
+    kept = {
+        k: v
+        for k, v in definition.items()
+        if k not in {"version", "description", "public_discovery"}
+    }
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "definition": kept,
+                "files": {p: hashlib.sha256(c).hexdigest() for p, c in sorted(files.items())},
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
+@pytest.mark.parametrize("key", sorted(RETIRED))
+def test_a_retired_workflow_keeps_its_contract_and_leaves_discovery(key):
+    version, digest = RETIRED[key]
+    definition = spec(key).definition
+    assert definition["version"] == version and definition["public_discovery"] is False
+    assert definition["description"].startswith("Retired: Draft planned content")
+    # Pinned runs and saved schedules run exactly what they ran before.
+    assert contract_digest(key) == digest
+    programs = json.loads(
+        (Path(approved_article.__file__).parent / "growth_plan_assets/programs.json").read_text()
+    )
+    organic = next(p for p in programs["programs"] if p["id"] == "organic-traffic")
+    assert key not in organic["tin"]["workflows"]
+    assert "content.generate" in organic["tin"]["workflows"]
+
+
+async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(
+    publication_db, monkeypatch
+):
+    f = await fixture(publication_db, monkeypatch)
+    answer = spec("content.answer_page")
+    await f.db.upsert_registry_workflow(
+        workflow_id=answer.id,
+        key=answer.key,
+        title=answer.title,
+        description=answer.description,
+        executor=answer.executor,
+        definition_repo_id="registry/workflows",
+        definition_path=answer.definition_path,
+        current_commit_sha="e" * 40,
+        version_label=answer.version_label,
+        definition=answer.definition,
+    )
+    server = mcp(f, monkeypatch)
+    listed = str(
+        structured(await server.call_tool("list_workflows", {"project_id": str(f.project.id)}))
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        response = await client.get("/api/workflows", params={"project_id": str(f.project.id)})
+    for catalog in (listed, response.text):
+        assert "content.generate" in catalog
+        assert "content.refresh" not in catalog and "content.answer_page" not in catalog
+    # A saved weekly refresh still starts at its pinned revision.
+    workflow = await f.db.get_workflow(refresh.WORKFLOW_ID)
+    configured = await f.db.create_project_workflow(
+        project_id=f.project.id,
+        workflow_id=workflow.id,
+        definition_commit_sha="e" * 40,
+        name="Weekly page refresh",
+        inputs={"direction": ""},
+        input_schema=workflow.definition["input_schema"],
+        schedule=None,
+        request_id=uuid4(),
+        created_by_clerk_user_id=PRIVATE_ACTOR,
+    )
+    await f.db.project_workflow_synced(
+        project_workflow_id=configured.id, temporal_schedule_id=None, next_run_at=None
+    )
+    run = await start_workflow_run(
+        runtime=f.runtime,
+        settings=f.settings,
+        workflow=workflow,
+        project_id=f.project.id,
+        started_by_clerk_user_id=PRIVATE_ACTOR,
+        project_workflow_id=configured.id,
+        input_payload={"direction": ""},
+        trigger_source="schedule",
+    )
+    assert run.workflow_id == refresh.WORKFLOW_ID and run.status.value == "pending"
+    assert (await f.refreshes.prepare(run))["page"]["path"] == "/pricing"

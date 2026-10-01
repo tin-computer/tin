@@ -284,6 +284,10 @@ CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
     queue_clause="Page refresh ready to review",
 )
 
+# Emre's v2 organic map: content.generate is the one workflow that writes copy, so these two
+# stay registered for pinned runs and saved schedules but leave discovery.
+RETIRED_CONTENT_KEYS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, content_refresh.KEY})
+
 # content.generate 1.9.0 drafts three kinds of plan item. The article keeps the planned-content
 # policy above; an answer page and a page refresh each get their own review wording, and all
 # three take feedback as a revision of the same document.
@@ -496,6 +500,11 @@ class BuiltinWorkflow:
             definition["paid_ads_monitor_policy"] = dict(paid_ads_monitor.POLICY)
             definition["paid_ads_monitor_routes"] = paid_ads_monitor.route_definitions()
             definition["paid_ads_monitor_contract_sha256"] = paid_ads_monitor.contract_digest()
+        if self.key in RETIRED_CONTENT_KEYS:
+            # content.generate drafts answer pages and page refreshes from the content plan.
+            # Pinned runs and saved schedules keep running these at their revisions; new setups,
+            # the organic system and discovery no longer offer them.
+            definition["public_discovery"] = False
         if self.key == content_draft.KEY:
             definition[content_draft.KINDS_FIELD] = list(content_plan.KINDS)
             definition["human_review_kinds"] = {
@@ -849,7 +858,9 @@ BUILTIN_WORKFLOWS = (
         key=content_refresh.KEY,
         title="Refresh an existing page",
         description=(
-            "Pick the page from your latest audit with the most search impressions at stake: "
+            "Retired: Draft planned content refreshes the pages your content plan schedules. "
+            "Saved schedules keep running: pick the page from your latest audit with the most "
+            "search impressions at stake: "
             "searchers see it near the top but rarely click, or it ranks just below the top "
             "results. Propose a new title, meta description and, where they miss the search, "
             "H1 and opening answer, in your positioning and voice. After you approve in "
@@ -858,7 +869,7 @@ BUILTIN_WORKFLOWS = (
             "runs report its clicks before and after."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand", "weekly"),
         review_policy=CONTENT_REFRESH_REVIEW_POLICY,
@@ -1499,11 +1510,13 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_answer_page", destructive=True, open_world=True),
         title="Draft an answer page",
         description=(
-            "Create a public-facing Markdown content draft from the latest AI visibility "
-            "findings; not for general advice or internal business questions."
+            "Retired: Draft planned content writes answer pages for the AI-visibility gaps your "
+            "content plan schedules. Saved schedules keep running: create a public-facing "
+            "Markdown content draft from the latest AI visibility findings; not for general "
+            "advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.6.0",
+        version_label="1.7.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
