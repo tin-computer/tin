@@ -61,7 +61,6 @@ async def billed(publication_db):
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=500 * NANOS_PER_DOLLAR,
-            concurrency=5,
             expected_revision=0,
         ),
     )
@@ -661,7 +660,6 @@ async def test_revoked_membership_and_lowered_limits_stop_new_paid_units(billed)
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=NANOS_PER_DOLLAR,
-            concurrency=5,
             expected_revision=1,
         ),
     )

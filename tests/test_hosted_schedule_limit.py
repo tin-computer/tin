@@ -78,7 +78,6 @@ async def test_hosted_default_policy_funds_scheduled_runs_until_cleared(billed):
         ProjectSpendingPolicy(
             per_run_nanos=DEFAULT,
             monthly_nanos=DEFAULT,
-            concurrency=1,
             expected_revision=1,
             schedule_max_nanos=None,
         ),

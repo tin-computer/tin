@@ -193,8 +193,8 @@ async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
 def test_project_limit_message_names_the_limit_that_blocks_admission():
     from tin_lite.billing import project_limit_message
 
-    policy = {"per_run_nanos": 10_000_000_000, "monthly_nanos": 10_000_000_000, "concurrency": 1}
-    idle = {"exposure": 0, "active": 0}
+    policy = {"per_run_nanos": 10_000_000_000, "monthly_nanos": 10_000_000_000}
+    idle = {"exposure": 0}
     assert project_limit_message(policy, 5_000_000_000, idle) is None
     no_policy = project_limit_message(None, 5_000_000_000, idle)
     assert no_policy.startswith("This project has no spending policy yet.")
@@ -204,18 +204,11 @@ def test_project_limit_message_names_the_limit_that_blocks_admission():
         "This workflow is estimated at up to $12.50; the project's per-run limit is $10.00."
     )
     assert "set_project_spending_limits" in per_run
-    monthly = project_limit_message(policy, 5_000_000_000, {"exposure": 7_250_000_000, "active": 0})
+    monthly = project_limit_message(policy, 5_000_000_000, {"exposure": 7_250_000_000})
     assert monthly.startswith(
         "This workflow is estimated at up to $5.00, which would exceed this month's "
         "$10.00 project limit ($7.25 already committed)."
     )
-    one = project_limit_message(policy, 5_000_000_000, {"exposure": 0, "active": 1})
-    assert one.startswith("1 run is already active; the project's concurrent-run limit is 1.")
-    many = project_limit_message(
-        {**policy, "concurrency": 2}, 5_000_000_000, {"exposure": 0, "active": 3}
-    )
-    assert many.startswith("3 runs are already active; the project's concurrent-run limit is 2.")
-    assert "set_project_spending_limits" in many
 
 
 async def test_project_limit_admission_says_which_limit_and_keeps_its_code(billed):
@@ -227,7 +220,6 @@ async def test_project_limit_admission_says_which_limit_and_keeps_its_code(bille
         ProjectSpendingPolicy(
             per_run_nanos=1_500_000_000,
             monthly_nanos=100_000_000_000,
-            concurrency=5,
             expected_revision=1,
         ),
     )
@@ -272,7 +264,6 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed, monkeypatch):
         ProjectSpendingPolicy(
             per_run_nanos=10_000_000_000,
             monthly_nanos=100_000_000_000,
-            concurrency=2,
             expected_revision=0,
         ),
     )
@@ -322,7 +313,6 @@ async def test_monthly_limit_checks_actual_plus_pending_calls(billed):
         ProjectSpendingPolicy(
             per_run_nanos=5_000_000_000,
             monthly_nanos=1_000_000_000,
-            concurrency=5,
             expected_revision=1,
         ),
     )
@@ -366,7 +356,6 @@ async def test_scheduled_parent_rechecks_standing_authority_for_children(billed)
         ProjectSpendingPolicy(
             per_run_nanos=30_000_000_000,
             monthly_nanos=100_000_000_000,
-            concurrency=5,
             expected_revision=1,
             schedule_max_nanos=30_000_000_000,
         ),
@@ -380,7 +369,6 @@ async def test_scheduled_parent_rechecks_standing_authority_for_children(billed)
         ProjectSpendingPolicy(
             per_run_nanos=20_000_000_000,
             monthly_nanos=100_000_000_000,
-            concurrency=5,
             expected_revision=2,
             schedule_max_nanos=None,
         ),
@@ -403,7 +391,7 @@ async def test_zero_work_or_zero_cost_releases_everything(billed):
         assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "100.00"
 
 
-async def test_terminal_unknown_bill_keeps_money_liability_but_not_execution_capacity(billed):
+async def test_runs_start_while_another_is_active_and_an_unknown_bill_keeps_its_liability(billed):
     f = billed
     await fund(f, 1000)
     await f.billing.update_policy(
@@ -412,14 +400,15 @@ async def test_terminal_unknown_bill_keeps_money_liability_but_not_execution_cap
         ProjectSpendingPolicy(
             per_run_nanos=10_000_000_000,
             monthly_nanos=100_000_000_000,
-            concurrency=1,
             expected_revision=1,
         ),
     )
     first = await direct(f)
     await operation(f, first, "uncertain-call", 100_000_000)
-    with pytest.raises(BillingError, match="concurrent-run"):
-        await direct(f)
+    # No run limit: the money limits bound spending, not how many runs are active.
+    concurrent = await direct(f)
+    await finish(f, concurrent)
+    assert await f.billing.settle(concurrent.id) == 0
     await finish(f, first)
     assert await f.billing.settle(first.id) is None
     assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.90"
@@ -429,17 +418,18 @@ async def test_terminal_unknown_bill_keeps_money_liability_but_not_execution_cap
         await f.db.pool.fetchval("SELECT status FROM billing_operations WHERE id='uncertain-call'")
         == "pending"
     )
-    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 0
+    assert not await f.db.pool.fetchval(
+        "SELECT count(*) FROM billing_ledger WHERE kind='charge' AND run_id=$1", first.id
+    )
 
 
-async def limits(f, *, monthly_usd, revision, per_run_usd=10, concurrency=5):
+async def limits(f, *, monthly_usd, revision, per_run_usd=10):
     await f.billing.update_policy(
         f.project.id,
         ACTOR,
         ProjectSpendingPolicy(
             per_run_nanos=per_run_usd * 1_000_000_000,
             monthly_nanos=monthly_usd * 1_000_000_000,
-            concurrency=concurrency,
             expected_revision=revision,
         ),
     )

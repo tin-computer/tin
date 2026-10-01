@@ -88,7 +88,6 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
         ProjectSpendingPolicy(
             per_run_nanos=10 * DOLLAR,
             monthly_nanos=10 * DOLLAR,
-            concurrency=1,
             schedule_max_nanos=10 * DOLLAR,
             expected_revision=1,
         ),
@@ -148,7 +147,6 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
         ProjectSpendingPolicy(
             per_run_nanos=10 * DOLLAR,
             monthly_nanos=100 * DOLLAR,
-            concurrency=1,
             schedule_max_nanos=10 * DOLLAR,
             expected_revision=2,
         ),
