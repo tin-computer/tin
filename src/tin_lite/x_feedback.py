@@ -70,6 +70,16 @@ A guide's explicit preferences take precedence over sampled habits; newer explic
 qualify older preferences. Do not change the account or broaden a guide to other channels.
 """
 POLICY = {"version": "x-feedback-v1", "max_input_bytes": 60000, "max_output_tokens": 8000}
+# A run's result_summary is one line of at most 160 characters (migration 019).
+SUMMARY_CHARS = 160
+
+
+def summary_line(summary):
+    """The change summary as a run's one-line result, cut at a word when it is longer."""
+    text = " ".join(summary.split())
+    if len(text) <= SUMMARY_CHARS:
+        return text
+    return text[: SUMMARY_CHARS - 1].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
 
 
 def validate_result(value, *, feedback, guide, account, kind):

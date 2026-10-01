@@ -265,6 +265,27 @@ async def test_guide_revision_keeps_original_gate_and_approval_pins_revised_copy
     assert (await f.db.get_run(original.id)).status.value == "succeeded"
 
 
+@pytest.mark.parametrize("guide", [True, False])
+async def test_a_long_change_summary_still_records_the_revision(publication_db, guide):
+    # A run's result_summary holds one line of 160 characters. A longer change summary used
+    # to fail the projection after the file was committed, so the revision showed as failed.
+    f = await setup(publication_db, guide=guide)
+    summary = "Rewrote the voice section around the founder's character and plain speech. " * 4
+    f.router.generate.return_value.parsed["summary"] = summary
+    run = await request(f)
+    await f.activities.generate(str(run.id))
+    await f.activities.publish(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "succeeded" and len(done.result_summary) <= 160
+    assert done.result_summary.startswith("Rewrote the voice section")
+    assert done.result_summary.endswith("…")
+    view = await f.reviews.view(f.source.id, ACTOR, "" if guide else "p1")
+    assert view["change_summary"] == done.result_summary
+    if guide:
+        source = await f.db.get_run(f.source.id)
+        assert source.canonical_commit_sha == done.canonical_commit_sha
+
+
 async def test_guide_review_document_reads_latest_file_and_binds_its_content(publication_db):
     from tin_lite.x_posts import digest
 
