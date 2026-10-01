@@ -35,10 +35,34 @@ A token explicitly authorized for both resources can be used at both, as usual.
 Project membership is checked on every operation, independently of token caching.
 
 Use Clerk's existing PKCE S256, consent, registration, issuer and callback behavior.
-See [MCP authentication](clerk-agent-connection.md). No provider settings are changed
-by this implementation. Verify a fresh client, the exact audience, expiry, refresh,
+Configure the [ChatGPT client scopes and PKCE policy](clerk-agent-connection.md#client-scopes-and-pkce)
+before connecting. ChatGPT requests Clerk's advertised `openid`, `email` and `profile`
+identity scopes; an `openid`-only client registration fails before sign-in. Changing
+dynamic-registration defaults alone does not repair an existing client.
+No provider settings are changed automatically by the server. Verify a fresh client,
+the exact audience, expiry, refresh,
 revocation, wrong-resource rejection and denied-project access in the development
 connection before public submission. A new resource needs a fresh authorization.
+
+Authentication acceptance must cover each layer:
+
+- Protected-resource discovery identifies the exact public endpoint and Clerk issuer.
+- Both Clerk discovery documents advertise accurate endpoints, OIDC scopes, token
+  authentication methods and `S256`; every requested scope is allowed on the client.
+- The existing connection and a fresh registration reach sign-in with
+  `scope=openid email profile`, the exact resource, callback, state and S256 challenge.
+  Missing PKCE and `plain` challenges are rejected. An authorization redirect reaching
+  sign-in is only a pre-login check, not a completed connection.
+- A real user completes consent, ChatGPT exchanges the code and can list tools and
+  existing projects. Confirm the issuer on callbacks, the resource audience on issued
+  access tokens, refresh, expiry and revocation without logging tokens or codes.
+- The signed-in connection starts one authorized test workflow, reads its result and
+  rejects inaccessible projects and tools excluded from the public surface. A working
+  coding-agent `/mcp` connection does not establish `/mcp/plugins` acceptance.
+
+Clerk's OIDC UserInfo endpoint must return `email` and `email_verified: true` for a
+verified identity to support ChatGPT Enterprise workspace domain restrictions. Check
+this through the normal authorized connection; do not invent verification claims.
 
 OAuth declarations are carried on every tool in `_meta.securitySchemes`, the documented
 compatibility location supported by the pinned Python MCP SDK. The endpoint also
