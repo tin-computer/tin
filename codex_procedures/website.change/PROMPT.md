@@ -1,8 +1,16 @@
-# Make one approved change to the website
+# Make approved changes to the website
 
-Run the site-change skill. This workflow edits the founder's website, and it makes exactly
-one change: the change row in the trusted `workspace.website_change`
-context. This is adaptation, not writing or rewriting.
+This workflow edits the founder's website. Read `workspace.website_change.source` in the
+trusted context first:
+
+- An approved page (no `source`, or `content_draft`): run the site-change skill. It makes
+  exactly one change, the change row in `workspace.website_change`. This is adaptation, not
+  writing or rewriting. The rest of this prompt is about that case.
+- `audit`: run the site-repair skill instead. It fixes the audit findings in
+  `workspace.technical_fix` (site-fix-v5's plan) in one bounded pull request. Return
+  outcome `patch` with reason `""`, or outcome `no_change` with reason `no_safe_patch` and
+  no files. Never write marketing copy, and never touch a path in
+  `workspace.website_change.protected_paths`.
 
 The context holds the change row (`change`: its source, stable ID, kind and site paths),
 the exact approved copy (`article`), its source identity, the destination repository,

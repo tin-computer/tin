@@ -292,6 +292,8 @@ class GitHubPullRequestProcedure:
     provider_key: str = "infra.github"
     repair_policy: str | None = None
     allow_no_change: bool = False
+    # website.change: the repair rules its audit runs follow. Its page runs ignore it.
+    site_repair_policy: str | None = None
 
 
 @dataclass(frozen=True)
@@ -361,6 +363,7 @@ class CodexProcedureSpec:
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
+    site_repair_policy: str | None = None
     services: tuple[ServiceBinding, ...] = ()
     documents: DocumentPair | None = None
     optional_repository: bool = False
@@ -395,6 +398,7 @@ class PinnedCodexProcedure:
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
+    site_repair_policy: str | None = None
     content_draft_context: dict[str, Any] | None = None
     brand_capture_context: dict[str, Any] | None = None
     # content.refresh: the page, its current text and the files Tin pinned before compute.
@@ -494,6 +498,8 @@ class PinnedCodexProcedure:
             output["repair_policy"] = self.repair_policy
         if self.allow_no_change:
             output["allow_no_change"] = True
+        if self.site_repair_policy is not None:
+            output["site_repair_policy"] = self.site_repair_policy
         if self.output_media_type is not None:
             output["media_type"] = self.output_media_type
         if self.output_validator is not None:
@@ -726,6 +732,8 @@ class CodexProcedureSource:
                 output["repair_policy"] = pull_request.repair_policy
             if pull_request.allow_no_change:
                 output["allow_no_change"] = True
+            if pull_request.site_repair_policy is not None:
+                output["site_repair_policy"] = pull_request.site_repair_policy
 
         procedure = {
             "prompt_path": prompt_path,
@@ -1044,13 +1052,12 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             raise ValueError("procedure workspace and output providers must match")
         output_max_files = output.get("max_files")
         files_limit = MAX_PROCEDURE_PULL_REQUEST_FILES
-        if output.get("repair_policy"):
+        batch_policy = output.get("repair_policy") or output.get("site_repair_policy")
+        if batch_policy:
             from tin_lite import technical_fix
 
             # A batch repair collects every fixable audit finding into one pull request.
-            files_limit = max(
-                files_limit, technical_fix.POLICY_MAX_FILES.get(output["repair_policy"], 0)
-            )
+            files_limit = max(files_limit, technical_fix.POLICY_MAX_FILES.get(batch_policy, 0))
         if (
             not isinstance(output_max_files, int)
             or isinstance(output_max_files, bool)
@@ -1112,6 +1119,21 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         raise ValueError("Codex procedure allow_no_change must be a boolean")
     if allow_no_change and (result_kind != GITHUB_PULL_REQUEST_RESULT or repair_policy is not None):
         raise ValueError("allow_no_change requires a pull-request result without a repair policy")
+    site_repair_policy = output.get("site_repair_policy")
+    if site_repair_policy is not None:
+        from tin_lite import technical_fix
+
+        # website.change pins the batch rules its audit runs repair under. Its page runs keep
+        # their own checks; a run without findings to fix may end with no change.
+        if (
+            site_repair_policy not in technical_fix.POLICY_COMMANDS
+            or not technical_fix.batches(site_repair_policy)
+            or definition.get("key") != "website.change"
+            or result_kind != GITHUB_PULL_REQUEST_RESULT
+            or repair_policy is not None
+            or not allow_no_change
+        ):
+            raise ValueError("Unsupported site repair policy")
 
     project_skills: list[ProjectSkillDependency] = []
     raw_project_skills = procedure.get("project_skills", [])
@@ -1199,6 +1221,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         workspace_capabilities=workspace_capabilities,
         repair_policy=repair_policy,
         allow_no_change=allow_no_change,
+        site_repair_policy=site_repair_policy,
         services=services,
         documents=documents,
         optional_repository=optional_repository,
@@ -1353,6 +1376,7 @@ async def load_pinned_codex_procedure(
         workspace_capabilities=spec.workspace_capabilities,
         repair_policy=spec.repair_policy,
         allow_no_change=spec.allow_no_change,
+        site_repair_policy=spec.site_repair_policy,
         services=spec.services,
         documents=spec.documents,
         optional_repository=spec.optional_repository,

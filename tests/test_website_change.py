@@ -214,8 +214,8 @@ def test_a_change_row_is_defined_once_for_every_source():
     assert row.as_dict()["paths"] == ["/a", "/b"]
     assert set(website_change.SOURCES) == {
         "content_draft",
+        "audit",
         "planned_url_change",
-        "technical_fix",
         "blog_index",
     }
     for bad, match in (

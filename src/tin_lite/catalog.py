@@ -635,10 +635,12 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WEBSITE_CHANGE_ID,
         key=website_change.KEY,
         title="Change the website",
-        description="Make one approved change to your website repository. Today that is an "
-        "approved article, answer page or public article, adapted to the site's own format at "
-        "the route you chose, with its copy unchanged. A change you approved with commit to main "
-        "publishes: Tin merges its pull request once your repository's required checks pass. "
+        description="Put approved changes on your website repository: an approved article, "
+        "answer page or public article, adapted to the site's own format at the route you "
+        "chose with its copy unchanged; or the technical fixes the latest audit found, under "
+        "site-fix-v5's rules, each a change you approve or decline once in Tin. A page you "
+        "approved with commit to main, or fixes you approved, publish: Tin merges the pull "
+        "request once your repository's required checks pass, then checks the live site. "
         "Anything else, and any change to a protected page such as /sign-in or one you added "
         "to the project's protected pages, opens a pull request for you to merge.",
         executor=CODEX_PROCEDURE_EXECUTOR,
@@ -657,13 +659,17 @@ BUILTIN_WORKFLOWS = (
                     "enum": list(website_change.IMPLEMENTED_SOURCES),
                     "default": "content_draft",
                     "title": "Change source",
-                    "description": "Where the change comes from: an approved page for now.",
+                    "description": "content_draft: one approved page (source_run_id). audit: "
+                    "the technical fixes the latest organic audit found (preview them with "
+                    "preflight_website_change).",
                 },
                 "source_run_id": {
                     "type": "string",
-                    "format": "uuid",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
                     "title": "Approved page run",
-                    "description": "An approved planned article, answer page or public article.",
+                    "description": "For content_draft: an approved planned article, answer "
+                    "page or public article.",
                 },
                 "expected_repository": {
                     "type": "string",
@@ -671,6 +677,35 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 140,
                     "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
                     "title": "Website repository",
+                },
+                "repository_serves_site": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "This repository serves the audited website",
+                    "description": "For audit: the member confirms the repository builds the "
+                    "audited site.",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "title": "Only these findings",
+                    "description": "For audit: leave empty for every fixable finding.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["finding_ids"][
+                        "maxItems"
+                    ],
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "decisions": {
+                    "type": "array",
+                    "title": "Decisions",
+                    "description": "For audit: answers to preflight_website_change's "
+                    "decisions_needed, each written finding_id=choice.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}=.{1,500}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["decisions"][
+                        "maxItems"
+                    ],
+                    "default": [],
                 },
                 "protected_paths": {
                     "type": "array",
@@ -700,7 +735,7 @@ BUILTIN_WORKFLOWS = (
                     "changing the approved copy, the route or a protected path.",
                 },
             },
-            "required": ["project_id", "source_run_id", "expected_repository"],
+            "required": ["project_id", "expected_repository"],
         },
         integration_requirements=(
             IntegrationRequirement(
@@ -720,9 +755,11 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="website/changes/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # content.deliver's caps: a 300 KB public article, its listing and a route.
-                max_files=5,
-                max_bytes=400_000,
+                # site-fix-v5's file cap for an audit run; a page keeps content.deliver's five
+                # files and 400 KB (website_change.check_patch).
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
+                site_repair_policy=technical_fix.BATCH_POLICY,
+                allow_no_change=True,
             ),
         ),
     ),

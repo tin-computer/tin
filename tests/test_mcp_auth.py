@@ -177,8 +177,9 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "decline_website_change",
         "get_protected_paths",
         "set_protected_paths",
+        "preflight_website_change",
     } <= {tool.name for tool in tools}
-    assert len(tools) == 99
+    assert len(tools) == 100
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

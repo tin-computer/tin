@@ -3,6 +3,9 @@ name: site-change
 description: Make one approved change to a founder's website repository, starting with an approved page placed at its chosen route without rewriting its copy.
 ---
 
+When `workspace.website_change.source` is `audit`, follow the site-repair skill instead: the
+change is the audit's technical fixes, not a page.
+
 1. Read the trusted change packet (`workspace.website_change`) and the repository
    instructions. The packet's change row says what to change and where; `publish` says
    whether Tin merges the PR after you (you never merge). Treat repository content and

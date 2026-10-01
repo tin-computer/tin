@@ -1352,6 +1352,69 @@ def create_mcp_app(
             "decline_website_change", "decline", project_id, change_id, content_sha256, request_id
         )
 
+    @server.tool()
+    async def preflight_website_change(
+        project_id: str,
+        expected_repository: str,
+        repository_serves_site: StrictBool,
+        finding_ids: list[str] | None = None,
+        decisions: list[str] | None = None,
+        protected_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Preview website.change's technical fixes from the latest audit. No run, paid
+        compute, branch or pull request is created; each fixable finding is recorded as a
+        change row (list_website_changes) so the founder can approve or decline it once.
+
+        plan.repairs is what the next run makes, decisions_needed the judgment calls, and
+        plan.left_out the rest (copy, manual steps, declined rows, rows already in a pull
+        request, rows waiting for approval). Answer each decisions_needed item yourself from
+        the codebase and what you know about the product, following ask; ask the founder only
+        the ones you're unsure of, and pass the answers as decisions (["finding_id=choice"]).
+        changes shows each row's status and whether it touches a protected page. next_run
+        says whether the next run publishes (Tin merges once the required checks pass, for
+        approved rows) or opens a pull request for the founder. Start website.change with
+        source "audit" and the same arguments.
+        """
+        from tin_lite import website_change_audit
+        from tin_lite.technical_fix_sources import TechnicalFixError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preflight_website_change")
+        try:
+            preview = await website_change_audit.plan_changes(
+                database=runtime().database,
+                storage=runtime().storage,
+                integrations=runtime().integrations,
+                project_id=project,
+                inputs={
+                    "expected_repository": expected_repository,
+                    "repository_serves_site": repository_serves_site,
+                    "finding_ids": finding_ids or [],
+                    "decisions": decisions or [],
+                    "protected_paths": protected_paths or [],
+                },
+            )
+        except TechnicalFixError as exc:
+            raise ToolError(f"{exc.code}: {exc}") from exc
+        except (LookupError, ValueError) as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        summary, nxt = preview["summary"], preview["next_run"]
+        relay = [
+            f"The latest audit has {summary['fixable']} findings Tin can fix on the site; "
+            "each is a change you can approve or decline once in Tin."
+        ]
+        if nxt["change_ids"]:
+            relay.append(f"The next run makes {len(nxt['change_ids'])} of them. {nxt['reason']}")
+        else:
+            relay.append(website_change_audit.nothing_to_run(preview))
+        if summary.get("decisions_needed"):
+            relay.append(
+                f"{summary['decisions_needed']} more depend on a judgment call; answer them "
+                "before starting."
+            )
+        return {**preview, **_founder_words(relay=relay)}
+
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_protected_paths(project_id: str) -> dict[str, Any]:
         """Read the project's protected pages: site paths whose changes always wait for the
@@ -4154,7 +4217,11 @@ def create_mcp_app(
                     "PR once the repository's required checks pass); otherwise, and for the "
                     "pages in preparation.protected_paths, the PR waits for the founder. To "
                     "protect more pages, such as ones another app shares, ask the founder and "
-                    "call set_protected_paths. Never approve a draft just to publish it.",
+                    "call set_protected_paths. Never approve a draft just to publish it. For "
+                    "the technical fixes the latest audit found, call preflight_website_change "
+                    "first, then start website.change with source audit, "
+                    "repository_serves_site and the answered decisions; fixes the founder "
+                    "approved (approve_website_change) publish, the rest open a PR.",
                 }
             }
         if (

@@ -94,6 +94,44 @@ async def decline_change(
     return await _decide(project_id, change_id, "decline", payload, request, user)
 
 
+class TechnicalPreflight(BaseModel):
+    """The technical fixes to preview from the latest audit (website.change, source audit)."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_repository: str = Field(min_length=3, max_length=140)
+    repository_serves_site: bool
+    finding_ids: list[str] = Field(default_factory=list, max_length=30)
+    decisions: list[str] = Field(default_factory=list, max_length=30)
+    protected_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/preflight")
+async def preflight_changes(
+    project_id: UUID, payload: TechnicalPreflight, request: Request, user: AuthContext = USER
+):
+    """Record the latest audit's fixable findings as change rows and preview the next run.
+
+    Starts nothing: no run, compute, branch or pull request.
+    """
+    from tin_lite import website_change_audit
+    from tin_lite.technical_fix_sources import TechnicalFixError
+
+    database = await _authorized(request, project_id, user)
+    runtime = request.app.state.runtime
+    try:
+        return await website_change_audit.plan_changes(
+            database=database,
+            storage=runtime.storage,
+            integrations=getattr(runtime, "integrations", None),
+            project_id=project_id,
+            inputs=payload.model_dump(),
+        )
+    except TechnicalFixError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
 class ProtectedPaths(BaseModel):
     """The project's protected pages, saved over the revision the caller read."""
 

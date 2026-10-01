@@ -3,10 +3,15 @@
 In the organic traffic system every change to the site is meant to flow through here after
 the founder approves it: content drafts, page decisions (URL changes), the page tree, the blog
 index and technical fixes. Each is a change row: a source, a stable ID, a kind, the site
-paths it touches and its approval (ChangeRow). Phase 1 implements the page source, an approved
-content.generate article, answer page or public article, adapted into the site's own format
-and route with content.deliver's machinery (content_repository_delivery). Planned URL
-changes, the technical fix and the blog index plug into the same row later.
+paths it touches and its approval (ChangeRow). Two sources are implemented:
+
+- `content_draft` (phase 1): an approved content.generate article, answer page or public
+  article, adapted into the site's own format and route with content.deliver's machinery
+  (content_repository_delivery);
+- `audit` (phase 2, website_change_audit): what the latest organic audit found, repaired
+  under site-fix-v5's rules, one change row per fixable finding.
+
+Planned URL changes and the blog index plug into the same row later.
 
 Two modes, decided by whether the change is pre-approved to commit to main:
 
@@ -39,19 +44,25 @@ from uuid import UUID, uuid4
 
 from tin_lite import content_draft
 from tin_lite import content_repository_delivery as delivery
+from tin_lite import technical_repair_plan as repair_plan
 
 KEY = "website.change"
 WORKFLOW_ID = delivery.WEBSITE_CHANGE_ID
 OPERATION = delivery.WEBSITE_CHANGE_OPERATION
-# Every source a change row can come from, with the kinds of change it makes.
+# Every source a change row can come from, with the kinds of change it makes. An audit row's
+# kind is the site-fix-v5 repair it plans (html_noindex, sitemap_add_urls, merge_redirect, …).
 SOURCES: dict[str, tuple[str, ...]] = {
     "content_draft": ("page",),
+    "audit": tuple(sorted({repair.kind for repair in repair_plan.REPAIRS.values()})),
     "planned_url_change": ("redirect", "noindex"),
-    "technical_fix": ("repair",),
     "blog_index": ("index",),
 }
-# Sources website.change can take today. The others come with phases 2 and 3.
-IMPLEMENTED_SOURCES = ("content_draft",)
+# Sources website.change can take today. Planned URL changes and the blog index come later.
+IMPLEMENTED_SOURCES = ("content_draft", "audit")
+# A page change keeps content.deliver's caps: a 300 KB public article, its listing and a
+# route. A technical change follows site-fix-v5's (20 files, 800 changed lines).
+PAGE_MAX_FILES = 5
+PAGE_MAX_BYTES = 400_000
 # Sources whose approval is a row in website_changes. A page's approval is its own review.
 RECORDED_SOURCES = tuple(source for source in SOURCES if source != "content_draft")
 DECISIONS = {"approve": "approved", "decline": "declined"}
@@ -503,8 +514,21 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
     from tin_lite.content_delivery import ContentDelivery, adapted, choice_key, chosen_mode
     from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
 
-    if inputs.get("source", "content_draft") not in IMPLEMENTED_SOURCES:
-        raise ValueError("website.change publishes approved pages for now.")
+    source_kind = inputs.get("source", "content_draft")
+    if source_kind not in IMPLEMENTED_SOURCES:
+        raise ValueError("website.change makes approved pages and audit fixes for now.")
+    if source_kind == "audit":
+        from tin_lite import website_change_audit
+
+        return await website_change_audit.select_source(
+            database=database,
+            storage=storage,
+            integrations=integrations,
+            project_id=project_id,
+            inputs=inputs,
+        )
+    if not inputs.get("source_run_id"):
+        raise ValueError("Choose the approved page to put on the site (source_run_id).")
     source = await delivery.page_source(
         database=database,
         storage=storage,
@@ -558,6 +582,12 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
 async def guard_source(conn, *, project_id, inputs, source) -> None:
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
+    if inputs.get("source") == "audit" or source.get("source") == "audit":
+        from tin_lite import website_change_audit
+
+        return await website_change_audit.guard_source(
+            conn, project_id=project_id, inputs=inputs, source=source
+        )
     change = source.get("change") or {}
     if (
         inputs["source_run_id"] != source["source_run_id"]
@@ -576,10 +606,16 @@ async def guard_source(conn, *, project_id, inputs, source) -> None:
 
 
 def check_patch(manifest: dict[str, Any], source: dict[str, Any], proof: dict[str, Any]) -> None:
-    """website.change's own patch rule, on top of the exact-copy proof (which refuses
-    dependency files) and the file caps: never a page in Tin's own draft folder. An answer page
-    lands in the site's page registry at its chosen route.
+    """website.change's own patch rules for a page, on top of the exact-copy proof (which
+    refuses dependency files): content.deliver's five files and 400 KB, and never a page in
+    Tin's own draft folder. An answer page lands in the site's page registry at its chosen
+    route.
     """
+    files = manifest.get("files") or []
+    if len(files) > PAGE_MAX_FILES:
+        raise ValueError(f"A page change touches at most {PAGE_MAX_FILES} files.")
+    if sum(len(item["content"].encode()) for item in files) > PAGE_MAX_BYTES:
+        raise ValueError(f"A page change stays under {PAGE_MAX_BYTES // 1000} KB.")
     page = proof["article_path"]
     if any(page.startswith(folder) or f"/{folder}" in page for folder in TIN_DRAFT_FOLDERS):
         where = f" at {source['route']}" if source.get("route") else ""
