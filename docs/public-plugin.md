@@ -82,7 +82,9 @@ metadata: a stable public tool name and effect hints. This metadata is not seria
 Input schemas come from `client_input_schema(entry.definition)`; the project is bound
 outside workflow inputs by the shared run service. The public tool inventory combines
 `BUILTIN_WORKFLOWS` and `PUBLIC_WORKFLOWS`:
-29 native workflows plus 18 reviewed published packages, for 47 named starts.
+28 native workflows plus 18 reviewed published packages, for 46 named starts. A workflow
+retired from discovery (`content.answer_page`, whose answer pages `content.generate` now drafts)
+has no start tool; its saved configurations keep running in Tin.
 Package schemas are read through the same safe manifest decoder used by catalog
 publication. No package code runs during discovery, and unregistered folders,
 `example.*` packages and private `custom.*` workflows are not exposed.

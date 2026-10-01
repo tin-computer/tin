@@ -75,8 +75,9 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
 "Retired:" description, and leave the organic program's workflow list in
 `growth_plan_assets/programs.json`. Nothing else in their definitions or procedure files
 changed (a test pins the digests their 1.6.0 and 1.0.0 shipped with), so pinned runs, saved
-schedules and the traffic system's weekly refresh keep working. `start_answer_page` stays in the
-public plugin, as `start_visibility_audit` and `start_public_article` do.
+schedules and the traffic system's weekly refresh keep working. `start_answer_page` leaves the
+ChatGPT plugin, as #239 does for the workflows it hides; `start_content_draft` drafts answer
+pages there now.
 
 ## Versions
 
@@ -92,18 +93,26 @@ did when its children moved before: its next published revision carries the new 
 
 ## Merging with #239
 
-PR #239 (`feat/public-loop-workflows`) touches the same places:
+PR #239 (`feat/public-loop-workflows`, rebased on main at d69d337) merges with this branch with
+two conflicts, and needs three changes:
 
-- **programs.json.** Both branches remove lines from the organic program's workflow list next to
-  each other, so git reports a conflict. Keep both removals: `content.refresh` and
-  `content.answer_page` (here), `organic.mention_backlinks` and `organic.error_surface` (#239).
-- **Page decisions' refresh rows.** #239 passes them to `content_refresh.choose` through its
-  `planned_refreshes`. It must also return `planned_url_changes.refresh_candidates(...)` from
-  `content_plan_sources.page_decision_refreshes`, so content.plan schedules those pages as
-  refresh items. `plan_candidates` already merges `planned` rows; it can call #239's
-  `candidates(findings, planned, host)` instead once both land.
-- **Catalog.** Both add discovery flags, in separate blocks (`RETIRED_CONTENT_KEYS` here, the
-  site-health set in #239), and `docs/workflows.md` regenerates with `scripts/dump_catalog.py`.
+- **programs.json conflicts.** Both branches change the organic program's workflow list next to
+  each other. Keep both: drop `content.refresh` and `content.answer_page` (here) and
+  `organic.mention_backlinks` and `organic.error_surface` (#239), and keep #239's five loop
+  packages.
+- **docs/workflows.md conflicts.** Regenerate it with `scripts/dump_catalog.py`.
+- **#239's freeze test must allow the retirement.** `test_planned_url_changes.py` pins
+  content.refresh's definition at main's 1.0.0 digest. Here it is 1.1.0 with
+  `public_discovery: false` and a "Retired:" description, and nothing else changed
+  (`test_one_content_generate.py` pins that). Compare the definition without `version`,
+  `description` and `public_discovery`, or drop content.refresh from that freeze.
+- **Page decisions' refresh rows.** #239 keeps `planned_url_changes.refresh_candidates` as a
+  reader for this work. `content_plan_sources.page_decision_refreshes` should return it:
+  read `planned_url_changes.EFFICACY_PATH` at the plan's revision and pass the text and `today`.
+  `content_refresh.plan_candidates` already merges those rows into the refresh sources.
+- **Plugin count.** Both branches remove ChatGPT tools, so `docs/public-plugin.md` and
+  `test_mcp_public.py` need one recount: 27 native workflows and 16 packages, for 43 starts,
+  with `start_answer_page` among the hidden tools.
 
 ## Not done here
 

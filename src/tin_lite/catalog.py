@@ -1507,7 +1507,8 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ANSWER_PAGE_WORKFLOW_ID,
         key=ANSWER_PAGE_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_answer_page", destructive=True, open_world=True),
+        # Retired from discovery, so it has no ChatGPT plugin tool either; content.generate
+        # (start_content_draft) drafts answer pages, and saved configurations keep running.
         title="Draft an answer page",
         description=(
             "Retired: Draft planned content writes answer pages for the AI-visibility gaps your "
