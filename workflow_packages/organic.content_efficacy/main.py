@@ -214,7 +214,6 @@ def blank(url):
         "first_seen": None,
         "last_change": None,
         "links": "unknown",
-        "findings": [],
     }
 
 
@@ -398,54 +397,92 @@ async def read_search_console(ctx, inventory, windows, notes):
     return count
 
 
-def audit_run(ctx, requested, notes):
-    """The newest organic audit by the date inside its files, or None when that is unclear."""
-    if requested:
-        return requested
-    candidates, seen = {}, set()
-    for path in glob(ctx, "reports/organic-audit/*/findings.json", notes)[:16]:
-        parts = path.split("/")
-        if len(parts) < 4:
-            continue
-        run_id = parts[2]
-        seen.add(run_id)
-        data = parse(read(ctx, path, notes, quiet=True))
-        if not isinstance(data, dict):
-            continue
-        dates = [day(data.get(k)) for k in ("generated_at", "date", "run_date", "created_at")]
-        dates += [day(f.get("date") or f.get("detected_at")) for f in data.get("findings") or []]
-        dates = [d for d in dates if d]
-        candidates[run_id] = max(dates) if dates else dt.date.min
-    if not candidates:
-        return None
-    newest = max(candidates.values())
-    hits = [k for k, v in candidates.items() if v == newest]
-    if len(hits) != 1:
-        notes.append("the newest organic audit is ambiguous; name one as audit_run_id")
-        return None
-    return hits[0]
+LATEST = "reports/organic-audit/LATEST.json"
+COMPETING = "search.cannibalization"
 
 
-def attach_audit(ctx, inventory, run_id, notes):
-    if not run_id:
-        return [], None
-    text = read(ctx, f"reports/organic-audit/{run_id}/findings.json", notes)
+def audit_summary(ctx, requested, notes):
+    """The organic audit's summary: the named run's SUMMARY.json, else LATEST.json.
+
+    Both stay under the 64 KB a code workflow may read; findings.json need not. Audits before
+    policy v12 write no summary, so their checks are not attached.
+    """
+    path = f"reports/organic-audit/{requested}/SUMMARY.json" if requested else LATEST
+    text = read(ctx, path, notes, quiet=not requested)
     data = parse(text)
-    if not isinstance(data, dict):
+    columns = ((data or {}).get("pages") or {}).get("columns") if isinstance(data, dict) else None
+    if (
+        not isinstance(data, dict)
+        or data.get("kind") != "organic_audit_summary"
+        or data.get("schema_version") != 1
+        or not isinstance(columns, list)
+        or "path" not in columns
+    ):
         if text is not None:
-            notes.append("audit findings could not be parsed")
+            notes.append(f"{path} is not an organic audit summary Tin can read; set aside")
+        elif requested:
+            notes.append("that audit wrote no SUMMARY.json (audits before policy v12 write none)")
+        return None
+    return data
+
+
+def attach_audit(inventory, summary, origin, notes):
+    """Pin the summary's checks to its page rows; returns the audit's competing-page groups.
+
+    The summary lists the checks that name each crawled page, but not which competing pages
+    pair up; with one competing-pages finding its pages are one group, with more the pairs
+    come from Search Console queries instead.
+    """
+    if not summary:
         return [], None
-    findings = [f for f in data.get("findings") or [] if isinstance(f, dict)]
-    for finding in findings:
-        urls = finding.get("urls") or []
-        for raw in urls if isinstance(urls, list) else [urls]:
-            url = path_of(raw)
-            if not url:
-                continue
+    host = str(summary.get("host") or "").lower().removeprefix("www.")
+    site = (urlsplit(origin).hostname or "").lower().removeprefix("www.")
+    if origin != "unknown" and host != site:
+        notes.append(f"the organic audit is for {host}, not {site}; its checks are not used")
+        return [], None
+    by_check = [c for c in (summary.get("findings") or {}).get("by_check") or []]
+    names = [str(c.get("check") or "") if isinstance(c, dict) else "" for c in by_check]
+    columns = summary["pages"]["columns"]
+    if "checks" not in columns:
+        notes.append("the audit summary dropped its per-page checks to fit 64 KB")
+    tagged = defaultdict(list)
+    for raw in summary["pages"].get("rows") or []:
+        if not isinstance(raw, list) or len(raw) != len(columns):
+            continue
+        row = dict(zip(columns, raw, strict=True))
+        url = row.get("path")
+        if not isinstance(url, str) or not url.startswith("/"):
+            continue
+        checks = row.get("checks") if isinstance(row.get("checks"), list) else []
+        named = [names[i] for i in checks if type(i) is int and 0 <= i < len(names)]
+        if named:
             page = inventory.setdefault(url, blank(url))
-            page["audit"].append(str(finding.get("check_id") or ""))
-            page["findings"].append(finding)
-    return findings, str(data.get("target_host") or "") or None
+            page["audit"] += [name for name in named if name not in page["audit"]]
+            for name in named:
+                tagged[name].append(url)
+    # `pages` sums what each finding affects; `listed` is how many rows name it. Fewer listed
+    # means a finding named examples only, the whole site or pages outside the crawl.
+    short = [
+        f"{c.get('check')} ({c.get('listed')} of {c.get('pages')})"
+        for c in by_check
+        if isinstance(c, dict) and int(c.get("pages") or 0) > int(c.get("listed") or 0)
+    ]
+    if short:
+        notes.append(
+            "audit checks that name more pages than its summary lists (examples, site-level "
+            "or outside the crawl), so the rest carry no check here: " + ", ".join(short[:8])
+        )
+    competing = next(
+        (c for c in by_check if isinstance(c, dict) and c.get("check") == COMPETING), {}
+    )
+    if int(competing.get("findings") or 0) == 1 and len(tagged[COMPETING]) > 1:
+        return [{"check_id": COMPETING, "urls": tagged[COMPETING]}], host
+    if int(competing.get("findings") or 0) > 1:
+        notes.append(
+            f"the audit found {competing['findings']} sets of competing pages; its summary does "
+            "not say which pages pair, so pairs come from Search Console queries"
+        )
+    return [], host
 
 
 def read_links(ctx, file, inventory, notes):
@@ -1226,9 +1263,10 @@ async def run(ctx, inputs):
             "prior": [str(end - dt.timedelta(days=55)), str(end - dt.timedelta(days=28))],
         }
     calls = await read_search_console(ctx, inventory, windows, notes) if not has_snapshot else 0
-    run_id = audit_run(ctx, inputs.get("audit_run_id"), notes)
-    findings, audit_host = attach_audit(ctx, inventory, run_id, notes)
-    origin = site_origin(snapshot, audit_host)
+    summary = audit_summary(ctx, inputs.get("audit_run_id"), notes)
+    origin = site_origin(snapshot, str((summary or {}).get("host") or "") or None)
+    findings, audit_host = attach_audit(inventory, summary, origin, notes)
+    run_id = str(summary.get("run_id") or "") if summary and audit_host else None
     if origin == "unknown":
         notes.append("site origin unavailable; run organic.traffic_snapshot or organic.audit")
     previous = previous_block(read(ctx, OUT, notes, quiet=True))

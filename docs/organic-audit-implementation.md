@@ -599,10 +599,26 @@ crawled page. In the tests a synthetic crawl of 500 pages with 130-character pat
 
 ### For the weekly workflows
 
-The page tree (`organic.site_architecture`) can read click depth and inbound links from
-`LATEST.json` instead of reporting click depth as not measured, and page decisions and the
-traffic snapshot can take the per-page checks from it instead of globbing
-`reports/organic-audit/*/findings.json`. Those workflows need a change of their own to do so.
+The weekly loop reads `LATEST.json` (or a named run's `SUMMARY.json`) and never globs
+`reports/organic-audit/*/findings.json`, which can pass 64 KB. Each checks the summary's
+`host` against its own site and sets a mismatch aside:
+
+- The page tree (`organic.site_architecture`) shows each page's click depth, exact or "at
+  most" as `links.depth` says, and inbound links. Possible orphans are pages the orphan
+  check names or that no read page links to; a key page more than three clicks deep fires
+  its trigger only on an exact depth.
+- Page decisions (`organic.content_efficacy`) and the traffic snapshot take each page's
+  checks from its row. The summary does not say which competing pages pair up, so page
+  decisions takes one group from a single competing-pages finding and otherwise pairs pages
+  by Search Console queries. The snapshot's page entries keep their `[id, check, priority]`
+  shape with a null id, since the summary names checks, not finding IDs.
+- `listed` against `pages`: a check whose findings affect more pages than the rows name
+  (examples only, site-level or outside the crawl) is not spread over pages. Page decisions
+  names those checks in its notes, and the snapshot keeps them under
+  `audit.unlisted_checks`.
+
+An audit from before v12 writes no summary: the page tree then says click depth is not
+measured, and the other two attach no checks.
 
 ## 0.9 — the buyer prompt panel and six AI engines (organic-audit-v13)
 

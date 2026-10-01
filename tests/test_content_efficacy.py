@@ -212,3 +212,93 @@ async def test_qualification_cases_pass_on_their_fixtures(monkeypatch):
         )
         verdict = assess_output(case, status="succeeded", content=content.encode())
         assert verdict["status"] == "passed", (case.id, verdict["checks"])
+
+
+def audit_summary(rows, by_check, *, host=SITE, run_id="22222222-2222-4222-8222-222222222222"):
+    """An organic audit summary as policy v12 and later write it (LATEST.json)."""
+    from tin_lite.organic_audit_summary import PAGE_COLUMNS
+
+    return {
+        "schema_version": 1,
+        "kind": "organic_audit_summary",
+        "run_id": run_id,
+        "host": host,
+        "policy_version": "organic-audit-v13",
+        "findings": {
+            "by_check": [
+                {"check": check, "findings": found, "pages": pages, "listed": listed}
+                for check, found, pages, listed in by_check
+            ]
+        },
+        "pages": {
+            "columns": list(PAGE_COLUMNS),
+            "rows": [
+                [{"path": path, "checks": checks}.get(column) for column in PAGE_COLUMNS]
+                for path, checks in rows
+            ],
+            "total": len(rows),
+        },
+        "truncated": False,
+    }
+
+
+# Positions in by_check: 0 competing pages (one finding), 1 a utility page in search, 2 a
+# site-level check that names no page row.
+SUMMARY = audit_summary(
+    [
+        ("/blog/invoice-late-fee-template", [0]),
+        ("/blog/mileage-log-template", [0]),
+        ("/sign-in", [1]),
+        ("/", []),
+    ],
+    [
+        ("search.cannibalization", 1, 2, 2),
+        ("indexation.utility_pages_indexable", 1, 1, 1),
+        ("crawl.robots_blocks_sitemap", 1, 3, 0),
+    ],
+)
+
+
+async def test_page_checks_come_from_the_audit_summary(monkeypatch):
+    files = {**FILES, "reports/organic-audit/LATEST.json": SUMMARY}
+    content, ctx = await run(monkeypatch, files=files)
+    assert "reports/organic-audit/LATEST.json" in ctx.files.reads
+    assert not any(path.endswith("findings.json") for path in ctx.files.reads)
+    rows = decisions(content)
+    assert rows["/sign-in"]["evidence"]["audit"] == ["indexation.utility_pages_indexable"]
+    found = block(content)
+    assert found["sources"]["audit"] == "22222222-2222-4222-8222-222222222222"
+    pair = next(g for g in found["groups"] if g["summary"].startswith("The audit found"))
+    assert pair["kind"] == "duplicate_pair" and pair["pages"] == 2
+    # Site-level and example-only checks are named, never spread over pages.
+    assert "crawl.robots_blocks_sitemap (0 of 3)" in content
+
+
+async def test_an_audit_of_another_site_or_without_pairs_is_not_guessed(monkeypatch):
+    other = audit_summary([("/sign-in", [0])], [("search.cannibalization", 3, 6, 1)])
+    files = {**FILES, "reports/organic-audit/LATEST.json": {**other, "host": "elsewhere.example"}}
+    content, _ = await run(monkeypatch, files=files)
+    assert "the organic audit is for elsewhere.example, not tallyfox.example" in content
+    assert block(content)["sources"]["audit"] == "none"
+    files = {**FILES, "reports/organic-audit/LATEST.json": other}
+    content, _ = await run(monkeypatch, files=files)
+    assert "the audit found 3 sets of competing pages; its summary does not say" in content
+    assert not any(g["summary"].startswith("The audit found") for g in block(content)["groups"])
+
+
+async def test_a_named_audit_needs_its_summary(monkeypatch):
+    run_id = "33333333-3333-4333-8333-333333333333"
+    named = audit_summary([("/sign-in", [0])], [("indexation.utility_pages_indexable", 1, 1, 1)])
+    files = {
+        **FILES,
+        "reports/organic-audit/LATEST.json": SUMMARY,
+        f"reports/organic-audit/{run_id}/SUMMARY.json": {**named, "run_id": run_id},
+    }
+    content, ctx = await run(monkeypatch, files=files, inputs={"audit_run_id": run_id})
+    assert block(content)["sources"]["audit"] == run_id
+    assert "reports/organic-audit/LATEST.json" not in ctx.files.reads
+    old = "44444444-4444-4444-8444-444444444444"
+    files[f"reports/organic-audit/{old}/findings.json"] = {"schema_version": 3}
+    content, _ = await run(monkeypatch, files=files, inputs={"audit_run_id": old})
+    assert "that audit wrote no SUMMARY.json" in content
+    assert block(content)["sources"]["audit"] == "none"

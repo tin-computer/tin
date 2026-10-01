@@ -363,28 +363,79 @@ async def test_worst_case_queries_fit_posthogs_8000_byte_limit(monkeypatch):
     assert max(len(q.encode()) for q in sql.values()) <= 8000
 
 
-async def test_no_host_input_uses_the_audited_host(monkeypatch):
-    findings = {
-        "schema_version": 3,
-        "target_host": SITE,
-        "findings": [
-            {
-                "id": "oa_" + "1" * 20,
-                "check_id": "search.low_ctr",
-                "priority": "quick_win",
-                "urls": [f"https://{SITE}/pricing"],
-            }
-        ],
-        "coverage": {"inspected_pages": 40, "sitemap_pages": 60},
+AUDIT_RUN = "11111111-1111-4111-8111-111111111111"
+
+
+def audit_summary(host=SITE, run_id=AUDIT_RUN):
+    """An organic audit summary as policy v12 and later write it (LATEST.json)."""
+    from tin_lite.organic_audit_summary import PAGE_COLUMNS
+
+    rows = [("/pricing", [0]), ("/missing-page", [0]), ("/", [])]
+    return {
+        "schema_version": 1,
+        "kind": "organic_audit_summary",
+        "run_id": run_id,
+        "host": host,
+        "policy_version": "organic-audit-v13",
+        "coverage": {"status": "complete", "inspected_pages": 40, "sitemap_pages": 60},
+        "findings": {
+            "by_check": [
+                {"check": "search.low_ctr", "priority": "quick_win", "pages": 2, "listed": 2},
+                {
+                    "check": "crawl.sitemap_missing",
+                    "priority": "high_impact",
+                    "pages": 1,
+                    "listed": 0,
+                },
+            ]
+        },
+        "pages": {
+            "columns": list(PAGE_COLUMNS),
+            "rows": [
+                [{"path": path, "checks": checks}.get(c) for c in PAGE_COLUMNS]
+                for path, checks in rows
+            ],
+            "total": len(rows),
+        },
+        "truncated": False,
     }
-    files = {"reports/organic-audit/11111111-1111-4111-8111-111111111111/findings.json": findings}
-    data, _ = await snapshot(monkeypatch, inputs={"signup_event": "signed_up"}, files=files)
+
+
+async def test_no_host_input_uses_the_audited_host(monkeypatch):
+    files = {"reports/organic-audit/LATEST.json": audit_summary()}
+    data, ctx = await snapshot(monkeypatch, inputs={"signup_event": "signed_up"}, files=files)
     assert data["definitions"]["website_hosts"] == [SITE]
     assert data["definitions"]["website_hosts_source"] == "organic.audit"
-    assert by_page(data)[f"{SITE}/pricing"]["audit"] == [
-        ["oa_" + "1" * 20, "search.low_ctr", "quick_win"]
-    ]
+    # The summary names checks, not finding IDs.
+    assert by_page(data)[f"{SITE}/pricing"]["audit"] == [[None, "search.low_ctr", "quick_win"]]
+    audit = data["audit"]
+    assert audit["status"] == "attached" and audit["run_id"] == AUDIT_RUN
+    assert audit["pages_with_findings"] == 1 and audit["not_listed"] == 1
+    # A site-level check names no page row; it is kept apart, not spread over pages.
+    assert audit["unlisted_checks"] == [["crawl.sitemap_missing", "high_impact", 1, 0]]
+    assert not any(path.endswith("findings.json") for path in ctx.files.reads)
     assert "team visits are counted" in " ".join(data["status_reasons"])
+
+
+async def test_an_audit_of_another_site_is_not_attached(monkeypatch):
+    files = {"reports/organic-audit/LATEST.json": audit_summary(host="elsewhere.example")}
+    inputs = {"signup_event": "signed_up", "website_hosts": [SITE]}
+    data, _ = await snapshot(monkeypatch, inputs=inputs, files=files)
+    assert data["audit"]["status"] == "other_host"
+    assert by_page(data)[f"{SITE}/pricing"]["audit"] == []
+    assert "summary is for elsewhere.example" in " ".join(data["status_reasons"])
+
+
+async def test_a_named_audit_without_a_summary_is_said_so(monkeypatch):
+    old = "22222222-2222-4222-8222-222222222222"
+    files = {
+        "reports/organic-audit/LATEST.json": audit_summary(),
+        f"reports/organic-audit/{old}/findings.json": {"schema_version": 3},
+    }
+    inputs = {"signup_event": "signed_up", "audit_run_id": old}
+    data, _ = await snapshot(monkeypatch, inputs=inputs, files=files)
+    assert data["audit"]["status"] == "none"
+    assert "has no SUMMARY.json" in " ".join(data["status_reasons"])
 
 
 async def test_truncated_prior_read_is_never_a_zero(monkeypatch):

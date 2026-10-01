@@ -23,7 +23,7 @@
         "kind": "run",
         "level": "recommended",
         "workflow": "organic.audit",
-        "reason": "The audit's cannibalization, utility-page and brand-landing findings name the pages that compete."
+        "reason": "The audit's summary (reports/organic-audit/LATEST.json, from policy v12) names the pages its cannibalization, utility-page and brand-landing checks flag."
       }
     ],
     "input_schema": {
@@ -73,7 +73,7 @@
           "type": "string",
           "format": "uuid",
           "title": "Organic audit run",
-          "description": "Leave empty to use the newest audit."
+          "description": "Leave empty to use the newest audit's summary (LATEST.json). A named run needs a SUMMARY.json, which audits write from policy v12."
         },
         "max_rows": {
           "type": "integer",

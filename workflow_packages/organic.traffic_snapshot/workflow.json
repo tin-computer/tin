@@ -3,7 +3,7 @@
   "definition": {
     "key": "organic.traffic_snapshot",
     "title": "Take a weekly traffic snapshot and growth readout",
-    "description": "Each week, read Search Console and PostHog once into one file. Per landing page it holds clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth and the latest audit's findings; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages, with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
+    "description": "Each week, read Search Console and PostHog once into one file. Per landing page it holds clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth and the latest audit's checks; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages, with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
     "version": "1.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
@@ -16,7 +16,7 @@
         "kind": "run",
         "level": "recommended",
         "workflow": "organic.audit",
-        "reason": "The audit names the site's host and pins its findings to the pages they affect."
+        "reason": "The audit's summary (reports/organic-audit/LATEST.json, from policy v12) names the site's host and the checks that flag each page."
       }
     ],
     "input_schema": {
@@ -109,7 +109,7 @@
           "type": "string",
           "format": "uuid",
           "title": "Organic audit run",
-          "description": "Leave empty to use the newest audit the snapshot has not seen yet."
+          "description": "Leave empty to use the newest audit's summary (LATEST.json). A named run needs a SUMMARY.json, which audits write from policy v12."
         },
         "content_paths": {
           "type": "array",

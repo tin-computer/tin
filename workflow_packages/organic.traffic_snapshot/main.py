@@ -369,11 +369,40 @@ def short(page):
     ]
 
 
-def attach_audit(ctx, inputs, previous, objects, reasons, today):
-    """Pin the organic audit's findings to the pages they name.
+LATEST = "reports/organic-audit/LATEST.json"
+
+
+def read_summary(ctx, run_id=None):
+    """An organic audit's summary: the named run's SUMMARY.json, else LATEST.json.
+
+    Both stay under the 64 KB a code workflow may read, which findings.json need not. Returns
+    (summary, problem); audits before policy v12 write no summary.
+    """
+    path = f"reports/organic-audit/{run_id}/SUMMARY.json" if run_id else LATEST
+    try:
+        data = json.loads(ctx.files.read_text(path))
+    except FileNotFoundError:
+        return None, "missing"
+    except (ValueError, OSError):
+        return None, "unreadable"
+    columns = ((data or {}).get("pages") or {}).get("columns") if isinstance(data, dict) else None
+    if (
+        not isinstance(data, dict)
+        or data.get("kind") != "organic_audit_summary"
+        or data.get("schema_version") != 1
+        or not isinstance(columns, list)
+        or "path" not in columns
+    ):
+        return None, "unreadable"
+    return data, None
+
+
+def attach_audit(ctx, inputs, previous, objects, hosts, reasons, today):
+    """Pin the organic audit's checks to the pages its summary lists.
 
     `seen_on` is the day a snapshot first attached this audit run; the readout uses it to
-    say how old the audit's AI answers are.
+    say how old the audit's AI answers are. Page entries are [finding id, check, priority]:
+    the summary names checks, not finding IDs, so the id is null.
     """
     before = (previous or {}).get("audit") or {}
     known = before.get("known_run_ids") or []
@@ -388,87 +417,80 @@ def attach_audit(ctx, inputs, previous, objects, reasons, today):
         "sitemap_pages": None,
         "pages_with_findings": 0,
         "not_listed": 0,
+        "unlisted_checks": [],
     }
-    try:
-        paths = ctx.files.glob("reports/organic-audit/*/findings.json")
-    except (ValueError, OSError):
-        paths = []
-        reasons.append("step 9: organic.audit findings could not be listed.")
-    runs = {p.split("/")[2]: p for p in paths if len(p.split("/")) == 4}
     chosen = inputs.get("audit_run_id")
-    new = [run for run in runs if run not in known]
-    if not chosen:
-        if len(new) == 1:
-            chosen = new[0]
-        elif len(new) > 1:
-            audit["status"] = "ambiguous"
+    data, problem = read_summary(ctx, chosen)
+    if problem == "missing":
+        if chosen:
             reasons.append(
-                "step 9: several new organic.audit runs were found; name one as audit_run_id."
+                "step 9: the selected organic.audit run has no SUMMARY.json "
+                "(audits before policy v12 write none)."
             )
-        elif ((previous or {}).get("audit") or {}).get("run_id") in runs:
-            chosen = previous["audit"]["run_id"]
-    if not chosen:
         return audit
-    if chosen not in runs:
-        reasons.append("step 9: the selected organic.audit findings were not found.")
-        return audit
-    try:
-        data = json.loads(ctx.files.read_text(runs[chosen]))
-    except FileNotFoundError:
-        reasons.append("step 9: the selected organic.audit findings were not found.")
-        return audit
-    except (ValueError, OSError):
-        # Larger than a 64 KB read, or not JSON: the snapshot still ships without it.
+    if problem:
         audit["status"] = "unreadable"
-        reasons.append("step 9: organic.audit findings could not be read (over 64 KB or invalid).")
+        reasons.append("step 9: the organic.audit summary could not be read.")
         return audit
-    if not isinstance(data, dict) or data.get("schema_version") != 3:
-        audit["status"] = "unreadable"
-        reasons.append("step 9: organic.audit findings are not schema 3.")
+    target = str(data.get("host") or "").lower().removeprefix("www.")
+    wanted = {str(h).lower().removeprefix("www.") for h in hosts}
+    if wanted and target not in wanted:
+        audit.update(status="other_host", target_host=target)
+        reasons.append(f"step 9: the organic.audit summary is for {target}, not this site.")
         return audit
+    run_id = str(data.get("run_id") or "")
     coverage = data.get("coverage") if isinstance(data.get("coverage"), dict) else {}
     audit.update(
         status="attached",
-        run_id=chosen,
-        seen_on=(before.get("seen_on") if before.get("run_id") == chosen else None) or str(today),
-        target_host=data.get("target_host"),
-        known_run_ids=list(dict.fromkeys(known + [chosen])),
-        coverage_status=data.get("coverage_status"),
+        run_id=run_id,
+        seen_on=(before.get("seen_on") if before.get("run_id") == run_id else None) or str(today),
+        target_host=target,
+        known_run_ids=list(dict.fromkeys(known + [run_id])),
+        coverage_status=coverage.get("status"),
         inspected_pages=coverage.get("inspected_pages"),
         sitemap_pages=coverage.get("sitemap_pages"),
     )
+    by_check = [c for c in (data.get("findings") or {}).get("by_check") or []]
+    checks = [c if isinstance(c, dict) else {} for c in by_check]
+    # `pages` sums what each finding affects; `listed` is how many rows name it. Fewer listed
+    # means the finding named examples only, the whole site or pages outside the crawl, so
+    # those pages carry no entry here.
+    audit["unlisted_checks"] = [
+        [c.get("check"), c.get("priority"), c.get("pages"), c.get("listed")]
+        for c in checks
+        if int(c.get("pages") or 0) > int(c.get("listed") or 0)
+    ][:20]
+    by_path = {}
+    for key in objects:
+        host, _, path = key.partition("/")
+        if host.removeprefix("www.") == target:
+            by_path.setdefault("/" + path, key)
+    columns = data["pages"]["columns"]
     found = set()
-    for finding in data.get("findings") or []:
-        if not isinstance(finding, dict):
+    for raw in data["pages"].get("rows") or []:
+        if not isinstance(raw, list) or len(raw) != len(columns):
             continue
-        for url in finding.get("urls") or []:
-            key = page_key(url)
-            if key in objects:
-                objects[key]["audit"].append(
-                    [finding.get("id"), finding.get("check_id"), finding.get("priority")]
-                )
-                found.add(key)
-            else:
-                audit["not_listed"] += 1
+        row = dict(zip(columns, raw, strict=True))
+        named = [i for i in row.get("checks") or [] if type(i) is int and 0 <= i < len(checks)]
+        path = str(row.get("path") or "").split("?")[0]
+        if not named or not path.startswith("/"):
+            continue
+        key = by_path.get(path.rstrip("/") or "/")
+        if key is None:
+            audit["not_listed"] += 1
+            continue
+        for i in named:
+            objects[key]["audit"].append([None, checks[i].get("check"), checks[i].get("priority")])
+        found.add(key)
     audit["pages_with_findings"] = len(found)
     return audit
 
 
 def audit_host(ctx):
-    """The newest organic audit's own host, when a findings file is small enough to read."""
-    try:
-        paths = sorted(ctx.files.glob("reports/organic-audit/*/findings.json"))
-    except (ValueError, OSError):
-        return None
-    for path in reversed(paths[-3:]):
-        try:
-            data = json.loads(ctx.files.read_text(path))
-        except (ValueError, OSError):
-            continue
-        host = str((data or {}).get("target_host") or "").lower()
-        if HOST.fullmatch(host):
-            return host
-    return None
+    """The newest organic audit's own host, from its summary."""
+    data, _ = read_summary(ctx)
+    host = str((data or {}).get("host") or "").lower()
+    return host if HOST.fullmatch(host) else None
 
 
 def event_name(inputs, name):
@@ -1051,7 +1073,7 @@ async def run(ctx, inputs):
                 )
         content.sort(key=lambda r: -r["views"])
 
-    audit = attach_audit(ctx, inputs, previous, objects, reasons, today)
+    audit = attach_audit(ctx, inputs, previous, objects, hosts, reasons, today)
     if not returned:
         raise RuntimeError("No provider read returned data; the previous snapshot stays in place.")
 
