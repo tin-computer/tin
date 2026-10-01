@@ -229,6 +229,12 @@ async def fixture(*, prepare=True, inputs=None, budget=10, modern=False):
             "keyword_instructions": v6.INSTRUCTIONS,
             "keyword_schemas": v6.SCHEMAS,
         }
+    if definition["keyword_policy"] != v7.POLICY:
+        # Definitions pinned before v7 name the route without a reasoning effort.
+        definition = {
+            **definition,
+            "model_route": {**definition["model_route"], "capabilities": ["json_schema", "text"]},
+        }
     storage.read_canonical_artifact = AsyncMock(return_value=canonical_json(definition))
     provider, model = providers()
     activities = KeywordPlanActivities(

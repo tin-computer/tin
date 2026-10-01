@@ -60,8 +60,9 @@ class ModelOutputTruncated(ModelProviderError):
     """The response stopped at its output-token cap, so its structured output is incomplete.
 
     Raised when the provider says so (an OpenAI response `incomplete` for
-    `max_output_tokens`) or when structured output does not parse and the response used its
-    whole output allowance (or did not report its usage).
+    `max_output_tokens`), when a response with no text used its whole output allowance
+    (reasoning counts against it), or when structured output does not parse and the response
+    used its whole output allowance (or did not report its usage).
     """
 
 
@@ -647,7 +648,12 @@ def _result(
         usage=usage,
         service_tier=service_tier,
     )
-    if truncated:
+    # Reasoning counts against the cap, so a response can spend all of it before any text.
+    if truncated or (
+        not text
+        and usage.output_tokens is not None
+        and usage.output_tokens >= request.max_output_tokens
+    ):
         raise ModelOutputTruncated(
             f"{provider.value} model stopped at its output-token cap", observation=observation
         )

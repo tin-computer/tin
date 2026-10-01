@@ -39,9 +39,8 @@ from tin_lite.e2b_runtime import E2BRuntime
 from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.growth_plan_activities import GrowthPlanActivities
 from tin_lite.integrations import IntegrationService
-from tin_lite.keyword_plan import POLICY as KEYWORD_POLICY
-from tin_lite.keyword_plan import ROUTE_KEY as KEYWORD_ROUTE_KEY
 from tin_lite.keyword_plan_activities import KeywordPlanActivities
+from tin_lite.keyword_plan_v7 import ROUTE as KEYWORD_ROUTE
 from tin_lite.luna import LunaService, OpenAIResponsesClient, TinWorkflowApiClient
 from tin_lite.memory import MemoryGardener
 from tin_lite.model_providers import (
@@ -151,12 +150,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
                 model=content_plan_editorial.POLICY["model"],
                 capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
             ),
-            ModelRoute(
-                key=KEYWORD_ROUTE_KEY,
-                provider=ProviderName.OPENAI,
-                model=KEYWORD_POLICY["model"],
-                capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
-            ),
+            # One route serves every pinned keyword policy; only v7 sends a reasoning effort.
+            KEYWORD_ROUTE,
         )
         if settings.luna_api_key is not None
         else ()

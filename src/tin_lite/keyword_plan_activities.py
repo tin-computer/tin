@@ -47,7 +47,9 @@ from tin_lite.keyword_plan import (
 from tin_lite.model_providers import (
     MessageRole,
     ModelMessage,
+    ModelOutputTruncated,
     ModelRequest,
+    ReasoningEffort,
     model_failure_reason,
 )
 from tin_lite.model_usage import model_usage_scope
@@ -94,6 +96,20 @@ def modern_scope(scope):
         v6.POLICY["version"],
         v7.POLICY["version"],
     }
+
+
+def route_definition(policy: dict) -> dict:
+    """The model route a policy pins. v7 screens at a set reasoning effort, so its route
+    declares that capability; earlier policies send no effort and pinned the route without it."""
+    route = {
+        "key": ROUTE_KEY,
+        "provider": "openai",
+        "model": POLICY["model"],
+        "capabilities": ["json_schema", "text"],
+    }
+    if policy.get("triage_reasoning_effort"):
+        route["capabilities"] = sorted(item.value for item in v7.ROUTE.capabilities)
+    return route
 
 
 def triage_reservations(policy: dict) -> list[tuple[str, str]]:
@@ -225,7 +241,15 @@ class KeywordPlanActivities:
         return session() if callable(session) else nullcontext()
 
     async def _paid(
-        self, run_id: str, stage: str, request: dict, amount: str, call, *, classify=None
+        self,
+        run_id: str,
+        stage: str,
+        request: dict,
+        amount: str,
+        call,
+        *,
+        classify=None,
+        observe=None,
     ):
         key, fingerprint = self.key(run_id, stage), digest(request)
         async with self.db.effect_lock(key, KEY) as (conn, existing):
@@ -280,6 +304,8 @@ class KeywordPlanActivities:
                         else {
                             "status": "unknown",
                             "reason": classify(exc) if classify else "provider_result_unavailable",
+                            # Provider-reported counts only, such as the tokens it used.
+                            **(observe(exc) if observe else {}),
                         }
                     )
             result = {"request_sha256": fingerprint, **saved, **result}
@@ -310,13 +336,17 @@ class KeywordPlanActivities:
         encoded = canonical_json(data).decode()
         if len(encoded.encode()) > POLICY["max_model_input_bytes"]:
             raise ApplicationError("Keyword review input exceeds its bound.", non_retryable=True)
+        # Only v7 screening names an effort; every other request leaves it unset, as before.
+        effort = policy.get(f"{limits}_reasoning_effort")
         request = ModelRequest(
             messages=(ModelMessage(role=MessageRole.USER, content=encoded),),
             system=instructions[contract],
             output_schema=schema if schema is not None else schemas[contract],
             output_schema_name=f"keyword_{contract}",
             max_output_tokens=output_tokens or policy[f"{limits}_output_tokens"],
+            reasoning_effort=ReasoningEffort(effort) if effort else None,
         )
+        answer_tokens = policy.get(f"{limits}_answer_tokens")
         bound = policy.get(f"{contract}_max_request_bytes")
         if bound and len(json.dumps(asdict(request), ensure_ascii=False).encode()) > bound:
             # The reservation is priced from this bound; a larger request is never sent.
@@ -341,6 +371,19 @@ class KeywordPlanActivities:
                 "provider": result.provider.value,
             }
 
+        def observe(exc) -> dict:
+            """What a failed call used: output and reasoning tokens from the provider's usage,
+            and, for a capped answer, whether reasoning or the answer ran out of room."""
+            observation = getattr(exc, "observation", None)
+            if observation is None:
+                return {}
+            fields = {"usage": asdict(observation.usage)}
+            if isinstance(exc, ModelOutputTruncated) and answer_tokens:
+                fields["truncated_by"] = v7.truncation_cause(
+                    observation.usage, cap=request.max_output_tokens, answer_tokens=answer_tokens
+                )
+            return fields
+
         return await self._paid(
             run_id,
             stage,
@@ -348,6 +391,7 @@ class KeywordPlanActivities:
             reservation or policy[f"{limits}_reservation_usd"],
             call,
             classify=model_failure_reason,
+            observe=observe,
         )
 
     async def _model(self, run_id: str, stage: str, data: dict, *, schema=None):
@@ -538,13 +582,7 @@ class KeywordPlanActivities:
             definition.get("keyword_policy") != policy
             or definition.get("keyword_instructions") != instructions
             or definition.get("keyword_schemas") != schemas
-            or definition.get("model_route")
-            != {
-                "key": ROUTE_KEY,
-                "provider": "openai",
-                "model": POLICY["model"],
-                "capabilities": ["json_schema", "text"],
-            }
+            or definition.get("model_route") != route_definition(policy)
         ):
             raise ApplicationError(
                 "The pinned keyword definition is not supported by this worker.", non_retryable=True
@@ -896,7 +934,11 @@ class KeywordPlanActivities:
 
     async def _screen_batch(self, run_id: str, scope: dict, policy: dict, index, batch, count):
         """One screening batch; a batch cut off at its output cap is asked once more with a
-        larger cap, under its own stage and reservation. Returns (labelled rows, stages)."""
+        larger cap, under its own stage and reservation. Returns (labelled rows, stages).
+
+        Reasoning shares the cap, so a batch cut off by reasoning (its receipt says
+        `truncated_by: reasoning`) takes the same retry: the larger cap is all extra reasoning
+        budget, and the answer keeps its own."""
         data, schema = v2.triage_input(scope, batch), v2.model_schema("triage", batch)
         stages = [v7.batch_stage(index)]
         result = await self._model_call(
@@ -909,6 +951,7 @@ class KeywordPlanActivities:
             reservation=policy["triage_reservation_usd"],
         )
         if result["status"] != "completed" and result.get("reason") == "output_truncated":
+            cut_off = result
             stages.append(v7.batch_stage(index, retry=True))
             result = await self._model_call(
                 run_id,
@@ -923,6 +966,7 @@ class KeywordPlanActivities:
                 "output_truncated",
                 "spending_limit",
             }:
+                last = result if result.get("reason") == "output_truncated" else cut_off
                 await self._save(
                     run_id,
                     "failure",
@@ -932,6 +976,11 @@ class KeywordPlanActivities:
                         "batch": index,
                         "batches": count,
                         "reason": result.get("reason"),
+                        **(
+                            {"truncated_by": last["truncated_by"]}
+                            if last.get("truncated_by")
+                            else {}
+                        ),
                     },
                 )
                 raise ScreeningStopped
@@ -1312,10 +1361,15 @@ class KeywordPlanActivities:
                 if failure.get("reason") == "spending_limit"
                 else "so did its retry with twice the limit"
             )
+            spent = (
+                ", most of it spent on reasoning"
+                if failure.get("truncated_by") == "reasoning"
+                else ""
+            )
             message = (
                 f"Keyword planning stopped because screening batch {batch} stopped at its "
-                f"output-token limit, and {retry}. Completed batches and the paid research were "
-                "kept; retrying the run reuses the research instead of buying it again."
+                f"output-token limit{spent}, and {retry}. Completed batches and the paid research "
+                "were kept; retrying the run reuses the research instead of buying it again."
             )
         await self.db.project_failure(
             run_id=UUID(run_id),

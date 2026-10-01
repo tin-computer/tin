@@ -191,7 +191,9 @@ to 80,000 bytes, so at the pinned standard-band rates ($0.125 per million input 
 cache-write rate, $0.50 per million output tokens) the largest call costs $0.0185; first
 attempts and retries each reserve $0.02. Six batches and six retries ($0.24) replace v6's
 single $0.10 screening reservation, so a full run reserves at most $1.79, still under the $2
-floor. Seeds, review, lookups and samples keep v6's reservations.
+floor. Seeds, review, lookups and samples keep v6's reservations. Screening asks for low
+reasoning effort; reasoning tokens count against the same output caps, so the reservations do
+not change.
 
 Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
 unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With

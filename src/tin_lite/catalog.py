@@ -72,14 +72,14 @@ from tin_lite.integrations import (
 from tin_lite.keyword_plan import (
     KEY as KEYWORD_KEY,
 )
-from tin_lite.keyword_plan import (
-    ROUTE_KEY as KEYWORD_ROUTE_KEY,
-)
 from tin_lite.keyword_plan_v7 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
 from tin_lite.keyword_plan_v7 import (
     POLICY as KEYWORD_POLICY,
+)
+from tin_lite.keyword_plan_v7 import (
+    ROUTE as KEYWORD_ROUTE,
 )
 from tin_lite.keyword_plan_v7 import (
     SCHEMAS as KEYWORD_SCHEMAS,
@@ -1132,12 +1132,7 @@ BUILTIN_WORKFLOWS = (
         version_label="0.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
-        model_route=ModelRoute(
-            key=KEYWORD_ROUTE_KEY,
-            provider=ProviderName.OPENAI,
-            model=KEYWORD_POLICY["model"],
-            capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
-        ),
+        model_route=KEYWORD_ROUTE,
         input_schema={
             "type": "object",
             "additionalProperties": False,

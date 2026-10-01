@@ -161,6 +161,28 @@ review, instructions and schemas and changes only screening:
 - Runs pinned to v2-v6 keep one screening call with their 5,000-token cap and fail as before;
   their failure now says the call stopped at its output limit when that is what happened.
 
+### Reasoning shares the cap
+
+The router turns `ModelRequest.max_output_tokens` into OpenAI's `max_output_tokens`, which
+bounds reasoning and visible output together, and `reasoning_effort` into
+`reasoning: {"effort": ...}`. The Responses API has no separate reasoning-token limit. Until
+v7 the keyword route sent no effort, so the model chose its own. In a59cded8, 4,221 of the
+5,000 tokens went to reasoning, and a second run, de1a4d3e, failed the same way.
+
+- v7 screening asks for `low` effort, on first attempts and retries; screening only labels
+  keywords. Seeds and review send what they did before, with no effort.
+- Each cap is a reasoning budget plus an answer budget. 50 labels need about 450 tokens, and
+  the answer gets 1,000. Reasoning gets 7,000 on the first attempt and 15,000 on the retry, so
+  the caps and reservations stay 8,000 and 16,000.
+- A response with no text at its cap counts as cut off, because reasoning used all of it, so
+  it takes the retry instead of failing as an empty answer.
+- A failed call's receipt keeps the provider's usage, including output and reasoning tokens.
+  A cut-off screening receipt also says what ran out (`truncated_by`): `reasoning` when
+  reasoning passed its budget, `answer` when it did not, `unknown` when the provider reported
+  no reasoning count. When reasoning is why a batch stopped, the run's failure says so.
+- The v7 definition pins the keyword route with `reasoning_effort` among its capabilities.
+  Definitions pinned to v2-v6 keep the route without it, and send the same requests as before.
+
 ## Concurrent lookups — September 29, 2026
 
 Research buys the same calls as before, but no longer one at a time. Policies, seed counts,
