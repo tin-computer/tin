@@ -1,5 +1,10 @@
 # Refreshing existing pages
 
+> Retired from discovery in `content.refresh` 1.1.0: `content.generate` 1.9.0 drafts the
+> refresh items the content plan schedules, with the same evidence, document, wait and applier
+> (see [one content.generate](one-content-generate.md)). Pinned runs and saved schedules keep
+> running as described below; both workflows share one six-week wait per page.
+
 `content.refresh` (1.0.0) rewrites the parts of one existing page that keep it from earning
 clicks, then changes exactly that text in the site's source after the founder approves. It runs
 on demand or weekly, one page a run, and the organic traffic system starts it before drafting

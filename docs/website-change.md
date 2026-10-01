@@ -116,6 +116,8 @@ website.change adapts the page into the site's own format, the way content.deliv
 articles: in the site's page registry or content folder, with the copy kept byte for byte.
 
 - An answer page or public article needs a chosen route (#244's `content/page-routes.json`).
+  A `content.generate` answer page is an answer page here: its approval starts website.change
+  itself, at the route its selection pinned (see [one content.generate](one-content-generate.md)).
   website.change never guesses one: without it, admission refuses with #244's question
   (`ask_the_founder`) and the `save_page_route` call to make, and MCP `get_workflow` shows the
   same question in its preparation. The route pinned at approval wins over one saved later.
