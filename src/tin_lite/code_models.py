@@ -189,7 +189,7 @@ class CodeModels:
     def __init__(self, *, database, router, settings):
         self.db, self.router, self.settings = database, router, settings
 
-    async def authorize(self, *, conn, run, workflow, require_budget=True):
+    async def authorize(self, *, conn, run, workflow, require_budget=False):
         from tin_lite.private_workflows import require_private_execution
 
         fresh = await self.db.get_run(run.id, conn=conn)
@@ -214,6 +214,9 @@ class CodeModels:
         ):
             raise CodeModelError("model_access_revoked")
         require_private_execution(self.settings, workflow, run.project_id)
+        # Paid managed reads ask for the reserved budget here. A model call doesn't: billing's
+        # begin_operation funds it from that budget, or from Tin for a run admission included
+        # (an approved onboarding setup step), which has no budget row.
         if (
             require_budget
             and self.db.billing is not None
@@ -284,7 +287,9 @@ class CodeModels:
                 # Recorder owns paid intent, reservation and observed usage. The owning
                 # operation below owns recoverable output, just like native activities.
                 with model_usage_scope(run_id=run.id, step=f"code:{step}", conn=conn):
-                    async with asyncio.timeout(30):
+                    # The package's declared runtime bounds its model calls: a slower answer
+                    # arrives after the package has given up on it.
+                    async with asyncio.timeout(spec.timeout_seconds):
                         result = await self.router.generate(route.router_key, request)
             except ModelProviderError as exc:
                 if exc.observation is not None:
