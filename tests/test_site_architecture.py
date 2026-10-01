@@ -10,6 +10,7 @@ from loop_workflow_fakes import context, definition, gsc, load
 
 from tin_lite import planned_url_changes as planned
 from tin_lite.community import REPOSITORY_ROOT
+from tin_lite.organic_audit_summary import PAGE_COLUMNS
 from tin_lite.workflow_code import validate_code_definition, validate_code_result
 from tin_lite.workflow_qualification import Qualification, assess_output
 
@@ -67,16 +68,63 @@ def snapshot():
     }
 
 
-def findings(*checks):
+def summary(rows, *, by_check=(), depth="exact", host=SITE, columns=PAGE_COLUMNS, **extra):
+    """An organic audit summary (LATEST.json) as policy v12 and later write it."""
+    checks = [
+        {"check": check, "findings": found, "pages": pages, "priority": "high_impact", "listed": n}
+        for check, found, pages, n in by_check
+    ]
     return {
-        "schema_version": 3,
-        "target_host": SITE,
-        "coverage": {"inspected_pages": 40, "sitemap_pages": 60},
-        "findings": [
-            {"id": f"oa_{i:020d}", "check_id": check, "urls": [f"https://{SITE}{path}"]}
-            for i, (check, path) in enumerate(checks)
-        ],
+        "schema_version": 1,
+        "kind": "organic_audit_summary",
+        "run_id": AUDIT,
+        "host": host,
+        "hosts": [host],
+        "site_url": f"https://{host}/",
+        "market": "US",
+        "audited_at": "2026-09-27T00:00:00+00:00",
+        "policy_version": "organic-audit-v13",
+        "coverage": {
+            "sitemap_pages": 60,
+            "inspected_pages": 40,
+            "crawled_pages": 40,
+            "read_pages": 38,
+        },
+        "findings": {"total": sum(c["findings"] for c in checks), "by_check": checks},
+        "links": {"status": "observed", "start": "/", "depth": depth, "unreached": 1},
+        "pages": {
+            "columns": list(columns),
+            "rows": [[row.get(column) for column in columns] for row in rows],
+            "total": len(rows),
+        },
+        "truncated": False,
+        **extra,
     }
+
+
+def row(path, depth, inbound, *checks):
+    return {
+        "path": path,
+        "status": 200,
+        "indexable": True,
+        "depth": depth,
+        "inbound": inbound,
+        "checks": list(checks),
+    }
+
+
+# Checks are positions in by_check: 0 is the possible orphan, 1 the competing pages.
+LATEST = summary(
+    [
+        row("/", 0, 0),
+        row("/pricing", None, 0, 0),
+        row("/features/invoicing", 1, 3),
+        row("/features/reports", 2, 2),
+        row("/blog/late-fees", 4, 1, 1),
+        row("/blog/invoice-template", 2, 1, 1),
+    ],
+    by_check=[("discovery.possible_orphan", 1, 1, 1), ("search.cannibalization", 1, 2, 2)],
+)
 
 
 def efficacy():
@@ -97,9 +145,7 @@ def efficacy():
 
 FILES = {
     "analytics/traffic-snapshot.json": snapshot(),
-    f"reports/organic-audit/{AUDIT}/findings.json": findings(
-        ("discovery.possible_orphan", "/pricing"), ("search.cannibalization", "/blog/late-fees")
-    ),
+    "reports/organic-audit/LATEST.json": LATEST,
     "content/efficacy.md": efficacy(),
 }
 LABELS = {
@@ -187,19 +233,25 @@ async def test_a_url_change_plan_hands_its_redirects_to_the_technical_fix(monkey
     assert reports["weeks"][-1]["end"] == str(LAST)
 
 
-async def test_click_depth_is_labelled_as_not_measured_and_orphans_come_from_the_crawl_sample(
-    monkeypatch,
-):
-    content, _ = await plan(monkeypatch, {"mode": "plan"})
-    assert "Click depth is not measured" in content
-    assert "crawl sample (at most 100 pages)" in content
+async def test_click_depth_and_orphans_come_from_the_audit_summary(monkeypatch):
+    content, ctx = await plan(monkeypatch, {"mode": "plan"})
+    assert "reports/organic-audit/LATEST.json" in ctx.files.reads
+    assert not any(path.endswith("findings.json") for path in ctx.files.reads)
+    assert "Click depth is not measured" not in content
+    assert "They are exact: every sitemap page was read" in content
     assert (
-        "- /pricing: URL depth 1; 120 clicks in 12 months; a possible orphan in the crawl sample."
-        in content
+        "- /pricing: not reached from home through the pages the audit read; URL depth 1; "
+        "120 clicks in 12 months; a possible orphan in the audit's crawl." in content
     )
-    # (b) fires on the orphaned key page, (c) on three integration pages without an index.
+    assert "- /features/invoicing: 1 click from home; URL depth 2; 80 clicks" in content
+    assert "| /blog/late-fees | /blog | 4 | 1 | 2 | 60 |" in content
+    assert "| /pricing | /pricing | not reached | 0 | 1 | 120 |" in content
+    # (b) fires on the orphaned key page and the key page four clicks deep, (c) on three
+    # integration pages without an index, (f) on the audit's competing pages.
     assert "(b) a key or clicked page is a possible orphan" in content
+    assert "more than 3 clicks from home: /blog/late-fees" in content
     assert "integration under /integrations (3 pages)" in content
+    assert "(f) pages compete for one search (1 audit findings" in content
     assert (
         "Header, by 12-month search clicks, signup last: Features (/features), Pricing (/pricing)"
         in content
@@ -283,6 +335,11 @@ async def test_follow_up_compares_old_plus_new_with_the_lowest_baseline_week(mon
 QUALIFICATION = {
     "url_change": ({}, FILES),
     "orphaned_pricing": ({}, FILES),
+    "no_audit_summary": (
+        {},
+        {k: v for k, v in FILES.items() if k != "reports/organic-audit/LATEST.json"}
+        | {f"reports/organic-audit/{AUDIT}/findings.json": {"schema_version": 3}},
+    ),
     "thin_data_stop": ({"G2_pages_12m": gsc([page("/", 90, 900)])}, {}),
     "follow_up_without_date": ({}, FILES),
     "truncated_gsc": (
@@ -320,3 +377,61 @@ async def test_qualification_cases_pass_on_their_fixtures(monkeypatch):
 def test_new_paths_are_validated_line_by_line(monkeypatch, text, error):
     _, _, errors = load(KEY, monkeypatch).parse_moves(text)
     assert any(error in e for e in errors), errors
+
+
+async def test_an_audit_of_another_host_is_set_aside(monkeypatch):
+    files = {**FILES, "reports/organic-audit/LATEST.json": summary([], host="elsewhere.example")}
+    content, _ = await plan(monkeypatch, URL_CHANGE, files=files)
+    assert (
+        "The organic audit is for elsewhere.example, not northpine.example; set aside." in content
+    )
+    assert "Click depth is not measured: there is no organic audit summary" in content
+    assert "| not measured | not measured |" in content
+
+
+async def test_an_upper_bound_depth_says_so_and_never_fires_the_depth_trigger(monkeypatch):
+    latest = {
+        **LATEST,
+        "links": {**LATEST["links"], "depth": "at_most"},
+        "truncated": {"columns": ["description", "title"], "pages": 12},
+        "pages": {**LATEST["pages"], "total": 18},
+        "findings": {
+            **LATEST["findings"],
+            "by_check": [
+                {**LATEST["findings"]["by_check"][0], "pages": 5},
+                LATEST["findings"]["by_check"][1],
+            ],
+        },
+    }
+    files = {**FILES, "reports/organic-audit/LATEST.json": latest}
+    content, _ = await plan(monkeypatch, {"mode": "plan"}, files=files)
+    assert "Depths are upper bounds" in content
+    assert "- /features/invoicing: at most 1 click from home;" in content
+    assert "more than 3 clicks from home: /blog/late-fees" not in content
+    assert "The summary left out 12 of 18 pages and these columns to fit 64 KB" in content
+    # The check names five pages; one is a row of the summary.
+    assert "possible-orphan check names 5 pages; 1 are rows of its summary" in content
+
+
+async def test_it_reads_the_summary_the_audit_writes(monkeypatch):
+    from test_organic_audit_v12 import documents, site_evidence
+
+    from tin_lite.organic_audit import AUDIT_POLICY, LATEST_SUMMARY_PATH
+
+    files, pages = await site_evidence(AUDIT_POLICY)
+    latest = documents(AUDIT_POLICY, files, pages)[LATEST_SUMMARY_PATH].decode()
+    ctx = context(files={LATEST_SUMMARY_PATH: latest})
+    notes = []
+    audit = load(KEY, monkeypatch).latest_audit(ctx, notes)
+    assert notes == [] and audit["host"] == "example.com" and audit["depth"] == "exact"
+    depth = {path: row["depth"] for path, row in audit["rows"].items()}
+    assert depth == {
+        "/": 0,
+        "/pricing": 1,
+        "/blog": 1,
+        "/blog/post-a": 2,
+        "/blog/post-b": 2,
+        "/blog/post-c": 3,
+        "/orphan": None,
+    }
+    assert "/orphan" in audit["orphans"] and "/" not in audit["orphans"]

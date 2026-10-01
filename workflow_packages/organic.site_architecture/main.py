@@ -1,14 +1,15 @@
 """Plan the site's page tree, URL and navigation rules and redirects from live data only.
 
-Sources: the latest organic audit (its crawl sample of at most 100 pages and its findings),
+Sources: the latest organic audit's summary (reports/organic-audit/LATEST.json, under 64 KB),
 12 months of Search Console, the traffic snapshot (28-day sessions) and Page decisions
 (content/efficacy.md). It does not read the site's repository. One model call names and groups
 the sections; code computes everything else: the inventory, the gate, the tree, the rules,
 the redirects the technical fix reads (the `redirects.json` block, unchanged) and the baseline
 a follow-up compares against.
 
-The audit records possible orphans in its crawl sample but no click depth, so this plan says
-click depth is not measured and reports URL depth (path segments) apart from it.
+Click depth and inbound links come from the audit summary: the fewest clicks from the homepage
+through the pages the audit read, exact or an upper bound as the summary says. URL depth (path
+segments) is reported apart from it. Audits before policy v12 write no summary.
 """
 
 import datetime as dt
@@ -39,6 +40,11 @@ from architecture import (
 
 OUT = "reports/organic/site-architecture/SITE_ARCHITECTURE.md"
 SNAPSHOT = "analytics/traffic-snapshot.json"
+LATEST = "reports/organic-audit/LATEST.json"
+ORPHAN_CHECK = "discovery.possible_orphan"
+COMPETING_CHECKS = ("search.cannibalization", "search.brand_landing_page")
+# A key page deeper than this many clicks from home fires trigger (b).
+MAX_KEY_DEPTH = 3
 EFFICACY = "content/efficacy.md"
 HOST = re.compile(r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+")
 ORIGIN = re.compile(r"https://[a-z0-9.-]+\.[a-z]{2,}(?::\d{1,5})?")
@@ -95,53 +101,90 @@ def fresh(stamp, today, days):
     return 0 <= (today - made).days <= days
 
 
-def newest_audit(ctx, snapshot, notes):
-    """The audit the snapshot last attached, else the only one; findings.json must fit 64 KB."""
-    try:
-        paths = ctx.files.glob("reports/organic-audit/*/findings.json")
-    except (ValueError, OSError):
-        paths = []
-    runs = {p.split("/")[2]: p for p in paths if len(p.split("/")) == 4}
-    chosen = ((snapshot or {}).get("audit") or {}).get("run_id")
-    if chosen not in runs:
-        if len(runs) > 1:
-            notes.append(
-                "Several organic audits exist and the traffic snapshot names none; the audit "
-                "evidence is not used. Run organic.traffic_snapshot first."
-            )
-            return None
-        chosen = next(iter(runs), None)
-    if not chosen:
-        return None
-    text = read(ctx, runs[chosen], notes, "The organic audit's findings")
+def latest_audit(ctx, notes):
+    """The newest organic audit's summary: each crawled page's click depth, inbound links and
+    checks. None when there is none (audits before policy v12) or Tin can't read it."""
+    text = read(ctx, LATEST, notes, "The organic audit's summary")
     try:
         data = json.loads(text) if text else None
     except ValueError:
         data = None
-    if not isinstance(data, dict) or data.get("schema_version") != 3:
+    pages = (data or {}).get("pages") if isinstance(data, dict) else None
+    columns = (pages or {}).get("columns") if isinstance(pages, dict) else None
+    if (
+        not isinstance(data, dict)
+        or data.get("kind") != "organic_audit_summary"
+        or data.get("schema_version") != 1
+        or not isinstance(columns, list)
+        or "path" not in columns
+    ):
+        if text:
+            notes.append("The organic audit's summary is not one Tin can read; set aside.")
         return None
-    host = str(data.get("target_host") or "").lower().removeprefix("www.")
+    by_check = (data.get("findings") or {}).get("by_check") or []
+    names = [str(c.get("check") or "") if isinstance(c, dict) else "" for c in by_check]
+    links = data.get("links") if isinstance(data.get("links"), dict) else {}
     coverage = data.get("coverage") if isinstance(data.get("coverage"), dict) else {}
     audit = {
-        "run_id": chosen,
-        "host": host,
-        "inspected_pages": coverage.get("inspected_pages"),
+        "run_id": str(data.get("run_id") or ""),
+        "policy": str(data.get("policy_version") or ""),
+        "host": str(data.get("host") or "").lower().removeprefix("www."),
+        "crawled_pages": coverage.get("crawled_pages"),
+        "read_pages": coverage.get("read_pages"),
         "sitemap_pages": coverage.get("sitemap_pages"),
+        # Depth is exact when every sitemap page was read and no link list was capped; else it
+        # is an upper bound: a page Tin did not read may hold a shorter path.
+        "links": links.get("status") == "observed",
+        "depth": links.get("depth") if links.get("status") == "observed" else None,
+        "unreached": links.get("unreached"),
+        "checks_listed": "checks" in columns,
+        "truncated": data.get("truncated") or False,
+        "total": (pages or {}).get("total"),
+        "rows": {},
         "orphans": [],
-        "competing": [],
-        "urls": set(),
+        "competing": sum(
+            int(c.get("findings") or 0)
+            for c in by_check
+            if isinstance(c, dict) and c.get("check") in COMPETING_CHECKS
+        ),
+        "orphan_finding": next(
+            (c for c in by_check if isinstance(c, dict) and c.get("check") == ORPHAN_CHECK), None
+        ),
     }
-    for finding in data.get("findings") or []:
-        if not isinstance(finding, dict):
+    for raw in (pages or {}).get("rows") or []:
+        if not isinstance(raw, list) or len(raw) != len(columns):
             continue
-        urls = [site_path(u, host) for u in finding.get("urls") or []]
-        urls = [bare(u) for u in urls if u]
-        audit["urls"].update(urls)
-        if finding.get("check_id") == "discovery.possible_orphan":
-            audit["orphans"] += urls
-        elif finding.get("check_id") in ("search.cannibalization", "search.brand_landing_page"):
-            audit["competing"].append(finding.get("id"))
+        row = dict(zip(columns, raw, strict=True))
+        path = site_path(row.get("path"), audit["host"] or "x.invalid")
+        if not path:
+            continue
+        checks = row.get("checks") if isinstance(row.get("checks"), list) else []
+        entry = {
+            "depth": row["depth"] if type(row.get("depth")) is int else None,
+            "inbound": row["inbound"] if type(row.get("inbound")) is int else None,
+            "checks": {names[i] for i in checks if type(i) is int and 0 <= i < len(names)},
+        }
+        audit["rows"][bare(path)] = entry
+        flagged = ORPHAN_CHECK in entry["checks"]
+        unlinked = audit["links"] and entry["inbound"] == 0 and bare(path) != "/"
+        if flagged or unlinked:
+            audit["orphans"].append(bare(path))
     return audit
+
+
+def depth_text(path, audit):
+    """How many clicks from home, as the audit measured it; never a guess."""
+    if not audit:
+        return "click depth not measured (no audit summary)"
+    row = audit["rows"].get(path)
+    if row is None:
+        return "not in the audit's crawl"
+    if not audit["links"]:
+        return "click depth not measured (the audit kept no links)"
+    if row["depth"] is None:
+        return "not reached from home through the pages the audit read"
+    clicks = f"{row['depth']} click{'' if row['depth'] == 1 else 's'} from home"
+    return clicks if audit["depth"] == "exact" else "at most " + clicks
 
 
 def verdict(value):
@@ -154,11 +197,51 @@ def known(value):
 
 def key_line(path, inventory, orphans, audit):
     clicks = known((inventory.get(path) or {}).get("clicks_12m"))
-    if path in orphans:
-        crawl = "a possible orphan in the crawl sample"
-    else:
-        crawl = "not flagged in the crawl sample" if audit else "crawl sample not read"
-    return f"- {path}: URL depth {url_depth(path)}; {clicks} clicks in 12 months; {crawl}."
+    line = f"- {path}: {depth_text(path, audit)}; URL depth {url_depth(path)}; "
+    line += f"{clicks} clicks in 12 months"
+    return line + ("; a possible orphan in the audit's crawl." if path in orphans else ".")
+
+
+def depth_lines(audit):
+    """What the click depth in this plan means, and what the summary left out."""
+    if not audit:
+        return ["- Click depth is not measured: there is no organic audit summary to read."]
+    if not audit["links"]:
+        return [
+            "- Click depth is not measured: the audit kept no page links. URL depth below is "
+            "the number of path segments, not click depth."
+        ]
+    exact = audit["depth"] == "exact"
+    lines = [
+        "- Click depth and inbound links come from the links in the static HTML of the pages "
+        "the audit read: the fewest clicks from the homepage, a redirect costing none. "
+        + (
+            "They are exact: every sitemap page was read and no link list was capped."
+            if exact
+            else "Depths are upper bounds: some pages were not read or a link list was capped, "
+            "so a shorter path may exist."
+        )
+        + f" Crawled pages not reached from home: {known(audit['unreached'])}. Links that "
+        "JavaScript adds are not seen. URL depth is the number of path segments.",
+    ]
+    finding = audit["orphan_finding"]
+    if finding and int(finding.get("pages") or 0) > int(finding.get("listed") or 0):
+        lines.append(
+            f"- The audit's possible-orphan check names {finding.get('pages')} pages; "
+            f"{finding.get('listed')} are rows of its summary, so the rest are not marked here."
+        )
+    if audit["truncated"]:
+        cut = audit["truncated"]
+        lines.append(
+            f"- The summary left out {cut.get('pages', 0)} of {known(audit['total'])} pages "
+            f"and these columns to fit 64 KB: {', '.join(cut.get('columns') or []) or 'none'}."
+        )
+    if not audit["checks_listed"]:
+        lines.append(
+            "- The summary dropped its per-page checks, so possible orphans come from inbound "
+            "links alone."
+        )
+    return lines
 
 
 def stop(lead, why, checked, again, notes):
@@ -221,7 +304,7 @@ async def run(ctx, inputs):
     ):
         notes.append("The traffic snapshot is stale or unreadable; sessions stay unknown.")
         snapshot = None
-    audit = newest_audit(ctx, snapshot, notes)
+    audit = latest_audit(ctx, notes)
     efficacy = read(ctx, EFFICACY, notes, "Page decisions")
     decided, decided_read = [], False
     found = re.search(r"## Decisions block\s*```json\s*(\{.*?\})\s*```", efficacy or "", re.S)
@@ -357,7 +440,7 @@ async def run(ctx, inputs):
             if isinstance(row, list) and len(row) > 7:
                 add(site_path(row[0], host), sessions_28d=row[7], source="snapshot")
     if audit and audit["host"] == host:
-        for path in audit["urls"]:
+        for path in audit["rows"]:
             add(path, source="audit")
     elif audit:
         notes.append(f"The organic audit is for {audit['host']}, not {host}; set aside.")
@@ -393,6 +476,7 @@ async def run(ctx, inputs):
         "decided": decided,
         "decided_read": decided_read,
         "clicks_complete": clicks_complete,
+        "max_key_depth": MAX_KEY_DEPTH,
     }
     triggers = gate(context)
     fired = [t for t in triggers if t[1]]
@@ -402,9 +486,10 @@ async def run(ctx, inputs):
         f"- Search Console calls: {', '.join(calls) or 'none'}.",
         "- Organic audit: "
         + (
-            f"run {audit['run_id']}, a crawl sample of {audit['inspected_pages']} pages."
+            f"run {audit['run_id']} ({audit['policy']}), {known(audit['crawled_pages'])} pages "
+            f"crawled and {known(audit['read_pages'])} read, from its summary."
             if audit
-            else "not read."
+            else f"not read ({LATEST} is missing; audits before policy v12 write none)."
         ),
         f"- Traffic snapshot: {'read' if snapshot else 'not read'}. Page decisions: "
         f"{'read' if decided_read else 'not read'}.",
@@ -416,7 +501,8 @@ async def run(ctx, inputs):
             checked,
             [
                 "- a URL change, redesign, platform or domain move is planned;",
-                "- a new audit finds a key page orphaned, or pages that compete for one search;",
+                "- a new audit finds a key page orphaned or deep, or pages that compete for one "
+                "search;",
                 "- a new type of page reaches three pages without an index page.",
             ],
             notes,
@@ -580,28 +666,34 @@ async def run(ctx, inputs):
         "## Evidence",
         "",
         *checked,
-        "- Click depth is not measured: the organic audit records possible orphans in its crawl "
-        "sample (at most 100 pages) but not how many clicks each page sits from home. URL depth "
-        "below is the number of path segments, not click depth.",
+        *depth_lines(audit),
         *[f"- {n}" for n in notes],
         "",
         "## URL map",
         "",
-        "| url | section | url depth | clicks_12m | impressions_12m | sessions_28d | "
-        "orphan in crawl sample | must_keep |",
-        "|---|---|---:|---:|---:|---:|---|---|",
+        "| url | section | click depth | inbound links | url depth | clicks_12m | "
+        "impressions_12m | sessions_28d | possible orphan | must_keep |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---|---|",
     ]
     orphans = set((audit or {}).get("orphans") or [])
     listed = sorted(inventory.values(), key=lambda p: (-(p["clicks_12m"] or 0), p["path"]))
     for page in listed[:60]:
         keep = (page["clicks_12m"] or 0) > 0 or (page["sessions_28d"] or 0) > 0
         known_zero = page["clicks_12m"] == 0 and page["sessions_28d"] == 0
+        row = (audit or {}).get("rows", {}).get(page["path"])
+        if not audit or not audit["links"]:
+            depth, inbound = "not measured", "not measured"
+        elif row is None:
+            depth, inbound = "not crawled", "not crawled"
+        else:
+            depth = "not reached" if row["depth"] is None else row["depth"]
+            inbound = known(row["inbound"])
         lines.append(
-            f"| {page['path']} | {page['section']} | {page['depth']} | "
+            f"| {page['path']} | {page['section']} | {depth} | {inbound} | {page['depth']} | "
             f"{'unknown' if page['clicks_12m'] is None else page['clicks_12m']} | "
             f"{'unknown' if page['impressions_12m'] is None else page['impressions_12m']} | "
             f"{'unknown' if page['sessions_28d'] is None else page['sessions_28d']} | "
-            f"{'yes' if page['path'] in orphans else 'no' if audit else 'not assessed'} | "
+            f"{'yes' if page['path'] in orphans else 'no' if row else 'not assessed'} | "
             f"{'yes' if keep else 'no' if known_zero else 'unknown'} |"
         )
     if len(listed) > 60:

@@ -3,7 +3,7 @@
   "definition": {
     "key": "organic.site_architecture",
     "title": "Plan the site's page tree and redirects",
-    "description": "Plan the site's page tree, URL and navigation rules from live data: the latest organic audit's crawl sample and findings, a year of Search Console clicks, the traffic snapshot's visits and Page decisions. One model call names and groups the sections; code computes the rest. When URLs must change, it lists the exact redirects: the next technical fix asks about each one and adds the ones you agree to in one pull request. Follow-ups after a change compare clicks with the saved baseline. It does not read the repository: possible orphans come from the audit's crawl sample, and click depth is not measured. Plans only; changes nothing itself.",
+    "description": "Plan the site's page tree, URL and navigation rules from live data: the latest organic audit's summary (click depth, inbound links and checks for each page it crawled), a year of Search Console clicks, the traffic snapshot's visits and Page decisions. One model call names and groups the sections; code computes the rest. When URLs must change, it lists the exact redirects: the next technical fix asks about each one and adds the ones you agree to in one pull request. Follow-ups after a change compare clicks with the saved baseline. It does not read the repository: click depth and possible orphans come from the pages the audit read. Plans only; changes nothing itself.",
     "version": "1.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
@@ -16,7 +16,7 @@
         "kind": "run",
         "level": "recommended",
         "workflow": "organic.audit",
-        "reason": "The audit's crawl sample (at most 100 pages) supplies possible orphans, pages that compete for one search and the sitemap size."
+        "reason": "The audit's summary (reports/organic-audit/LATEST.json, from policy v12) supplies click depth, inbound links, possible orphans, pages that compete for one search and the sitemap size."
       },
       {
         "kind": "artifact",

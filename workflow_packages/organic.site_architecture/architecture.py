@@ -2,8 +2,8 @@
 
 No reads and no model here; main.py passes in what it read. Every number keeps its source:
 Search Console for 12-month clicks, the traffic snapshot for 28-day sessions, and the organic
-audit's crawl sample (at most 100 pages) for possible orphans. The audit records no click
-depth, so this plan reports URL depth (path segments) and says so; it is not click depth.
+audit's summary for click depth, inbound links and possible orphans among the pages it read.
+URL depth (path segments) is reported apart; it is not click depth.
 """
 
 import hashlib
@@ -191,12 +191,21 @@ def gate(ctx):
         p for p in orphans or [] if (inventory.get(p, {}).get("clicks_12m") or 0) > 0
     ]
     key_orphans = [p for p in orphans or [] if p in ctx["key_pages"]]
+    # Only an exact depth counts: an upper bound may hide a shorter path.
+    deep = [
+        p
+        for p in ctx["key_pages"]
+        if audit
+        and audit["depth"] == "exact"
+        and ((audit["rows"].get(p) or {}).get("depth") or 0) > ctx["max_key_depth"]
+    ]
     found.append(
         (
             "b",
-            bool(clicked_orphans or key_orphans) if orphans is not None else None,
-            "a key or clicked page is a possible orphan in the audit's crawl sample "
-            "(click depth is not recorded by the audit)",
+            bool(clicked_orphans or key_orphans or deep) if orphans is not None else None,
+            "a key or clicked page is a possible orphan in the audit's crawl, or a key page sits "
+            f"more than {ctx['max_key_depth']} clicks from home"
+            + (f": {', '.join(deep[:3])}" if deep else ""),
         )
     )
     by_type = {}
@@ -228,14 +237,14 @@ def gate(ctx):
             "site's code" + (f"; deep sections: {', '.join(deep[:5])}" if deep else ""),
         )
     )
-    competing = (audit or {}).get("competing") or []
+    competing = (audit or {}).get("competing") or 0
     merges = [c for c in ctx["decided"] if c.get("kind") == "301"]
     found.append(
         (
             "f",
             bool(competing or merges) if (audit or ctx["decided_read"]) else None,
             "pages compete for one search"
-            + (f" ({len(competing)} audit findings, {len(merges)} Page decisions merges)"),
+            + (f" ({competing} audit findings, {len(merges)} Page decisions merges)"),
         )
     )
     silent = [
