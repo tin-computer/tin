@@ -264,7 +264,7 @@ async def test_hosted_welcome_enrolls_once_with_default_policy(billed, legacy):
         "SELECT * FROM billing_project_policies WHERE project_id=$1", f.project.id
     )
     assert policy["per_run_nanos"] == policy["monthly_nanos"] == 10_000_000_000
-    assert policy["concurrency"] == 1 and policy["schedule_max_nanos"] == 10_000_000_000
+    assert policy["schedule_max_nanos"] == 10_000_000_000
     assert api_enabled(f.settings, f.project.id)
 
 

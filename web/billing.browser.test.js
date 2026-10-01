@@ -13,7 +13,7 @@ async function harness({theme="light", admin=true, multiple=false, returning=adm
   const other={...project,id:"other",name:"Other project",workspace_id:"other-workspace",workspace_name:"Other workspace"};
   const data={enabled:true,mode:"test",currency:"USD",is_admin:admin,workspace_id:"workspace",project_id:"project",status:"active",
     available_usd:"25.00",reserved_usd:"2.00",spent_this_month_usd:"1.50",topup_min_cents:1000,topup_max_cents:100000,
-    policies:[{id:"project",name:"ClawMessenger",revision:1,per_run_nanos:10e9,monthly_nanos:100e9,concurrency:1,schedule_max_nanos:null}],transactions:[]};
+    policies:[{id:"project",name:"ClawMessenger",revision:1,per_run_nanos:10e9,monthly_nanos:100e9,schedule_max_nanos:null}],transactions:[]};
   if(!admin) {delete data.available_usd; delete data.reserved_usd;}
   if(welcome) {
     data.available_usd="10.00"; data.reserved_usd="0.00"; data.run_billing_enabled=false;
