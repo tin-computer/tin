@@ -1499,3 +1499,10 @@ async def test_failure_before_anything_was_written_does_not_send_the_founder_to_
     db.receipts[key] = EffectReceipt(key, plan.KEY, "started", None)
     await activities.failure(str(run.id))
     assert "Check Files for a saved result" in db.failures[-1]
+
+
+def test_onboarding_offers_no_social_channel():
+    # Which social channel a founder uses is decided after onboarding, by the founder, not
+    # chosen as a setup first run for them.
+    offered = {key for row in plan.PROGRAMS["programs"] for key in row["tin"]["workflows"]}
+    assert not {key for key in offered if key.startswith("social.")}
