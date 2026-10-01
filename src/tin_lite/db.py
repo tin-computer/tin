@@ -6675,6 +6675,7 @@ class Database:
             "(SELECT project_workflow_id FROM content_programs WHERE project_id = $1)",
             "DELETE FROM content_programs WHERE project_id = $1",
             "DELETE FROM workflow_review_commands WHERE project_id = $1",
+            "DELETE FROM capture_proposal_revisions WHERE project_id = $1",
             "DELETE FROM outreach_campaigns WHERE project_id = $1",
             "DELETE FROM run_tool_grants WHERE project_id = $1",
             "DELETE FROM run_decisions WHERE project_id = $1",
@@ -6925,10 +6926,15 @@ class Database:
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
             "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
             # A website.change run with the audit's changes when the live site needs none.
-            "website.change": ("website_change_checked", "Website changes checked."),
+            "website.change": ("website_change_ready", "Website changes checked."),
         }[workflow_key]
         if final_status == "failed":
-            event = "organic_system_incomplete"
+            # technical_fix_ready becomes technical_fix_failed; the traffic system keeps its own.
+            event = (
+                "organic_system_incomplete"
+                if workflow_key == "organic.traffic_system"
+                else event.removesuffix("_ready") + "_failed"
+            )
         async with conn.transaction():
             projected = await conn.fetchval(
                 """

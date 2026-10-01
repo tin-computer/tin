@@ -13,7 +13,7 @@ import { chromium } from "playwright";
 const assets = path.resolve("src/tin_lite/static");
 const minutesAgo = minutes => new Date(Date.now() - minutes * 60_000).toISOString();
 
-async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false} = {}) {
+async function serve({draft: revision, release, extra = [], waitingTasks = false, adapted, olderDraft = false, unavailableDraft = false, review = null} = {}) {
   const project = {id: "project-1", name: "Example project", workspace_id: "ws", workspace_name: "Example", member_count: 1, hidden: false};
   const task = {
     id: "5a7e0000-0000-4000-8000-000000000001", project_id: project.id, workflow_id: "task", workflow_name: "project.task",
@@ -111,6 +111,11 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
         const decision = decisions.find(item => url.pathname === `/api/decisions/${item.id}/apply`);
         const run = runs.find(item => item.id === decision?.run_id);
         if (!decision || !run) {response.statusCode = 404; return send({detail: "decision not found"});}
+        // Approval binds the version the founder read; a newer revision asks again.
+        const body = JSON.parse(raw || "{}");
+        if (review && run.id === review.runId && body.action === "approve" && body.review_token !== review.current.review_token) {
+          response.statusCode = 409; return send({detail: "This proposal changed after you opened it. Read it again, then approve."});
+        }
         decisions.splice(decisions.indexOf(decision), 1);
         return send({...run, status: "stopped", review_decision: JSON.parse(raw || "{}").action === "decline" ? "declined" : "approved"});
       }
@@ -130,6 +135,7 @@ async function serve({draft: revision, release, extra = [], waitingTasks = false
       if (unavailableDraft) {response.statusCode = 503; return send({detail: "Temporarily unavailable"});}
       return send(requestedRun);
     }
+    if (review && url.pathname === `/api/workflows/runs/${review.runId}/review`) return send(review.current);
     if (url.pathname.endsWith("/decisions")) return send(decisions);
     if (url.pathname.endsWith("/integrations")) return send(integrations);
     if (url.pathname.endsWith("/infra.github/options")) return send([{id: "repo-1", label: "example/site"}]);
@@ -426,7 +432,7 @@ test("a proposal can be discarded: it leaves Decisions and every count, the guid
     assert.equal(await page.locator("#decision-count").textContent(), "3");
     await page.locator('[data-decision-id="style-decision"]').click();
     assert.equal(await card.locator("footer > span").count(), 0);
-    assert.deepEqual(await card.locator("footer button").allTextContents(), ["Discard", "Approve guide"]);
+    assert.deepEqual(await card.locator("footer button").allTextContents(), ["Discard", "Approve"]);
     assert.equal(await card.getByRole("button", {name: "Discard", exact: true}).evaluate(button => getComputedStyle(button).color), "rgb(190, 58, 0)");
 
     await card.getByRole("button", {name: "Discard", exact: true}).click();
@@ -435,6 +441,42 @@ test("a proposal can be discarded: it leaves Decisions and every count, the guid
     assert.equal(await page.locator('[data-decision-id="style-decision"]').count(), 0);
     assert.equal(await page.locator("#decision-count").textContent(), "2");
     assert.equal(await page.locator("#project-summary").textContent(), "Example · 0 running");
+    assert.deepEqual(errors, []);
+    await context.close();
+  } finally { await browser.close(); server.close(); }
+});
+
+test("a proposal the coding agent revised says so, and approving an older version asks again", async () => {
+  const style = reviewRun("57e10000-0000-4000-8000-000000000008", {workflow_id: "style", workflow_name: "style.capture", artifact_path: "style/proposals/2026-10-01-writing-style.md", created_at: minutesAgo(5)});
+  const view = (count, token, by = "Claude Code") => ({run_id: style.id, project_id: projectId, status: "needs_input", review_token: token, can_approve: true, can_request_changes: false,
+    is_current: true, version: 1, versions: [], conflict: null, artifact: {run_id: style.id, path: style.artifact_path, revision: "c".repeat(40), sha256: token},
+    documents: [{path: style.artifact_path, destination: ".agents/skills/writing-style/SKILL.md", change: "updated"}],
+    proposal_revisions: {count, latest_by: by, latest_by_you: true, latest_at: "2026-10-01T14:05:00Z", history: []}});
+  const review = {runId: style.id, current: view(1, "1".repeat(64))};
+  const {server, writes, base} = await serve({review, extra: [{run: style, decision: {id: "style-revised", run_id: style.id, project_id: projectId, workflow_key: "style.capture",
+    workflow_title: "Capture writing style", kind: "review", title: "Review: Writing style guide", output_title: "Writing style guide",
+    explanation: "Proposes short, direct sentences.", consequence: "", items: [{file: style.artifact_path, revision: style.canonical_commit_sha, title: "2026-10-01-writing-style.md"}],
+    created_at: style.created_at, version_saved_at: "2026-10-01T12:10:00Z"}}]});
+  const browser = await chromium.launch({headless: true});
+  try {
+    const {page, context, errors} = await open(browser, base, "/decisions?project=project-1");
+    const card = page.locator(".decision-detail-card");
+    await card.waitFor();
+    await page.locator('[data-decision-id="style-revised"]').click();
+    const line = card.locator(".review-proposal-revisions");
+    await line.waitFor();
+    assert.match(await line.textContent(), /^Revised once by Claude Code\. Latest /);
+    assert.deepEqual(await card.locator("footer button").allTextContents(), ["Discard", "Approve"]);
+
+    // The agent revises again while the card is open; the old version cannot be approved.
+    review.current = view(2, "2".repeat(64), "Codex");
+    await card.getByRole("button", {name: "Approve", exact: true}).click();
+    await page.getByText("Could not apply decision: This proposal changed after you opened it. Read it again, then approve.", {exact: true}).waitFor();
+    await page.waitForFunction(() => /^Revised twice by Codex\./.test(document.querySelector(".review-proposal-revisions")?.textContent || ""));
+    await page.waitForFunction(() => !document.querySelector("[data-apply-decision]")?.disabled);
+    await card.getByRole("button", {name: "Approve", exact: true}).click();
+    await page.getByText("Decision applied.", {exact: true}).waitFor();
+    assert.deepEqual(writes.filter(item => item.path.endsWith("/apply")).map(item => item.body.review_token), ["1".repeat(64), "2".repeat(64)]);
     assert.deepEqual(errors, []);
     await context.close();
   } finally { await browser.close(); server.close(); }

@@ -87,6 +87,7 @@ from tin_lite.keyword_plan_v6 import (
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
 from tin_lite.organic_audit_ai import AI_CONTRACT, AI_SCHEMAS
+from tin_lite.procedure_documents import AGENT_REVISION
 from tin_lite.procedures import (
     BROWSER_SANDBOX_PROFILE,
     CODE_MAP_SECTION,
@@ -440,6 +441,9 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+            # 1.2.0: the founder's coding agent can revise the waiting proposal, and approval
+            # binds its exact content. Runs pinned to 1.1.0 lack this and keep their rules.
+            definition["proposal_revision"] = AGENT_REVISION
         if self.key == x_draft.KEY:
             definition["x_draft_policy"] = dict(x_draft.POLICY)
         if self.key == x_feedback.KEY:
@@ -925,11 +929,11 @@ BUILTIN_WORKFLOWS = (
         title="Capture writing style",
         description=(
             "Use your coding agent to select writing samples, or add samples here. "
-            "Review the proposed voice guide in Decisions; once you approve it, future "
-            "content uses it. Nothing is published."
+            "Review the proposed voice guide in Decisions; your coding agent can revise it "
+            "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),

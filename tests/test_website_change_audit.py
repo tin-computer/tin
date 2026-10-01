@@ -657,3 +657,63 @@ def test_planned_url_changes_fit_the_same_row_contract():
         website_change.CHANGE_ID.fullmatch(entry["finding_id"])
         for entry in [entry, {"finding_id": SITEMAP_LINE}]
     )
+
+
+# --- A run that can't read the repository fails ----------------------------------------------
+
+
+async def test_a_run_that_cannot_read_the_repository_ends_failed(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    await audit_run(f, findings(), revision="2" * 40)
+    f.runtime.integrations.github_repository_bundle.return_value = SimpleNamespace(
+        archive=b"", complete=False
+    )
+    run = await start(f)
+    assert await f.activities.prepare_codex_procedure(str(run.id)) is True
+    run = await f.db.get_run(run.id)
+    # Before, this ended succeeded with "No change proposed"; Tin did not do the job.
+    assert run.status.value == "failed"
+    assert run.error_message == (
+        "Tin couldn't read every file in the repository. No change proposed."
+    )
+    assert run.artifact_path == f"website/changes/{run.id}.md"
+    events = await f.db.pool.fetch(
+        "SELECT event_type FROM activity_events WHERE run_id=$1 AND event_type LIKE 'website%'",
+        run.id,
+    )
+    assert [event["event_type"] for event in events] == ["website_change_failed"]
+    f.runtime.integrations.github_create_pull_request.assert_not_awaited()
+
+
+async def test_nothing_left_to_change_still_succeeds(publication_db, monkeypatch):
+    f = await fixture(
+        publication_db,
+        monkeypatch,
+        site={f"{BASE}/robots.txt": ROBOTS + f"Sitemap: {SITEMAP_URL}\n", SITEMAP_URL: SITEMAP},
+    )
+    await audit_run(f, [row("robots.sitemap_reference_missing", SITEMAP_LINE)], revision="2" * 40)
+    run = await start(f)
+    assert await f.activities.prepare_codex_procedure(str(run.id)) is True
+    run = await f.db.get_run(run.id)
+    assert run.status.value == "succeeded" and run.error_message is None
+    assert run.result_summary == "Website changes checked. No change proposed."
+
+
+def test_which_preparation_outcomes_fail():
+    for reason in ("repository_incomplete", "unsupported_source", "plan_too_large"):
+        assert website_change_audit.preparation_failed({"reason": reason})
+    for reason in ("nothing_to_fix", "already_resolved", "incomplete_pr_evidence", None):
+        assert not website_change_audit.preparation_failed({"reason": reason})
+        assert website_change_audit.preparation_summary({"reason": reason}) == (
+            "Website changes checked. No change proposed."
+        )
+    # When preparation recorded the files it couldn't read (#276 does), the error names them.
+    missing = {
+        "reason": "repository_incomplete",
+        "repository_missing": [{"path": "public/hero.mp4"}, {"path": "dist/app.js"}],
+        "repository_missing_count": 5,
+    }
+    assert website_change_audit.preparation_summary(missing) == (
+        "Tin couldn't read every file in the repository: public/hero.mp4; dist/app.js; and 3 "
+        "more. No change proposed."
+    )

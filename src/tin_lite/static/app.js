@@ -3267,7 +3267,7 @@ function renderDocument() {
             }
           : route.source !== "retained" && run?.status === "needs_input"
           ? {
-              label: publishPreview(run) ? "Publish" : repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
+              label: publishPreview(run) ? "Publish" : repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (["style.capture", "brand.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ? "Approve" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
               onActivate: async (button) => approveRun(run.id, button, await publishDelivery(run)),
             }
           : null,
@@ -4400,8 +4400,9 @@ async function discardCampaignRevision(runId, button) {
 
 function supportsArticleFeedback(run) {
   if (!run) return false;
+  // A writing style proposal reads its review too: approval binds the exact version shown.
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article", "social.x_style"].includes(workflowForRun(run)?.key || run?.workflow_name);
+    ["content.generate", "content.public_article", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name);
 }
 
 function mountArticleFeedback(host, runId, reader = false, documentContext = {}) {
@@ -4485,8 +4486,9 @@ function repositoryDeliveryAvailable(run) {
 }
 
 // A proposed writing style or brand guide: approve it, leave it for later, or discard it.
+const PROPOSAL_WORKFLOWS = new Set(["style.capture", "brand.capture"]);
 function isProposal(decision) {
-  return decision.kind === "review" && ["style.capture", "brand.capture"].includes(decision.workflow_key);
+  return decision.kind === "review" && PROPOSAL_WORKFLOWS.has(decision.workflow_key);
 }
 
 // Answer pages and public articles that Tin adapts to the site (a metered content.deliver run)
@@ -4553,9 +4555,10 @@ function decisionApprovalHtml(decision, run) {
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
   }
+  // Emre, 10/1: a proposal is approved or discarded; the coding agent revises it, not a button.
   if (isProposal(decision)) {
     return `${discard}
-      <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>Approve guide</button>`;
+      <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>Approve</button>`;
   }
   const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
   return `${discard}
@@ -4855,6 +4858,11 @@ async function applyDecision(decision, button) {
     button.disabled = false;
     button.textContent = originalLabel;
     showToast(`Could not apply decision: ${error.message}`);
+    // A proposal revised after the card opened asks again: reload it with its new version.
+    if (isProposal(decision) && state.view === "decisions") {
+      schedulePolling({ immediate: true });
+      renderDecisions();
+    }
   }
 }
 
