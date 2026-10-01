@@ -595,6 +595,36 @@ SITE_WIDE_STEMS = (
     "remix.config.",
     "gatsby-config.",
 )
+# Framework entry files that wrap or replace every page below them, wherever they sit:
+# Next.js layouts, templates, error and loading boundaries, route handlers and the pages
+# router's _app/_document, SvelteKit's +layout and +error, Remix's root.
+FRAMEWORK_ENTRY_STEMS = frozenset(
+    {
+        "layout",
+        "template",
+        "error",
+        "global-error",
+        "not-found",
+        "loading",
+        "default",
+        "route",
+        "instrumentation",
+        "_app",
+        "_document",
+        "_error",
+        "_middleware",
+        "+layout",
+        "+error",
+        "+server",
+        "root",
+    }
+)
+# Source folders frameworks route from. A chosen route named after one (`/app/{slug}`,
+# `/pages/{slug}`) can't tell the route's folder from the framework's, so it merges nothing
+# but the page itself.
+FRAMEWORK_ROOT_FOLDERS = frozenset(
+    {"app", "pages", "src", "routes", "api", "components", "lib", "layouts", "public", "static"}
+)
 
 
 def outside_route(manifest, proof, route):
@@ -602,9 +632,13 @@ def outside_route(manifest, proof, route):
 
     For `/guides/{slug}` a file serves the route only when its directories include `guides`
     (`src/app/guides/[slug]/page.tsx`, `content/guides/...`). Root layouts, middleware, host and
-    build settings, shared components and dotfiles reach other pages, so they stay a PR.
+    build settings, shared components and dotfiles reach other pages, so they stay a PR, as do
+    framework entry files (a layout or _document) anywhere. A route named after a framework's
+    own source folder (`/app/{slug}`) can't be told apart from it, so only the page merges.
     """
     folders = [part for part in route.split("{slug}", 1)[0].strip("/").split("/") if part]
+    if FRAMEWORK_ROOT_FOLDERS.intersection(folders):
+        folders = []
     outside = []
     for item in manifest.get("files") or []:
         path = item["path"]
@@ -622,6 +656,7 @@ def outside_route(manifest, proof, route):
             or any(part.startswith(".") for part in parts)
             or name in SITE_WIDE_NAMES
             or name.startswith(SITE_WIDE_STEMS)
+            or name.split(".", 1)[0] in FRAMEWORK_ENTRY_STEMS
         ):
             outside.append(path)
     return outside
@@ -668,10 +703,11 @@ async def publish_after_pull_request(
     """Honor a commit-to-main setting after the adaptation's PR opens, or leave it open.
 
     Only a run started by the page's approval, with the founder's setting to commit to
-    main, is merged: when its patch is the approved page alone, its branch still holds
-    exactly that patch, and GitHub calls it clean (no conflicts, no failing or pending
-    checks, no required review) within a few minutes. Otherwise the PR stays open and
-    the receipt says why. The outcome is recorded once; retries reuse it.
+    main, is merged: when its patch passes `merge_rule`, the page is a file it adds rather
+    than one it rewrites, its branch still holds exactly that patch, and GitHub calls it
+    clean (no conflicts, no failing or pending checks, no required review) within a few
+    minutes. Otherwise the PR stays open and the receipt says why. The outcome is recorded
+    once; retries reuse it.
     """
     source = await saved_source(database, run.id)
     # A website.change run always records its outcome: merged, or open and why.
@@ -740,6 +776,7 @@ async def publish_after_pull_request(
                         run=run,
                         source=source,
                         manifest=manifest,
+                        page=proof["article_path"],
                         number=number,
                         branch=published.get("pull_request_branch"),
                         sleep=sleep,
@@ -786,7 +823,9 @@ async def publish_after_pull_request(
             raise
 
 
-async def _merge_when_clean(*, integrations, run, source, manifest, number, branch, sleep, clock):
+async def _merge_when_clean(
+    *, integrations, run, source, manifest, page, number, branch, sleep, clock
+):
     binding = binding_from(source)
     deadline = clock().timestamp() + MERGE_WAIT_SECONDS
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
@@ -831,6 +870,7 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
                     files=tuple(GitHubFileChange(**item) for item in manifest["files"]),
                     expected_binding=binding,
                     commit_title=f"{manifest['title']} (#{number})"[:200],
+                    new_paths=(page,),
                 )
             except IntegrationAuthorizationError as exc:
                 # A changed branch or connection is final; the PR stays for the founder.

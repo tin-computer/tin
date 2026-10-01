@@ -621,6 +621,7 @@ async def test_commit_setting_merges_a_clean_page_only_pull_request(publication_
     assert call["number"] == 42 and call["expected_head_sha"] == "a" * 40
     assert call["execution_key"] == f"{child.id}:procedure_pull_request_merge"
     assert [item.path for item in call["files"]] == ["content/answers/reliable-ai-work.md"]
+    assert call["new_paths"] == ("content/answers/reliable-ai-work.md",)
     assert naps == [delivery.MERGE_POLL_SECONDS]
     merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
     assert merge["status"] == "merged" and merge["commit"] == "b" * 40

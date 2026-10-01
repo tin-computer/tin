@@ -217,6 +217,23 @@ async def test_merge_refuses_a_pull_request_that_changed(tmp_path, files) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["added", "modified"])
+async def test_merge_requires_the_page_to_be_a_new_file(tmp_path, status) -> None:
+    # Rewriting an existing file with the approved copy (a README, another page) is a PR.
+    database = FakeIntegrationDatabase()
+    binding = connected(database)
+    github = GitHub(files=[{"filename": FILES[0].path, "status": status}])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        if status == "added":
+            assert (await merge(service, binding, new_paths=(FILES[0].path,)))["merged"]
+        else:
+            with pytest.raises(IntegrationAuthorizationError, match="replace an existing file"):
+                await merge(service, binding, new_paths=(FILES[0].path,))
+    assert any(method == "PUT" for method, _ in github.requests) is (status == "added")
+
+
+@pytest.mark.asyncio
 async def test_merge_refuses_a_retargeted_pull_request(tmp_path) -> None:
     database = FakeIntegrationDatabase()
     binding = connected(database)
