@@ -580,7 +580,23 @@ class OrganicSystemActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
 
-    async def first_refresh(self, run, prepared):
+    @activity.defn
+    async def organic_system_refresh(self, run_id: str) -> dict:
+        """Save the weekly page refresh and prepare its first run for the parent to dispatch.
+
+        The parent workflow runs it as a child and waits for it before finishing, so the
+        system's spending allocation stays open while the refresh spends. Older system
+        histories still start the refresh from the draft step, on its own.
+        """
+        run = await self.active(run_id)
+        prepared = await self.saved(run_id, "prepare")
+        if not prepared or prepared["input_sha256"] != digest(run.input):
+            raise ApplicationError("System preparation is unavailable.", non_retryable=True)
+        if not refreshes_pages(prepared["policy"]):
+            return {"status": "skipped", "reason": "not_in_pinned_recipe"}
+        return await self.first_refresh(run, prepared, dispatch_by_parent=True)
+
+    async def first_refresh(self, run, prepared, *, dispatch_by_parent=False):
         """Save the weekly page refresh and start its first run now, once per system run."""
         key = f"traffic:{run.id}:refresh"
         async with self.db.effect_lock(key, KEY) as (conn, receipt):
@@ -590,7 +606,9 @@ class OrganicSystemActivities:
             from tin_lite.run_service import WorkflowExecutorUnavailableError
 
             try:
-                result = await self._first_refresh(run, prepared)
+                result = await self._first_refresh(
+                    run, prepared, dispatch_by_parent=dispatch_by_parent
+                )
             except (
                 BillingError,
                 PrerequisiteError,
@@ -609,7 +627,7 @@ class OrganicSystemActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
 
-    async def _first_refresh(self, run, prepared):
+    async def _first_refresh(self, run, prepared, *, dispatch_by_parent=False):
         from tin_lite.project_workflow_operations import sync_project_workflow
         from tin_lite.run_service import start_workflow_run
 
@@ -687,9 +705,16 @@ class OrganicSystemActivities:
             trigger_source=run.trigger_source,
             trigger_client=run.trigger_client,
             started_by_oauth_client_id=run.started_by_oauth_client_id,
+            _prepare_only=dispatch_by_parent,
             _billing_parent_run_id=run.id if getattr(self.db, "billing", None) else None,
         )
-        return {**refresh_result(configured), "run_id": str(child.id)}
+        result = {**refresh_result(configured), "run_id": str(child.id)}
+        if dispatch_by_parent:
+            result |= {
+                "executor": child.executor,
+                "temporal_workflow_id": child.temporal_workflow_id,
+            }
+        return result
 
     @activity.defn
     async def organic_system_step_failure(self, payload: dict[str, str]):

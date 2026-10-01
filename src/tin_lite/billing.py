@@ -876,8 +876,18 @@ class BillingService:
                 and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
             )
         if parent["executor"] == "organic.traffic_system":
-            from tin_lite.organic_system import STEPS
+            from tin_lite.organic_system import REFRESH_KEY, STEPS, refreshes_pages
 
+            if definition["key"] == REFRESH_KEY:
+                # The v5 recipe's first page refresh, pinned at preparation like its steps.
+                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+                return bool(
+                    key == f"system:{parent_id}:refresh"
+                    and prepared
+                    and prepared.status == "completed"
+                    and refreshes_pages(prepared.result.get("policy"))
+                    and prepared.result["definitions"].get("refresh") == definition
+                )
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
                 from tin_lite.organic_system import drafts_articles

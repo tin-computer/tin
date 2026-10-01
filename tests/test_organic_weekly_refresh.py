@@ -124,3 +124,31 @@ async def test_without_temporal_the_refresh_is_blocked_not_guessed(publication_d
         "reason": "scheduling_unavailable",
     }
     assert await refresh_runs(f) == []
+
+
+async def test_the_system_dispatches_its_refresh_as_a_child_it_waits_for(
+    publication_db, monkeypatch
+):
+    f = await refresh_fixture(publication_db, monkeypatch)
+    started = await f.system.organic_system_refresh(str(f.parent.id))
+    [child] = await refresh_runs(f)
+    # Prepared for the parent to run as its Temporal child, not started on its own.
+    assert started["run_id"] == str(child["id"])
+    assert started["executor"] == "codex.procedure" and started["temporal_workflow_id"]
+    f.client.start_workflow.assert_not_awaited()
+    run = await f.db.get_run(child["id"])
+    assert run.status.value == "pending"
+    # The draft step that follows finds the refresh already accounted for.
+    await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "draft"})
+    assert len(await refresh_runs(f)) == 1
+    f.client.start_workflow.assert_not_awaited()
+    assert await f.system.organic_system_refresh(str(f.parent.id)) == started
+
+
+async def test_an_older_recipe_dispatches_no_refresh(publication_db, monkeypatch):
+    f = await refresh_fixture(publication_db, monkeypatch, policy=organic_system.FALLBACK_POLICY)
+    assert await f.system.organic_system_refresh(str(f.parent.id)) == {
+        "status": "skipped",
+        "reason": "not_in_pinned_recipe",
+    }
+    assert await refresh_runs(f) == []

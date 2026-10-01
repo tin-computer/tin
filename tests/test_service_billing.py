@@ -462,6 +462,66 @@ async def test_content_children_share_parent_budget_only_for_pinned_recipe(bille
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
 
 
+async def test_the_systems_page_refresh_shares_its_budget_and_holds_settlement(billed):
+    from tin_lite.organic_system import FALLBACK_POLICY, POLICY
+
+    f = billed
+    await fund(f)
+    parent = await admit(f, "organic.traffic_system", PARENT)
+    refresh = SPECS["content.refresh"].definition
+    step = f"system:{parent.id}:refresh"
+    # Before the recipe is pinned, the refresh has no allocation to draw on.
+    with pytest.raises(BillingError, match="allocation"):
+        await admit(f, "content.refresh", parent=parent, step=step)
+    key = f"traffic:{parent.id}:prepare"
+    async with f.db.pool.acquire() as conn:
+        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
+        await f.db.complete_effect(
+            conn,
+            execution_key=key,
+            result={"policy": POLICY, "definitions": {"refresh": refresh}},
+        )
+        system = {"run_id": parent.id, "executor": "organic.traffic_system"}
+        # Only the pinned definition, under the refresh's own start key.
+        assert not await f.billing.valid_child(
+            conn, system, {"start_idempotency_key": f"system:{parent.id}:draft"}, refresh
+        )
+        assert not await f.billing.valid_child(
+            conn, system, {"start_idempotency_key": step}, {**refresh, "title": "Changed"}
+        )
+    child = await admit(f, "content.refresh", parent=parent, step=step)
+    async with f.db.pool.acquire() as conn:
+        await f.billing.begin_operation(
+            conn, run_id=child.id, operation_id=str(child.id), kind="codex_api", maximum=200_000_000
+        )
+        await f.billing.observe_operation(
+            conn, operation_id=str(child.id), nanos=80_000_000, observation={"basis": "fixture"}
+        )
+    # The system's budget stays open while its refresh is still running.
+    await finish(f, parent)
+    assert await f.billing.settle(parent.id) is None
+    await finish(f, child)
+    assert await f.billing.settle(parent.id) == 80_000_000
+    assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
+    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
+    # A recipe pinned before v5 refreshes nothing, so it funds no refresh.
+    older = await admit(f, "organic.traffic_system", PARENT)
+    async with f.db.pool.acquire() as conn:
+        key = f"traffic:{older.id}:prepare"
+        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
+        await f.db.complete_effect(
+            conn,
+            execution_key=key,
+            result={"policy": FALLBACK_POLICY, "definitions": {"refresh": refresh}},
+        )
+        assert not await f.billing.valid_child(
+            conn,
+            {"run_id": older.id, "executor": "organic.traffic_system"},
+            {"start_idempotency_key": f"system:{older.id}:refresh"},
+            refresh,
+        )
+
+
 async def test_free_onboarding_review_holds_no_credit_reservation(billed):
     f = billed
     await fund(f)

@@ -1278,6 +1278,20 @@ class OrganicTrafficSystemWorkflow:
             except Exception:
                 await call("organic_system_weekly_articles_failure", run_id)
 
+        async def page_refresh(child):
+            try:
+                await workflow.execute_child_workflow(
+                    child["executor"],
+                    child["run_id"],
+                    id=child["temporal_workflow_id"],
+                    task_queue=workflow.info().task_queue,
+                    parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                    cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                )
+            except Exception:
+                # A refresh never fails the recipe; its own run records why it stopped.
+                return
+
         try:
             await call("organic_system_prepare", run_id)
             audit = asyncio.create_task(step("audit"))
@@ -1293,10 +1307,23 @@ class OrganicTrafficSystemWorkflow:
                     # Saved beside the first draft, which may wait days for review. A failure
                     # is recorded on its own and never fails the recipe's child runs.
                     weekly = asyncio.create_task(weekly_articles())
+                refresh = None
+                if workflow.patched("organic-refresh-child-v1"):
+                    # The first page refresh is prepared before the draft and runs as a child
+                    # beside it. The system waits for it, so its budget never settles while
+                    # the refresh still spends.
+                    try:
+                        child = await call("organic_system_refresh", run_id)
+                    except Exception:
+                        child = {}
+                    if (child or {}).get("temporal_workflow_id"):
+                        refresh = asyncio.create_task(page_refresh(child))
                 await step("draft")
                 await step("delivery")
                 if weekly is not None:
                     await weekly
+                if refresh is not None:
+                    await refresh
             succeeded = await call("organic_system_finish", run_id, minutes=5)
             if not succeeded:
                 raise ApplicationError("One or more organic system steps could not finish.")
