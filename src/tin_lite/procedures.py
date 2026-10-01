@@ -1537,14 +1537,28 @@ def _owned_section_span(lines: list[str], *, section: OutputSection) -> tuple[in
     return start, end
 
 
+def memory_section_text(text: str, heading: str) -> str | None:
+    """The owned `heading` section of the memory index, bounded as its writer bounds it.
+
+    The section runs from its heading line (exact, or followed by the writer's parenthetical,
+    such as `### Code map (verified 2026-09-04, ...)`) to the next `##`/`###` heading, inside
+    `## Product`. None when the section is missing, misplaced or declared twice.
+    """
+    section = OutputSection(parent=MEMORY_SECTION_PARENT, heading=heading, max_bytes=0)
+    lines = text.splitlines()
+    try:
+        span = _owned_section_span(lines, section=section)
+    except ValueError:
+        return None
+    if span is None:
+        return None
+    start, end = span
+    return "\n".join(lines[start:end]).rstrip() + "\n"
+
+
 def memory_section_present(text: str, heading: str) -> bool:
     """Whether the memory index text holds one well-formed `heading` under the product parent."""
-    section = OutputSection(parent=MEMORY_SECTION_PARENT, heading=heading, max_bytes=0)
-    try:
-        span = _owned_section_span(text.splitlines(), section=section)
-    except ValueError:
-        return False
-    return span is not None
+    return memory_section_text(text, heading) is not None
 
 
 def _content_lines(lines: list[str]) -> list[str]:

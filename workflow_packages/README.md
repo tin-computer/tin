@@ -20,7 +20,9 @@ founder again. Before adding inputs, read these:
 - `reports/GROWTH_ONBOARDING_PLAN.md` from Start here: the business, its buyers, budget and
   hard no's. Respect the hard no's.
 - `wiki/INDEX.md`: its `### Code map` (`product.code_map`) and `### Feature map`
-  (`product.deep_dive`) sections.
+  (`product.deep_dive`) sections, under `## Product`. There is no separate file for either.
+  Code reads one with `ctx.files.read_section("### Code map")`; a procedure reads
+  `/home/user/state/wiki/INDEX.md`.
 - `.agents/skills/writing-style/SKILL.md` from `style.capture`, for any copy drafted in the
   founder's voice.
 - Outputs of earlier runs, such as the keyword plan, the organic audit and the signup walkthrough.

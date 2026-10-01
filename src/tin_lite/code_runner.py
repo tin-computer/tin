@@ -77,7 +77,10 @@ class Models:
         if response.get("error"):
             if request.get("kind") == "file":
                 if response["error"] == "file_not_found":
-                    raise FileNotFoundError(request["path"])
+                    section = request.get("section")
+                    raise FileNotFoundError(
+                        f"{request['path']} {section}" if section else request["path"]
+                    )
                 raise ValueError(response["error"].replace("_", " "))
             if request.get("kind") == "service":
                 raise ServiceError(
@@ -100,6 +103,21 @@ class Files(Models):
 
     def glob(self, pattern):
         return self._call({"kind": "file", "operation": "glob", "path": pattern})
+
+    def read_section(self, heading):
+        """One owned section of project memory, such as "### Code map", from wiki/INDEX.md.
+
+        Found where its workflow wrote it, even when the whole index is over the read limit.
+        """
+        encoded = self._call(
+            {
+                "kind": "file",
+                "operation": "read_section",
+                "path": "wiki/INDEX.md",
+                "section": heading,
+            }
+        )
+        return base64.b64decode(encoded, validate=True).decode("utf-8")
 
 
 class Context(dict):

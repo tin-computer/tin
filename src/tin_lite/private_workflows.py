@@ -881,7 +881,14 @@ def authoring_guide(*, settings, project_id):
                 + " In code, catch ValueError and read its code and provider_error attributes.",
             },
             "files": {
-                "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern)",
+                "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern), "
+                "read_section(heading)",
+                "memory": "Project memory is wiki/INDEX.md. product.code_map writes its "
+                "'### Code map' section and product.deep_dive its '### Feature map' section, "
+                "under '## Product'; neither has a file of its own. "
+                "ctx.files.read_section('### Code map') returns one section, even when the "
+                "whole index is over the 64000-byte read limit. Procedures read "
+                "/home/user/state/wiki/INDEX.md.",
                 "contract": "Read current project files without a revision or prior run ID input. "
                 "Tin pins one canonical project HEAD when the run starts and keeps it on retry. "
                 "Use a stable path when possible, or handle no match and multiple matches "
