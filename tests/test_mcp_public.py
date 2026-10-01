@@ -639,6 +639,12 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "social.x_compose",
         "competitor.sunset_rescue",
         "growth.framework_starter",
+        # The organic loop's packages; no reviewed ChatGPT tools for them yet.
+        "organic.traffic_snapshot",
+        "organic.content_efficacy",
+        "organic.site_architecture",
+        "content.blog_index",
+        "organic.prompt_panel",
     }
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
         "content.deliver",

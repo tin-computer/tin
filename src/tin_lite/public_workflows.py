@@ -45,7 +45,15 @@ class PublicWorkflow:
         # Read only the explicitly selected manifest through the shared safe decoder.
         # Never import package code or discover unregistered folders for tool exposure.
         raw = CheckoutStorage(REPOSITORY_ROOT)._read(self.definition_path)
-        return decode_workflow_source(raw, definition_path=self.definition_path).definition
+        source = decode_workflow_source(raw, definition_path=self.definition_path)
+        return self.catalog_definition(source.definition)
+
+    def catalog_definition(self, definition: dict[str, Any]) -> dict[str, Any]:
+        """The stored definition: the manifest's, plus the maintainer's discovery choice.
+
+        Catalog visibility, as for hidden built-ins; the package's files are unchanged.
+        """
+        return definition if self.public_discovery else {**definition, "public_discovery": False}
 
     @property
     def executor(self):
@@ -208,13 +216,13 @@ async def load_public_workflows(*, root: Path | None = None) -> tuple[PackagePub
         # Resources stay at package-relative locations inside the immutable registry commit.
         files = {package.definition_path: raw}
         files.update({path: storage._read(path) for path in source.resource_paths.values()})
-        definition = source.definition
-        if not selection.public_discovery:
-            # Catalog visibility, as for hidden built-ins; the package's files are unchanged.
-            definition = {**definition, "public_discovery": False}
         publications.append(
             PackagePublication(
-                selection.id, selection.key, package.definition_path, definition, files
+                selection.id,
+                selection.key,
+                package.definition_path,
+                selection.catalog_definition(source.definition),
+                files,
             )
         )
     return tuple(publications)
