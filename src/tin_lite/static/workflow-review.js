@@ -40,7 +40,10 @@
     requestButton.type = "button";
     requestButton.className = reader ? "markdown-context-action is-secondary is-review-request" : "button-secondary";
     requestButton.hidden = true;
-    if (approval[0]) approval[0].before(requestButton); else actions?.append(requestButton);
+    // A Decisions card holds Discard and the approval only; feedback lives on the draft page.
+    if (reader) {
+      if (approval[0]) approval[0].before(requestButton); else actions?.append(requestButton);
+    }
     // Reader bar order for a draft with GitHub connected: Request changes, Open a pull
     // request, Publish now. The extra choice follows the approval's visibility rules.
     for (const option of reader ? context.deliveryOptions || [] : []) {
@@ -66,6 +69,19 @@
         summary.className = "review-change-summary";
         summary.textContent = review.documents.map(item => `${item.destination}: ${item.change === "unchanged" ? "carried forward unchanged" : item.change}`).join(" · ");
         region.append(summary);
+      }
+      // The founder's coding agent may revise a waiting brand or style proposal; say so.
+      const revised = review.proposal_revisions;
+      if (revised?.count) {
+        const line = document.createElement("p");
+        line.className = "review-change-summary review-proposal-revisions";
+        const times = revised.count === 1 ? "once" : revised.count === 2 ? "twice" : `${revised.count} times`;
+        let when = "";
+        try {
+          when = new Date(revised.latest_at).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+        } catch {when = "";}
+        line.textContent = `Revised ${times} by ${revised.latest_by}.${when ? ` Latest ${when}.` : ""}`;
+        region.append(line);
       }
       if (review.conflict) {
         const conflict = document.createElement("p");
@@ -187,7 +203,9 @@
       if (disposed || !host.isConnected) return;
       // X guide revisions keep their original approval gate. Never pair a cached
       // document with a token for newer text, including edits made through Files.
-      if (reader && value.x_feedback && context.documentSha !== value.artifact?.sha256) {
+      // A brand or style proposal the agent revised after this page loaded reloads too.
+      const revisedSince = value.proposal_revisions?.count && context.documentSha && value.artifact?.sha256 && context.documentSha !== value.artifact.sha256;
+      if (reader && ((value.x_feedback && context.documentSha !== value.artifact?.sha256) || revisedSince)) {
         region.textContent = "Loading the updated guide…";
         context.reloadDocument?.();
         return;
