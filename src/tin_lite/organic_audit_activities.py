@@ -29,6 +29,7 @@ from tin_lite.organic_audit import (
     V9_AUDIT_POLICY,
     V10_AUDIT_POLICY,
     V11_AUDIT_POLICY,
+    V12_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     build_documents,
@@ -300,6 +301,7 @@ class OrganicAuditActivities:
                 V9_AUDIT_POLICY,
                 V10_AUDIT_POLICY,
                 V11_AUDIT_POLICY,
+                V12_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             or definition.get("audit_instructions") != ai_contract(pinned_policy["version"])
@@ -324,6 +326,7 @@ class OrganicAuditActivities:
                 V9_AUDIT_POLICY,
                 V10_AUDIT_POLICY,
                 V11_AUDIT_POLICY,
+                V12_AUDIT_POLICY,
                 AUDIT_POLICY,
             ):
                 raise ValueError("Audit completion requires the current compatible policy")

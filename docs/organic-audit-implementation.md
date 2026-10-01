@@ -443,24 +443,6 @@ constraint), and v10 discards the whole panel. Under v11:
 - The panel prompt anchors every question, including the constraint question, to the
   product's own category, never to a quality any tool could claim.
 
-### The buyer prompt panel
-
-When an `organic.prompt_panel` run has succeeded for the audited site, a v11 audit asks that
-panel's questions instead of drafting its own (`prompt_panel`):
-
-- There is no review step. The panel workflow publishes a panel only when every check in its
-  `check_panel` passes, so Tin reads the newest succeeded `organic.prompt_panel` run at its own
-  published revision. The panel must name the audited host and carry `"status": "ready"`.
-- The audit asks at most `max_questions` (eight) of its 32 prompts, allocated to the four
-  families by weight with the largest remainder, one prompt per stage before a second. The
-  panel's core family weighs 0.40, so it gets three of the eight. Answers per question and
-  the cost bound are unchanged.
-- The product name, aliases and competitors come from the panel. There is no research,
-  drafting or review call; `panel_preparation.method` is `buyer_prompt_panel`.
-- The choice is saved once, so a retry asks the same questions. An earlier audit is reused
-  only when it asked exactly this panel; a new panel starts a new baseline.
-  `refresh_questions` still drafts a new set.
-
 ### What else Tin reads
 
 - Each page's HTML facts now include text length, headings (the first eight H2/H3, and how
@@ -621,3 +603,30 @@ The page tree (`organic.site_architecture`) can read click depth and inbound lin
 `LATEST.json` instead of reporting click depth as not measured, and page decisions and the
 traffic snapshot can take the per-page checks from it instead of globbing
 `reports/organic-audit/*/findings.json`. Those workflows need a change of their own to do so.
+
+## 0.9 — the buyer prompt panel (organic-audit-v13)
+
+v11 and v12 are on main and may deploy at any time, so the panel hook is a new pinned
+policy, `organic-audit-v13` (catalog organic.audit 0.9.0). It keeps v12 and adds
+`prompt_panel`. Runs pinned to v11 or v12 draft their own questions exactly as before;
+tests freeze v12's policy and the files a synthetic v12 run writes.
+
+### The buyer prompt panel
+
+When an `organic.prompt_panel` run has succeeded for the audited site, a v13 audit asks that
+panel's questions instead of drafting its own (`prompt_panel`):
+
+- There is no review step; the founder decided the panel needs none. The panel workflow
+  publishes a panel only when every check in its `check_panel` passes, so Tin reads the
+  newest succeeded `organic.prompt_panel` run at its own published revision. The panel must
+  name the audited host and carry `"status": "ready"`.
+- The audit asks at most `max_questions` (eight) of its 32 prompts, allocated to the four
+  families by weight with the largest remainder, one prompt per stage before a second. The
+  panel's core family weighs 0.40, so it gets three of the eight. Answers per question and
+  the cost bound are unchanged.
+- The product name, aliases and competitors come from the panel. There is no research,
+  drafting or review call; `panel_preparation.method` is `buyer_prompt_panel`.
+- The choice is saved once, so a retry asks the same questions. An earlier audit is reused
+  only when it asked exactly this panel; a new panel starts a new baseline.
+  `refresh_questions` still drafts a new set. Without a usable panel the audit drafts its
+  own questions, as v12 does.

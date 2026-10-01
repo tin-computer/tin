@@ -2,7 +2,7 @@
 
 `organic.prompt_panel` (a Registry package) writes 32 buyer prompts in four intent families,
 weighted so the product's own category leads, plus four branded prompts. It publishes a
-panel only when every check passes. Audit policy organic-audit-v11 then asks the newest
+panel only when every check passes. Audit policy organic-audit-v13 then asks the newest
 succeeded panel that names its host instead of drafting its own questions. The audit's cost
 bound stays the same, so it asks at most `max_questions` of them, allocated to the families
 by weight.

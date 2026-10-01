@@ -12,7 +12,7 @@ comparison or alternatives pages never set a weight.
 When the check lists failures, one corrective call gets them; a panel that still fails fails
 the run, so the organic audit never asks a panel the check rejected.
 
-There is no founder review: the organic audit (policy organic-audit-v11) asks the newest
+There is no founder review: the organic audit (policy organic-audit-v13) asks the newest
 succeeded panel that names its host. The keyword plan's keywords.json is larger than the
 64 KB a code workflow can read and there is no compact keyword-group file, so the families
 come from Search Console alone.

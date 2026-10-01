@@ -140,7 +140,7 @@ V11_AUDIT_POLICY = {
 # bytes, and a real crawl's findings.json and evidence.json are larger (tin.computer's
 # evidence.json was 188 KB). v11 can deploy any time, so a run pinned to it writes exactly
 # v11's files: nothing below is read unless the pinned policy carries it.
-AUDIT_POLICY = {
+V12_AUDIT_POLICY = {
     **V11_AUDIT_POLICY,
     "version": "organic-audit-v12",
     # One compact row per crawled page, finding counts by check and the AI headline, cut to
@@ -149,6 +149,16 @@ AUDIT_POLICY = {
     # Tin's page reader keeps up to this many distinct links to the audited site per page, so
     # the summary can count inbound internal links and click depth from the homepage.
     "max_internal_links": 250,
+}
+# v13 keeps v12 and asks the buyer prompt panel.
+# v11 and v12 may be deployed, so a run pinned to either never reads these keys.
+AUDIT_POLICY = {
+    **V12_AUDIT_POLICY,
+    "version": "organic-audit-v13",
+    # The newest succeeded buyer prompt panel for this site (organic.prompt_panel) replaces
+    # the drafted questions, allocated to its families by weight within max_questions. The
+    # founder decided the panel needs no review.
+    "prompt_panel": True,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -245,6 +255,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V9_AUDIT_POLICY,
         V10_AUDIT_POLICY,
         V11_AUDIT_POLICY,
+        V12_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -263,6 +274,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V9_AUDIT_POLICY,
         V10_AUDIT_POLICY,
         V11_AUDIT_POLICY,
+        V12_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
