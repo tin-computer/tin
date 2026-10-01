@@ -202,8 +202,9 @@ outside marketing, or were written without ever being run. Full rules:
   `website_changes` row), never one read from a project file, and never for a protected path
   (/sign-in, /sign-up, /auth-complete, the project's `project_protected_paths` setting and the
   run's `protected_paths`). It merges once the repository's required checks pass (`clean`,
-  `has_hooks` or `unstable`), never on `dirty`, `blocked`, `behind`, `draft` or `unknown`. A
-  declined row never comes back. See [website.change](docs/website-change.md).
+  `has_hooks` or `unstable`); a branch that requires no checks (or whose rules can't be read)
+  waits for `clean`. Never on `dirty`, `blocked`, `behind`, `draft` or `unknown`. A declined
+  row never comes back. See [website.change](docs/website-change.md).
 
 ## Verification and contributions
 

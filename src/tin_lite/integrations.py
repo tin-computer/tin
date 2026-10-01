@@ -1907,6 +1907,68 @@ class IntegrationService:
             == repository.casefold(),
         }
 
+    async def github_required_status_checks(
+        self, *, project_id: UUID, repository: str, branch: str
+    ) -> dict[str, Any]:
+        """The status checks a branch requires before a merge, as GitHub reports them.
+
+        Reads classic branch protection (the branch's protection summary) and rulesets (the
+        branch's active rules). `readable` is False when neither could be read; callers treat
+        that as no required checks. Only check names leave this method.
+        """
+        if not _safe_github_ref(branch):
+            raise IntegrationError("GitHub branch is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
+        headers = self._github_headers(token)
+        contexts: list[str] = []
+        readable = False
+
+        def add(name):
+            if isinstance(name, str) and 0 < len(name) <= 255 and name not in contexts:
+                contexts.append(name)
+
+        try:
+            summary = _provider_json(
+                await self._client.get(
+                    f"{root}/branches/{quote(branch, safe='')}", headers=headers
+                ),
+                provider="GitHub",
+            )
+            readable = True
+            protection = summary.get("protection")
+            required = (
+                protection.get("required_status_checks") if isinstance(protection, dict) else None
+            )
+            if isinstance(required, dict):
+                for name in required.get("contexts") or []:
+                    add(name)
+                for check in required.get("checks") or []:
+                    add(check.get("context") if isinstance(check, dict) else None)
+        except (IntegrationError, httpx.HTTPError):
+            pass
+        try:
+            rules = _provider_list(
+                await self._client.get(
+                    f"{root}/rules/branches/{quote(branch, safe='')}",
+                    headers=headers,
+                    params={"per_page": 100},
+                ),
+                provider="GitHub",
+            )
+            readable = True
+            for rule in rules:
+                if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+                    continue
+                parameters = (
+                    rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+                )
+                for check in parameters.get("required_status_checks") or []:
+                    add(check.get("context") if isinstance(check, dict) else None)
+        except (IntegrationError, httpx.HTTPError):
+            pass
+        return {"readable": readable, "contexts": contexts[:50]}
+
     async def github_merge_pull_request(
         self,
         *,

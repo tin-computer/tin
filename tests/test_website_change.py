@@ -66,6 +66,10 @@ async def fixture(db, monkeypatch):
     f.website = await db.get_workflow(spec.id)
     f.content_deliver = await db.get_workflow(delivery.WORKFLOW_ID)
     monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+    # The site's main branch requires a build check, unless a test says otherwise.
+    f.runtime.integrations.github_required_status_checks = AsyncMock(
+        return_value={"readable": True, "contexts": ["build"]}
+    )
     return f
 
 
@@ -925,13 +929,48 @@ async def test_an_unstable_pull_request_merges_when_pre_approved(publication_db,
     merge = await merge_outcome(f, run)
     integrations.github_merge_pull_request.assert_awaited_once()
     assert merge["status"] == "merged" and merge["merged_by"] == "tin"
-    # The receipt names the state that allowed the merge.
+    # The receipt names the state that allowed the merge, and the rule that applied.
     assert merge["mergeable_state"] == "unstable"
+    assert merge["checks_rule"] == "required_checks" and merge["required_checks"] == ["build"]
+    integrations.github_required_status_checks.assert_awaited_with(
+        project_id=f.project.id, repository="owner/site", branch="main"
+    )
     other = await approved_for_main(f)
     run = await made(f, await start(f, other))
     integrations = mergeable(f)
     merge = await merge_outcome(f, run)
     assert merge["status"] == "merged" and merge["mergeable_state"] == "clean"
+
+
+@pytest.mark.parametrize("required", ["none", "unreadable"])
+async def test_without_required_checks_an_unstable_pull_request_waits_for_every_check(
+    publication_db, monkeypatch, required
+):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    integrations = f.runtime.integrations
+    if required == "none":
+        integrations.github_required_status_checks.return_value = {
+            "readable": True,
+            "contexts": [],
+        }
+    else:
+        integrations.github_required_status_checks.side_effect = RuntimeError("403")
+    run = await made(f, await start(f, await approved_for_main(f)))
+    mergeable(f)
+    # Nothing says which checks matter, so a failing or running check holds the merge.
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open" and merge["checks_rule"] == "all_checks"
+    assert merge["reason"].startswith("Your repository requires no status checks")
+    # Once every check passes, Tin merges under the same rule.
+    run = await made(f, await start(f, await approved_for_main(f)))
+    mergeable(f)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["checks_rule"] == "all_checks"
+    assert merge["mergeable_state"] == "clean"
 
 
 NEVER_MERGE = {

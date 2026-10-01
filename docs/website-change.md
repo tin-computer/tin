@@ -73,15 +73,26 @@ and merges only while `mergeable` is true and the state is one of these:
 | --- | --- | --- |
 | `clean` | every check passed | merges |
 | `has_hooks` | every check passed; the repository has pre-receive hooks | merges |
-| `unstable` | mergeable, but a check the repository does not require failed or is still running | merges |
+| `unstable` | mergeable, but a check the repository does not require failed or is still running | merges when the branch requires checks; otherwise waits, then leaves the PR open |
 | `blocked` | a required check has not passed, or a required review is missing | waits, then leaves the PR open |
 | `unknown` | GitHub is still computing it | waits, then leaves the PR open |
 | `dirty`, `behind`, `draft` | conflicts, out of date, or a draft | leaves the PR open at once |
 
 A failing required check reports `blocked`, not `unstable`, so `clean`, `has_hooks` and
 `unstable` all mean the required checks passed. GitHub's merge call also enforces branch
-protection itself, so a merge it forbids is refused and the PR stays open. The merge receipt
-records the state that allowed the merge (`mergeable_state`).
+protection itself, so a merge it forbids is refused and the PR stays open.
+
+**No required checks means every check.** On a branch that requires no status checks, every
+check counts as optional, so `unstable` would arrive as soon as any check started. Before the
+merge loop, Tin reads the base branch's required checks (`github_required_status_checks`: the
+classic protection summary of `GET /repos/{repo}/branches/{branch}` and the rulesets of
+`GET /repos/{repo}/rules/branches/{branch}`). With none, or none it can read, Tin waits for
+`clean` (every check finished and passing) within the same three and a half minutes, then
+leaves the PR open with the reason.
+
+The merge receipt records the state that allowed the merge (`mergeable_state`) and the rule
+that applied: `checks_rule` is `required_checks` (with the `required_checks` names) or
+`all_checks`.
 
 content.deliver keeps its own rule: it merges only on `clean` or `has_hooks`.
 

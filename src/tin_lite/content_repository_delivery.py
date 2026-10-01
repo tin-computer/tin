@@ -868,14 +868,72 @@ async def _merge_when_clean(
     `dirty`, `behind` and `draft` stop at once. `blocked` and `unknown` never merge; Tin
     waits for them to change until the deadline. With `record_state`, the merge receipt
     names the state that allowed the merge.
+
+    `unstable` counts only where the base branch requires status checks (Emre, 10/1): with
+    none, or none Tin can read, nothing says which checks matter, so Tin waits for every
+    check to pass (`clean`). The receipt records which rule applied (`checks_rule`).
     """
     binding = binding_from(source)
-    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
-    reason = (
-        "Its required checks had not passed after a few minutes, so Tin left it open."
-        if "unstable" in ready
-        else "Its checks had not all passed after a few minutes, so Tin left it open."
+    rule = {}
+    reason = "Its checks had not all passed after a few minutes, so Tin left it open."
+    if "unstable" in ready:
+        required = await required_checks(integrations, run, binding)
+        if required:
+            rule = {"checks_rule": "required_checks", "required_checks": required}
+            reason = "Its required checks had not passed after a few minutes, so Tin left it open."
+        else:
+            ready = MERGE_READY
+            rule = {"checks_rule": "all_checks", "required_checks": []}
+            reason = (
+                "Your repository requires no status checks, so Tin waits for every check to "
+                "pass. They had not all passed after a few minutes, so Tin left it open."
+            )
+    result = await _merge_loop(
+        integrations=integrations,
+        run=run,
+        binding=binding,
+        manifest=manifest,
+        new_paths=new_paths,
+        number=number,
+        branch=branch,
+        sleep=sleep,
+        clock=clock,
+        ready=ready,
+        record_state=record_state,
+        reason=reason,
     )
+    return {**result, **rule}
+
+
+async def required_checks(integrations, run, binding):
+    """The status checks the base branch requires; none when GitHub can't say."""
+    try:
+        found = await integrations.github_required_status_checks(
+            project_id=run.project_id,
+            repository=binding.repository,
+            branch=binding.default_branch,
+        )
+    except Exception:
+        return []
+    return list(found.get("contexts") or []) if found.get("readable") else []
+
+
+async def _merge_loop(
+    *,
+    integrations,
+    run,
+    binding,
+    manifest,
+    new_paths,
+    number,
+    branch,
+    sleep,
+    clock,
+    ready,
+    record_state,
+    reason,
+):
+    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
     while True:
         state = await integrations.github_pull_request_merge_state(
             project_id=run.project_id, repository=binding.repository, number=number

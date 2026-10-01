@@ -416,6 +416,7 @@ async def test_approved_technical_rows_publish_once_the_required_checks_pass(
     integrations.github_merge_pull_request.assert_awaited_once()
     assert merge["status"] == "merged" and merge["merge_rule"] == "approved_changes"
     assert merge["mergeable_state"] == "unstable" and merge["merged_by"] == "tin"
+    assert merge["checks_rule"] == "required_checks"
     assert integrations.github_merge_pull_request.await_args.kwargs["new_paths"] == ()
     # The live check ran right after the merge: merged, and the problem is gone.
     live = await f.live.view(run)
