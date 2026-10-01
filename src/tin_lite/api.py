@@ -22,6 +22,7 @@ from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
+from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
@@ -917,6 +918,18 @@ class WorkflowRevisionRequest(BaseModel):
     request_id: UUID
     review_token: str = Field(min_length=64, max_length=64)
     billing_quote_id: UUID | None = None
+
+
+class ProposalRevisionRequest(BaseModel):
+    """A coding agent's revision of a brand or style proposal that waits in Decisions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_token: str = Field(min_length=64, max_length=64)
+    request_id: UUID
+    files: list[ProposalFile] = Field(min_length=1, max_length=2)
+    note: str = Field(default="", max_length=500)
+    client: Literal["claude_code", "codex", "api"] | None = None
 
 
 class WorkflowReviewApproval(BaseModel):
@@ -4123,6 +4136,49 @@ async def workflow_review(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+@router.post("/api/workflows/runs/{run_id}/proposal-revisions", status_code=201)
+async def revise_capture_proposal(
+    run_id: UUID,
+    payload: ProposalRevisionRequest,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Replace a waiting brand or style proposal's files; the founder still decides."""
+    from tin_lite.capture_revisions import (
+        CaptureRevisions,
+        RevisionInvalid,
+        RevisionRefused,
+        review_view,
+    )
+    from tin_lite.workflow_review_store import ReviewConflict
+
+    runtime = request.app.state.runtime
+    try:
+        result = await CaptureRevisions(database=runtime.database, storage=runtime.storage).revise(
+            run_id=run_id,
+            actor=user.clerk_user_id,
+            review_token=payload.review_token,
+            request_id=payload.request_id,
+            files=[item.model_dump() for item in payload.files],
+            note=payload.note,
+            source="api",
+            client=payload.client,
+        )
+        view = await review_view(runtime.database, runtime.storage, run_id, user.clerk_user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RevisionInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RevisionRefused, ReviewConflict) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        **result,
+        "review_token": view["review_token"],
+        "proposal_revisions": view.get("proposal_revisions"),
+        "review_url": view["review_url"],
+    }
+
+
 @router.post(
     "/api/workflows/runs/{run_id}/request-changes", response_model=RunView, status_code=202
 )
@@ -4225,16 +4281,20 @@ async def approve_run(
     if payload is not None and payload.delivery is not None:
         # Record the pick before the approval so a refused pick never approves blindly.
         await _choose_content_delivery(run, payload, request, user)
+    from tin_lite.capture_revisions import STYLE_KEY, binds_style_approval
     from tin_lite.reviewed_documents import document_spec
 
+    runtime = request.app.state.runtime
     if (
         run.executor == "social.x_style"
         or run.workflow_id in SUPPORTED_IDS
         or (
             run.executor == "codex.procedure"
-            and await document_spec(
-                request.app.state.runtime.database, request.app.state.runtime.storage, run
-            )
+            and await document_spec(runtime.database, runtime.storage, run)
+        )
+        or (
+            run.executor == STYLE_KEY
+            and await binds_style_approval(runtime.database, runtime.storage, run)
         )
     ):
         try:

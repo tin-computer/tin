@@ -13,6 +13,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import style_capture as style
+from tin_lite.capture_revisions import approved_style_artifact, contract
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
@@ -239,8 +240,16 @@ class StyleCaptureActivities:
 
     @activity.defn(name="style_record_approval")
     async def record_approval(self, run_id: str):
-        """Bind the approval to the proposal as it stands now, including edits made in Files."""
+        """Record the approved guide: the exact version the founder approved (1.2.0), or for runs
+        pinned to 1.1.0 the proposal as it stands now, including edits made in Files."""
         run = await self.db.get_run(UUID(run_id))
+        bound = await approved_style_artifact(self.db, run.id)
+        if bound is None and await contract(self.db, self.storage, run) is not None:
+            raise ApplicationError(
+                "This approval was not bound to a reviewed version of the guide. "
+                "Your current guide is unchanged; start capture again.",
+                non_retryable=True,
+            )
         await self.db.record_human_review(
             run_id=run.id, decision="approved", summary="You approved the writing style guide."
         )
@@ -254,9 +263,20 @@ class StyleCaptureActivities:
                 head = await self.storage.head_sha(
                     await self.storage.get_repo(project.state_repo_id), project.canonical_branch
                 )
+                if bound is not None:
+                    # The approval names the project revision and digest the founder read.
+                    path, head = bound["path"], bound["revision"]
                 content = await self.storage.read_canonical_artifact_if_exists(
                     repo_id=project.state_repo_id, commit_sha=head, path=path
                 )
+                if bound is not None and (
+                    content is None or hashlib.sha256(content).hexdigest() != bound["sha256"]
+                ):
+                    raise ApplicationError(
+                        "The approved guide does not match the version you approved. "
+                        "Your current guide is unchanged; start capture again.",
+                        non_retryable=True,
+                    )
                 try:
                     if not content or len(content) > style.MAX_GUIDE_BYTES:
                         raise ValueError
