@@ -214,12 +214,12 @@ async def test_an_approved_page_is_one_change_row_approved_by_its_reviewer(
 
 def test_a_change_row_is_defined_once_for_every_source():
     sha = "a" * 64
-    row = ChangeRow("oa_" + "1" * 20, "planned_url_change", "redirect", "Move", ("/a", "/b"), sha)
+    row = ChangeRow("oa_" + "1" * 20, "planned", "redirect", "Move", ("/a", "/b"), sha)
     assert row.as_dict()["paths"] == ["/a", "/b"]
     assert set(website_change.SOURCES) == {
         "content_draft",
         "audit",
-        "planned_url_change",
+        "planned",
         "blog_index",
     }
     for bad, match in (
@@ -231,7 +231,7 @@ def test_a_change_row_is_defined_once_for_every_source():
     ):
         values = {
             "change_id": "oa_" + "1" * 20,
-            "source": "planned_url_change",
+            "source": "planned",
             "kind": "redirect",
             "title": "Move",
             "paths": ("/a",),
@@ -367,7 +367,7 @@ async def test_a_file_edit_cannot_fake_approval(publication_db, monkeypatch):
     assert source["publish"]["mode"] == "pull_request"
     # The same holds for a proposed change row: a pending row is not approved by a file.
     sha = hashlib.sha256(b"redirect /old to /new").hexdigest()
-    row = ChangeRow("oa_" + "2" * 20, "planned_url_change", "redirect", "Move", ("/old",), sha)
+    row = ChangeRow("oa_" + "2" * 20, "planned", "redirect", "Move", ("/old",), sha)
     await website_change.propose(f.db, project_id=f.project.id, rows=[row])
     f.storage.repo.edit(
         {"content/website-changes.json": canonical_json({row.change_id: "approved"})}
@@ -409,7 +409,7 @@ async def test_decided_rows_stay_decided(publication_db, monkeypatch):
     def row(n, content, kind="redirect"):
         return ChangeRow(
             f"oa_{n * 20}",
-            "planned_url_change",
+            "planned",
             kind,
             f"Change {n}",
             (f"/old-{n}",),
@@ -669,7 +669,7 @@ async def test_http_and_mcp_approve_or_decline_one_change_row(publication_db, mo
     f = await fixture(publication_db, monkeypatch)
     sha = "d" * 64
     rows = [
-        ChangeRow(f"oa_{n * 20}", "planned_url_change", "noindex", f"Hide {n}", (f"/{n}",), sha)
+        ChangeRow(f"oa_{n * 20}", "planned", "noindex", f"Hide {n}", (f"/{n}",), sha)
         for n in ("4", "5")
     ]
     await website_change.propose(f.db, project_id=f.project.id, rows=rows)

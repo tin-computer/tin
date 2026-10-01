@@ -75,19 +75,37 @@ def merge_key(run_id):
 # A website.change run whose changes come from the latest audit (website_change_audit) rather
 # than an approved page. Its source receipt sits under the same key; nothing else is shared.
 AUDIT_SOURCE = "audit"
+# Sources a website.change run repairs the site from with site-fix-v5's machinery: the audit's
+# findings, and the URL changes other workflows planned.
+REPAIR_SOURCES = frozenset({AUDIT_SOURCE, "planned"})
+# A website.change run that applies the blog index plan's files as they are, without Codex.
+BLOG_INDEX_SOURCE = "blog_index"
+
+
+def _website_source(run):
+    if getattr(run, "workflow_id", None) != WEBSITE_CHANGE_ID:
+        return None
+    return (getattr(run, "input", None) or {}).get("source")
 
 
 def repairs_site(run):
-    """Whether this is a website.change run that repairs what the latest audit found."""
-    return (
-        getattr(run, "workflow_id", None) == WEBSITE_CHANGE_ID
-        and ((getattr(run, "input", None) or {}).get("source")) == AUDIT_SOURCE
-    )
+    """Whether this is a website.change run that repairs the site from change rows (the
+    audit's findings or planned URL changes) with site-fix-v5's preparation."""
+    return _website_source(run) in REPAIR_SOURCES
+
+
+def applies_plan(run):
+    """Whether this is a website.change run that applies the blog index plan's files."""
+    return _website_source(run) == BLOG_INDEX_SOURCE
 
 
 def adapts(run):
     """Whether this run adapts an approved page to the site: content.deliver or website.change."""
-    return getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS and not repairs_site(run)
+    return (
+        getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
+        and not repairs_site(run)
+        and not applies_plan(run)
+    )
 
 
 def status_projection(run, source, publication, recovery, merge=None):

@@ -2806,6 +2806,8 @@ class TinActivities:
                 return False
             if content_repository_delivery.repairs_site(run):
                 return await self._prepare_website_repairs(run)
+            if content_repository_delivery.applies_plan(run):
+                return await self._apply_blog_index(run)
             await content_repository_delivery.saved_source(self._db, run_id)
             await self._db.mark_run_running(run_id)
             await self._db.project_run_progress(
@@ -2906,6 +2908,30 @@ class TinActivities:
                 summary="Preparing one pull request for the audit's changes.",
             )
         return handled
+
+    async def _apply_blog_index(self, run) -> bool:
+        """A website.change run with the blog index plan: no Codex session. Tin opens the pull
+        request with the plan's files, merges it under the mode rules, and reports."""
+        from tin_lite import website_change_blog_index
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=1,
+            total=2,
+            step="apply_blog_index",
+            summary="Opening a pull request with the blog index plan's files.",
+        )
+        return await self._await_with_heartbeats(
+            website_change_blog_index.apply(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "website_change_blog_index"},
+        )
 
     async def _prepare_content_refresh(self, run_id: UUID) -> bool:
         """Pin the refresh's page and sources; with nothing due, report it and stop here."""
@@ -4495,6 +4521,9 @@ class TinActivities:
         from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
+        if content_repository_delivery.applies_plan(run):
+            # The blog index run merged or left its pull request while it applied the plan.
+            return
         if content_repository_delivery.repairs_site(run):
             if run.status == RunStatus.SUCCEEDED:
                 from tin_lite import website_change_audit

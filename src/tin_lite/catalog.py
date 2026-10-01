@@ -638,14 +638,16 @@ BUILTIN_WORKFLOWS = (
         title="Change the website",
         description="Put approved changes on your website repository: an approved article, "
         "answer page or public article, adapted to the site's own format at the route you "
-        "chose with its copy unchanged; or the technical fixes the latest audit found, under "
-        "site-fix-v5's rules, each a change you approve or decline once in Tin. A page you "
-        "approved with commit to main, or fixes you approved, publish: Tin merges the pull "
-        "request once your repository's required checks pass, then checks the live site. "
-        "Anything else, and any change to a protected page such as /sign-in or one you added "
-        "to the project's protected pages, opens a pull request for you to merge.",
+        "chose with its copy unchanged; the technical fixes the latest audit found; the "
+        "redirects and noindex changes your page decisions and site plan made; or the blog "
+        "index plan. Each fix, planned change or plan is a change you approve or decline once "
+        "in Tin. What you approved publishes: Tin merges the pull request once your "
+        "repository's required checks pass, then checks the live site. Anything else, and any "
+        "change to a protected page such as /sign-in or one you added to the project's "
+        "protected pages, opens a pull request for you to merge. Deleting a page stays with "
+        "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -661,8 +663,10 @@ BUILTIN_WORKFLOWS = (
                     "default": "content_draft",
                     "title": "Change source",
                     "description": "content_draft: one approved page (source_run_id). audit: "
-                    "the technical fixes the latest organic audit found (preview them with "
-                    "preflight_website_change).",
+                    "the technical fixes the latest organic audit found. planned: the "
+                    "redirects and noindex changes page decisions and the site architecture "
+                    "plan made. blog_index: the newest content.blog_index plan. Preview the "
+                    "last three with preflight_website_change.",
                 },
                 "source_run_id": {
                     "type": "string",
@@ -683,13 +687,13 @@ BUILTIN_WORKFLOWS = (
                     "type": "boolean",
                     "default": False,
                     "title": "This repository serves the audited website",
-                    "description": "For audit: the member confirms the repository builds the "
-                    "audited site.",
+                    "description": "For audit and planned: the member confirms the repository "
+                    "builds the audited site.",
                 },
                 "finding_ids": {
                     "type": "array",
                     "title": "Only these findings",
-                    "description": "For audit: leave empty for every fixable finding.",
+                    "description": "For audit or planned: leave empty for every change.",
                     "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}$"},
                     "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["finding_ids"][
                         "maxItems"

@@ -43,6 +43,16 @@ async def list_changes(
     return await website_change.list_changes(database, project_id=project_id, status=status)
 
 
+@router.get("/questions")
+async def judgment_calls(project_id: UUID, request: Request, user: AuthContext = USER):
+    """The judgment calls the latest previews left open, for the Decisions page. The coding
+    agent answers them with the next run, asking the founder when unsure."""
+    from tin_lite import website_change_audit
+
+    database = await _authorized(request, project_id, user)
+    return {"questions": await website_change_audit.judgment_calls(database, project_id)}
+
+
 @router.get("/{change_id}")
 async def get_change(project_id: UUID, change_id: str, request: Request, user: AuthContext = USER):
     database = await _authorized(request, project_id, user)
@@ -95,9 +105,10 @@ async def decline_change(
 
 
 class TechnicalPreflight(BaseModel):
-    """The technical fixes to preview from the latest audit (website.change, source audit)."""
+    """What to preview: the latest audit's fixes, the planned URL changes, or the blog index."""
 
     model_config = ConfigDict(extra="forbid")
+    source: Literal["audit", "planned", "blog_index"] = "audit"
     expected_repository: str = Field(min_length=3, max_length=140)
     repository_serves_site: bool
     finding_ids: list[str] = Field(default_factory=list, max_length=30)
@@ -109,26 +120,29 @@ class TechnicalPreflight(BaseModel):
 async def preflight_changes(
     project_id: UUID, payload: TechnicalPreflight, request: Request, user: AuthContext = USER
 ):
-    """Record the latest audit's fixable findings as change rows and preview the next run.
+    """Record a source's change rows and preview the next run.
 
     Starts nothing: no run, compute, branch or pull request.
     """
     from tin_lite import website_change_audit
+    from tin_lite.integrations import IntegrationError
     from tin_lite.technical_fix_sources import TechnicalFixError
 
     database = await _authorized(request, project_id, user)
     runtime = request.app.state.runtime
+    inputs = payload.model_dump()
     try:
-        return await website_change_audit.plan_changes(
+        return await website_change_audit.preview(
             database=database,
             storage=runtime.storage,
             integrations=getattr(runtime, "integrations", None),
             project_id=project_id,
-            inputs=payload.model_dump(),
+            source=inputs.pop("source"),
+            inputs=inputs,
         )
     except TechnicalFixError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except ValueError as exc:
+    except (ValueError, IntegrationError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

@@ -648,7 +648,7 @@ def test_planned_url_changes_fit_the_same_row_contract():
         entry, {"audit_run_id": str(uuid4()), "audit_revision": "2" * 40}
     )
     assert (change.source, change.kind, change.paths) == (
-        "planned_url_change",
+        "planned",
         "redirect",
         ("/old", "/new"),
     )

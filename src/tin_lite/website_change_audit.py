@@ -24,8 +24,10 @@ the run takes the rows waiting for approval (and approved rows on protected page
 pull request the founder merges. Rows already in an open or merged website.change pull
 request are skipped and named, so a weekly run does not open the same pull request again.
 
-Phase 3 plugs planned URL changes (#239's `planned.redirect` and `planned.noindex`
-selections) into the same rows with source `planned_url_change` (`row_source`).
+Phase 3 runs planned URL changes through the same machinery (`source: planned`,
+website_change_planned): each redirect or noindex that page decisions or the site
+architecture plan made becomes a `planned` row, planned as a site-fix-v5 repair and written,
+merged and checked on the live site the same way.
 """
 
 from __future__ import annotations
@@ -56,6 +58,11 @@ from tin_lite.website_change import (
 logger = logging.getLogger(__name__)
 
 SOURCE = delivery.AUDIT_SOURCE
+PLANNED = "planned"
+# What a start or preview calls the source it plans, in the founder's words.
+ORIGINS = {SOURCE: "the latest audit", PLANNED: "the planned URL changes"}
+# Where the preview keeps the latest judgment calls for the Decisions page.
+QUESTIONS_OPERATION = "website_change_questions"
 # The repair rules a technical run follows. website.change pins them in its definition.
 POLICY = repair_plan.POLICY
 # How many earlier technical runs Tin looks back over for pull requests still in flight.
@@ -78,22 +85,26 @@ def repairs_site(run) -> bool:
 
 
 def row_source(entry: dict) -> tuple[str, str]:
-    """The row source and kind of a planned repair: an audit finding, or (phase 3) a URL
-    change another workflow planned."""
+    """The row source and kind of a planned repair: an audit finding, or a URL change another
+    workflow planned (`planned.redirect`, `planned.noindex`)."""
     check = entry.get("check_id", "")
     if check.startswith("planned."):
-        return "planned_url_change", check.split(".", 1)[1]
+        return PLANNED, check.split(".", 1)[1]
     return SOURCE, entry["kind"]
 
 
 def intent(entry: dict) -> dict:
-    """What an approval covers: the finding, the kind of change and its judgment-call answer."""
-    return {
+    """What an approval covers: the finding, the kind of change and its judgment-call answer,
+    and for a planned change both of its ends."""
+    value = {
         "finding_id": entry["finding_id"],
         "check_id": entry["check_id"],
         "kind": entry["kind"],
         "decision": entry.get("decision"),
     }
+    if entry.get("planned"):
+        value["planned"] = {"from": entry["planned"]["from"], "to": entry["planned"].get("to")}
+    return value
 
 
 def _site_path(url: Any) -> str | None:
@@ -121,7 +132,9 @@ def entry_paths(entry: dict) -> list[str]:
     return paths[:20] or ["/"]
 
 
-def change_row(entry: dict, audit: dict) -> ChangeRow:
+def change_row(entry: dict, origin: dict) -> ChangeRow:
+    """One change row from a planned repair. `origin` is where it came from: the audit run
+    and revision, or the planned changes' project revision."""
     source, kind = row_source(entry)
     return ChangeRow(
         change_id=entry["finding_id"],
@@ -131,8 +144,8 @@ def change_row(entry: dict, audit: dict) -> ChangeRow:
         paths=tuple(entry_paths(entry)),
         content_sha256=hashlib.sha256(canonical_json(intent(entry))).hexdigest(),
         detail={
-            "audit_run_id": audit["audit_run_id"],
-            "audit_revision": audit["audit_revision"],
+            **origin,
+            **({"planned": entry["planned"]} if entry.get("planned") else {}),
             "check_id": entry["check_id"],
             "group": entry["group"],
             "change": entry["change"],
@@ -146,19 +159,23 @@ def change_row(entry: dict, audit: dict) -> ChangeRow:
 # --- Pull requests already carrying rows ---------------------------------------------------
 
 
-async def rows_in_flight(database, integrations, *, project_id) -> dict[str, dict]:
-    """Change IDs sitting in an open or merged website.change pull request, with that PR.
+async def rows_in_flight(
+    database, integrations, *, project_id, source: str = SOURCE
+) -> dict[str, dict]:
+    """Change IDs of `source` sitting in an open or merged website.change pull request, with
+    that PR. The PR is the one GitHub delivery recorded for the run.
 
     A PR whose state Tin can't read counts as open: better to skip a row than to open a
     second pull request for it.
     """
     runs = await database.pool.fetch(
         """
-        SELECT r.id, s.result AS source, p.result AS publication, m.result AS merge
+        SELECT r.id, s.result AS source, p.response_summary AS publication, m.result AS merge
         FROM workflow_runs r
         JOIN effect_receipts s ON s.execution_key = 'content-delivery:' || r.id::text
             || ':source' AND s.status = 'completed'
-        JOIN effect_receipts p ON p.execution_key = r.id::text || ':procedure_canonical_commit'
+        JOIN integration_call_receipts p
+            ON p.execution_key = r.id::text || ':procedure_pull_request'
             AND p.status = 'completed'
         LEFT JOIN effect_receipts m ON m.execution_key = 'content-delivery:' || r.id::text
             || ':merge' AND m.status = 'completed'
@@ -167,7 +184,7 @@ async def rows_in_flight(database, integrations, *, project_id) -> dict[str, dic
         """,
         project_id,
         website_change.WORKFLOW_ID,
-        SOURCE,
+        source,
         MAX_EARLIER_RUNS,
     )
     found: dict[str, dict] = {}
@@ -177,7 +194,7 @@ async def rows_in_flight(database, integrations, *, project_id) -> dict[str, dic
             delivery_decode(row["publication"]),
             delivery_decode(row["merge"]),
         )
-        number, url = publication.get("pull_request_number"), publication.get("external_url")
+        number, url = publication.get("number"), publication.get("url")
         if type(number) is not int or not url:
             continue
         state = "merged" if merge.get("status") == "merged" else None
@@ -229,9 +246,21 @@ async def latest_audit(sources, project_id) -> dict:
 async def plan_changes(
     *, database, storage, integrations, project_id: UUID, inputs: dict, bind: bool = True
 ) -> dict[str, Any]:
-    """Read the latest audit, record its fixable findings as change rows, and choose what the
-    next run makes. Used by the preview and by admission; neither guesses a judgment call.
+    """Read what the source found (the latest audit, or the planned URL changes), record its
+    changes as rows, and choose what the next run makes. Used by the preview and by
+    admission; neither guesses a judgment call.
     """
+    if inputs.get("source", SOURCE) == PLANNED:
+        from tin_lite import website_change_planned
+
+        return await website_change_planned.plan_changes(
+            database=database,
+            storage=storage,
+            integrations=integrations,
+            project_id=project_id,
+            inputs=inputs,
+            bind=bind,
+        )
     from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 
     sources = TechnicalFixSources(
@@ -254,29 +283,11 @@ async def plan_changes(
                 status_code=404,
             )
         selections = [row for row in selections if row["finding"]["id"] in wanted]
-    ids = [row["finding"]["id"] for row in selections]
-    recorded = {
-        row["change_id"]: row
-        for row in await database.pool.fetch(
-            "SELECT change_id, status, detail FROM website_changes "
-            "WHERE project_id=$1 AND change_id = ANY($2::text[])",
-            project_id,
-            ids,
-        )
-    }
-
-    def brief(row, reason, **extra):
-        finding = row["finding"]
-        return {
-            "id": finding["id"],
-            "check_id": finding["check_id"],
-            "issue": finding.get("issue") or finding.get("title") or finding["check_id"],
-            "reason": reason,
-            **extra,
-        }
-
+    recorded = await recorded_rows(
+        database, project_id, [row["finding"]["id"] for row in selections]
+    )
     declined = [
-        brief(row, "You declined this change in Tin; Tin won't propose it again.")
+        brief(row["finding"], "You declined this change in Tin; Tin won't propose it again.")
         for row in selections
         if (recorded.get(row["finding"]["id"]) or {}).get("status") == "declined"
     ]
@@ -298,8 +309,73 @@ async def plan_changes(
         planned = repair_plan.build_plan(selections, answers)
     except ValueError as exc:
         raise TechnicalFixError("invalid_decision", str(exc), status_code=422) from exc
+    if declined:
+        planned["left_out"]["declined"] = declined
+    origin = {
+        "audit_run_id": audit["source"]["audit_run_id"],
+        "audit_revision": audit["source"]["audit_revision"],
+    }
+    return await finish_plan(
+        database=database,
+        integrations=integrations,
+        project_id=project_id,
+        inputs=inputs,
+        bind=bind,
+        source=SOURCE,
+        planned=planned,
+        origin=origin,
+        # A narrowed preview sees only some findings, so it retires no rows.
+        complete=not wanted,
+        result={
+            "source": {**audit["source"], "site_url": latest.get("site_url")},
+            "target": audit["target"],
+            "crawl_status": audit["crawl_status"],
+        },
+    )
 
-    flight = await rows_in_flight(database, integrations, project_id=project_id)
+
+def brief(finding: dict, reason: str, **extra) -> dict:
+    return {
+        "id": finding["id"],
+        "check_id": finding["check_id"],
+        "issue": finding.get("issue") or finding.get("title") or finding["check_id"],
+        "reason": reason,
+        **extra,
+    }
+
+
+async def recorded_rows(database, project_id, change_ids) -> dict[str, Any]:
+    return {
+        row["change_id"]: row
+        for row in await database.pool.fetch(
+            "SELECT change_id, status, detail FROM website_changes "
+            "WHERE project_id=$1 AND change_id = ANY($2::text[])",
+            project_id,
+            list(change_ids),
+        )
+    }
+
+
+async def finish_plan(
+    *,
+    database,
+    integrations,
+    project_id,
+    inputs,
+    bind,
+    source,
+    planned,
+    origin,
+    complete,
+    result,
+) -> dict[str, Any]:
+    """Skip rows already in a pull request, record the rest, and choose the next run: the
+    approved rows on no protected page first, else the ones waiting for the founder.
+
+    `planned` is site-fix-v5's plan shape (repairs, left_out, decisions_needed). With
+    `complete`, pending rows of `source` the plan no longer proposes are retired.
+    """
+    flight = await rows_in_flight(database, integrations, project_id=project_id, source=source)
     entries, in_pull_request = [], []
     for entry in planned["repairs"]:
         carried = flight.get(entry["finding_id"])
@@ -318,17 +394,21 @@ async def plan_changes(
 
     # Bind the repository before recording anything, so a refused preview writes nothing.
     binding = await _bind(integrations, project_id, inputs) if bind and entries else None
-    source = {
-        "audit_run_id": audit["source"]["audit_run_id"],
-        "audit_revision": audit["source"]["audit_revision"],
-    }
-    rows = [change_row(entry, source) for entry in entries]
+    rows = [change_row(entry, origin) for entry in entries]
     stored = {
         row["change_id"]: row
         for row in (
             await website_change.propose(database, project_id=project_id, rows=rows) if rows else []
         )
     }
+    if complete:
+        await website_change.retire(
+            database,
+            project_id=project_id,
+            source=source,
+            keep=[row.change_id for row in rows] + list(flight),
+        )
+    await record_questions(database, project_id, source, planned["decisions_needed"], origin)
     setting = await project_protected_paths(database.pool, project_id=project_id)
     roots = protected_paths(setting["paths"], inputs.get("protected_paths"))
     views, publish, review = [], [], []
@@ -346,6 +426,7 @@ async def plan_changes(
             "approved": approval is not None,
             "approval": approval,
             "protected": hit,
+            "suggestion": "ask" if hit else "apply",
         }
         views.append(view)
         (publish if approval is not None and not hit else review).append((entry, row, view))
@@ -374,15 +455,13 @@ async def plan_changes(
     ]
     left_out = {
         **planned["left_out"],
-        **({"declined": declined} if declined else {}),
         **({"in_pull_request": in_pull_request} if in_pull_request else {}),
         **({"waiting": waiting} if waiting else {}),
     }
     run_entries = [entry for entry, _, _ in take]
     result = {
-        "source": {**audit["source"], "site_url": latest.get("site_url")},
-        "target": audit["target"],
-        "crawl_status": audit["crawl_status"],
+        **result,
+        "change_source": source,
         "plan": {
             "repairs": run_entries,
             "decisions_needed": planned["decisions_needed"],
@@ -421,6 +500,63 @@ async def plan_changes(
     }
 
 
+def questions_key(project_id) -> str:
+    return f"website-change:{UUID(str(project_id))}:questions"
+
+
+async def record_questions(database, project_id, source, questions, origin) -> None:
+    """Keep the latest preview's judgment calls for the Decisions page, per source."""
+    import json
+    from datetime import UTC, datetime
+
+    saved = await saved_questions(database, project_id)
+    saved[source] = {
+        "questions": questions,
+        "origin": origin,
+        "recorded_at": datetime.now(UTC).isoformat(),
+    }
+    await database.pool.execute(
+        "INSERT INTO effect_receipts (execution_key, operation, status, result) "
+        "VALUES ($1, $2, 'completed', $3::jsonb) ON CONFLICT (execution_key) DO UPDATE "
+        "SET result = EXCLUDED.result, updated_at = now() "
+        "WHERE effect_receipts.operation = EXCLUDED.operation",
+        questions_key(project_id),
+        QUESTIONS_OPERATION,
+        json.dumps(saved, default=str),
+    )
+
+
+async def saved_questions(database, project_id) -> dict[str, Any]:
+    row = await database.pool.fetchrow(
+        "SELECT result FROM effect_receipts WHERE execution_key=$1 AND operation=$2",
+        questions_key(project_id),
+        QUESTIONS_OPERATION,
+    )
+    return dict(delivery_decode(row["result"])) if row else {}
+
+
+async def judgment_calls(database, project_id) -> list[dict]:
+    """The judgment calls the latest previews left open, newest source first, for Decisions.
+    A question whose finding the founder declined since is dropped."""
+    saved = await saved_questions(database, project_id)
+    ids = [q["id"] for entry in saved.values() for q in entry.get("questions", [])]
+    declined = {
+        change_id
+        for change_id, row in (await recorded_rows(database, project_id, ids)).items()
+        if row["status"] == "declined"
+    }
+    calls = []
+    for source, entry in sorted(
+        saved.items(), key=lambda item: item[1].get("recorded_at", ""), reverse=True
+    ):
+        for question in entry.get("questions", []):
+            if question["id"] not in declined:
+                calls.append(
+                    {**question, "source": source, "recorded_at": entry.get("recorded_at")}
+                )
+    return calls
+
+
 async def _bind(integrations, project_id, inputs):
     """The repository a run would write, after the member confirms it serves the site."""
     from tin_lite.integrations import IntegrationError
@@ -446,18 +582,19 @@ async def _bind(integrations, project_id, inputs):
 def nothing_to_run(preview: dict) -> str:
     """Why a start has nothing to change, in the founder's words."""
     left = preview["plan"]["left_out"]
+    origin = ORIGINS.get(preview.get("change_source", SOURCE), ORIGINS[SOURCE])
     if left.get("in_pull_request"):
         prs = sorted({row["pull_request"]["url"] for row in left["in_pull_request"]})
         return (
-            "Every change Tin can make from the latest audit already sits in a website.change "
+            f"Every change Tin can make from {origin} already sits in a website.change "
             f"pull request: {', '.join(prs)}. Merge or close it before starting another."
         )
     if preview["decisions_needed"]:
         return (
-            "The changes left in the latest audit wait for judgment calls. Answer "
+            f"The changes left in {origin} wait for judgment calls. Answer "
             "decisions_needed from preflight_website_change, then start again with decisions."
         )
-    return "Nothing in the latest audit is left for website.change to fix."
+    return f"Nothing in {origin} is left for website.change to change."
 
 
 async def select_source(*, database, storage, integrations, project_id, inputs) -> dict:
@@ -474,9 +611,11 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
         raise ValueError(nothing_to_run(preview))
     taken = set(preview["next_run"]["change_ids"])
     binding = preview["repository_binding"]
+    source = preview["change_source"]
     return {
-        "source": SOURCE,
-        "audit": preview["source"],
+        "source": source,
+        # Where the rows came from: the audit run, or the planned changes' revision.
+        ("audit" if source == SOURCE else "planned"): preview["source"],
         "binding": binding,
         "changes": [
             {
@@ -519,10 +658,11 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
 
 async def guard_source(conn, *, project_id, inputs, source) -> None:
-    """Under create_run's project lock: the pinned approvals still stand, and no other
-    technical run of this project is still working."""
-    if inputs.get("source") != SOURCE or source.get("source") != SOURCE:
-        raise ValueError("The audit's changes are not the source this run was admitted for.")
+    """Under create_run's project lock: the pinned approvals still stand, and no other run of
+    this project is still working on the same source's changes."""
+    kind = inputs.get("source")
+    if kind not in delivery.REPAIR_SOURCES or source.get("source") != kind:
+        raise ValueError("These changes are not the source this run was admitted for.")
     for change in source["changes"]:
         try:
             current = await approval_for(conn, project_id=project_id, change=change)
@@ -536,13 +676,13 @@ async def guard_source(conn, *, project_id, inputs, source) -> None:
         "ORDER BY created_at DESC LIMIT 1",
         project_id,
         website_change.WORKFLOW_ID,
-        SOURCE,
+        kind,
         list(ACTIVE),
     )
     if busy:
         raise ValueError(
-            f"Website changes run {busy} is still working on the audit's changes; wait for "
-            "it to finish."
+            f"Website changes run {busy} is still working on {ORIGINS[kind]}; wait for it "
+            "to finish."
         )
 
 
@@ -608,7 +748,7 @@ async def prepare(*, database, storage, integrations, run) -> bool:
 def workspace(source: dict) -> dict:
     """What the procedure reads about the rows beside site-fix-v5's plan."""
     return {
-        "source": SOURCE,
+        "source": source["source"],
         "change_ids": [change["change_id"] for change in source["changes"]],
         "publish": source["publish"],
         "protected_paths": source["protected_paths"],
@@ -746,3 +886,57 @@ async def publish(*, database, storage, integrations, run, sleep=None, clock=Non
         # again while someone reads the run, until the problems are gone or a fortnight passes.
         await live_recheck(database, integrations).view(run, check=True)
     return result
+
+
+# --- One preview for every recorded source -----------------------------------------------
+
+
+async def preview(
+    *, database, storage, integrations, project_id, source: str, inputs: dict
+) -> dict[str, Any]:
+    """Record the rows a source proposes and say what the next run makes, with what to tell
+    the founder (`relay`). Shared by MCP preflight_website_change and the HTTP preflight."""
+    if source == delivery.BLOG_INDEX_SOURCE:
+        from tin_lite import website_change_blog_index
+
+        found = await website_change_blog_index.plan_changes(
+            database=database,
+            storage=storage,
+            integrations=integrations,
+            project_id=project_id,
+            inputs=inputs,
+        )
+        nxt = found["next_run"]
+        relay = (
+            [found["note"]]
+            if found.get("note")
+            else [
+                "The newest blog index plan is one change you can approve or decline once in Tin.",
+                nxt["reason"] or "",
+            ]
+        )
+        return {**found, "relay": [line for line in relay if line]}
+    found = await plan_changes(
+        database=database,
+        storage=storage,
+        integrations=integrations,
+        project_id=project_id,
+        inputs={**inputs, "source": source},
+    )
+    summary, nxt = found["summary"], found["next_run"]
+    relay = [
+        f"{ORIGINS[source][0].upper()}{ORIGINS[source][1:]} hold {summary['fixable']} changes Tin "
+        "can make on the site; each is a change you can approve or decline once in Tin."
+    ]
+    if found.get("note"):
+        relay.append(found["note"])
+    if nxt["change_ids"]:
+        relay.append(f"The next run makes {len(nxt['change_ids'])} of them. {nxt['reason']}")
+    else:
+        relay.append(nothing_to_run(found))
+    if summary.get("decisions_needed"):
+        relay.append(
+            f"{summary['decisions_needed']} more depend on a judgment call; answer them "
+            "before starting."
+        )
+    return {**found, "relay": relay}

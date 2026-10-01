@@ -1907,6 +1907,40 @@ class IntegrationService:
             == repository.casefold(),
         }
 
+    async def github_changed_paths(
+        self, *, project_id: UUID, repository: str, base: str, head: str
+    ) -> dict[str, Any]:
+        """The files that changed between two commits of the selected repository, as GitHub's
+        compare reports them. `complete` is False when GitHub cut the list short (300
+        files) or the commits are not related; callers then treat every file as changed.
+        Only paths leave this method.
+        """
+        if not _SHA.fullmatch(base or "") or not _SHA.fullmatch(head or ""):
+            raise IntegrationError("GitHub commits to compare are invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        payload = _provider_json(
+            await self._client.get(
+                f"https://api.github.com/repos/{quote(repository, safe='/')}/compare/"
+                f"{base}...{head}",
+                headers=self._github_headers(token),
+                params={"per_page": 100},
+            ),
+            provider="GitHub",
+        )
+        files = payload.get("files") if isinstance(payload.get("files"), list) else []
+        paths: list[str] = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            for key in ("filename", "previous_filename"):
+                name = item.get(key)
+                if isinstance(name, str) and _safe_github_path(name) and name not in paths:
+                    paths.append(name)
+        return {
+            "paths": paths,
+            "complete": payload.get("status") in {"ahead", "identical"} and len(files) < 300,
+        }
+
     async def github_required_status_checks(
         self, *, project_id: UUID, repository: str, branch: str
     ) -> dict[str, Any]:

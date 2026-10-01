@@ -611,7 +611,10 @@ def report(prepared: dict, *, reason: str | None = None, pull_request=None) -> b
     lines += [
         "## How it was checked",
         "",
-        f"Audit: `{source['audit_run_id']}` at `{source['audit_revision']}`.",
+        f"Audit: `{source['audit_run_id']}` at `{source['audit_revision']}`."
+        if "audit_run_id" in source
+        # website.change's planned URL changes come from project files, not an audit.
+        else f"Planned changes: project files at `{source.get('project_revision')}`.",
         "",
         f"Repository: `{binding['repository']}` at `{binding['head_sha']}`.",
         "",

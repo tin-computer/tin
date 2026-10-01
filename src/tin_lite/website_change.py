@@ -9,9 +9,11 @@ paths it touches and its approval (ChangeRow). Two sources are implemented:
   article, adapted into the site's own format and route with content.deliver's machinery
   (content_repository_delivery);
 - `audit` (phase 2, website_change_audit): what the latest organic audit found, repaired
-  under site-fix-v5's rules, one change row per fixable finding.
-
-Planned URL changes and the blog index plug into the same row later.
+  under site-fix-v5's rules, one change row per fixable finding;
+- `planned` (phase 3, website_change_planned): the redirects and noindex changes page
+  decisions and the site architecture plan made, one row per change, written the same way;
+- `blog_index` (phase 3, website_change_blog_index): the newest blog index plan, one row,
+  its files applied as they are.
 
 Two modes, decided by whether the change is pre-approved to commit to main:
 
@@ -54,11 +56,12 @@ OPERATION = delivery.WEBSITE_CHANGE_OPERATION
 SOURCES: dict[str, tuple[str, ...]] = {
     "content_draft": ("page",),
     "audit": tuple(sorted({repair.kind for repair in repair_plan.REPAIRS.values()})),
-    "planned_url_change": ("redirect", "noindex"),
+    "planned": ("redirect", "noindex"),
     "blog_index": ("index",),
 }
-# Sources website.change can take today. Planned URL changes and the blog index come later.
-IMPLEMENTED_SOURCES = ("content_draft", "audit")
+# Sources website.change takes: an approved page, the latest audit's fixes, the URL changes
+# page decisions and the site architecture plan made, and the blog index plan.
+IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index")
 # A page change keeps content.deliver's caps: a 300 KB public article, its listing and a
 # route. A technical change follows site-fix-v5's (20 files, 800 changed lines).
 PAGE_MAX_FILES = 5
@@ -516,8 +519,21 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
     source_kind = inputs.get("source", "content_draft")
     if source_kind not in IMPLEMENTED_SOURCES:
-        raise ValueError("website.change makes approved pages and audit fixes for now.")
-    if source_kind == "audit":
+        raise ValueError(
+            "website.change makes approved pages, audit fixes, planned URL changes and the "
+            "blog index."
+        )
+    if source_kind == "blog_index":
+        from tin_lite import website_change_blog_index
+
+        return await website_change_blog_index.select_source(
+            database=database,
+            storage=storage,
+            integrations=integrations,
+            project_id=project_id,
+            inputs=inputs,
+        )
+    if source_kind in {"audit", "planned"}:
         from tin_lite import website_change_audit
 
         return await website_change_audit.select_source(
@@ -582,7 +598,16 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
 async def guard_source(conn, *, project_id, inputs, source) -> None:
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
-    if inputs.get("source") == "audit" or source.get("source") == "audit":
+    if inputs.get("source") == "blog_index" or source.get("source") == "blog_index":
+        from tin_lite import website_change_blog_index
+
+        return await website_change_blog_index.guard_source(
+            conn, project_id=project_id, inputs=inputs, source=source
+        )
+    if inputs.get("source") in {"audit", "planned"} or source.get("source") in {
+        "audit",
+        "planned",
+    }:
         from tin_lite import website_change_audit
 
         return await website_change_audit.guard_source(
@@ -737,6 +762,24 @@ async def propose(database, *, project_id: UUID, rows: list[ChangeRow], run_id=N
     return [view(row) for row in stored]
 
 
+async def retire(database, *, project_id: UUID, source: str, keep: list[str]) -> int:
+    """Remove the pending rows of a source that its newest plan no longer proposes.
+
+    Only pending rows go; a decided row stays decided whatever later plans say. Returns how
+    many were removed.
+    """
+    if source not in RECORDED_SOURCES:
+        raise ValueError("A page is approved through its review in Decisions.")
+    result = await database.pool.execute(
+        "DELETE FROM website_changes WHERE project_id=$1 AND source=$2 AND status='pending' "
+        "AND NOT (change_id = ANY($3::text[]))",
+        project_id,
+        source,
+        list(keep),
+    )
+    return int(result.split()[-1])
+
+
 async def decide(
     database,
     *,
@@ -834,7 +877,11 @@ async def get_change(database, *, project_id: UUID, change_id: str) -> dict[str,
 async def list_changes(
     database, *, project_id: UUID, status: str | None = None, limit: int = 100
 ) -> list[dict[str, Any]]:
-    """Change rows, pending first (oldest first), then decided ones (newest first)."""
+    """Change rows, pending first (oldest first), then decided ones (newest first).
+
+    Each says which protected page it touches, if any (`protected`): the defaults and the
+    project's setting as they stand now. Such a change always opens a pull request.
+    """
     rows = await database.pool.fetch(
         """
         SELECT * FROM website_changes
@@ -847,7 +894,28 @@ async def list_changes(
         status,
         max(1, min(int(limit), 200)),
     )
-    return [view(row) for row in rows]
+    setting = await project_protected_paths(database.pool, project_id=project_id)
+    roots = setting["effective"]
+    views = []
+    for row in rows:
+        item = view(row)
+        files = [
+            entry.get("path")
+            for entry in item["detail"].get("files") or []
+            if isinstance(entry, dict)
+        ]
+        item["protected"] = next(
+            (root for path in item["paths"] if (root := protected(path, roots))), None
+        ) or next(
+            (
+                root
+                for path in files
+                if isinstance(path, str) and (root := file_protected(path, roots))
+            ),
+            None,
+        )
+        views.append(item)
+    return views
 
 
 async def decided(database, *, project_id: UUID, change_ids: list[str]) -> dict[str, str]:
