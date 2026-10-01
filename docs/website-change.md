@@ -5,17 +5,19 @@
 `website.change` is meant to become the one workflow in the organic traffic system that writes
 to the founder's website: content drafts, page decisions (URL changes), the page tree, the
 blog index and technical fixes would all reach the site through it, after the founder approves
-them. Today it handles approved pages only; content.deliver and the technical fix still open
-their own pull requests.
+them. Today it makes two kinds of change, approved pages and the technical fixes the latest
+audit found; content.deliver still opens its own pull requests for pages its approval starts.
 
-A change the founder approved with commit to main as its delivery publishes: Tin opens the
-pull request and merges it once the repository's required checks pass. Anything else opens a
-pull request that the founder merges. A change to a protected page, such as the sign-in page
+A change the founder approved publishes: Tin opens the pull request and merges it once the
+repository's required checks pass. For a page, approved means approved with commit to main as
+its delivery; for a technical fix, a recorded approval of its change row. Anything else opens
+a pull request that the founder merges. A change to a protected page, such as the sign-in page
 another app shares or a page the founder listed in the project's settings, always waits for
 the founder, approved or not.
 
-Phase 1 (1.0.0, and 1.1.0 with the decisions below) makes one kind of change: it puts an
-approved page on the site.
+- Phase 1 (1.0.0) puts an approved page on the site.
+- 1.1.0 adds the decisions below and phase 2: the audit finds; website.change plans, fixes and
+  publishes ([Technical changes](#phase-2-technical-changes-from-the-latest-audit)).
 
 ## Decided (Emre, 10/1)
 
@@ -30,6 +32,8 @@ approved page on the site.
    [Pages land at the founder's route](#pages-land-at-the-founders-route).
 
 ## Two modes
+
+For a page (`source: content_draft`):
 
 | The change is | Tin |
 | --- | --- |
@@ -57,6 +61,8 @@ Every outcome is recorded once under `content-delivery:{run}:merge`: `merged`, o
 
 "Publish directly" is implemented as "open the PR and merge it once the required checks
 pass", not as a commit straight to the default branch, so the repository's checks still run.
+Technical changes follow the same two modes per change row; see
+[Technical changes](#phase-2-technical-changes-from-the-latest-audit).
 
 ### Merging once the required checks pass
 
@@ -122,6 +128,7 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | read one | `GET /api/projects/{id}/website-changes/{change_id}` | |
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
+| preview technical changes | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
 
@@ -186,17 +193,103 @@ and the route-folder check treats them as site-wide wherever they sit.
 
 | Field | Meaning |
 | --- | --- |
-| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for URL changes and repairs. |
-| `source` | `content_draft`, `planned_url_change`, `technical_fix` or `blog_index`. |
-| `kind` | Per source: `page`; `redirect` or `noindex`; `repair`; `index`. |
+| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; #239's `oa_` IDs for planned URL changes. |
+| `source` | `content_draft`, `audit`, `planned_url_change` or `blog_index` (migration 056 renamed the unused `technical_fix` placeholder to `audit`). |
+| `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`. |
 | `title` | What the founder reads. |
 | `paths` | Site paths or route patterns it touches (`/blog/{slug}`). |
 | `content_sha256`, `content_revision` | The exact content an approval covers. |
 | `detail` | Source facts under 16 KB, such as `source_run_id` or redirect ends. |
 
-A run pins the row with its approval (`change.approval`: decision, by, at, revision,
+A page run pins its row with its approval (`change.approval`: decision, by, at, revision,
 `content_sha256`, `via: review | decision`) in its source receipt, beside `publish`, `route`
-and `protected_paths`.
+and `protected_paths`. A technical run pins a list of rows (`changes`), each with its approval
+and the protected page it touches, if any.
+
+## Phase 2: technical changes from the latest audit
+
+The audit finds; website.change plans, fixes and publishes. A run with `source: audit` repairs
+what the project's latest successful organic audit found, under site-fix-v5's rules. The code
+is the technical fix's, shared rather than copied: `TechnicalFixSources.inspect` reads the
+audit, `technical_repair_plan.build_plan` sorts its findings, `TechnicalFixExecution
+.prepare_selection` re-reads the live site and names the files the diff can prove,
+`technical_batch` checks the patch, and `technical_fix_live` checks the live site after the
+merge. `website_change_audit.py` holds what is new.
+
+### One change row per fixable finding
+
+`preflight_website_change` (or `POST …/website-changes/preflight`) and a start both read the
+latest audit and record one `website_changes` row per finding the plan repairs:
+
+- `change_id` is the audit's stable finding ID, `source` is `audit`, `kind` is the repair,
+  `paths` are the pages, both ends of a redirect, `/robots.txt` or `/sitemap.xml`.
+- `content_sha256` covers the repair itself (`intent`): the finding, its check, the kind of
+  change and the judgment-call answer. It leaves out the pages, because a finding ID is
+  stable per check and site while the pages an audit lists move week to week; each run
+  re-reads them and checks them against the protected paths.
+- New IDs are added; a pending row takes the newer plan; a row the founder approved or
+  declined stays as it is. A declined finding is left out of every later plan (listed under
+  `left_out.declined`), even when a newer audit finds it on more pages.
+- The repository is bound before anything is recorded, and only after the member confirms it
+  serves the audited site (`repository_serves_site`).
+
+### Judgment calls
+
+They stay MCP → coding agent → founder, as in site-fix-v5. The preview returns
+`decisions_needed` and site-fix-v5's `ask`: the coding agent answers from the codebase, asks
+the founder only when unsure, and passes the answers as `decisions` (`finding_id=choice`). A
+finding whose call is unanswered gets no row. An answer recorded in an approved row is reused
+by later runs; an explicit answer in a run wins over it, and a different answer is not what the
+founder approved, so it does not publish.
+
+### Which rows a run makes, and how
+
+One run makes one pull request:
+
+| The rows | Tin |
+| --- | --- |
+| approved, touching no protected page | the run takes these first; Tin merges the PR once the required checks pass |
+| waiting for approval | the next run takes them into a PR the founder merges |
+| approved, but touching a protected page | a PR the founder merges |
+| already in an open or merged website.change PR | skipped, and the preview names the PR |
+| declined | never made, never proposed again |
+
+`next_run` in the preview says which rows the next start takes and why. A start with nothing
+left to make is refused with the reason: every row already sits in an open PR (named, merge or
+close it first), the rest wait for judgment calls, or nothing is left. A row whose earlier PR
+was closed without merging can go in a new one. Only one technical run per project works at a
+time.
+
+Before any merge, `website_change_audit.hold_reason` checks again: the pinned mode, every
+row's approval as it stands now, and the protected paths (pinned, plus the project's setting
+as it stands now) against the rows' paths, the planned repairs and every changed file. Then
+the merge follows [the required-checks rule](#merging-once-the-required-checks-pass), with
+`merge_rule: approved_changes` in the receipt.
+
+### Caps and checks
+
+site-fix-v5's bounds: at most 30 findings per run (the rest are left for a later run), 20
+files and 800 changed lines, no dependencies, CI, deploy settings or secrets, files the site
+serves byte for byte checked from the diff, and a re-read of those files before the PR opens.
+website.change 1.1.0 pins these rules in its definition (`site_repair_policy: site-fix-v5`) and
+raises its file cap to 20; a page keeps content.deliver's five files and 400 KB
+(`website_change.check_patch`). The `site-repair` skill is the technical fix's
+`audit-batch-repair` skill, adapted to website.change's context and to say who merges.
+
+### The live check after merge
+
+Right after Tin merges, the run records the merge and reads the live site once
+(`technical_fix_live.LiveRecheck`): per finding, fixed, still showing, or left to the next
+audit. It reads again, at most every ten minutes, while someone reads the run (MCP `get_run`),
+and stops a fortnight after the merge.
+
+### organic.technical_fix
+
+It stays registered for pinned site-fix-v5 runs and saved schedules, byte for byte as on main
+except its catalog flag: 0.6.1 sets `public_discovery: false`, so new setups don't see it, and
+it left the growth plan's program lists and onboarding copy. `preflight_technical_fix` keeps
+working for older clients, and so does the public plugin's `start_technical_fix`. The
+organic traffic system's technical step still starts it on its pinned definition.
 
 ## How content.deliver relates
 
@@ -215,24 +308,27 @@ semantics, and delegating would change them. The one shared rule both now follow
 at most one adaptation per repository, whichever workflow made it (`guard_attempts`), so the
 two never open two pull requests for the same page.
 
-## What phases 2 and 3 add
+## What comes next
 
-- **Phase 2, planned URL changes** (after #239): `planned_url_changes.read_changes` becomes a
-  source that proposes `planned_url_change` rows (`finding_id`'s `oa_` IDs, kind `redirect`
-  or `noindex`, paths `from` and `to`, `protected` from the same list). Approved rows go to
-  website.change instead of becoming technical-fix judgment calls. Needs: an input that
-  names change IDs, a redirect writer in the skill, a duplicate guard keyed on `change_id`,
-  and Decisions cards for pending rows.
-- **Phase 3, the technical fix and the blog index** (after #246): site-fix-v5's repairs and
-  judgment calls become `technical_fix` rows per audit finding (`oa_` IDs), and
-  `content.blog_index` hands its planned page over as a `blog_index` row. website.change
-  takes their larger caps (20 files, 800 lines) under a new version, and its skill gains the
-  repair rules.
-- **Later**: the approval path starts website.change instead of content.deliver, and the
-  traffic system's recipe switches to it.
+- **Phase 3, planned URL changes and the blog index** (after #239): #239's
+  `planned_url_changes.as_selections` already shapes page decisions and the page tree as
+  findings (`planned.redirect`, `planned.noindex`, stable `oa_` IDs). Fed into the same plan,
+  `website_change_audit.row_source` records them as `planned_url_change` rows of kind
+  `redirect` or `noindex`, with both ends of the redirect as paths, so approval, protected
+  paths and publishing work as for audit rows. Still needed: the REPAIRS entries for the two
+  checks, and reading the plan files at a pinned revision. `content.blog_index` hands its
+  planned page over as a `blog_index` row.
+- **The recipe rewrite**: organic.traffic_system's technical step should start website.change
+  with `source: audit` (and the system's `expected_repository` and `repository_serves_site`)
+  instead of organic.technical_fix, and stop reading the technical fix's preview itself. Its
+  judgment calls then go through `preflight_website_change`.
+- **Later**: Decisions cards for pending rows, and the approval path starts website.change
+  instead of content.deliver.
 
 ## Verification limits
 
-Fixture tests only: synthetic GitHub, storage and Postgres. No live repository, merge, deploy
-or charge was run. The copy proof shows the approved copy is stored in the patch; it does not
-prove the site renders or builds it.
+Fixture tests only: synthetic GitHub, storage, live site and Postgres. No live repository,
+merge, deploy or charge was run. The copy proof shows the approved copy is stored in the patch;
+it does not prove the site renders or builds it. A technical patch that touches files Tin
+can't prove from the diff carries Tin's sentence that it couldn't build the site; the
+repository's required checks and the live check after merge are what verify it.

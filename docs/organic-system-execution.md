@@ -53,7 +53,10 @@ Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
 2. After the audit, if requested, propose one technical fix. Under `site-fix-v5` that PR
-   covers every fixable finding of the audit; earlier policies take one finding.
+   covers every fixable finding of the audit; earlier policies take one finding. The step
+   still starts `organic.technical_fix` at the parent's pinned definition. New technical
+   fixes go through website.change (`source: audit`); the recipe rewrite should start that
+   instead ([website.change](website-change.md#what-comes-next)).
 3. After both research runs succeed, create one manual `content.plan` configuration in
    My system, using these exact research run IDs, then run it.
 4. Publish `reports/organic-system/{run_id}/RESULT.md`, linking the exact child artifacts
