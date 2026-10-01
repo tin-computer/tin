@@ -437,6 +437,23 @@ def report(source: dict, plan: dict, *, pull_request=None, merge=None) -> bytes:
     return "\n".join(lines).encode()
 
 
+def failed_report(source: dict, plan: dict, reason: str) -> bytes:
+    """The report of a run that couldn't apply the plan to the repository as it is now."""
+    return "\n".join(
+        [
+            "# Blog index",
+            "",
+            "## Result",
+            "",
+            f"Tin couldn't apply the blog index plan: {reason.rstrip('.')}. No pull request "
+            "was opened, and the change stays waiting in Tin. Run content.blog_index again.",
+            "",
+            *[f"- {item['action']} `{item['path']}`" for item in plan["files"]],
+            "",
+        ]
+    ).encode()
+
+
 def pull_request_body(source: dict, plan: dict) -> str:
     lines = [
         plan["summary"] or f"A blog index for {plan['route']}.",
@@ -461,7 +478,7 @@ async def apply(*, database, storage, integrations, run, sleep=None, clock=None)
     import asyncio
     from datetime import UTC, datetime
 
-    from tin_lite.integrations import GitHubFileChange
+    from tin_lite.integrations import GitHubFileChange, IntegrationAuthorizationError
     from tin_lite.run_reports import publish_run_report
     from tin_lite.website_change import (
         WebsiteChangeConflict,
@@ -480,19 +497,39 @@ async def apply(*, database, storage, integrations, run, sleep=None, clock=None)
     if files_sha256(plan["files"]) != change["content_sha256"]:
         raise ValueError("The blog index plan changed after this run started.")
     binding = delivery.binding_from(source)
-    pull_request = await integrations.github_create_pull_request(
-        project_id=run.project_id,
-        execution_key=f"{run.id}:procedure_pull_request",
-        title=f"Blog index: {plan['summary'] or plan['route']}"[:200],
-        body=pull_request_body(source, plan),
-        files=tuple(
-            GitHubFileChange(path=item["path"], content=item["content"]) for item in plan["files"]
-        ),
-        base_branch=binding.default_branch,
-        expected_base_sha=binding.head_sha,
-        run_id=run.id,
-        expected_binding=binding,
-    )
+    try:
+        pull_request = await integrations.github_create_pull_request(
+            project_id=run.project_id,
+            execution_key=f"{run.id}:procedure_pull_request",
+            title=f"Blog index: {plan['summary'] or plan['route']}"[:200],
+            body=pull_request_body(source, plan),
+            files=tuple(
+                GitHubFileChange(path=item["path"], content=item["content"])
+                for item in plan["files"]
+            ),
+            base_branch=binding.default_branch,
+            expected_base_sha=binding.head_sha,
+            run_id=run.id,
+            expected_binding=binding,
+            # Commits that touch none of the plan's files since admission don't block it;
+            # one that changes a plan file, or an open PR that does, still does.
+            allow_unrelated_base_advance=True,
+        )
+    except IntegrationAuthorizationError as exc:
+        # Tin couldn't apply the plan to the repository as it is now: the run failed; it did
+        # not find nothing to change. Same rule as website_change_audit.preparation_failed.
+        await publish_run_report(
+            database=database,
+            storage=storage,
+            run_id=run.id,
+            workflow_key=website_change.KEY,
+            prefix="website-change",
+            path=f"website/changes/{run.id}.md",
+            content=failed_report(source, plan, str(exc)),
+            summary=f"Tin couldn't apply the blog index plan: {exc}"[:900],
+            failed=True,
+        )
+        return True
     key = delivery.merge_key(run.id)
     sleep = sleep or asyncio.sleep
     clock = clock or (lambda: datetime.now(UTC))

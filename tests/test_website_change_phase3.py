@@ -443,3 +443,50 @@ async def test_decisions_read_pending_rows_with_protection_and_open_judgment_cal
     # Once the coding agent answers, the question leaves Decisions.
     await preview(f, "audit", decisions=[f"{ai_search}=allow"])
     assert await website_change_audit.judgment_calls(f.db, f.project.id) == []
+
+
+# --- Runs that can't read or apply to the repository fail -----------------------------------
+
+
+async def test_a_planned_run_that_cannot_read_the_repository_ends_failed(
+    publication_db, monkeypatch
+):
+    from types import SimpleNamespace
+
+    f = await fixture(publication_db, monkeypatch)
+    plan_files(f, efficacy_text=efficacy(generated="2026-09-30"))
+    f.runtime.integrations.github_repository_bundle.return_value = SimpleNamespace(
+        archive=b"", complete=False
+    )
+    run = await start(f, source="planned")
+    assert await f.activities.prepare_codex_procedure(str(run.id)) is True
+    run = await f.db.get_run(run.id)
+    assert run.status.value == "failed"
+    assert run.error_message.startswith("Tin couldn't read every file in the repository")
+
+
+async def test_a_blog_index_that_cannot_apply_ends_failed_and_names_the_file(
+    publication_db, monkeypatch
+):
+    from tin_lite.integrations import IntegrationAuthorizationError
+
+    f = await fixture(publication_db, monkeypatch)
+    await blog_index_run(f)
+    run = await start(f, **BI_INPUTS)
+    integrations = f.runtime.integrations
+    integrations.github_create_pull_request.side_effect = IntegrationAuthorizationError(
+        "An open GitHub pull request already changes src/lib/posts.ts; resolve it or choose a "
+        "non-overlapping improvement"
+    )
+    assert await f.activities.prepare_codex_procedure(str(run.id)) is True
+    run = await f.db.get_run(run.id)
+    # Before, the gateway's refusal escaped the activity as an unnamed failure.
+    assert run.status.value == "failed"
+    assert "src/lib/posts.ts" in run.error_message
+    assert await f.db.get_effect(delivery.merge_key(run.id)) is None
+    integrations.github_merge_pull_request.assert_not_called()
+    # Unrelated commits since admission don't block a plan; the gateway checks its files.
+    assert (
+        integrations.github_create_pull_request.await_args.kwargs["allow_unrelated_base_advance"]
+        is True
+    )
