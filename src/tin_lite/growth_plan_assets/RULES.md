@@ -42,7 +42,7 @@ sentence that most systems unlock once a site exists, and the outlook says what 
 
 `tin_state.running` lists the project's saved schedules and `tin_state.recent_runs` the last
 runs. When `running` is not empty this plan is an expansion: the systems table's "Current
-status" says what Tin already runs there ("Tin: weekly site-health PR since Sept 11"), the
+status" says what Tin already runs there ("Tin: weekly technical-fix PR since Sept 11"), the
 proposed scope and the systems list are additions on top of what runs (never a system that
 repeats a running schedule), and every outlook starts from the results already in motion.
 Say in the first paragraph, in one sentence, what is already running.
@@ -214,8 +214,8 @@ with access, and what can proceed without it. The agent records what the founder
 explicitly declined, and Tin reads it at setup.
 
 Each system carries, in the block, a `summary` (one sentence in the founder's framing of what
-Tin does for them there: "Tin improves your technical SEO: a weekly site-health pull request you
-merge or close") and an `outlook` with three short sentences, `week`, `month` and `quarter`: the
+Tin does for them there: "Tin improves your technical SEO: a pull request that fixes what the
+audit found, which you merge or close") and an `outlook` with three short sentences, `week`, `month` and `quarter`: the
 likely visible result of that system after one week, one month and three months, estimated from
 this business's evidence and the usual pace of that system. Say what will exist ("three merged
 fixes", "first answer page indexed") and what may move ("impressions on the fixed pages"), hedge

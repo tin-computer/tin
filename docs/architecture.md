@@ -70,6 +70,10 @@ Next Monday you run `content.answer_page`. It reads that audit, picks the strong
 
 ### Site health as a pull request
 
+`site.health_improve` is folded into `organic.technical_fix`, which fixes everything an
+organic audit finds in one pull request (see [technical repair](technical-fix.md)). Saved
+site-health schedules keep running as described here.
+
 You connect GitHub, select the repository, and opt in to write access. You start `site.health_improve` with your site URL, a focus such as accessibility, and a change budget of one to three files. In a sandbox, the agent reads the live page and the repository, reads the open pull requests so it does not duplicate work, picks one evidenced defect, fixes it, and writes a PR description with the evidence, the change, and the verification. The switchboard opens the pull request with a short-lived installation token the sandbox never saw. The pull request stays unmerged. Your repository's own deployment process determines when an accepted change goes live.
 
 ### Email shortlist, then a campaign
@@ -87,7 +91,8 @@ This is a selection, not a complete catalog. The live Registry lists current inp
 | `organic.audit` | Reads robots.txt, sitemaps and Search Console, inspects up to 100 chosen public pages by default for crawl, indexation, on-page and search issues, asks a fixed panel of buyer questions to an AI adviser, and reports whether the answers mention, cite, or recommend you | nothing | no |
 | `visibility.audit` | Asks five buyer questions to a model with and without web search and scores where you appear | nothing | no |
 | `content.answer_page` | Drafts one researched page for the strongest unanswered buyer question | nothing | yes |
-| `site.health_improve` | One small evidenced fix on one public page, as a pull request | GitHub | the PR is yours to merge |
+| `organic.technical_fix` | Every fixable finding from an organic audit, in one pull request grouped by kind of change | GitHub | the PR is yours to merge |
+| `site.health_improve` | Retired from discovery; saved schedules still make one small evidenced fix per run | GitHub | the PR is yours to merge |
 | `outreach.email_shortlist` | Evidence-backed shortlist from your Gmail and Calendar history, as a CSV | Google Workspace | no |
 | `outreach.email_campaign` | Paced sends with reply-aware follow-ups, from selected rows and approved copy | Google Workspace | yes, before anything is sent |
 | `qa.signup_walkthrough` | Signs up for your product as a stranger with a Tin-owned identity and reports the issues it encounters | Google Workspace | no |

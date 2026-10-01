@@ -134,6 +134,51 @@ existing keyword workflow should research next. Do not schedule cosmetic variati
 """
 
 
+V5_POLICY, V5_INSTRUCTIONS = POLICY, INSTRUCTIONS
+POSITIONING_OWNER = """\
+Strategy owns product positioning. State the priority buyer, their decision, credible alternatives,
+the product advantage that matters to that buyer, the proof supporting it and the choice the
+content should help them make. Price is one possible advantage; do not assume it is always the
+right one. Tie each brief to that argument while respecting the reader's actual question.
+"""
+POSITIONING_FROM_FILES = """\
+Positioning comes from the project, not from this plan. The supplied `positioning` files (the
+brand guide, founder notes in context/, project memory and the Start here plan) say who the
+product is for, what it does and why it wins. Follow them. Never narrow, downplay or reframe the
+product in the strategy or a brief, and never tell writers how to position it: a brief chooses
+the reader question, searches, evidence and sections, and names which part of the supplied
+positioning the piece supports. In the strategy, state the priority buyer, their decision,
+credible alternatives and the choice the content should help them make, taking the product's
+advantage and proof from the positioning files. Price is one possible advantage; do not assume
+it is always the right one. When no positioning file is supplied, say so in gaps instead of
+inventing a positioning.
+"""
+if POSITIONING_OWNER not in V5_INSTRUCTIONS:
+    raise RuntimeError("The v5 positioning paragraph moved; update the v6 replacement.")
+POLICY = {**V5_POLICY, "version": "content-editorial-v6", "positioning_files": "project-v1"}
+INSTRUCTIONS = V5_INSTRUCTIONS.replace(POSITIONING_OWNER, POSITIONING_FROM_FILES)
+
+
+# A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
+# "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
+POSITIONING_DIRECTIVE = re.compile(
+    r"(?i)(?:\b(?:re)?position(?:ing)?\s*:|\b(?:re)?position\s+(?!\d)(?:[\w'-]+\s+){0,3}?"
+    r"(?:as|narrowly|squarely|primarily|only)\b|\bframe\s+(?:[\w'-]+\s+){0,3}?as\b)"
+)
+SENTENCE = re.compile(r"[^.!?\n]+[.!?]*\s*")
+
+
+def without_positioning(text):
+    """Drop sentences that set positioning; the writer takes it from the project's files."""
+    kept, removed = [], 0
+    for sentence in SENTENCE.findall(text):
+        if POSITIONING_DIRECTIVE.search(sentence):
+            removed += 1
+        else:
+            kept.append(sentence)
+    return "".join(kept).strip(), removed
+
+
 def contract(definition):
     """Never reinterpret a saved v1 program or accept an edited execution policy."""
     current = SimpleNamespace(
@@ -157,7 +202,13 @@ def contract(definition):
         MODEL_SCHEMA=MODEL_SCHEMA,
         ROUTE_KEY=ROUTE_KEY,
     )
-    for module in (legacy, v2, v3, v4, current):
+    v5 = SimpleNamespace(
+        POLICY=V5_POLICY,
+        INSTRUCTIONS=V5_INSTRUCTIONS,
+        MODEL_SCHEMA=MODEL_SCHEMA,
+        ROUTE_KEY=ROUTE_KEY,
+    )
+    for module in (legacy, v2, v3, v4, v5, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY
@@ -305,6 +356,7 @@ def model_context(context, pages, *, readable_aliases=False):
     data = {
         "research": compact(research),
         **({"integrations": context["integrations"]} if "integrations" in context else {}),
+        **({"positioning": context["positioning"]} if "positioning" in context else {}),
         "sources": compact(sources),
         "pages": {
             "pages": [
@@ -394,9 +446,14 @@ def allocate(context, proposed, pages, aliases):
         if b["id"] not in context["editable"]
         for item in b["items"]
     }
-    items, decisions = [], []
+    items, decisions, positioning_removed = [], [], 0
     for opportunity in opportunities:
         item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale"}}
+        if "positioning" in context:
+            # Positioning comes from the project's files, so a brief never carries its own.
+            brief, removed = without_positioning(item["brief"])
+            item["brief"] = brief or item["intent"]
+            positioning_removed += removed
         intent = re.sub(r"\W+", " ", item["intent"].casefold()).strip()
         if not intent or intent in intents:
             raise ValueError("Editorial opportunities must address distinct buyer intents.")
@@ -467,6 +524,7 @@ def allocate(context, proposed, pages, aliases):
         "excluded": portfolio["excluded"],
         "decisions": decisions,
         "consolidations": consolidations,
+        **({"positioning_removed": positioning_removed} if "positioning" in context else {}),
     }
     plan["strategy"] = portfolio["strategy"]
     if coverage["unused_capacity"]:

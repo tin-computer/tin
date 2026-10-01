@@ -26,7 +26,7 @@ from tin_lite.content_plan import (
     render_plan,
     validate_change,
 )
-from tin_lite.content_plan_sources import context_files, research_sources
+from tin_lite.content_plan_sources import context_files, positioning_files, research_sources
 from tin_lite.content_programs import ContentPrograms, decoded
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
@@ -431,7 +431,17 @@ class ContentPlanActivities:
                         "files": files,
                         **(
                             {"integrations": await integration_inventory(self.db, project.id)}
-                            if contract.POLICY["version"] == "content-editorial-v5"
+                            if contract.POLICY["version"]
+                            in {"content-editorial-v5", "content-editorial-v6"}
+                            else {}
+                        ),
+                        **(
+                            {
+                                "positioning": await positioning_files(
+                                    storage=self.storage, project=project, revision=head
+                                )
+                            }
+                            if contract.POLICY.get("positioning_files") == "project-v1"
                             else {}
                         ),
                         "editable": editable,

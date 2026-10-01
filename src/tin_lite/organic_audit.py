@@ -132,6 +132,9 @@ V11_AUDIT_POLICY = {
     # shortlisted, picked first. Each question also gets one answer without web search.
     "answer_ladder": True,
     "unsearched_answers": True,
+    # Each finding's next_action says where the technical fix's repair plan puts it, so the
+    # report and the fix never disagree about who handles a finding.
+    "next_action_from_repair_plan": True,
 }
 # v12 keeps v11 and adds SUMMARY.json. Code workflows read project files of at most 64,000
 # bytes, and a real crawl's findings.json and evidence.json are larger (tin.computer's
@@ -180,6 +183,7 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "content_review_pages",
         "summary_max_bytes",
         "max_internal_links",
+        "next_action_from_repair_plan",
     }
 )
 
@@ -1411,6 +1415,10 @@ def site_check_documents(
         search_previous=search_previous,
     )
     findings = sorted([*technical, *content, *analysis["findings"]], key=order_key)
+    if policy.get("next_action_from_repair_plan"):
+        from tin_lite.technical_repair_plan import next_action
+
+        findings = [{**f, "next_action": next_action(f["check_id"])} for f in findings]
     evidence = {
         "schema_version": 1,
         "run_id": run_id,
