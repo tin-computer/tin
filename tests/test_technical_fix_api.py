@@ -59,6 +59,14 @@ def arguments(f):
     }
 
 
+RELAY = {"quote", "relay", "tell_the_founder"}
+
+
+def without_relay(value):
+    """MCP adds the founder-facing relay to the HTTP preview; the facts match exactly."""
+    return {key: item for key, item in value.items() if key not in RELAY}
+
+
 async def test_all_http_and_mcp_surfaces_deny_before_source_or_provider_reads(surface_fixture):
     f = surface_fixture
     args = arguments(f)
@@ -100,8 +108,10 @@ async def test_members_read_the_same_verified_source_and_preview_over_http_and_m
     assert response.status_code == 200
     assert response.json()["repository_mapping"] == "member_asserted_not_verified"
     assert response.json()["execution_available"] is True
+    assert response.json()["summary"]["fixable"] >= 1
     result = await f.server.call_tool("preflight_technical_fix", args)
-    assert result.structured_content == response.json()
+    assert without_relay(result.structured_content) == response.json()
+    assert result.structured_content["relay"][0].startswith("Tin can fix")
     assert f.integrations.github_repository_binding.await_count == 2
     first, second = f.integrations.github_repository_binding.await_args_list
     assert first == second
@@ -120,17 +130,19 @@ async def test_content_only_audit_is_visible_and_rejected_consistently(surface_f
     )
     assert result.structured_content == response.json()
     assert response.json()["repair_availability"]["reason"] == "no_technical_findings"
+    # A content finding is copy: listed for the content workflows, never a repair.
     for row in response.json()["excluded_findings"]:
         f.selection["finding_id"] = row["finding"]["id"]
         args = arguments(f)
-        rejected = await f.client.post(
+        preview = await f.client.post(
             f.root + "/preflight", json={k: v for k, v in args.items() if k != "project_id"}
         )
-        assert rejected.status_code == 409
-        assert rejected.json()["detail"] == {"code": "content_finding", "message": row["message"]}
-        with pytest.raises(ToolError, match="content_finding") as error:
-            await f.server.call_tool("preflight_technical_fix", args)
-        assert row["message"] in str(error.value)
+        assert preview.status_code == 200
+        plan = preview.json()["plan"]
+        assert plan["repairs"] == [] and preview.json()["execution_available"] is False
+        assert [item["id"] for item in plan["left_out"]["copy"]] == [row["finding"]["id"]]
+        result = await f.server.call_tool("preflight_technical_fix", args)
+        assert without_relay(result.structured_content) == preview.json()
     f.integrations.github_repository_binding.assert_not_awaited()
 
 
@@ -205,7 +217,9 @@ def test_technical_fix_is_an_explicit_codex_catalog_template():
 
     template = next(row for row in BUILTIN_WORKFLOWS if row.key == "organic.technical_fix")
     assert template.executor == "codex.procedure"
-    assert template.definition["procedure"]["output"]["repair_policy"] == "html-metadata-v3"
+    assert template.definition["procedure"]["output"]["repair_policy"] == "site-fix-v5"
+    assert template.definition["procedure"]["output"]["max_files"] == 20
+    assert template.definition["procedure"]["entry_skill"] == "audit-batch-repair"
 
 
 async def test_new_controls_enforce_membership_before_any_stop(surface_fixture):

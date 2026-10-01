@@ -2064,7 +2064,11 @@ class TinActivities:
         )
         project = await self._require_project(run.project_id)
         await self._db.mark_run_running(run_id)
-        sources = await self._answer_page_sources(run_id=run_id, project=project)
+        sources = await self._answer_page_sources(
+            run_id=run_id,
+            project=project,
+            positioning=getattr(reporter, "reads_positioning", False),
+        )
         day = (run.created_at or datetime.now(UTC)).date().isoformat()
         draft = await self._await_with_heartbeats(
             self._answer_page_effect(
@@ -2811,13 +2815,17 @@ class TinActivities:
                 summary="Approved article pinned. Waiting to adapt it to the website repository.",
             )
             return False
+        if procedure.output_validator == "content-refresh.v1":
+            return await self._prepare_content_refresh(run_id)
         if procedure.output_validator in content_draft.VALIDATORS:
             run = await self._require_run(run_id)
             if run.status.value not in {"pending", "running"}:
                 raise StaleGenerationError("The draft is no longer active")
             context = await self._await_with_heartbeats(
                 ContentDraftSources(database=self._db, storage=self._storage).prepare(
-                    run, output_validator=procedure.output_validator
+                    run,
+                    output_validator=procedure.output_validator,
+                    positioning=content_draft.POSITIONING_MARKER in procedure.prompt,
                 ),
                 details={"stage": "content_draft_preparation"},
             )
@@ -2862,6 +2870,58 @@ class TinActivities:
                 summary="Preparing a bounded metadata-only change.",
             )
         return handled
+
+    async def _prepare_content_refresh(self, run_id: UUID) -> bool:
+        """Pin the refresh's page and sources; with nothing due, report it and stop here."""
+        from tin_lite import content_refresh
+        from tin_lite.content_refresh_sources import ContentRefreshSources
+        from tin_lite.run_reports import publish_run_report
+
+        run = await self._require_run(run_id)
+        if run.status.value not in {"pending", "running"}:
+            raise StaleGenerationError("The refresh is no longer active")
+        context = await self._await_with_heartbeats(
+            ContentRefreshSources(
+                database=self._db, storage=self._storage, integrations=self._integrations
+            ).prepare(run),
+            details={"stage": "content_refresh_preparation"},
+        )
+        await self._db.mark_run_running(run_id)
+        if not context.get("page"):
+            report = "\n".join(
+                [
+                    "# No page refresh this week",
+                    "",
+                    context.get("nothing_due") or "No page is due for a refresh.",
+                    "",
+                    "## Results of earlier refreshes",
+                    "",
+                    context["results_markdown"],
+                    "",
+                ]
+            )
+            await publish_run_report(
+                database=self._db,
+                storage=self._storage,
+                run_id=run_id,
+                workflow_key=content_refresh.KEY,
+                prefix="content-refresh",
+                path=f"reports/content-refresh/{run_id}.md",
+                content=report.encode(),
+                summary="No page is due for a refresh.",
+            )
+            return True
+        await self._db.project_run_progress(
+            run_id=run_id,
+            mode="steps",
+            current=1,
+            total=3,
+            step="waiting_to_refresh",
+            summary=(
+                f"Ready to refresh {context['page']['path']}. Waiting for the writing worker."
+            )[:240],
+        )
+        return False
 
     @activity.defn(name="create_codex_procedure_sandbox")
     async def create_codex_procedure_sandbox(self, run_id_text: str) -> None:
@@ -2937,6 +2997,11 @@ class TinActivities:
                     expected_head_sha = procedure.brand_capture_context["project_revision"]
                 elif procedure.output_validator == "brand-design-capture.v1":
                     raise ValueError("Brand capture must pin its sources before compute")
+                if procedure.output_validator == "content-refresh.v1":
+                    if not (procedure.refresh_context or {}).get("page"):
+                        raise ValueError("Prepare the refresh's page before compute.")
+                    # The positioning and style files the refresh names, at that revision.
+                    expected_head_sha = procedure.refresh_context["project_revision"]
                 # New revision packets pin current reference files separately from
                 # the original article's brief/style/evidence. Legacy packets keep
                 # their existing checkout semantics.
@@ -5009,7 +5074,9 @@ class TinActivities:
                     raise _interrupted_model_request(label) from exc
                 raise
 
-    async def _answer_page_sources(self, *, run_id: UUID, project) -> list[AnswerPageSource]:
+    async def _answer_page_sources(
+        self, *, run_id: UUID, project, positioning: bool = False
+    ) -> list[AnswerPageSource]:
         sources: list[AnswerPageSource] = []
         if project.memory_commit_sha is not None and project.memory_index_path is not None:
             content = await self._storage.read_canonical_artifact(
@@ -5032,10 +5099,12 @@ class TinActivities:
             project_id=project.id,
             exclude_run_id=run_id,
         )
+        # The organic audit asks the same kind of buyer questions, graded the same way, so
+        # the newest of either audit supplies the questions the page answers.
         visibility_runs = [
             source_run
             for source_run in source_runs
-            if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+            if source_run.executor in {VISIBILITY_AUDIT_WORKFLOW_NAME, "organic.audit"}
         ]
         selected_runs = (
             visibility_runs[-1:] if visibility_runs else ([] if sources else source_runs[-5:])
@@ -5066,13 +5135,40 @@ class TinActivities:
                     label=(
                         "latest AI visibility audit"
                         if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+                        else "latest organic audit, with its AI buyer questions"
+                        if source_run.executor == "organic.audit"
                         else source_run.executor
                     ),
                     artifact_ref=source_run.artifact_ref,
                     content=content.decode("utf-8"),
                 )
             )
+        if positioning:
+            sources.extend(await self._positioning_sources(project))
         return sources
+
+    async def _positioning_sources(self, project) -> list[AnswerPageSource]:
+        """The brand guide, founder notes and Start here plan at the project's head."""
+        from tin_lite.content_plan_sources import positioning_files
+
+        repo = await self._storage.get_repo(project.state_repo_id)
+        head = await self._storage.head_sha(repo, project.canonical_branch)
+        if head is None:
+            return []
+        files = await positioning_files(
+            storage=self._storage,
+            project=project,
+            revision=head,
+            include_memory=project.memory_index_path is None,
+        )
+        return [
+            AnswerPageSource(
+                label=f"project positioning: {item['path']}",
+                artifact_ref=f"code.storage://{project.state_repo_id}@{head}/{item['path']}",
+                content=item["content"],
+            )
+            for item in files
+        ]
 
     async def _visibility_effect(
         self,
@@ -5414,6 +5510,13 @@ class TinActivities:
                 run.id
             )
             procedure = replace(procedure, brand_capture_context=prepared)
+        if procedure.output_validator == "content-refresh.v1":
+            from tin_lite.content_refresh_sources import ContentRefreshSources
+
+            prepared = await ContentRefreshSources(database=self._db, storage=self._storage).saved(
+                run.id
+            )
+            procedure = replace(procedure, refresh_context=prepared)
         if procedure.output_validator in BRANDED_DIAGRAM_VALIDATORS and run.expected_head_sha:
             from tin_lite.brand_diagrams import prepare
 

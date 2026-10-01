@@ -2975,6 +2975,59 @@ class IntegrationService:
             raise ServiceResponseTooLarge("A single Search Console row exceeds the response bound.")
         return payload
 
+    async def search_console_url_inspection(
+        self,
+        *,
+        project_id: UUID,
+        url: str,
+        expected_site_url: str,
+        execution_key: str | None = None,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Google's own index status for one URL of the selected property (read only)."""
+        connection = await self._connection(project_id, GSC_PROVIDER)
+        selected_site = connection.configuration.get("selected_site_url")
+        if not isinstance(selected_site, str) or not selected_site:
+            raise IntegrationAuthorizationError("Choose a Search Console property first")
+        if selected_site != expected_site_url:
+            raise IntegrationAuthorizationError("The selected Search Console property changed")
+        request_body = {"inspectionUrl": url, "siteUrl": selected_site, "languageCode": "en-US"}
+        fingerprint = _sha256(_canonical_json(request_body))
+        receipt_key = execution_key or f"integration:{uuid4()}"
+        access_token = await self._google_access_token(connection)
+        try:
+            response = await self._client.post(
+                "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json=request_body,
+            )
+            payload = _provider_json(response, provider="Google Search Console")
+        except IntegrationError:
+            await self._database.record_integration_call(
+                execution_key=receipt_key,
+                project_id=project_id,
+                run_id=run_id,
+                connection_id=connection.id,
+                provider_key=GSC_PROVIDER,
+                capability="url_inspection.read",
+                request_fingerprint=fingerprint,
+                status="failed",
+                error_code="provider_request_failed",
+            )
+            raise
+        await self._database.record_integration_call(
+            execution_key=receipt_key,
+            project_id=project_id,
+            run_id=run_id,
+            connection_id=connection.id,
+            provider_key=GSC_PROVIDER,
+            capability="url_inspection.read",
+            request_fingerprint=fingerprint,
+            status="completed",
+            response_summary={"inspected": 1},
+        )
+        return payload
+
     async def github_create_pull_request(
         self,
         *,
@@ -3400,18 +3453,13 @@ class IntegrationService:
         branch = await self._github_default_branch(
             headers=headers, repository_path=repository_path, base_branch=base_branch
         )
+        head_sha = None
         if expected_binding is not None:
             # Writes use the live file's sha, so a destination changed after preparation
             # would be overwritten silently. Unrelated default-branch commits remain fine.
-            ref_response = await self._client.get(
-                f"https://api.github.com/repos/{repository_path}/git/ref/heads/"
-                f"{quote(branch, safe='')}",
-                headers=headers,
+            head_sha = await self._github_branch_head(
+                headers=headers, repository_path=repository_path, branch=branch
             )
-            target = _provider_json(ref_response, provider="GitHub").get("object")
-            head_sha = target.get("sha") if isinstance(target, dict) else None
-            if not isinstance(head_sha, str) or not head_sha:
-                raise IntegrationUpstreamError("GitHub default branch did not resolve to a commit")
             if head_sha != expected_binding.head_sha:
                 await self._github_validate_base_advance(
                     connection=connection,
@@ -3419,8 +3467,7 @@ class IntegrationService:
                     current_sha=head_sha,
                     files=files,
                 )
-        result = None
-        request_id = None
+        pending = []
         for change in files:
             content_url = (
                 f"https://api.github.com/repos/{repository_path}/contents/"
@@ -3429,8 +3476,19 @@ class IntegrationService:
             current_sha, current = await self._github_current_file(
                 headers=headers, content_url=content_url, branch=branch
             )
-            if current == change.content:
-                continue
+            if current != change.content:
+                pending.append((change, content_url, current_sha))
+        if not pending:
+            # Every file already held this exact content; report the commit that did it.
+            return await self._github_latest_commit(
+                headers=headers,
+                repository_path=repository_path,
+                repository=repository,
+                branch=branch,
+                path=files[0].path,
+            )
+        if len(pending) == 1:
+            change, content_url, current_sha = pending[0]
             update_payload: dict[str, Any] = {
                 "message": message,
                 "content": base64.b64encode(change.content.encode()).decode(),
@@ -3442,27 +3500,86 @@ class IntegrationService:
                 content_url, headers=headers, json=update_payload
             )
             update_payload = _provider_json(update_response, provider="GitHub")
-            request_id = update_response.headers.get("x-github-request-id") or request_id
             commit = update_payload.get("commit")
             commit = commit if isinstance(commit, dict) else {}
-            result = _github_commit_result(
+            return _github_commit_result(
                 {
                     "repository": repository,
                     "branch": branch,
                     "commit": commit.get("sha"),
                     "url": commit.get("html_url"),
                 }
+            ), update_response.headers.get("x-github-request-id")
+        # Several files land as one commit, so a failure partway never leaves the default
+        # branch half changed: one tree, one commit, then a fast-forward of the branch.
+        root = f"https://api.github.com/repos/{repository_path}"
+        if head_sha is None:
+            head_sha = await self._github_branch_head(
+                headers=headers, repository_path=repository_path, branch=branch
             )
-        if result is None:
-            # Every file already held this exact content; report the commit that did it.
-            result, request_id = await self._github_latest_commit(
+        base = _provider_json(
+            await self._client.get(f"{root}/git/commits/{head_sha}", headers=headers),
+            provider="GitHub",
+        )
+        base_tree = (base.get("tree") or {}).get("sha") if isinstance(base, dict) else None
+        if not isinstance(base_tree, str) or not base_tree:
+            raise IntegrationUpstreamError("GitHub default branch commit has no tree")
+        tree = _provider_json(
+            await self._client.post(
+                f"{root}/git/trees",
                 headers=headers,
-                repository_path=repository_path,
-                repository=repository,
-                branch=branch,
-                path=files[0].path,
-            )
-        return result, request_id
+                json={
+                    "base_tree": base_tree,
+                    "tree": [
+                        {
+                            "path": change.path,
+                            "mode": "100644",
+                            "type": "blob",
+                            "content": change.content,
+                        }
+                        for change, _url, _sha in pending
+                    ],
+                },
+            ),
+            provider="GitHub",
+        )
+        commit = _provider_json(
+            await self._client.post(
+                f"{root}/git/commits",
+                headers=headers,
+                json={"message": message, "tree": tree.get("sha"), "parents": [head_sha]},
+            ),
+            provider="GitHub",
+        )
+        if not isinstance(commit.get("sha"), str):
+            raise IntegrationUpstreamError("GitHub did not return the new commit")
+        # Not forced: if the branch moved since it was read, GitHub refuses and nothing lands.
+        ref_response = await self._client.patch(
+            f"{root}/git/refs/heads/{quote(branch, safe='')}",
+            headers=headers,
+            json={"sha": commit["sha"], "force": False},
+        )
+        _provider_json(ref_response, provider="GitHub")
+        return _github_commit_result(
+            {
+                "repository": repository,
+                "branch": branch,
+                "commit": commit["sha"],
+                "url": commit.get("html_url"),
+            }
+        ), ref_response.headers.get("x-github-request-id")
+
+    async def _github_branch_head(self, *, headers, repository_path, branch):
+        ref_response = await self._client.get(
+            f"https://api.github.com/repos/{repository_path}/git/ref/heads/"
+            f"{quote(branch, safe='')}",
+            headers=headers,
+        )
+        target = _provider_json(ref_response, provider="GitHub").get("object")
+        head_sha = target.get("sha") if isinstance(target, dict) else None
+        if not isinstance(head_sha, str) or not head_sha:
+            raise IntegrationUpstreamError("GitHub default branch did not resolve to a commit")
+        return head_sha
 
     async def _github_find_open_pull_request(
         self,

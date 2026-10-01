@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import asdict
+from datetime import UTC, datetime
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -30,9 +31,12 @@ CHOICE_OPERATION = "content_draft_delivery_choice_v1"
 DRAFT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000031")
 PUBLIC_ARTICLE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000009")
 ANSWER_PAGE_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000005")
+# content.refresh: approved replacements on an existing page (see content_refresh.py).
+REFRESH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000044")
+REFRESH_KIND = "refresh"
 # Runs whose approval may choose a repository delivery for that one document.
 CHOICE_WORKFLOW_IDS = frozenset(
-    {DRAFT_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID}
+    {DRAFT_WORKFLOW_ID, PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID, REFRESH_WORKFLOW_ID}
 )
 REPOSITORY_MODES = frozenset({"github_pr", "github_commit"})
 APPROVAL_CHOICES = ("github_pr", "github_commit", "none")
@@ -43,7 +47,11 @@ ADAPTER = "repository"
 ADAPTATION_OPERATION = "content_draft_adaptation_v1"
 ADAPTED_PATH = "Repository-adapted page"
 # The largest reviewed document each workflow saves; the Markdown publisher reads it whole.
-DOCUMENT_MAX_BYTES = {ANSWER_PAGE_WORKFLOW_ID: 150_000, PUBLIC_ARTICLE_WORKFLOW_ID: 300_000}
+DOCUMENT_MAX_BYTES = {
+    ANSWER_PAGE_WORKFLOW_ID: 150_000,
+    PUBLIC_ARTICLE_WORKFLOW_ID: 300_000,
+    REFRESH_WORKFLOW_ID: 40_000,
+}
 
 
 def settings_path(program_id):
@@ -60,6 +68,17 @@ def preparation_key(run_id):
 
 def github_key(run_id):
     return f"{delivery_key(run_id)}:github"
+
+
+# A refresh retried after the default branch moved reads the repository again under a new
+# attempt's keys, up to this many times.
+MAX_REFRESH_ATTEMPTS = 20
+
+
+def refresh_keys(run_id, attempt):
+    """The repository read and GitHub write keys of one refresh delivery attempt."""
+    suffix = f":{attempt}" if attempt else ""
+    return f"{run_id}:refresh_repository{suffix}", f"{github_key(run_id)}{suffix}"
 
 
 def choice_key(run_id):
@@ -578,6 +597,8 @@ class ContentDelivery:
         existing = existing.result if existing and existing.status == "completed" else None
         if run.review_decision == "approved":
             return existing  # The approval already happened; its delivery choice stands.
+        if run.workflow_id == REFRESH_WORKFLOW_ID:
+            return await self.choose_refresh(run=run, mode=mode, remember=remember, actor=actor)
         if adapt and run.workflow_id in ADAPTED_WORKFLOW_IDS and mode in REPOSITORY_MODES:
             return await self.choose_adaptation(
                 run=run,
@@ -725,6 +746,233 @@ class ContentDelivery:
                 actor=actor,
             )
         return await self.record_choice(run, record)
+
+    async def choose_refresh(self, *, run, mode, remember, actor):
+        """Pin the repository and delivery for a page refresh's approved replacements.
+
+        A refresh edits the page's existing source, so no destination path is computed:
+        Tin finds the approved old text in the repository when it delivers. A refresh
+        started outside a saved workflow uses the connected repository and cannot
+        remember the pick.
+        """
+        try:
+            program_id, _ = await self.program_for(run)
+            configured = await self.settings(project_id=run.project_id, program_id=program_id)
+        except (ValueError, LookupError):
+            program_id, configured = None, None
+        if configured is not None:
+            base = DeliverySettings.model_validate(configured["settings"])
+            available = configured["available_repository"]
+        else:
+            base = DeliverySettings()
+            connection = await self.db.get_integration_connection(
+                project_id=run.project_id, provider_key="infra.github"
+            )
+            available = (
+                connection.configuration.get("selected_repository")
+                if connection and connection.status == "connected"
+                else None
+            )
+        if mode == "none":
+            chosen = DeliverySettings.model_validate({**base.model_dump(), "mode": "draft_only"})
+            record = {"kind": REFRESH_KIND, "settings": chosen.model_dump(), "path": None}
+        else:
+            chosen = DeliverySettings.model_validate(
+                {
+                    **base.model_dump(),
+                    "mode": mode,
+                    "repository": base.repository or available or "",
+                }
+            )
+            if self.integrations is None:
+                raise ValueError("Connect GitHub before publishing to a repository.")
+            binding = await self.integrations.github_repository_binding(
+                project_id=run.project_id, expected_repository=chosen.repository
+            )
+            record = {
+                "kind": REFRESH_KIND,
+                "settings": chosen.model_dump(),
+                "settings_revision": configured["revision"] if configured else None,
+                "path": None,
+                "repository_id": binding.repository_id,
+                "connection_id": str(binding.connection_id),
+                "installation_id": binding.installation_id,
+            }
+        record["chosen_by"] = actor
+        if (
+            remember
+            and program_id is not None
+            and mode != "none"
+            and chosen.model_dump() != base.model_dump()
+        ):
+            await self.save_settings(
+                project_id=run.project_id,
+                program_id=program_id,
+                settings=chosen,
+                request_id=uuid5(NAMESPACE_URL, f"tin:delivery-choice:{run.id}:{mode}"),
+                expected_revision=configured["revision"],
+                actor=actor,
+            )
+        return await self.record_choice(run, record)
+
+    async def deliver_refresh(self, run, intent):
+        """Apply exactly the approved replacements to the site's source, then commit or open a PR.
+
+        Tin finds each approved old text in the repository itself and changes nothing else
+        (content_refresh.plan_patch verifies it). Text the source does not hold verbatim, or
+        holds in several unrelated places, stops the delivery with the reason.
+        """
+        from tin_lite import content_refresh
+        from tin_lite.content_refresh_sources import ContentRefreshSources
+        from tin_lite.technical_build_profile import archive_files
+
+        if run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
+            raise ValueError("Approve this refresh before publishing it.")
+        direct_commit = chosen_mode(intent) == "github_commit"
+        key = delivery_key(run.id)
+        async with self.db.effect_lock(key, OPERATION) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return
+            await self.db.start_effect(conn, execution_key=key, operation=OPERATION)
+            try:
+                if self.integrations is None:
+                    raise ValueError("GitHub is unavailable. Reconnect it, then retry delivery.")
+                context = await ContentRefreshSources(database=self.db, storage=self.storage).saved(
+                    run.id
+                )
+                if not context or not context.get("page"):
+                    raise ValueError("This refresh has no pinned page.")
+                raw, _, _ = await self.document_source(run)
+                items = content_refresh.validate_document(raw, context)
+                binding = await self.integrations.github_repository_binding(
+                    project_id=run.project_id, expected_repository=intent["settings"]["repository"]
+                )
+                if str(binding.repository_id) != str(intent["repository_id"]) or str(
+                    binding.connection_id
+                ) != str(intent["connection_id"]):
+                    raise ValueError(
+                        "The GitHub connection changed after this refresh was approved."
+                    )
+                read_key, write_key = refresh_keys(
+                    run.id, await self.refresh_attempt(run.id, binding.head_sha)
+                )
+                bundle = await self.integrations.github_repository_bundle(
+                    project_id=run.project_id,
+                    run_id=run.id,
+                    execution_key=read_key,
+                    expected_binding=binding,
+                )
+                if not getattr(bundle, "complete", True):
+                    raise ValueError(
+                        "The repository is too large for Tin to search completely, so it will "
+                        "not guess where the page's text lives. Change it by hand."
+                    )
+                changed = content_refresh.plan_patch(archive_files(bundle.archive), items)
+                files = tuple(
+                    GitHubFileChange(path=path, content=text) for path, text in changed.items()
+                )
+                page = context["page"]["path"]
+                title = f"Refresh: {page}"[:200]
+                if direct_commit:
+                    result = await self.integrations.github_commit_files(
+                        project_id=run.project_id,
+                        run_id=run.id,
+                        execution_key=write_key,
+                        message=title,
+                        files=files,
+                        base_branch=binding.default_branch,
+                        expected_binding=binding,
+                    )
+                else:
+                    result = await self.integrations.github_create_pull_request(
+                        project_id=run.project_id,
+                        run_id=run.id,
+                        execution_key=write_key,
+                        title=title,
+                        body=content_refresh.patch_body(context, items),
+                        files=files,
+                        base_branch=binding.default_branch,
+                        expected_base_sha=binding.head_sha,
+                        expected_binding=binding,
+                        allow_unrelated_base_advance=True,
+                    )
+                result = {
+                    **asdict(result),
+                    "page": context["page"]["url"],
+                    "changed_paths": sorted(changed),
+                    "replacements_sha256": content_refresh.document_digest(items),
+                    # A commit is live on the default branch now; a PR once it merges.
+                    "delivered_at": datetime.now(UTC).isoformat(),
+                }
+                if direct_commit:
+                    short = result["commit"][:7]
+                    event = {
+                        "event_type": "content_refresh_commit_ready",
+                        "summary": f"The approved refresh of {page} is committed as {short}.",
+                        "external_label": f"View commit {short}",
+                    }
+                else:
+                    event = {
+                        "event_type": "content_refresh_pull_request_ready",
+                        "summary": f"The approved refresh of {page} is ready as PR "
+                        f"#{result['number']}.",
+                        "external_label": f"Review PR #{result['number']}",
+                    }
+                async with conn.transaction():
+                    await self.db.complete_effect(conn, execution_key=key, result=result)
+                    await self.db.add_activity(
+                        run_id=run.id,
+                        event_type=event["event_type"],
+                        audience="product",
+                        summary=event["summary"],
+                        details={
+                            "kind": "runs",
+                            "status": "succeeded",
+                            "external_url": result["url"],
+                            "external_label": event["external_label"],
+                            "repository": result["repository"],
+                            "artifact_ref": run.artifact_ref,
+                        },
+                        dedupe_key=f"{key}:ready",
+                        conn=conn,
+                    )
+            except Exception as exc:
+                error = (
+                    str(exc)[:500]
+                    if isinstance(exc, (ValueError, IntegrationAuthorizationError))
+                    else "GitHub delivery could not be confirmed. "
+                    "Retry delivery; the approved refresh is safe."
+                )
+                await self.db.fail_effect(conn, execution_key=key, error_message=error)
+                raise
+
+    async def refresh_attempt(self, run_id, head_sha):
+        """Which delivery attempt a refresh uses now.
+
+        An attempt that committed, opened a pull request, or may have done either keeps its
+        keys, so a retry replays or recovers it. When the attempt's write failed or never
+        started and the default branch has moved since its repository read, a new attempt
+        reads the current head instead of replaying the old one.
+        """
+        for attempt in range(MAX_REFRESH_ATTEMPTS):
+            read_key, write_key = refresh_keys(run_id, attempt)
+            write = await self.db.get_integration_call_receipt(write_key)
+            if write is not None and write.status != "failed":
+                return attempt
+            read = await self.db.get_integration_call_receipt(read_key)
+            summary = read.response_summary if read is not None else None
+            if read is None or (
+                write is None
+                and (
+                    read.status != "completed"
+                    or (isinstance(summary, dict) and summary.get("head_sha") == head_sha)
+                )
+            ):
+                return attempt
+        raise ValueError(
+            "This refresh failed to deliver too many times. Apply it by hand or ask your "
+            "coding agent."
+        )
 
     async def record_choice(self, run, record):
         key = choice_key(run.id)
@@ -961,6 +1209,8 @@ class ContentDelivery:
         if not intent or adapted(intent):
             # An adapted page ships through content.deliver (see adapt), never as plain Markdown.
             return
+        if intent.get("kind") == REFRESH_KIND:
+            return await self.deliver_refresh(run, intent)
         if run.workflow_id == DRAFT_WORKFLOW_ID:
             from tin_lite.content_editorial_judgment import NO_DRAFT, saved
 

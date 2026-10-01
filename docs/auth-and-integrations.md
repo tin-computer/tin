@@ -30,11 +30,13 @@ checking it.
 The shared Clerk instance advertises Dynamic Client Registration so MCP clients that do not support
 Client ID Metadata Documents can connect. Clerk requires consent for those clients and applies only
 the standard `openid` scope when a client omits scopes. Tin does not use that scope as a substitute
-for authorization: Tin requires an exact client ID in `TIN_LITE_MCP_OAUTH_CLIENT_IDS`, checks
-returned audience/resource claims, and every MCP tool still resolves the Clerk user to a local
-project membership. The same OAuth policy protects connection setup. The empty client list
-disables OAuth access while preserving browser sessions; see
-[client admission and rollout](clerk-agent-connection.md#oauth-client-admission). When
+for authorization: an access token must be bound to Tin's resource (`TIN_LITE_PUBLIC_URL` plus
+`/mcp`) in its audience or resource claims, checked against both Clerk's introspection and the
+signature-verified token, and every MCP tool still resolves the Clerk user to a local project
+membership. The same OAuth policy protects connection setup. `TIN_LITE_MCP_OAUTH_CLIENT_IDS` is
+only an optional exception for legacy clients whose tokens carry no resource binding. Leaving it
+empty refuses those unbound tokens; it does not turn MCP OAuth off. See
+[OAuth resource binding](clerk-agent-connection.md#oauth-resource-binding). When
 CIMD is generally available, prefer explicitly allowed CIMD clients and turn off public dynamic
 registration if the supported client set makes that practical.
 

@@ -610,6 +610,7 @@ def test_github_pr_workflows_and_worker_verification_are_supported():
     old = definition["key"]
     definition["key"] = "custom.site_fix"
     definition.pop("presentation", None)
+    definition.pop("public_discovery", None)  # Catalog visibility is not a private field.
     definition["schedule_modes"] = ["on_demand"]
     # The private authoring language deliberately excludes legacy regex inputs.
     definition["input_schema"] = json.loads(

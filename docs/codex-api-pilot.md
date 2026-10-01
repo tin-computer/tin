@@ -27,7 +27,8 @@ inputs, version chooser, new saved configuration, or new executor are added.
 Studio's protected API runner and fal accounting are described in
 [Studio API and hosted credits](studio-api-and-hosted-credits.md), including its
 acceptance/rollout status. Native model-service routing is unchanged. The
-switchboard still needs its legacy broker for historical OAuth runs.
+legacy broker is removed: historical OAuth runs keep their artifacts and billing pins but cannot
+start new compute ([API-only Codex execution](oauth-credential-security.md)).
 The existing project-scoped Temporal execution gate and trusted activity lane are unchanged.
 
 Procedure retry recovery is independent of the funding policy: it never purchases a second

@@ -158,3 +158,60 @@ async def context_files(*, storage, project, revision, paths):
             }
         )
     return result
+
+
+# Where a project's positioning lives: brand guide, project memory, the Start here plan and up
+# to five founder notes. Read at plan time, bounded, and pinned in the plan's saved context.
+POSITIONING_PATHS = ("brand/BRAND.md", "wiki/INDEX.md", "reports/GROWTH_ONBOARDING_PLAN.md")
+POSITIONING_CONTEXT_PREFIX = "context/"
+POSITIONING_NOTES = 5
+POSITIONING_FILE_BYTES = 8_000
+POSITIONING_TOTAL_BYTES = 30_000
+
+
+async def _read_if_exists(storage, project, revision, path):
+    read = getattr(storage, "read_canonical_artifact_if_exists", None)
+    if read is not None:
+        return await read(repo_id=project.state_repo_id, commit_sha=revision, path=path)
+    try:
+        return await storage.read_canonical_artifact(
+            repo_id=project.state_repo_id, commit_sha=revision, path=path
+        )
+    except LookupError:
+        return None
+
+
+async def positioning_files(*, storage, project, revision, include_memory=True):
+    """The project's own positioning, bounded. Missing files are simply absent; the plan then
+    says so in its gaps instead of inventing a positioning."""
+    paths = [path for path in POSITIONING_PATHS if include_memory or path != "wiki/INDEX.md"]
+    list_files = getattr(storage, "list_canonical_files_at", None)
+    if list_files is not None:
+        listed = await list_files(repo_id=project.state_repo_id, revision=revision)
+        paths += sorted(
+            path
+            for path in listed
+            if path.startswith(POSITIONING_CONTEXT_PREFIX)
+            and path.endswith(".md")
+            and safe_project_file_path(path)
+        )[:POSITIONING_NOTES]
+    result, total = [], 0
+    for path in paths:
+        raw = await _read_if_exists(storage, project, revision, path)
+        if not raw:
+            continue
+        excerpt = raw[:POSITIONING_FILE_BYTES].decode("utf-8", errors="ignore")
+        size = len(excerpt.encode())
+        if total + size > POSITIONING_TOTAL_BYTES:
+            break
+        total += size
+        result.append(
+            {
+                "path": path,
+                "revision": revision,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "truncated": len(raw) > POSITIONING_FILE_BYTES,
+                "content": excerpt,
+            }
+        )
+    return result

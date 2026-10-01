@@ -294,19 +294,19 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
         name = request.get("text", {}).get("format", {}).get("name")
         if name == "BuyerPanel":
             return response(json.dumps(panel_fixture()))
-        if name == "PanelValidation":
-            return response(
-                json.dumps(
-                    {"accepted": True, "explanation": "All questions are grounded and unbranded."}
-                ),
-                search=False,
-            )
-        if name == "AnswerJudgment":
+        if name in {"PanelValidation", "PanelReview"}:
+            value = {"accepted": True, "explanation": "All questions are grounded and unbranded."}
+            if name == "PanelReview":
+                value["rejected_questions"] = []
+            return response(json.dumps(value), search=False)
+        if name == "AnswerGrade":
             return response(
                 json.dumps(
                     {
                         "mentioned": True,
                         "mention_quote": "Acme is not suitable for this buyer.",
+                        "evaluated": True,
+                        "evaluation_quote": "Acme is not suitable for this buyer.",
                         "shortlisted": False,
                         "shortlist_quote": "",
                         "selected_first": False,
@@ -323,8 +323,9 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
     first_calls = len(calls)
     await finish(activities, run)
     # Research, draft, four blind interpretations, review, 12 answer/judge pairs (three answers
-    # to each of four questions), 2 branded probes.
-    assert len(calls) == first_calls == 33
+    # to each of four questions with web search), 4 answer/judge pairs without web search,
+    # 2 branded probes.
+    assert len(calls) == first_calls == 41
     await activities.organic_project(str(run.id))
     saved = await publication_db.get_run(run.id)
     evidence = json.loads(

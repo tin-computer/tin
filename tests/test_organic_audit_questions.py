@@ -53,6 +53,8 @@ def judge(mentioned):
             {
                 "mentioned": mentioned,
                 "mention_quote": quote,
+                "evaluated": mentioned,
+                "evaluation_quote": quote,
                 "shortlisted": mentioned,
                 "shortlist_quote": quote,
                 "selected_first": False,
@@ -88,9 +90,11 @@ def test_limit_keeps_the_first_jobs_and_recomputes_the_question_set_digest():
 async def test_first_audit_drafts_two_buyer_jobs_with_three_answers_each():
     activities, db, _, _ = await activities_fixture()
     run_id = str(db.run.id)
-    assert await draft_first_panel(activities, run_id) == 24
+    # Eight questions, three answers each with web search and one without: 32.
+    assert await draft_first_panel(activities, run_id) == 32
     panel = await activities._result(run_id, "panel")
-    assert panel["repetitions"] == 3 and panel["planned_observations"] == 24
+    assert panel["repetitions"] == 3 and panel["planned_observations"] == 32
+    assert panel["unsearched"] is True
     assert list(dict.fromkeys(q["job"] for q in panel["questions"])) == JOBS[:2]
     requests = [call.args[0] for call in activities.responses.create.await_args_list]
     # Only the eight kept questions were interpreted; the third job was never reviewed.
@@ -129,7 +133,7 @@ def previous_audit(db, *, market="US", host="example.com", repetitions=3, mentio
     source = SimpleNamespace(id=uuid4())
     panel = frozen_panel()
     if repetitions:
-        panel = limit_panel(panel, max_jobs=2, repetitions=repetitions)
+        panel = limit_panel(panel, max_jobs=2, repetitions=repetitions, unsearched=True)
     panel = {"status": "completed", **panel}
     effects = {
         "scope": {
@@ -140,8 +144,8 @@ def previous_audit(db, *, market="US", host="example.com", repetitions=3, mentio
         },
         "panel": panel,
     }
-    for index in range(panel["planned_observations"]):
-        reps = repetitions or 2
+    reps = repetitions or 2
+    for index in range(len(panel["questions"]) * reps):
         effects[f"observation:{index}"] = {
             "status": "completed",
             "index": index,
@@ -169,7 +173,7 @@ async def test_a_later_audit_reuses_the_frozen_questions_without_paid_preparatio
     run_id = str(db.run.id)
     source, panel = previous_audit(db, mentioned={0})
     activities.responses = SimpleNamespace(create=AsyncMock(side_effect=AssertionError))
-    assert await activities.organic_prepare_panel(run_id) == 12
+    assert await activities.organic_prepare_panel(run_id) == 16
     assert await activities._result(run_id, "panel") == panel
     preparation = await activities._result(run_id, "panel_preparation")
     assert preparation["method"] == "reused_frozen_panel"
@@ -190,11 +194,12 @@ async def test_a_later_audit_reuses_the_frozen_questions_without_paid_preparatio
                 judge(True),
                 answer("Acme is a good fit."),
                 judge(True),
-                *[answer() for _ in range(10)],
+                *[answer() for _ in range(14)],
             ]
         )
     )
-    for index in range(12):
+    # Twelve answers with web search, then one without for each of the four questions.
+    for index in range(16):
         await activities.organic_observe({"run_id": run_id, "index": index})
     await activities.organic_start_crawl(run_id)
     assert await activities.organic_poll_crawl(run_id)
@@ -228,7 +233,7 @@ async def test_questions_from_another_market_host_or_policy_are_not_reused(chang
     activities, db, _, _ = await activities_fixture()
     run_id = str(db.run.id)
     previous_audit(db, **change)
-    assert await draft_first_panel(activities, run_id) == 24
+    assert await draft_first_panel(activities, run_id) == 32
     assert (await activities._result(run_id, "panel_preparation"))["method"] != (
         "reused_frozen_panel"
     )
@@ -242,7 +247,7 @@ async def test_refresh_questions_drafts_a_new_set_and_starts_a_new_comparison():
     db.run = replace(db.run, input={**db.run.input, "refresh_questions": True})
     run_id = str(db.run.id)
     previous_audit(db)
-    assert await draft_first_panel(activities, run_id) == 24
+    assert await draft_first_panel(activities, run_id) == 32
     assert db.list_prerequisite_runs.await_count == 0
     assert await activities._result(run_id, "panel_baseline") is None
 
@@ -291,7 +296,12 @@ async def test_a_retry_keeps_the_source_it_already_chose():
     other["questions"][0]["question"] = "Which apps help a small team schedule shared work?"
     other = {
         "status": "completed",
-        **limit_panel({k: v for k, v in other.items() if k != "status"}, max_jobs=2, repetitions=3),
+        **limit_panel(
+            {k: v for k, v in other.items() if k != "status"},
+            max_jobs=2,
+            repetitions=3,
+            unsearched=True,
+        ),
     }
     from tin_lite.domain import EffectReceipt
 
@@ -299,7 +309,7 @@ async def test_a_retry_keeps_the_source_it_already_chose():
     db.effects[key] = EffectReceipt(key, "organic.audit", "completed", other)
     assert other["sha256"] != panel["sha256"]
     db.list_prerequisite_runs.return_value = [("organic.audit", newer), ("organic.audit", first)]
-    assert await activities.organic_prepare_panel(run_id) == 12
+    assert await activities.organic_prepare_panel(run_id) == 16
     assert await activities._result(run_id, "panel") == panel
     baseline = await activities._result(run_id, "panel_baseline")
     assert baseline["source_run_id"] == str(first.id)
