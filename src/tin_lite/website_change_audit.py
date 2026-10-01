@@ -548,6 +548,44 @@ async def guard_source(conn, *, project_id, inputs, source) -> None:
 
 # --- Preparation, the sandbox and the report ----------------------------------------------
 
+# Preparation outcomes where Tin couldn't do the job, so the run ends failed rather than
+# succeeded with "no change": it couldn't read the repository (an incomplete snapshot, an
+# unreadable archive) or the plan was too large to hand over. Nothing to change, already
+# resolved or rows waiting for approval still succeed. This mirrors
+# technical_fix.preparation_failed and preparation_summary from #276 (fix/experiment-1oct);
+# switch to those helpers once both are on main.
+FAILED_REASONS = frozenset({"repository_incomplete", "unsupported_source", "plan_too_large"})
+
+
+def preparation_failed(prepared: dict) -> bool:
+    """Whether a run that stopped in preparation failed, rather than found nothing to change."""
+    return prepared.get("reason") in FAILED_REASONS
+
+
+def missing_files(prepared: dict) -> list[str]:
+    """The files the snapshot left out, when preparation recorded them (#276 does)."""
+    return [
+        str(item.get("path") if isinstance(item, dict) else item)
+        for item in prepared.get("repository_missing") or []
+    ]
+
+
+def preparation_summary(prepared: dict) -> str:
+    """The run's one-line outcome; for a failed run, its error message, naming the files."""
+    if not preparation_failed(prepared):
+        return "Website changes checked. No change proposed."
+    files = missing_files(prepared)
+    total = prepared.get("repository_missing_count") or len(files)
+    more = total - min(3, len(files))
+    named = "; ".join(files[:3]) + (f"; and {more} more" if files and more > 0 else "")
+    if prepared["reason"] == "plan_too_large":
+        return "The repair plan is too large to hand to Codex in one run. No change proposed."
+    return (
+        "Tin couldn't read every file in the repository"
+        + (f": {named}" if named else "")
+        + ". No change proposed."
+    )[:900]
+
 
 def report(prepared: dict, source: dict, *, reason=None, pull_request=None) -> bytes:
     """site-fix-v5's report, with the change rows and whether Tin merges them."""
@@ -564,6 +602,13 @@ def report(prepared: dict, source: dict, *, reason=None, pull_request=None) -> b
         )
         lines.append(f"- `{change['change_id']}` ({change['kind']}): {state}.")
     lines.append("")
+    if reason and missing_files(prepared):
+        lines += [
+            "Files Tin couldn't read:",
+            "",
+            *(f"- {path}" for path in missing_files(prepared)),
+        ]
+        lines.append("")
     marker = "## How it was checked"
     head, _, tail = text.partition(marker)
     return (head + "\n".join(lines) + "\n" + marker + tail).encode()
@@ -596,7 +641,9 @@ async def prepare(*, database, storage, integrations, run) -> bool:
             prefix="technical",
             path=f"website/changes/{run.id}.md",
             content=report(prepared, source, reason=prepared["reason"]),
-            summary="Website changes checked. No change proposed.",
+            summary=preparation_summary(prepared),
+            # A run that couldn't read the repository failed; it didn't find the site fine.
+            failed=preparation_failed(prepared),
         )
         return True
 
