@@ -102,6 +102,9 @@ def fixture(origin: str):
             assert user_id == "user_Synthetic"
 
     class Storage:
+        async def canonical_file_modified_dates(self, **kwargs):
+            return {}
+
         async def list_canonical_files(self, **kwargs):
             return list(files), REVISION
 

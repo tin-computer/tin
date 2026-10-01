@@ -70,6 +70,7 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         "social.post_batch",
         PublicMCPExposure("start_social_post_batch", destructive=True, open_world=False),
     ),
+    PublicWorkflow(UUID("3eebd981-bc95-4c50-86a1-0643155270bc"), "social.x_compose"),
     PublicWorkflow(
         UUID("a94f3a5d-d58c-4e91-b6bb-c1e047dc8372"),
         "brand.capture",
@@ -150,6 +151,8 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         "outreach.newsletter_placements",
         PublicMCPExposure("start_newsletter_placements", destructive=True, open_world=True),
     ),
+    PublicWorkflow(UUID("234d05ce-c9e6-46c5-8299-5ec3973645ef"), "competitor.sunset_rescue"),
+    PublicWorkflow(UUID("4cfd20c4-6aaa-46d7-a5c1-1f67032a4358"), "growth.framework_starter"),
 )
 
 

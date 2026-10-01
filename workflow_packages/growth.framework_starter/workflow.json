@@ -1,0 +1,102 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.framework_starter",
+    "title": "Add a starter developers can clone",
+    "description": "For a product developers build on: find the SDK, API, webhook or embed a developer calls first in your connected repository, pick the framework its users build with, and open an unmerged PR adding a small runnable starter under examples/ with a five-minute README. Says no when there is nothing a developer integrates, and never repeats a starter. Never merges, deploys, publishes a package or creates a repository.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "framework": {
+          "type": "string",
+          "enum": ["", "nextjs", "fastapi", "vite-react", "express"],
+          "default": "",
+          "title": "Framework",
+          "description": "Leave empty to use the best fit that has no starter yet.",
+          "x-tin-ui": {"control": "select", "order": 10}
+        },
+        "use_case": {
+          "type": "string",
+          "maxLength": 300,
+          "default": "",
+          "title": "Optional capability to show",
+          "description": "What the starter should demonstrate. Leave empty to use the clearest capability in your Feature map.",
+          "x-tin-ui": {"control": "textarea", "order": 20}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "Points the run at the public API, SDK, webhooks or embed in the repository."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "Names the capability that shows the product's value fastest."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "Names the developer the product is for and the founder's hard no's."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "Keeps the starter README in the founder's voice."
+      }
+    ],
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "contents.write", "pull_requests.read", "pull_requests.write"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/framework-starter/SKILL.md",
+        "skills/framework-starter/FRAMEWORKS.md",
+        "skills/framework-starter/CHECK.md",
+        "skills/framework-starter/RESULT.md"
+      ],
+      "entry_skill": "framework-starter",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "pull_requests.read"]
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 900},
+      "output": {
+        "kind": "github.pull_request",
+        "provider_key": "infra.github",
+        "max_files": 10,
+        "max_bytes": 120000,
+        "receipt_path_template": "reports/framework-starter/{run_id}/RESULT.md",
+        "allow_no_change": true
+      },
+      "verification": {
+        "commands": ["git diff --check", "git status --short"]
+      }
+    }
+  }
+}

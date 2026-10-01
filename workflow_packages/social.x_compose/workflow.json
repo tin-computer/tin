@@ -1,0 +1,42 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "social.x_compose",
+    "title": "Compose X posts directly",
+    "description": "Composition step; use Draft for X for automatic voice setup. Turn current project facts and your direction into one X draft or a small set of distinct drafts, ready for individual review and editing.",
+    "version": "1.0.1",
+    "executor": "workflow.code",
+    "system": "x",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "direction": {"type": "string", "minLength": 8, "maxLength": 4000, "title": "What should this post say?", "x-tin-ui": {"control": "textarea"}},
+        "post_count": {"type": "integer", "minimum": 1, "maximum": 6, "default": 1, "title": "Number of posts"},
+        "notes": {"type": "string", "maxLength": 8000, "title": "Current facts or preferences", "x-tin-ui": {"control": "textarea"}},
+        "evidence_paths": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 512}, "title": "Relevant project files"},
+        "plan_path": {"type": "string", "maxLength": 512, "title": "Optional social plan"},
+        "asset_paths": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 512}, "title": "Existing images or video"},
+        "account_id": {"type": "string", "maxLength": 24, "title": "Connected X account ID, if known"}
+      },
+      "required": ["project_id", "direction"]
+    },
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py", "x_text.py"],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "compose": {"provider": "openai", "model": "gpt-6-sol", "max_calls": 1, "max_input_bytes": 32000, "max_output_tokens": 4096}
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "social/x-drafts/{date}-{slug}.json",
+        "media_type": "application/json",
+        "max_bytes": 24000
+      }
+    }
+  }
+}

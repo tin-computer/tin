@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, R
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
@@ -54,6 +54,7 @@ from tin_lite.integrations import (
     GSC_PROVIDER,
     POSTHOG_PROVIDER,
     STRIPE_PROVIDER,
+    X_PROVIDER,
     GitHubInstallationChoiceError,
     GitHubInstallationRequiredError,
     IntegrationAuthorizationError,
@@ -91,7 +92,9 @@ from tin_lite.project_files import (
     ProjectFileMutationInput,
     StaleProjectRevisionError,
     safe_project_file_path,
+    safe_project_search_path,
 )
+from tin_lite.project_media import MAX_IMAGE_BYTES, MAX_VIDEO_BYTES, MEDIA_TYPES
 from tin_lite.projects import (
     ProjectCreationConflictError,
     ProjectProvisioningError,
@@ -112,9 +115,11 @@ from tin_lite.run_service import (
 from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
+from tin_lite.website_change_api import router as website_change_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
+from tin_lite.x_posts import XPosts
 
 
 class _RunSafeRoute(APIRoute):
@@ -144,6 +149,7 @@ router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
 router.include_router(public_catalog_router)
+router.include_router(website_change_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)
@@ -391,6 +397,8 @@ ASSET_VERSION = hashlib.sha256(
             "content-delivery.js",
             "style-capture.js",
             "content-draft.js",
+            "x-posts.js",
+            "x-posts.css",
             "delimited-viewer.js",
             "json-viewer.js",
             "diagram-loader.js",
@@ -641,6 +649,7 @@ class RunView(BaseModel):
     review_version: int = 1
     review_decision: str | None = None
     selected_sources: dict = Field(default_factory=dict)
+    x_draft: dict | None = None
     review_requested_at: datetime | None = None
     reviewed_at: datetime | None = None
     system_wiki_commit_sha: str | None = None
@@ -901,6 +910,8 @@ class DecisionApply(BaseModel):
 class WorkflowRevisionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    post_id: str = Field(default="", max_length=2)
+
     feedback: str = Field(min_length=1, max_length=8000)
     reference_files: list[str] = Field(default_factory=list, max_length=8)
     request_id: UUID
@@ -1108,10 +1119,12 @@ class MarkdownDocumentView(BaseModel):
     revision: str | None = None
     size_bytes: int | None = None
     related_documents: list[dict[str, str]] = Field(default_factory=list)
+    sha256: str | None = None
 
 
 class ProjectFileView(BaseModel):
     path: str
+    modified_at: datetime | None = None
 
 
 class ProjectFilesView(BaseModel):
@@ -1127,6 +1140,29 @@ class ProjectFilesCommit(BaseModel):
     expected_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
     message: str = Field(min_length=1, max_length=240)
     changes: list[ProjectFileMutationInput] = Field(min_length=1, max_length=50)
+
+
+class XDraftSave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    expected_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    request_id: UUID
+    draft: dict[str, Any]
+
+
+class XPostPreview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    post_id: str = Field(pattern=r"^p[1-6]$")
+
+
+class XPostPublish(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    preview_token: UUID
+    request_id: UUID
 
 
 class ProjectFilesRevert(BaseModel):
@@ -1278,6 +1314,7 @@ async def authentication_ui(request: Request) -> HTMLResponse:
 @router.get("/integrations/callback/google", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/github", response_class=HTMLResponse, include_in_schema=False)
 @router.get("/integrations/callback/posthog", response_class=HTMLResponse, include_in_schema=False)
+@router.get("/integrations/callback/x", response_class=HTMLResponse, include_in_schema=False)
 @router.get(
     "/integrations/callback/github-account", response_class=HTMLResponse, include_in_schema=False
 )
@@ -1683,6 +1720,27 @@ async def complete_posthog_integration(
     except IntegrationError as exc:
         raise _integration_http_error(exc) from None
     return _integration_view(service._definition(POSTHOG_PROVIDER), connection, configured=True)
+
+
+@router.post("/api/integrations/x/complete", response_model=IntegrationView)
+async def complete_x_integration(
+    payload: GoogleIntegrationComplete,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> IntegrationView:
+    """Finish the project-bound X PKCE grant after verifying the member and state."""
+    service = request.app.state.runtime.integrations
+    try:
+        project_id = await service.x.pending_project(
+            state=payload.state, clerk_user_id=user.clerk_user_id
+        )
+        await _require_project_access(project_id, request, user)
+        connection = await service.x.complete(
+            state=payload.state, code=payload.code, clerk_user_id=user.clerk_user_id
+        )
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from None
+    return _integration_view(service._definition(X_PROVIDER), connection, configured=True)
 
 
 @router.post(
@@ -2259,14 +2317,171 @@ async def delete_project(
     return ProjectDeletionView(**result)
 
 
+def _x_posts_service(request: Request) -> XPosts:
+    return XPosts(request.app.state.runtime, request.app.state.settings)
+
+
+@router.get("/api/projects/{project_id}/x/drafts")
+async def read_x_drafts(
+    project_id: UUID,
+    request: Request,
+    path: str = Query(min_length=1, max_length=512),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).read(project_id, user.clerk_user_id, path)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid or unavailable.") from exc
+
+
+@router.put("/api/projects/{project_id}/x/drafts")
+async def save_x_draft(
+    project_id: UUID,
+    payload: XDraftSave,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).save(
+            project_id,
+            user.clerk_user_id,
+            path=payload.path,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+            draft=payload.draft,
+            client_id="browser",
+        )
+    except (StaleProjectRevisionError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=422, detail="X draft has an invalid field or path."
+        ) from exc
+
+
+@router.post("/api/projects/{project_id}/x/preview")
+async def preview_x_post(
+    project_id: UUID,
+    payload: XPostPreview,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).preview(
+            project_id, user.clerk_user_id, path=payload.path, post_id=payload.post_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/projects/{project_id}/x/publish")
+async def publish_x_post(
+    project_id: UUID,
+    payload: XPostPublish,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await _x_posts_service(request).publish(
+            project_id,
+            user.clerk_user_id,
+            preview_token=payload.preview_token,
+            request_id=payload.request_id,
+            client_id="browser",
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except IntegrationError as exc:
+        raise _integration_http_error(exc) from exc
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail="X draft is invalid.") from exc
+    except (ValueError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BillingError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+    except (TemporalStartError, WorkflowExecutorUnavailableError) as exc:
+        raise HTTPException(
+            status_code=503, detail="X delivery could not start; retry the same request ID."
+        ) from exc
+
+
+@router.post("/api/projects/{project_id}/files/upload")
+async def upload_project_media(
+    project_id: UUID,
+    request: Request,
+    request_id: UUID,
+    path: str = Query(min_length=1, max_length=512),
+    expected_revision: str = Query(pattern=r"^[0-9a-f]{40}$"),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Store one bounded image/video in project Files; bytes never enter MCP or JSON."""
+    project = await _require_project_access(project_id, request, user)
+    expected_media_type = MEDIA_TYPES.get(PurePosixPath(path).suffix.lower())
+    actual_media_type = request.headers.get("content-type", "").split(";", 1)[0].lower()
+    if (
+        not safe_project_file_path(path)
+        or not expected_media_type
+        or actual_media_type != expected_media_type
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail="Choose a JPEG, PNG or MP4 project file with its matching content type.",
+        )
+    limit = MAX_VIDEO_BYTES if expected_media_type == "video/mp4" else MAX_IMAGE_BYTES
+    if request.headers.get("content-length"):
+        try:
+            if int(request.headers["content-length"]) > limit:
+                raise HTTPException(
+                    status_code=413, detail="Media file exceeds the supported size."
+                )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="Invalid content length.") from exc
+    chunks = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit:
+            raise HTTPException(status_code=413, detail="Media file exceeds the supported size.")
+        chunks.append(chunk)
+    try:
+        return await request.app.state.runtime.project_files.upload(
+            project=project,
+            actor_clerk_user_id=user.clerk_user_id,
+            client_id="browser",
+            request_id=request_id,
+            expected_revision=expected_revision,
+            path=path,
+            content=b"".join(chunks),
+            media_type=actual_media_type,
+        )
+    except (StaleProjectRevisionError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 @router.get(
     "/api/projects/{project_id}/files",
     response_model=ProjectFilesView,
+    response_model_exclude_none=True,
 )
 async def list_project_files(
     project_id: UUID,
     request: Request,
     revision: str | None = Query(default=None, pattern=r"^[0-9a-f]{40}$"),
+    include_modified: bool = False,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectFilesView:
     project = await _require_project_access(project_id, request, user)
@@ -2287,10 +2502,17 @@ async def list_project_files(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="project files are not available",
         ) from exc
+    dates = (
+        await request.app.state.runtime.storage.canonical_file_modified_dates(
+            repo_id=project.state_repo_id, revision=resolved_revision
+        )
+        if include_modified
+        else {}
+    )
     return ProjectFilesView(
         project_id=project.id,
         revision=resolved_revision,
-        files=[ProjectFileView(path=path) for path in paths],
+        files=[ProjectFileView(path=path, modified_at=dates.get(path)) for path in paths],
     )
 
 
@@ -2308,7 +2530,7 @@ async def search_project_files(
     user: AuthContext = AUTHENTICATED_USER,
 ) -> ProjectFileSearchView:
     project = await _require_project_access(project_id, request, user)
-    if path and any(not safe_project_file_path(item) for item in path):
+    if path and any(not safe_project_search_path(item) for item in path):
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="unsafe path")
     if revision is None:
         _, revision = await request.app.state.runtime.storage.list_canonical_files(
@@ -2323,6 +2545,14 @@ async def search_project_files(
             paths=path,
             limit=limit,
         )
+    except LookupError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="revision not found"
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)
+        ) from exc
     except Exception as exc:
         storage_status = getattr(exc, "status_code", None)
         response_status = getattr(getattr(exc, "response", None), "status_code", None)
@@ -2764,7 +2994,9 @@ async def update_project_workflow(
             revision=existing.definition_commit_sha,
             input_schema=existing.input_schema,
         )
-        _ensure_workflow_schedule_allowed(workflow.definition, payload.schedule)
+        _ensure_workflow_schedule_allowed(
+            workflow.definition, payload.schedule, previous=existing.schedule
+        )
         inputs = normalize_workflow_inputs(
             schema=existing.input_schema,
             project_id=project_id,
@@ -2791,11 +3023,9 @@ async def update_project_workflow(
             workflow_key=existing.workflow_key,
             workflow_title=existing.workflow_title,
         )
+        # Pause state comes from the saved row, which a pause may have changed since `existing`.
         configured = await _sync_project_workflow_schedule(
-            configured,
-            request,
-            previous_schedule=existing.schedule,
-            paused=existing.status == "paused",
+            configured, request, previous_schedule=existing.schedule
         )
     except StaleSettingsRevisionError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
@@ -2829,10 +3059,14 @@ def _changed_project_workflow_fields(
     return changed
 
 
-def _ensure_workflow_schedule_allowed(definition: dict, schedule: WorkflowSchedule | None) -> None:
+def _ensure_workflow_schedule_allowed(
+    definition: dict, schedule: WorkflowSchedule | None, *, previous: dict | None = None
+) -> None:
+    from tin_lite.schedules import require_saveable_schedule
     from tin_lite.workflow_definitions import ensure_schedule_allowed
 
     ensure_schedule_allowed(definition, schedule)
+    require_saveable_schedule(schedule, previous=previous)
 
 
 @router.post(
@@ -2896,7 +3130,7 @@ async def start_project_workflow_run(
                 database=request.app.state.runtime.database,
                 settings=request.app.state.settings,
                 run=run,
-            )
+            ),
         }
     )
 
@@ -3341,7 +3575,6 @@ async def _sync_project_workflow_schedule(
 ) -> ProjectWorkflow:
     from tin_lite.project_workflow_operations import sync_project_workflow
 
-    database = request.app.state.runtime.database
     try:
         return await sync_project_workflow(
             runtime=request.app.state.runtime,
@@ -3351,9 +3584,13 @@ async def _sync_project_workflow_schedule(
             paused=paused,
         )
     except Exception as exc:
-        await database.project_workflow_failed(
-            project_workflow_id=configured.id,
-            error_message=f"{type(exc).__name__}: schedule synchronization failed",
+        from tin_lite.project_workflow_operations import sync_failed
+
+        await sync_failed(
+            runtime=request.app.state.runtime,
+            settings=request.app.state.settings,
+            configured=configured,
+            error=exc,
         )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -3402,11 +3639,15 @@ async def get_run(
     run = await _run_from_postgres(run_id, request, user)
     response.headers["X-Tin-Read-Source"] = "postgres"
     from tin_lite.content_delivery_api import delivery_service, page_url_service
+    from tin_lite.x_draft import facts as x_draft_facts
 
     runtime = request.app.state.runtime
     delivery = await delivery_service(runtime).status(run)
     return RunView.model_validate(run).model_copy(
         update={
+            "x_draft": await x_draft_facts(runtime.database, run)
+            if run.executor == "social.x_draft"
+            else None,
             "content_delivery": delivery,
             "page_url": await page_url_service(
                 runtime, getattr(request.app.state, "settings", None)
@@ -3871,9 +4112,11 @@ def _workflow_reviews(request):
 
 
 @router.get("/api/workflows/runs/{run_id}/review")
-async def workflow_review(run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER):
+async def workflow_review(
+    run_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER, post_id: str = ""
+):
     try:
-        return await _workflow_reviews(request).view(run_id, user.clerk_user_id)
+        return await _workflow_reviews(request).view(run_id, user.clerk_user_id, post_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -3896,6 +4139,7 @@ async def request_workflow_changes(
             run_id=run_id,
             actor=user.clerk_user_id,
             feedback=payload.feedback,
+            post_id=payload.post_id,
             request_id=payload.request_id,
             token=payload.review_token,
             reference_files=payload.reference_files,
@@ -3933,9 +4177,20 @@ async def read_previous_review_copy(
     response: Response,
     user: AuthContext = AUTHENTICATED_USER,
 ):
-    """Read a revision's previous copy without calling it that revision's own output."""
+    """Read the current X guide, or an article revision's previous saved copy."""
     try:
         service = _workflow_reviews(request)
+        candidate = await service.db.get_run(run_id)
+        if candidate and candidate.executor == "social.x_style":
+            from tin_lite.x_feedback_service import XFeedback
+
+            feedback = XFeedback(service.runtime, service.settings)
+            run = await feedback.source(run_id, user.clerk_user_id)
+            snapshot, _, _ = await feedback.snapshot(run)
+            document = await get_project_file_document(
+                run.project_id, request, response, snapshot["path"], snapshot["revision"], user
+            )
+            return document.model_copy(update={"sha256": snapshot["sha256"]})
         run, _ = await service.source(run_id, user.clerk_user_id)
         artifact_run, _ = await service.artifact(run)
     except LookupError as exc:
@@ -3972,10 +4227,14 @@ async def approve_run(
         await _choose_content_delivery(run, payload, request, user)
     from tin_lite.reviewed_documents import document_spec
 
-    if run.workflow_id in SUPPORTED_IDS or (
-        run.executor == "codex.procedure"
-        and await document_spec(
-            request.app.state.runtime.database, request.app.state.runtime.storage, run
+    if (
+        run.executor == "social.x_style"
+        or run.workflow_id in SUPPORTED_IDS
+        or (
+            run.executor == "codex.procedure"
+            and await document_spec(
+                request.app.state.runtime.database, request.app.state.runtime.storage, run
+            )
         )
     ):
         try:
@@ -4261,7 +4520,13 @@ async def _choose_content_delivery(
             # An answer page or public article is adapted to the site (a metered run).
             adapt=adapt_on_approval(getattr(request.app.state, "settings", None), run),
         )
-    except (LookupError, ValueError, ProjectFileError, IntegrationError) as exc:
+    except (
+        LookupError,
+        ValueError,
+        ProjectFileError,
+        IntegrationError,
+        SideEffectConflictError,
+    ) as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
@@ -4347,7 +4612,10 @@ async def _run_from_postgres(
     user: AuthContext,
 ) -> WorkflowRun:
     run = await request.app.state.runtime.database.get_run(run_id)
-    if run is None:
+    if run is None or not await request.app.state.runtime.database.has_project_access(
+        project_id=run.project_id, clerk_user_id=user.clerk_user_id
+    ):
+        # A missing run and another project's run read the same.
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
     await _require_project_access(run.project_id, request, user)
     return run
@@ -4404,7 +4672,7 @@ async def _read_project_file(
     except Exception as exc:
         storage_status = getattr(exc, "status_code", None)
         response_status = getattr(getattr(exc, "response", None), "status_code", None)
-        if storage_status == 404 or response_status == 404:
+        if isinstance(exc, LookupError) or storage_status == 404 or response_status == 404:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="project file not found at this revision",

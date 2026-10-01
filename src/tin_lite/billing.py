@@ -40,13 +40,27 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
-# Workflows that act only through the founder's own connected account and buy no model or
-# provider work: no quote, no reservation, a $0 Tin charge. The value is the pinned rate card.
+# Workflows with no Tin charge. X API credits are paid by the configured app's operator,
+# separately from Tin's model ledger; included execution does not claim X API calls are free.
+# The other providers below buy no model or provider work.
 CONNECTED_ACCOUNT_EXECUTORS = {
     "outreach.email_campaign": "tin-connected-email-v1",
     "outreach.awesome_submit": "tin-connected-github-v1",
+    "social.x_publish": "tin-x-operator-funded-v1",
 }
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
+
+# A billing_run_budgets row's liability() in SQL: committed usage, plus the execution fee
+# once anything is committed, rounded up to cents and capped at the run's maximum.
+_COMMITTED_LIABILITY_SQL = """LEAST(maximum_nanos,
+    ((committed_nanos + CASE WHEN committed_nanos>0
+      THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
+      + 9999999) / 10000000) * 10000000)"""
+# The admitted estimate of a per-call run that can still buy work (begin_operation needs a
+# 'reserved' root). A root awaiting reconciliation ('pending') cannot, so only its
+# committed liability remains.
+_UNSTARTED_ESTIMATE_SQL = """CASE WHEN status='reserved'
+    THEN COALESCE((terms->'estimate'->>'amount_nanos')::bigint, maximum_nanos) ELSE 0 END"""
 
 
 def project_limit_message(policy, estimate, usage) -> str | None:
@@ -228,7 +242,7 @@ class BillingService:
     async def require_project(self, conn, project_id, actor):
         row = await conn.fetchrow(
             """SELECT p.* FROM projects p JOIN project_memberships m ON m.project_id=p.id
-               WHERE p.id=$1 AND m.clerk_user_id=$2""",
+               WHERE p.id=$1 AND m.clerk_user_id=$2 AND p.deleted_at IS NULL""",
             project_id,
             actor,
         )
@@ -293,9 +307,13 @@ class BillingService:
         if not policy.per_run_nanos or not policy.monthly_nanos or policy.schedule_max_nanos == 0:
             raise BillingError("invalid_limits", "Spending limits must be positive.", 422)
         async with self.db.pool.acquire() as conn, conn.transaction():
+            # Limits are a workspace wallet control: its billing admin sets them for every
+            # live project in the workspace, as the Billing page lists them.
             workspace_id = await conn.fetchval(
-                "SELECT workspace_id FROM projects WHERE id=$1", project_id
+                "SELECT workspace_id FROM projects WHERE id=$1 AND deleted_at IS NULL", project_id
             )
+            if workspace_id is None:
+                raise LookupError("project not found")
             await self.require_admin(conn, workspace_id, actor, lock=True)
             old = await conn.fetchrow(
                 "SELECT * FROM billing_project_policies WHERE project_id=$1", project_id
@@ -333,7 +351,7 @@ class BillingService:
         if definition.get("executor") == "workflow.code":
             from tin_lite.workflow_code import POLICY, validate_code_definition
 
-            if validate_code_definition(definition).model_routes:
+            if validate_code_definition(definition).metered:
                 from tin_lite.code_models import model_terms
 
                 return model_terms(definition)
@@ -362,7 +380,12 @@ class BillingService:
                     definition["executor"] == "growth.onboarding"
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
-                    in {"organic-traffic-v2", "organic-traffic-v3", "organic-traffic-v4"}
+                    in {
+                        "organic-traffic-v2",
+                        "organic-traffic-v3",
+                        "organic-traffic-v4",
+                        "organic-traffic-v5",
+                    }
                 ):
                     raise BillingError(
                         "unmetered_profile", "This system needs API-billed Codex execution enabled."
@@ -376,6 +399,11 @@ class BillingService:
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
+                **(
+                    {"external_api_funding": "operator_x_credits"}
+                    if definition["executor"] == "social.x_publish"
+                    else {}
+                ),
             }
         if supports_api_definition(definition) and codex_api_enabled(self.settings, project_id):
             from tin_lite.codex_api_pricing import api_terms
@@ -689,16 +717,18 @@ class BillingService:
             "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
         )
         period = datetime.now(UTC).date().replace(day=1)
+        # Per-call funding reserves nothing here, so a run that can still spend counts at
+        # the larger of its admitted estimate and its committed liability. Otherwise any
+        # number of parallel starts pass before their first paid call and then fail mid-work.
+        # begin_operation keeps checking actual commitments for runs already admitted.
         usage = await conn.fetchrow(
-            """SELECT COALESCE(sum(CASE WHEN status='settled'
+            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
                                         AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
                                         THEN charged_nanos
                                       WHEN status<>'settled'
                                         AND terms->>'funding'='per_operation_v1'
-                                        THEN LEAST(maximum_nanos,
-                                          ((committed_nanos + CASE WHEN committed_nanos>0
-                                            THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
-                                            + 9999999) / 10000000) * 10000000)
+                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
+                                                      {_COMMITTED_LIABILITY_SQL})
                                       WHEN status<>'settled' THEN maximum_nanos
                                       ELSE 0 END),0) AS exposure,
                       count(*) FILTER(WHERE status<>'settled' AND EXISTS (
@@ -707,18 +737,29 @@ class BillingService:
                         WHERE child.root_run_id=b.root_run_id
                           AND (r.status NOT IN ('succeeded','failed','stopped')
                                OR r.lease_active))) AS active
-               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",
+               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
             run["project_id"],
             period,
         )
         if limit := project_limit_message(policy, estimate, usage):
             raise BillingError("project_limit", limit, 402)
-        if account["balance_nanos"] - account["reserved_nanos"] < estimate:
+        # reserved_nanos already holds each per-call run's committed liability; add the
+        # rest of the estimates of runs that can still spend from this wallet.
+        unstarted = await conn.fetchval(
+            f"""SELECT COALESCE(sum(GREATEST(
+                     {_UNSTARTED_ESTIMATE_SQL} - {_COMMITTED_LIABILITY_SQL}, 0)),0)
+               FROM billing_run_budgets WHERE workspace_id=$1 AND run_id=root_run_id
+                 AND status='reserved' AND terms->>'funding'='per_operation_v1'""",  # noqa: S608 — static SQL, no caller text
+            account["workspace_id"],
+        )
+        available = account["balance_nanos"] - account["reserved_nanos"] - unstarted
+        if available < estimate:
             raise BillingError(
                 "insufficient_funds",
                 f"This workflow is estimated at up to ${usd(estimate)}. "
-                f"Available credits: ${usd(account['balance_nanos'] - account['reserved_nanos'])}. "
-                "Add credits before starting.",
+                f"Available credits: ${usd(max(available, 0))}"
+                + (f" after ${usd(unstarted)} set aside for runs in progress" if unstarted else "")
+                + ". Add credits before starting.",
                 402,
             )
         await conn.execute(
@@ -760,7 +801,7 @@ class BillingService:
         if code_only:
             from tin_lite.workflow_code import validate_code_definition
 
-            code_only = not validate_code_definition(definition).model_routes
+            code_only = not validate_code_definition(definition).metered
         if not parent_included and not code_only and not onboarding_is_free(definition):
             return False
         await self.require_spending_actor(conn, run, run["project_id"])
@@ -821,9 +862,32 @@ class BillingService:
         """
         key = run["start_idempotency_key"]
         parent_id = parent["run_id"]
-        if parent["executor"] == "organic.traffic_system":
-            from tin_lite.organic_system import STEPS
+        if parent["executor"] == "social.x_draft":
+            from tin_lite.x_draft import STEPS
 
+            step = next((s for s, child in STEPS.items() if child == definition["key"]), None)
+            prepared = await self.db.get_effect(f"x-draft:{parent_id}:prepare", conn=conn)
+            return bool(
+                step
+                and key == f"x-draft:{parent_id}:{step}"
+                and prepared
+                and prepared.status == "completed"
+                and prepared.result["definitions"].get(step) == definition
+                and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
+            )
+        if parent["executor"] == "organic.traffic_system":
+            from tin_lite.organic_system import REFRESH_KEY, STEPS, refreshes_pages
+
+            if definition["key"] == REFRESH_KEY:
+                # The v5 recipe's first page refresh, pinned at preparation like its steps.
+                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+                return bool(
+                    key == f"system:{parent_id}:refresh"
+                    and prepared
+                    and prepared.status == "completed"
+                    and refreshes_pages(prepared.result.get("policy"))
+                    and prepared.result["definitions"].get("refresh") == definition
+                )
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
                 from tin_lite.organic_system import drafts_articles
@@ -1313,7 +1377,13 @@ class BillingService:
         )
         return True
 
+    # Roots settled per reconciliation pass.
+    RECONCILE_BATCH = 100
+
     async def reconcile(self):
+        # Roots still inside their unknown-usage window can't settle yet, so they go last. Put
+        # first by their earlier deadlines, a provider incident's worth of them held every slot
+        # for up to a day and no other workspace's finished runs settled.
         rows = await self.db.pool.fetch(
             """SELECT b.run_id FROM billing_run_budgets b
                WHERE b.run_id=b.root_run_id AND b.status<>'settled'
@@ -1325,7 +1395,10 @@ class BillingService:
                                 AND (child.terms->>'kind'='parent'
                                      OR r.executor IN ('project.task', 'ads.launch')))
                             OR (r.lease_active AND r.status<>'needs_input')))
-               ORDER BY b.reconcile_by, b.created_at LIMIT 100"""
+               ORDER BY (b.status = 'pending' AND b.reconcile_by > now()),
+                        b.reconcile_by, b.created_at
+               LIMIT $1""",
+            self.RECONCILE_BATCH,
         )
         for row in rows:
             await self.settle(row["run_id"])
@@ -1337,7 +1410,11 @@ class BillingService:
             )
             if not row:
                 raise LookupError("run not found")
-            await self.require_project(conn, row["project_id"], actor)
+            try:
+                await self.require_project(conn, row["project_id"], actor)
+            except LookupError:
+                # The same answer as a missing run: never confirm another project's run.
+                raise LookupError("run not found") from None
             budget = await conn.fetchrow(
                 "SELECT * FROM billing_run_budgets WHERE run_id=$1", run_id
             )
@@ -1421,14 +1498,22 @@ class BillingService:
                 bool(admin),
                 project_id,
             )
+            # An admin reads the whole wallet. Each row says whose it is: this project, another
+            # project (named only to its members, like run IDs), or the workspace itself.
             transactions = await conn.fetch(
-                """SELECT id, kind, amount_nanos, balance_after_nanos, created_at,
-                    CASE WHEN project_id=$2 THEN run_id ELSE NULL END AS run_id
-                   FROM billing_ledger WHERE workspace_id=$1 AND ($3 OR project_id=$2)
-                   ORDER BY id DESC LIMIT 100""",
+                """SELECT l.id, l.kind, l.amount_nanos, l.balance_after_nanos, l.created_at,
+                    CASE WHEN l.project_id=$2 THEN l.run_id ELSE NULL END AS run_id,
+                    CASE WHEN l.project_id IS NULL THEN 'workspace'
+                         WHEN l.project_id=$2 THEN 'project' ELSE 'other_project' END AS scope,
+                    CASE WHEN l.project_id=$2 OR EXISTS (SELECT 1 FROM project_memberships m
+                        WHERE m.project_id=l.project_id AND m.clerk_user_id=$4)
+                      THEN l.project_id ELSE NULL END AS project_id
+                   FROM billing_ledger l WHERE l.workspace_id=$1 AND ($3 OR l.project_id=$2)
+                   ORDER BY l.id DESC LIMIT 100""",
                 project["workspace_id"],
                 project_id,
                 bool(admin),
+                actor,
             )
             spent = await conn.fetchval(
                 """SELECT COALESCE(-sum(amount_nanos),0) FROM billing_ledger WHERE project_id=$1
@@ -1470,6 +1555,8 @@ class BillingService:
                         "amount_usd": usd(t["amount_nanos"]),
                         "balance_after_usd": usd(t["balance_after_nanos"]) if admin else None,
                         "run_id": str(t["run_id"]) if t["run_id"] else None,
+                        "scope": t["scope"],
+                        "project_id": str(t["project_id"]) if t["project_id"] else None,
                         "created_at": t["created_at"].isoformat(),
                     }
                     for t in transactions

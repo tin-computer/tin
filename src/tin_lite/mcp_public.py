@@ -100,6 +100,14 @@ PUBLIC_DESCRIPTIONS = {
     "list_integrations": (
         "Read existing project connection status. Connect or repair accounts in Tin."
     ),
+    "preflight_technical_fix": (
+        "Preview repairs from the exact saved audit without starting a run or creating a PR. "
+        "Inspect plan.repairs, decisions_needed and plan.left_out; ask the user about "
+        "uncertain judgment calls. Pass decisions as finding_id=choice strings to this "
+        "preview and start_technical_fix. An optional finding_id limits the preview to one "
+        "finding; use inputs.finding_ids on the start tool for the same selection. "
+        "repository_serves_site records the user's assertion. This is not live site verification."
+    ),
 }
 
 
@@ -214,12 +222,12 @@ def public_result(name: str, value: dict, entries: dict[UUID, CatalogWorkflow]) 
             "id run_id project_id status review_decision approved delivery delivery_cost result",
         )
     if name == "preflight_technical_fix":
-        return {
-            **value,
-            "repository_binding": select(
+        result = {key: item for key, item in value.items() if key != "relay"}
+        if "repository_binding" in value:
+            result["repository_binding"] = select(
                 value["repository_binding"], "repository default_branch head_sha"
-            ),
-        }
+            )
+        return result
     if name == "list_integrations":
         return {
             "result": [

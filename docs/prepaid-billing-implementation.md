@@ -123,7 +123,10 @@ subscription, key, or webhook was changed.
   Unconfirmed usage stays pending, is reconciled from durable receipts, and
   unresolved expense is absorbed after the recorded 24-hour deadline. Charges round once to
   cents. Monthly limits count charges posted in that UTC month plus all unsettled reservations,
-  including reservations carried from a prior month.
+  including reservations carried from a prior month. At admission, an unsettled per-call run
+  that can still buy work counts at the larger of its admitted estimate and its committed
+  liability, for the monthly limit and for the credits a new start needs; a run awaiting
+  reconciliation counts at its committed liability.
 - A lost Temporal start acknowledgment retains the original run and reservation. Recovery uses
   the same workflow ID with duplicate reuse rejected. The browser retains opaque quote/request
   IDs across reloads after ambiguous starts; it stores no workflow inputs with them.

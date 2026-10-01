@@ -58,16 +58,22 @@ metadata: a stable public tool name and effect hints. This metadata is not seria
 Input schemas come from `client_input_schema(entry.definition)`; the project is bound
 outside workflow inputs by the shared run service. The public tool inventory combines
 `BUILTIN_WORKFLOWS` and `PUBLIC_WORKFLOWS`:
-29 native workflows plus all 18 currently published packages, for 47 named starts.
+29 native workflows plus 18 reviewed published packages, for 47 named starts.
 Package schemas are read through the same safe manifest decoder used by catalog
 publication. No package code runs during discovery, and unregistered folders,
 `example.*` packages and private `custom.*` workflows are not exposed.
 
-Only four catalog entries lack a standalone start: `growth.onboarding`,
+Within the reviewed scope, four catalog entries lack a standalone start: `growth.onboarding`,
 `growth.onboarding_plan` and `project.task` are outside this plugin's scope;
 `content.deliver` is invoked through the existing approval/delivery flow. New entries
 still require explicit reviewed presentation metadata; registration does not silently
 expand the public callable surface.
+
+Subsequent catalog additions remain outside this release's reviewed tool set:
+`website.change`, `content.refresh`, `social.x_revise`, `social.x_draft`,
+`social.x_style`, `social.x_publish`, `social.x_compose`, `competitor.sunset_rescue`
+and `growth.framework_starter`. They keep their ordinary Tin registration. Adding
+ChatGPT tools for them requires an explicit review of their effects and controls.
 
 Every start takes a project UUID and required request UUID. Choose exactly one form:
 
@@ -98,7 +104,7 @@ before release; never silently move a saved configuration to a newer revision.
 
 Style capture takes an existing, explicitly user-selected sample packet in project Files.
 For technical repair, use `list_technical_fix_sources`, `get_technical_fix_source` and
-`preflight_technical_fix` to inspect an eligible finding and its exact revision; the
+`preflight_technical_fix` to inspect the exact audit, selected findings and any judgment calls; the
 ordinary run service still verifies the selection before execution.
 
 There is no generic `start_workflow` escape hatch, client-selected

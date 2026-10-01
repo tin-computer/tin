@@ -301,10 +301,9 @@ async def test_code_not_the_model_decides_what_reaches_the_block():
     assert not keys & {"project.weekly_brief", "project.task", "content.plan"}
     # The market is an enum the workflow accepts, whatever prose the model offered.
     assert {w["inputs"]["market"] for w in workflows if "market" in w["inputs"]} <= {"US"}
-    # visibility.audit's target is the bare domain, set by code.
-    assert {w["inputs"]["target"] for w in workflows if w["key"] == "visibility.audit"} == {
-        "acmeforms.example"
-    }
+    # The organic traffic system's audit grades AI visibility, so Start here no longer adds
+    # the separate AI visibility audit beside it.
+    assert "visibility.audit" not in keys
     # One configuration per workflow, so setup never doubles a schedule.
     configs = {}
     for w in workflows:

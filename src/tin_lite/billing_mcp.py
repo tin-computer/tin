@@ -23,7 +23,11 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_project_spending(project_id: str) -> dict[str, Any]:
-        """Read your project's spending, or workspace billing if you are its billing admin."""
+        """Read your project's spending, or workspace billing if you are its billing admin.
+
+        spent_this_month_usd is this project's. A billing admin's transactions cover the
+        whole workspace wallet; each has a scope: project, other_project or workspace.
+        """
         token = await caller()
         return await result(service().overview(UUID(project_id), token.subject))
 

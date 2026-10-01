@@ -48,6 +48,10 @@ workflow implicitly.
 6. Describe input-dependent model/agent cost drivers and assumptions. Never invent a dollar
    estimate, usage receipt, benchmark result or passing score. The trusted qualifier uses Tin's
    pricing and actual run evidence; before measurement it reports cost as unmeasured.
+   For external API costs, check the provider's official pricing. If the workflow's bounded
+   usage supports a per-run estimate, add provider_cost to that service binding with
+   estimated_usd, basis and pricing_url. Explain plan/volume assumptions; omit it if unknown.
+   This creator estimate is separate from Tin's measured model costs and never a spending cap.
 7. Write reports/WORKFLOW_CANDIDATE.json in the exact candidate format. Include only declared
    package files, proposed qualification cases and concise limitations. Do not include actual
    project data, credentials, unrelated files or an invented qualification report. If you can't

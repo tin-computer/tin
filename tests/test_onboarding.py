@@ -84,7 +84,9 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
     assert "DataForSEO" in rows["organic.audit"]["reason"]
     assert rows["organic.audit"]["unblock"]["kind"] == "tin_operator"
     assert rows["content.plan"]["unblock"] is None
-    assert rows["site.health_improve"]["unblock"]["kind"] == "connect_integration"
+    assert rows["organic.technical_fix"]["unblock"]["kind"] == "connect_integration"
+    # Site health is folded into the technical fix and left out of discovery.
+    assert "site.health_improve" not in rows
     assert rows["visibility.audit"]["unblock"] is None
     audit_prerequisites = rows["qa.product_audit"]["prerequisites"]
     assert any(
@@ -98,9 +100,9 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
     assert rows["organic.keyword_plan"]["runnable"] is False
     assert rows["organic.traffic_system"]["runnable"] is False
     assert rows["content.plan"]["reason"] is None
-    assert rows["site.health_improve"]["runnable"] is False
-    assert rows["site.health_improve"]["reason"] == "Connect infra.github first."
-    assert rows["site.health_improve"]["requires_integrations"] == ["infra.github"]
+    assert rows["organic.technical_fix"]["runnable"] is False
+    assert rows["organic.technical_fix"]["reason"] == "Connect infra.github first."
+    assert rows["organic.technical_fix"]["requires_integrations"] == ["infra.github"]
     assert rows["outreach.email_campaign"]["reason"] == "Connect workspace.google first."
     assert rows["organic.audit"]["required_inputs"] == ["site_url", "market"]
     assert rows["visibility.audit"]["schedule_modes"] == ["on_demand", "daily", "weekly"]
@@ -113,6 +115,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
     assert state["running"] == [] and state["recent_runs"] == []
@@ -181,7 +184,7 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
     assert rows["organic.audit"]["runnable"] is True
     assert rows["organic.keyword_plan"]["runnable"] is True
     assert rows["organic.traffic_system"]["runnable"] is True
-    assert rows["site.health_improve"]["runnable"] is True
+    assert rows["organic.technical_fix"]["runnable"] is True
     # A connection that needs attention is not connected.
     assert rows["outreach.email_campaign"]["runnable"] is False
     assert {item["provider_key"]: item["connected"] for item in state["integrations"]} == {
@@ -191,6 +194,7 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
 

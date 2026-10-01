@@ -131,6 +131,12 @@ class HistoryRepo:
         }
 
     async def get_file_stream(self, *, ref, path, **kwargs):
+        if path not in self.trees[ref]:
+            # Like code.storage: a file the revision does not contain is a 404.
+            request = httpx.Request("GET", f"https://storage.test/{ref}/{path}")
+            raise httpx.HTTPStatusError(
+                "not found", request=request, response=httpx.Response(404, request=request)
+            )
         content = self.trees[ref][path][1]
 
         class Response:
@@ -894,7 +900,7 @@ async def test_mcp_saved_output_reader_authorizes_before_storage(publication_db,
     token.subject = "user_outsider"
     from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
-    with pytest.raises(ToolError, match="not_found: project not found") as failure:
+    with pytest.raises(ToolError, match="not_found: run not found") as failure:
         await server.call_tool("read_run_output", {"run_id": str(run.id), "source": "retained"})
     assert not isinstance(failure.value, UnexpectedToolError)
     assert not storage.reads

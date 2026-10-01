@@ -1,0 +1,94 @@
+/* Paper 19 supplies the shared Markdown typography and centered reading column;
+   132/128 supply context actions and editing outside the copy. No title eyebrows.
+   The dashboard's font and theme aliases apply in both paper and coal. */
+.x-workflow-fields, .x-workflow-details > div { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.x-workflow-fields[hidden], .x-workflow-fields [hidden] { display: none; }
+.x-workflow-fields .system-config-note { margin: 0; }
+.x-workflow-details summary { color: var(--accent-text); font: 400 13px/18px var(--sans); cursor: pointer; }
+.x-workflow-details > div { padding-top: 14px; }
+.x-posts-reader { container: x-reader / inline-size; min-height: 100svh; background: var(--paper-bg); color: var(--ink); font-family: var(--sans); }
+.x-posts-context { min-height: 62px; gap: 16px; }
+.x-posts-context .markdown-filename { min-width: 0; color: var(--ink-secondary); }
+.x-posts-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; padding: 9px 12px; border: 1px solid var(--paper-border); border-radius: var(--radius-chip); background: transparent; color: var(--ink-secondary); font: 400 13px/18px var(--sans); cursor: pointer; }
+.x-posts-button:hover { background: var(--paper-well); color: var(--ink); }
+.x-posts-button.is-primary { background: var(--accent-deep); border-color: transparent; color: var(--on-accent); font-weight: 700; }
+.x-posts-button.is-primary:hover { background: var(--accent-hover); }
+.x-posts-button.is-publish { background: var(--hot); border-color: transparent; color: var(--on-hot); font-weight: 700; }
+.x-posts-button:disabled, .x-posts-reader button:disabled { opacity: .5; cursor: default; }
+.x-posts-link { padding: 0; border: 0; background: transparent; color: var(--accent-text); font: 400 13px/20px var(--sans); cursor: pointer; }
+.x-posts-reader button:focus-visible, .x-posts-reader input:focus-visible, .x-posts-reader select:focus-visible, .x-posts-reader textarea:focus-visible { outline: 2px solid var(--accent-deep); outline-offset: 3px; }
+.x-posts-layout { align-items: start; padding: 64px 0 80px; }
+.x-posts-nav { position: sticky; top: 98px; display: flex; flex-direction: column; align-items: stretch; gap: 14px; }
+.x-posts-nav button { padding: 0; background: transparent; color: var(--ink-secondary); font: 400 13px/19px var(--sans); text-align: left; cursor: pointer; }
+.x-posts-nav button[aria-current] { color: var(--bermellon-text); font-weight: 700; }
+.x-posts-nav button span { display: block; margin-top: 3px; color: var(--ink-secondary); font-weight: 400; font-size: 12px; }
+.x-posts-column { min-width: 0; }
+.x-posts-status { margin: 0 0 28px; padding: 12px 16px; background: var(--paper-well); border-radius: var(--radius-chip); color: var(--ink-secondary); font: 400 13px/20px var(--sans); overflow-wrap: anywhere; }
+.x-posts-document { padding: 0; }
+/* Preserve exact X text; shared reader styles must not interpret it as Markdown. */
+.x-posts-copy { white-space: pre-wrap; overflow-wrap: anywhere; }
+.x-posts-account { margin: 0 0 20px; color: var(--ink-secondary); font: 400 15px/23px var(--sans); }
+.x-posts-account strong { color: var(--ink); font-weight: 700; }
+.x-posts-editor, .x-posts-notes { margin-bottom: 48px; padding: 24px; border: 1px solid var(--paper-border); border-radius: var(--radius-card); background: var(--paper-card); }
+.x-posts-editor > label, .x-posts-reader h2 { display: block; margin: 0 0 16px; font: 700 17px/22px var(--sans); }
+.x-posts-editor textarea { width: 100%; min-height: 116px; padding: 14px 16px; resize: vertical; border: 1px solid var(--paper-border-strong); border-radius: var(--radius-chip); background: var(--input-bg); color: var(--ink); font: 400 15px/24px var(--sans); }
+.x-posts-editor > small { display: block; margin-top: 8px; color: var(--ink-secondary); font: 400 12px/18px var(--sans); }
+.x-posts-attachments { margin-top: 24px; }
+.x-posts-add { display: flex; flex-wrap: wrap; gap: 12px; }
+.x-posts-upload { position: relative; }
+.x-posts-upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.x-posts-upload:focus-within { outline: 2px solid var(--accent-deep); outline-offset: 3px; }
+.x-posts-limit { margin: 12px 0 0; color: var(--ink-secondary); font: 400 13px/20px var(--sans); }
+.x-posts-file-picker { margin: 16px 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; }
+.x-posts-file-picker label, .x-posts-file-picker p { grid-column: 1 / -1; font-size: 13px; }
+.x-posts-file-picker select { min-width: 0; width: 100%; padding: 8px; background: var(--input-bg); color: var(--ink); border: 1px solid var(--paper-border-strong); border-radius: var(--radius-chip); font: 400 13px/20px var(--sans); }
+.x-posts-editor-actions { display: flex; justify-content: end; margin-top: 24px; }
+.x-posts-media { display: grid; grid-template-columns: 80px minmax(0, 1fr); gap: 12px; margin: 16px 0; }
+.x-posts-media-preview { display: grid; place-items: center; min-width: 0; overflow: hidden; background: var(--paper-well); border-radius: var(--radius-chip); font: 400 13px/20px var(--sans); color: var(--ink-secondary); }
+.x-posts-media .x-posts-media-preview { width: 80px; height: 80px; }
+.x-posts-media-preview img, .x-posts-media-preview video { display: block; max-width: 100%; max-height: 380px; object-fit: contain; }
+.x-posts-media-fields { overflow-wrap: anywhere; font: 400 12px/18px var(--mono); color: var(--ink-secondary); }
+.x-posts-media-fields label { display: grid; gap: 6px; margin-top: 8px; font: 400 13px/20px var(--sans); }
+.x-posts-media-fields input { width: 100%; min-width: 0; }
+.x-posts-media-actions { grid-column: 2; display: flex; gap: 12px; }
+.x-posts-media-actions button { padding: 4px 6px; background: transparent; color: var(--accent-text); font: 400 13px/20px var(--sans); cursor: pointer; }
+.x-posts-gallery { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 16px; margin-top: 28px; }
+.x-posts-gallery figure { min-width: 0; margin: 0; }
+.x-posts-gallery .x-posts-media-preview { min-height: 180px; }
+.x-posts-gallery figcaption { margin-top: 8px; overflow-wrap: anywhere; color: var(--ink-secondary); font: 400 12px/18px var(--sans); }
+.x-posts-notes p, .x-posts-notes li, .x-posts-support { color: var(--ink-secondary); font: 400 15px/24px var(--sans); }
+.x-posts-notes p { margin: 8px 0 16px; }
+.x-posts-notes ul { padding-left: 20px; }
+.x-posts-notes li { margin: 8px 0; }
+.x-posts-notes li button { margin-left: 8px; }
+.x-posts-support { overflow-wrap: anywhere; }
+.x-posts-support summary { cursor: pointer; }
+.x-posts-support code { font: 400 12px/18px var(--mono); }
+.x-posts-needs { margin-top: 28px; color: var(--ink-secondary); font: 400 13px/20px var(--sans); }
+.x-posts-footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--paper-border); }
+.x-posts-footer a { color: var(--accent-text); text-decoration: none; font: 400 13px/20px var(--sans); }
+@container x-reader (max-width: 1100px) {
+  .x-posts-layout { display: grid; width: min(680px, calc(100% - 64px)); grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 36px; transform: none; }
+  .x-posts-nav { position: static; flex-direction: row; flex-wrap: wrap; gap: 16px 28px; }
+  .x-posts-nav button span { display: none; }
+  .x-posts-context { flex-wrap: wrap; gap: 12px; }
+  .x-posts-context .markdown-filename { flex: 1; }
+  .x-posts-context .markdown-context-spacer { display: none; }
+}
+@container x-reader (max-width: 600px) {
+  .x-posts-context { padding: 12px 16px; }
+  .x-posts-context .markdown-filename { flex-basis: 65%; font-size: 11px; }
+  .x-posts-context > .x-posts-link { margin-right: auto; }
+  .x-posts-context .x-posts-button, .x-posts-editor .x-posts-button { min-height: 44px; }
+  .x-posts-layout { width: calc(100% - 40px); padding: 28px 0 48px; }
+  .x-posts-editor, .x-posts-notes { padding: 16px; }
+  .x-posts-file-picker { grid-template-columns: minmax(0, 1fr); }
+  .x-posts-media-actions { grid-column: 1 / -1; }
+}
+
+@media (max-width: 820px) {
+  .app-shell .x-posts-context { top: var(--top-menu-height); }
+}
+
+/* Reuse Paper’s feedback panel in the generic document column. */
+.x-posts-card > .review-composer { margin-bottom: 40px; }

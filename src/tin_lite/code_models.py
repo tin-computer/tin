@@ -60,6 +60,10 @@ def registered_routes():
 
 
 def model_terms(definition):
+    """Metered code terms: declared model routes plus paid managed service reads."""
+    from tin_lite.managed_services import CALL_CEILING_USD
+    from tin_lite.service_pricing import amount_nanos
+
     spec = validate_code_definition(definition)
     terms = {
         "rate_card": CARD["id"],
@@ -68,7 +72,7 @@ def model_terms(definition):
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "metered_workflow",
-        "operations": ["native_model"],
+        "operations": ["native_model"] + (["tool"] if spec.paid_services else []),
         "execution_fee_nanos": 0,
         "rounding": "half_up_cent_at_root_settlement",
         "failure_policy": "verified_usage; platform_duplicates_and_overages_absorbed",
@@ -84,6 +88,10 @@ def model_terms(definition):
             output_tokens=route.max_output_tokens,
         )
         for route in spec.model_routes
+    ) + sum(
+        # Each paid read reserves its provider's per-call ceiling; reported cost settles it.
+        service.max_calls * amount_nanos(CALL_CEILING_USD[service.provider_key])
+        for service in spec.paid_services
     )
     # The shared UI/ledger settles cents. A paid route must not display a $0.00
     # ceiling; this rounds only its conservative bound, never its actual usage.

@@ -54,6 +54,7 @@ GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
 ADS_PROVIDER = "ads.google"
 STRIPE_PROVIDER = "payments.stripe"
 POSTHOG_PROVIDER = "analytics.posthog"
+X_PROVIDER = "social.x"
 # A founder's own GitHub account, through Tin's GitHub OAuth App (see github_account.py).
 GITHUB_USER_PROVIDER = "infra.github_user"
 PROVIDER_KEYS = frozenset(
@@ -64,6 +65,7 @@ PROVIDER_KEYS = frozenset(
         ADS_PROVIDER,
         STRIPE_PROVIDER,
         POSTHOG_PROVIDER,
+        X_PROVIDER,
         GITHUB_USER_PROVIDER,
     }
 )
@@ -77,6 +79,7 @@ STRIPE_CAPABILITIES = (
 )
 # Read-only PostHog capabilities for the one project the founder selects.
 POSTHOG_CAPABILITIES = ("query.read", "definitions.read", "insights.read")
+X_CAPABILITIES = ("x.posts.read", "x.posts.publish", "x.media.upload")
 ADS_CAPABILITIES = ("account.read", "campaigns.read", "campaigns.write")
 # Only what an approved list submission needs; nothing on the founder's own repositories.
 GITHUB_USER_CAPABILITIES = ("forks.write", "public_pull_requests.write", "public_issues.write")
@@ -115,6 +118,16 @@ ADS_ALREADY_LINKED = {
     "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER",
     "ManagerLinkError.ALREADY_MANAGED_IN_HIERARCHY",
 }
+ADS_FOREIGN_LINK_MESSAGE = (
+    "Tin already has a manager link or an open invitation for this Google Ads account that this "
+    "project didn't send. If the account is yours, disconnect it in your other Tin project, or "
+    "decline or remove Tin's manager link in Google Ads under Admin, Access and security, "
+    "Managers, then connect it here again."
+)
+ADS_SHARED_LINK_MESSAGE = (
+    "This Google Ads account is also connected to another Tin project. Disconnect it in one of "
+    "them, then refresh the connection in the other."
+)
 GOOGLE_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 GOOGLE_IDENTITY_SCOPES = frozenset({"openid", "email", "profile"})
 WORKSPACE_CAPABILITY_SCOPES = {
@@ -397,6 +410,15 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
             unlocks=("Activation and funnel evidence", "Product analytics brief"),
         ),
         IntegrationDefinition(
+            key=X_PROVIDER,
+            name="X",
+            badge="X",
+            description="Read your own posts and publish only posts you explicitly approve.",
+            access_label="Own posts · approved publishing",
+            capabilities=X_CAPABILITIES,
+            unlocks=("X writing voice", "Approved X posts"),
+        ),
+        IntegrationDefinition(
             key=GITHUB_USER_PROVIDER,
             name="GitHub account",
             badge="GH",
@@ -441,6 +463,10 @@ def parse_integration_requirements(value: Any) -> tuple[IntegrationRequirement, 
 
         if isinstance(provider_key, str) and CUSTOM_KEY.fullmatch(provider_key):
             definitions[provider_key] = custom_definition(provider_key)
+        from tin_lite.managed_services import DEFINITIONS as MANAGED_DEFINITIONS
+
+        if isinstance(provider_key, str) and provider_key in MANAGED_DEFINITIONS:
+            definitions[provider_key] = MANAGED_DEFINITIONS[provider_key]
         if not isinstance(provider_key, str) or provider_key not in definitions:
             raise ValueError("workflow integration requirement names an unknown provider")
         if provider_key in seen_providers:
@@ -574,6 +600,10 @@ class IntegrationService:
 
     def is_configured(self, provider_key: str) -> bool:
         self._definition(provider_key)
+        from tin_lite import managed_services
+
+        if managed_services.is_managed(provider_key):
+            return managed_services.configured(self._settings, provider_key)
         if provider_key.startswith("custom.api.") or provider_key == STRIPE_PROVIDER:
             return self._cipher is not None
         if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
@@ -584,6 +614,10 @@ class IntegrationService:
             )
         if provider_key == POSTHOG_PROVIDER:
             from tin_lite.posthog_connection import oauth_ready
+
+            return self._cipher is not None and oauth_ready(self._settings)
+        if provider_key == X_PROVIDER:
+            from tin_lite.x_connection import oauth_ready
 
             return self._cipher is not None and oauth_ready(self._settings)
         if provider_key == GITHUB_USER_PROVIDER:
@@ -632,6 +666,12 @@ class IntegrationService:
         return PostHogConnections(self)
 
     @property
+    def x(self):
+        from tin_lite.x_connection import XConnection
+
+        return XConnection(self)
+
+    @property
     def github_account(self):
         from tin_lite.github_account import GitHubAccounts
 
@@ -664,6 +704,15 @@ class IntegrationService:
 
             if CUSTOM_KEY.fullmatch(requirement.provider_key):
                 await self.custom.ready(project_id, requirement)
+                continue
+            from tin_lite import managed_services
+
+            if managed_services.is_managed(requirement.provider_key):
+                # Tin holds this key; there is no founder connection to check.
+                if not self.is_configured(requirement.provider_key):
+                    raise IntegrationNotConfiguredError(
+                        managed_services.not_configured(requirement.provider_key)
+                    )
                 continue
             self._require_configured(requirement.provider_key)
             connection = await self._database.get_integration_connection(
@@ -716,6 +765,14 @@ class IntegrationService:
                         "PostHog did not grant "
                         + ", ".join(sorted(missing) or ["these reads"])
                         + "; reconnect PostHog and approve the read access"
+                    )
+                continue
+            if requirement.provider_key == X_PROVIDER:
+                if connection.credential_ciphertext is None or set(
+                    requirement.capabilities
+                ) - _granted(connection):
+                    raise IntegrationAuthorizationError(
+                        "Reconnect X and approve the access this workflow needs"
                     )
                 continue
             if requirement.provider_key == GITHUB_USER_PROVIDER:
@@ -780,6 +837,8 @@ class IntegrationService:
     ) -> ConnectStart:
         if provider_key.startswith("custom.api."):
             raise IntegrationError("Use the secure Custom API form in project Integrations.")
+        if provider_key.startswith("managed."):
+            raise IntegrationError("Tin holds this service's key; there is nothing to connect.")
         self._require_configured(provider_key)
         definition = self._definition(provider_key)
         if provider_key == STRIPE_PROVIDER:
@@ -796,6 +855,8 @@ class IntegrationService:
             requested_capabilities = (
                 WORKSPACE_DEFAULT_CAPABILITIES
                 if provider_key == GOOGLE_WORKSPACE_PROVIDER
+                else ("x.posts.read",)
+                if provider_key == X_PROVIDER
                 else definition.capabilities
             )
         else:
@@ -806,7 +867,7 @@ class IntegrationService:
                 raise IntegrationAuthorizationError(
                     "requested integration capabilities are empty or unsupported"
                 )
-        if provider_key == GOOGLE_WORKSPACE_PROVIDER:
+        if provider_key in {GOOGLE_WORKSPACE_PROVIDER, X_PROVIDER}:
             existing = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key
             )
@@ -821,7 +882,13 @@ class IntegrationService:
                             ]
                         )
                     )
-        pkce = {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER, POSTHOG_PROVIDER, GITHUB_USER_PROVIDER}
+        pkce = {
+            GSC_PROVIDER,
+            GOOGLE_WORKSPACE_PROVIDER,
+            POSTHOG_PROVIDER,
+            GITHUB_USER_PROVIDER,
+            X_PROVIDER,
+        }
         state = secrets.token_urlsafe(32)
         state_hash = _sha256(state)
         verifier_ciphertext = None
@@ -852,6 +919,18 @@ class IntegrationService:
             return ConnectStart(
                 authorization_url=authorization_url(
                     self._settings, state=state, challenge=challenge
+                )
+            )
+        if provider_key == X_PROVIDER:
+            from tin_lite.x_connection import CALLBACK, authorization_url
+
+            return ConnectStart(
+                authorization_url=authorization_url(
+                    self._settings,
+                    state=state,
+                    challenge=challenge,
+                    redirect=self._callback_url(CALLBACK),
+                    capabilities=requested_capabilities,
                 )
             )
         if provider_key == GITHUB_USER_PROVIDER:
@@ -1096,16 +1175,7 @@ class IntegrationService:
             installation_id = await self._github_resolve_user_installation(
                 user_token, attempt=attempt
             )
-        access_response = await self._client.get(
-            f"https://api.github.com/user/installations/{installation_id}/repositories",
-            headers=self._github_headers(user_token),
-            params={"per_page": 1},
-        )
-        if access_response.status_code in {401, 403, 404}:
-            raise IntegrationAuthorizationError(
-                "The signed-in GitHub user cannot access that installation"
-            )
-        _provider_json(access_response, provider="GitHub")
+        user_repositories = await self._github_user_repositories(user_token, installation_id)
         response = await self._client.get(
             f"https://api.github.com/app/installations/{installation_id}",
             headers=self._github_headers(await self._github_jwt()),
@@ -1134,6 +1204,7 @@ class IntegrationService:
             ),
             configuration={
                 "selected_repository": None,
+                "user_repositories": user_repositories,
                 "permissions": {
                     "contents": "write",
                     "pull_requests": "write",
@@ -1233,8 +1304,51 @@ class IntegrationService:
         )
         return options
 
+    async def _github_user_repositories(self, user_token: str, installation_id: int) -> list[str]:
+        """The installation's repositories the signed-in person may push to, by their own token.
+
+        Tin reads and changes the selected repository with the installation's token, which
+        reaches every repository the app was installed on. Only repositories the connecting
+        person could change themselves are offered, so connecting never widens their access.
+        """
+        names: list[str] = []
+        for page in range(1, GITHUB_REPOSITORY_PAGE_LIMIT + 1):
+            response = await self._client.get(
+                f"https://api.github.com/user/installations/{installation_id}/repositories",
+                headers=self._github_headers(user_token),
+                params={"per_page": 100, "page": page},
+            )
+            if response.status_code in {401, 403, 404}:
+                raise IntegrationAuthorizationError(
+                    "The signed-in GitHub user cannot access that installation"
+                )
+            payload = _provider_json(response, provider="GitHub")
+            for item in payload.get("repositories", []):
+                if not isinstance(item, dict) or not item.get("full_name"):
+                    continue
+                access = item.get("permissions")
+                if isinstance(access, dict) and any(
+                    access.get(level) is True for level in ("push", "maintain", "admin")
+                ):
+                    names.append(str(item["full_name"]))
+            if not _github_has_next_page(response):
+                break
+        return sorted(set(names), key=str.casefold)
+
     async def github_repositories(self, *, project_id: UUID) -> list[ProviderOption]:
         connection = await self._connection(project_id, GITHUB_PROVIDER)
+        allowed = connection.configuration.get("user_repositories")
+        selected = connection.configuration.get("selected_repository")
+        if not isinstance(allowed, list):
+            # Connected before Tin recorded the person's own access: keep the repository
+            # already chosen, and ask for a reconnect before offering any other.
+            if not isinstance(selected, str) or not selected:
+                raise IntegrationAuthorizationError(
+                    "Reconnect GitHub to choose a repository; Tin now offers only the "
+                    "repositories you can push to"
+                )
+            allowed = [selected]
+        permitted = {name.casefold() for name in allowed if isinstance(name, str)}
         installation_id = _installation_id(connection)
         token = await self._github_installation_token(installation_id)
         execution_key = f"integration:{uuid4()}"
@@ -1264,6 +1378,7 @@ class IntegrationService:
                     break
             else:
                 truncated = True
+            options = [option for option in options if option.id.casefold() in permitted]
             options.sort(key=lambda option: option.label.casefold())
         except IntegrationError:
             await self._database.record_integration_call(
@@ -1804,8 +1919,11 @@ class IntegrationService:
         expected_binding: GitHubRepositoryBinding,
         commit_title: str,
         run_id: UUID | None = None,
+        new_paths: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Merge one pull request Tin opened, only while its branch holds exactly `files`.
+
+        Each of `new_paths` must be a file the pull request adds, never one it rewrites.
 
         GitHub merges only if the head is still `expected_head_sha`, so nothing pushed after
         Tin checked the branch can ride along. The effect is receipted under `execution_key`;
@@ -1909,7 +2027,12 @@ class IntegrationService:
             headers = self._github_headers(token)
             root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
             await self._github_validate_pull_request_files(
-                headers=headers, root=root, number=number, head_sha=expected_head_sha, files=files
+                headers=headers,
+                root=root,
+                number=number,
+                head_sha=expected_head_sha,
+                files=files,
+                new_paths=new_paths,
             )
             state = await self.github_pull_request_merge_state(
                 project_id=project_id, repository=repository, number=number
@@ -1978,8 +2101,11 @@ class IntegrationService:
             )
             return {"merged": True, **summary}
 
-    async def _github_validate_pull_request_files(self, *, headers, root, number, head_sha, files):
-        """The pull request changes exactly `files`, with exactly their content, at head_sha."""
+    async def _github_validate_pull_request_files(
+        self, *, headers, root, number, head_sha, files, new_paths=()
+    ):
+        """The pull request changes exactly `files`, with exactly their content, at head_sha,
+        and adds each of `new_paths` rather than rewriting an existing file."""
         response = await self._client.get(
             f"{root}/pulls/{number}/files", headers=headers, params={"per_page": 100}
         )
@@ -1992,6 +2118,9 @@ class IntegrationService:
             for item in changes
         ):
             raise IntegrationAuthorizationError("The pull request changed after Tin opened it")
+        added = {item["filename"] for item in changes if item["status"] == "added"}
+        if not set(new_paths) <= added:
+            raise IntegrationAuthorizationError("The page would replace an existing file")
         for path, content in expected.items():
             response = await self._client.get(
                 f"{root}/contents/{quote(path, safe='/')}",
@@ -2588,7 +2717,9 @@ class IntegrationService:
         fingerprint = _sha256(_canonical_json(request_value))
         async with self._database.integration_call_lock(execution_key):
             existing = await self._database.get_integration_call_receipt(execution_key)
-            is_retry = existing is not None
+            # Only an attempt that got as far as the send may have reached Gmail. One that
+            # failed before it, or that Gmail refused outright, sent nothing and may try again.
+            is_retry = existing is not None and existing.status in {"started", "unknown"}
             if existing is not None:
                 if (
                     existing.project_id != project_id
@@ -2605,16 +2736,6 @@ class IntegrationService:
                         **_gmail_send_result(existing.response_summary),
                         "rfc_message_id": rfc_message_id,
                     }
-            await self._database.record_integration_call(
-                execution_key=execution_key,
-                project_id=project_id,
-                run_id=run_id,
-                connection_id=connection.id,
-                provider_key=GOOGLE_WORKSPACE_PROVIDER,
-                capability="gmail.messages.send",
-                request_fingerprint=fingerprint,
-                status="started",
-            )
             access_token = await self._google_access_token(connection)
             recovered = await self._gmail_find_message(
                 access_token=access_token,
@@ -2637,15 +2758,42 @@ class IntegrationService:
                     raise IntegrationDeliveryUnknownError(
                         "Gmail delivery could not be confirmed; Tin will not resend automatically"
                     )
-                try:
-                    response = await self._client.post(
-                        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
-                        headers={"Authorization": f"Bearer {access_token}"},
-                        json={
-                            "raw": raw,
-                            **({"threadId": thread_id} if thread_id is not None else {}),
-                        },
+                # Recorded right before the send, so a failure getting here sent nothing.
+                await self._database.record_integration_call(
+                    execution_key=execution_key,
+                    project_id=project_id,
+                    run_id=run_id,
+                    connection_id=connection.id,
+                    provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                    capability="gmail.messages.send",
+                    request_fingerprint=fingerprint,
+                    status="started",
+                )
+                response = await self._client.post(
+                    "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    json={
+                        "raw": raw,
+                        **({"threadId": thread_id} if thread_id is not None else {}),
+                    },
+                )
+                if 400 <= response.status_code < 500 and response.status_code != 408:
+                    # Gmail refused the request, so nothing was sent; a later attempt may send.
+                    await self._database.record_integration_call(
+                        execution_key=execution_key,
+                        project_id=project_id,
+                        run_id=run_id,
+                        connection_id=connection.id,
+                        provider_key=GOOGLE_WORKSPACE_PROVIDER,
+                        capability="gmail.messages.send",
+                        request_fingerprint=fingerprint,
+                        status="failed",
+                        error_code=f"gmail_http_{response.status_code}",
                     )
+                    raise IntegrationError(
+                        f"Gmail refused the message (HTTP {response.status_code})"
+                    )
+                try:
                     payload = _provider_json(response, provider="Gmail")
                     recovered = _gmail_send_result(payload)
                     provider_request_id = response.headers.get("x-guploader-uploadid")
@@ -2841,6 +2989,59 @@ class IntegrationService:
             raise ServiceResponseTooLarge("A single Search Console row exceeds the response bound.")
         return payload
 
+    async def search_console_url_inspection(
+        self,
+        *,
+        project_id: UUID,
+        url: str,
+        expected_site_url: str,
+        execution_key: str | None = None,
+        run_id: UUID | None = None,
+    ) -> dict[str, Any]:
+        """Google's own index status for one URL of the selected property (read only)."""
+        connection = await self._connection(project_id, GSC_PROVIDER)
+        selected_site = connection.configuration.get("selected_site_url")
+        if not isinstance(selected_site, str) or not selected_site:
+            raise IntegrationAuthorizationError("Choose a Search Console property first")
+        if selected_site != expected_site_url:
+            raise IntegrationAuthorizationError("The selected Search Console property changed")
+        request_body = {"inspectionUrl": url, "siteUrl": selected_site, "languageCode": "en-US"}
+        fingerprint = _sha256(_canonical_json(request_body))
+        receipt_key = execution_key or f"integration:{uuid4()}"
+        access_token = await self._google_access_token(connection)
+        try:
+            response = await self._client.post(
+                "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect",
+                headers={"Authorization": f"Bearer {access_token}"},
+                json=request_body,
+            )
+            payload = _provider_json(response, provider="Google Search Console")
+        except IntegrationError:
+            await self._database.record_integration_call(
+                execution_key=receipt_key,
+                project_id=project_id,
+                run_id=run_id,
+                connection_id=connection.id,
+                provider_key=GSC_PROVIDER,
+                capability="url_inspection.read",
+                request_fingerprint=fingerprint,
+                status="failed",
+                error_code="provider_request_failed",
+            )
+            raise
+        await self._database.record_integration_call(
+            execution_key=receipt_key,
+            project_id=project_id,
+            run_id=run_id,
+            connection_id=connection.id,
+            provider_key=GSC_PROVIDER,
+            capability="url_inspection.read",
+            request_fingerprint=fingerprint,
+            status="completed",
+            response_summary={"inspected": 1},
+        )
+        return payload
+
     async def github_create_pull_request(
         self,
         *,
@@ -2854,7 +3055,16 @@ class IntegrationService:
         run_id: UUID | None = None,
         expected_binding: GitHubRepositoryBinding | None = None,
         allow_unrelated_base_advance: bool = False,
+        blocking_paths: frozenset[str] | None = None,
     ) -> GitHubPullRequestResult:
+        """Open one PR. `blocking_paths` narrows which of its files another open PR or a later
+        commit may not also touch; by default every file counts. Content delivery passes its
+        page file alone, so a shared sitemap or index edited elsewhere never blocks an article.
+        """
+        if blocking_paths is not None and (
+            not blocking_paths or not blocking_paths <= {item.path for item in files}
+        ):
+            raise IntegrationError("Blocking paths must name files in this pull request")
         if allow_unrelated_base_advance and (
             expected_binding is None or expected_base_sha != expected_binding.head_sha
         ):
@@ -3004,6 +3214,7 @@ class IntegrationService:
                         if allow_unrelated_base_advance
                         else {}
                     ),
+                    **({"blocking_paths": blocking_paths} if blocking_paths is not None else {}),
                 )
             except IntegrationError:
                 await self._database.record_integration_call(
@@ -3256,18 +3467,13 @@ class IntegrationService:
         branch = await self._github_default_branch(
             headers=headers, repository_path=repository_path, base_branch=base_branch
         )
+        head_sha = None
         if expected_binding is not None:
             # Writes use the live file's sha, so a destination changed after preparation
             # would be overwritten silently. Unrelated default-branch commits remain fine.
-            ref_response = await self._client.get(
-                f"https://api.github.com/repos/{repository_path}/git/ref/heads/"
-                f"{quote(branch, safe='')}",
-                headers=headers,
+            head_sha = await self._github_branch_head(
+                headers=headers, repository_path=repository_path, branch=branch
             )
-            target = _provider_json(ref_response, provider="GitHub").get("object")
-            head_sha = target.get("sha") if isinstance(target, dict) else None
-            if not isinstance(head_sha, str) or not head_sha:
-                raise IntegrationUpstreamError("GitHub default branch did not resolve to a commit")
             if head_sha != expected_binding.head_sha:
                 await self._github_validate_base_advance(
                     connection=connection,
@@ -3275,8 +3481,7 @@ class IntegrationService:
                     current_sha=head_sha,
                     files=files,
                 )
-        result = None
-        request_id = None
+        pending = []
         for change in files:
             content_url = (
                 f"https://api.github.com/repos/{repository_path}/contents/"
@@ -3285,8 +3490,19 @@ class IntegrationService:
             current_sha, current = await self._github_current_file(
                 headers=headers, content_url=content_url, branch=branch
             )
-            if current == change.content:
-                continue
+            if current != change.content:
+                pending.append((change, content_url, current_sha))
+        if not pending:
+            # Every file already held this exact content; report the commit that did it.
+            return await self._github_latest_commit(
+                headers=headers,
+                repository_path=repository_path,
+                repository=repository,
+                branch=branch,
+                path=files[0].path,
+            )
+        if len(pending) == 1:
+            change, content_url, current_sha = pending[0]
             update_payload: dict[str, Any] = {
                 "message": message,
                 "content": base64.b64encode(change.content.encode()).decode(),
@@ -3298,27 +3514,86 @@ class IntegrationService:
                 content_url, headers=headers, json=update_payload
             )
             update_payload = _provider_json(update_response, provider="GitHub")
-            request_id = update_response.headers.get("x-github-request-id") or request_id
             commit = update_payload.get("commit")
             commit = commit if isinstance(commit, dict) else {}
-            result = _github_commit_result(
+            return _github_commit_result(
                 {
                     "repository": repository,
                     "branch": branch,
                     "commit": commit.get("sha"),
                     "url": commit.get("html_url"),
                 }
+            ), update_response.headers.get("x-github-request-id")
+        # Several files land as one commit, so a failure partway never leaves the default
+        # branch half changed: one tree, one commit, then a fast-forward of the branch.
+        root = f"https://api.github.com/repos/{repository_path}"
+        if head_sha is None:
+            head_sha = await self._github_branch_head(
+                headers=headers, repository_path=repository_path, branch=branch
             )
-        if result is None:
-            # Every file already held this exact content; report the commit that did it.
-            result, request_id = await self._github_latest_commit(
+        base = _provider_json(
+            await self._client.get(f"{root}/git/commits/{head_sha}", headers=headers),
+            provider="GitHub",
+        )
+        base_tree = (base.get("tree") or {}).get("sha") if isinstance(base, dict) else None
+        if not isinstance(base_tree, str) or not base_tree:
+            raise IntegrationUpstreamError("GitHub default branch commit has no tree")
+        tree = _provider_json(
+            await self._client.post(
+                f"{root}/git/trees",
                 headers=headers,
-                repository_path=repository_path,
-                repository=repository,
-                branch=branch,
-                path=files[0].path,
-            )
-        return result, request_id
+                json={
+                    "base_tree": base_tree,
+                    "tree": [
+                        {
+                            "path": change.path,
+                            "mode": "100644",
+                            "type": "blob",
+                            "content": change.content,
+                        }
+                        for change, _url, _sha in pending
+                    ],
+                },
+            ),
+            provider="GitHub",
+        )
+        commit = _provider_json(
+            await self._client.post(
+                f"{root}/git/commits",
+                headers=headers,
+                json={"message": message, "tree": tree.get("sha"), "parents": [head_sha]},
+            ),
+            provider="GitHub",
+        )
+        if not isinstance(commit.get("sha"), str):
+            raise IntegrationUpstreamError("GitHub did not return the new commit")
+        # Not forced: if the branch moved since it was read, GitHub refuses and nothing lands.
+        ref_response = await self._client.patch(
+            f"{root}/git/refs/heads/{quote(branch, safe='')}",
+            headers=headers,
+            json={"sha": commit["sha"], "force": False},
+        )
+        _provider_json(ref_response, provider="GitHub")
+        return _github_commit_result(
+            {
+                "repository": repository,
+                "branch": branch,
+                "commit": commit["sha"],
+                "url": commit.get("html_url"),
+            }
+        ), ref_response.headers.get("x-github-request-id")
+
+    async def _github_branch_head(self, *, headers, repository_path, branch):
+        ref_response = await self._client.get(
+            f"https://api.github.com/repos/{repository_path}/git/ref/heads/"
+            f"{quote(branch, safe='')}",
+            headers=headers,
+        )
+        target = _provider_json(ref_response, provider="GitHub").get("object")
+        head_sha = target.get("sha") if isinstance(target, dict) else None
+        if not isinstance(head_sha, str) or not head_sha:
+            raise IntegrationUpstreamError("GitHub default branch did not resolve to a commit")
+        return head_sha
 
     async def _github_find_open_pull_request(
         self,
@@ -3527,7 +3802,13 @@ class IntegrationService:
         expected_base_sha: str | None,
         expected_binding: GitHubRepositoryBinding | None = None,
         allow_unrelated_base_advance: bool = False,
+        blocking_paths: frozenset[str] | None = None,
     ) -> tuple[GitHubPullRequestResult, str | None]:
+        blocking = (
+            files
+            if blocking_paths is None
+            else tuple(item for item in files if item.path in blocking_paths)
+        )
         token = await self._github_installation_token(_installation_id(connection))
         headers = self._github_headers(token)
         repository_path = quote(repository, safe="/")
@@ -3556,7 +3837,10 @@ class IntegrationService:
                     "The GitHub repository changed after analysis; start a new workflow run"
                 )
             await self._github_validate_base_advance(
-                connection=connection, binding=expected_binding, current_sha=base_sha, files=files
+                connection=connection,
+                binding=expected_binding,
+                current_sha=base_sha,
+                files=blocking,
             )
             # Keep the immutable prepared branch base. GitHub's PR merge preserves
             # later unrelated commits; retry never rewrites the approved content.
@@ -3567,7 +3851,7 @@ class IntegrationService:
             base_branch=resolved_base,
         )
         overlapping_paths = sorted(
-            {item.path for item in files}.intersection(open_pull_requests.changed_paths)
+            {item.path for item in blocking}.intersection(open_pull_requests.changed_paths)
         )
         if overlapping_paths:
             preview = ", ".join(overlapping_paths[:3])
@@ -3741,6 +4025,12 @@ class IntegrationService:
             if connection is not None:
                 # Best effort, like Google: local disconnection is authoritative.
                 await self.posthog.revoke(connection)
+        if provider_key == X_PROVIDER:
+            connection = await self._database.get_integration_connection(
+                project_id=project_id, provider_key=provider_key
+            )
+            if connection is not None:
+                await self.x.revoke(connection)
         if provider_key == GITHUB_USER_PROVIDER:
             connection = await self._database.get_integration_connection(
                 project_id=project_id, provider_key=provider_key
@@ -3916,6 +4206,13 @@ class IntegrationService:
         existing = await self._database.get_integration_connection(
             project_id=project_id, provider_key=ADS_PROVIDER
         )
+        # Tin has one manager account, so an existing link or invitation doesn't say which
+        # project asked for it. This project's own earlier invitation is the only proof.
+        own_link_id = (
+            existing.configuration.get("manager_link_id")
+            if existing is not None and existing.external_account_id == account
+            else None
+        )
         if existing is not None and existing.external_account_id not in {None, account}:
             if existing.configuration.get("link_status") == "pending":
                 # The old invitation may have been accepted since Tin last checked it.
@@ -3931,7 +4228,7 @@ class IntegrationService:
             "customer_id": account,
             "manager_customer_id": manager,
             "link_status": "pending",
-            "manager_link_id": None,
+            "manager_link_id": own_link_id,
             "write_opted_in": True,
             "health": {},
             "invited_at": datetime.now(UTC).isoformat(),
@@ -3951,17 +4248,25 @@ class IntegrationService:
         try:
             result = await self.google_ads.client_link(account)
         except GoogleAdsError as exc:
+            already = exc.code in ADS_ALREADY_LINKED
+            adopted = already and own_link_id is not None
             await self._record_ads_call(
                 execution_key=execution_key,
                 connection=connection,
                 capability="account.read",
                 fingerprint=fingerprint,
-                status="completed" if exc.code in ADS_ALREADY_LINKED else "failed",
+                status="completed" if adopted else "failed",
                 response_summary={"code": exc.code},
-                error_code=None if exc.code in ADS_ALREADY_LINKED else exc.code[:120],
+                error_code=None if adopted else exc.code[:120],
             )
-            if exc.code in ADS_ALREADY_LINKED:
+            if adopted:
                 return await self.google_ads_link_status(project_id=project_id)
+            if already:
+                # Someone else's link or invitation: leave no claim on the account here.
+                await self._database.delete_integration_connection(
+                    project_id=project_id, provider_key=ADS_PROVIDER
+                )
+                raise IntegrationAuthorizationError(ADS_FOREIGN_LINK_MESSAGE) from None
             raise IntegrationUpstreamError(
                 ADS_LINK_MESSAGES.get(
                     exc.code,
@@ -4016,14 +4321,20 @@ class IntegrationService:
                 "Google Ads did not answer the link status check. Try again in a minute."
             ) from None
         rows = result.get("rows") or []
+        own_link_id = connection.configuration.get("manager_link_id")
         raw = None
         for row in rows:
             link = row.get("customerClientLink") if isinstance(row, dict) else None
-            if isinstance(link, dict) and isinstance(link.get("status"), str):
+            # Only the link this project's own invitation created speaks for it; another
+            # project's link to the same account is not this project's proof of ownership.
+            if (
+                isinstance(link, dict)
+                and isinstance(link.get("status"), str)
+                and own_link_id is not None
+                and str(link.get("managerLinkId")) == str(own_link_id)
+            ):
                 raw = link
-                # Prefer an active link over stale refused or canceled rows.
-                if link["status"] == "ACTIVE":
-                    break
+                break
         status = ADS_LINK_STATES.get(raw["status"], "pending") if raw else "missing"
         await self._record_ads_call(
             execution_key=execution_key,
@@ -4038,11 +4349,6 @@ class IntegrationService:
         configuration = {
             **dict(connection.configuration),
             "link_status": status,
-            "manager_link_id": (
-                str(raw.get("managerLinkId"))
-                if raw and raw.get("managerLinkId") is not None
-                else connection.configuration.get("manager_link_id")
-            ),
             "link_checked_at": datetime.now(UTC).isoformat(),
         }
         updated = await self._database.update_integration_configuration(
@@ -4075,6 +4381,8 @@ class IntegrationService:
             raise IntegrationAuthorizationError(
                 "Accept Tin's manager request in Google Ads before checking the account"
             )
+        if await self._ads_link_shared(connection):
+            raise IntegrationAuthorizationError(ADS_SHARED_LINK_MESSAGE)
         account = _ads_account(connection)
         reads: dict[str, list] = {}
         for name, query in (
@@ -4138,6 +4446,8 @@ class IntegrationService:
             raise IntegrationAuthorizationError("Google Ads needs attention")
         if connection.configuration.get("link_status") != "active":
             raise IntegrationAuthorizationError("Accept Tin's manager request in Google Ads first")
+        if await self._ads_link_shared(connection):
+            raise IntegrationAuthorizationError(ADS_SHARED_LINK_MESSAGE)
         return _ads_account(connection)
 
     async def google_ads_call(
@@ -4220,11 +4530,30 @@ class IntegrationService:
         )
         return {**result, "customer_id": account}
 
+    async def _ads_link_shared(self, connection: IntegrationConnection) -> bool:
+        """Whether another project's connection records this account's manager link.
+
+        One link proves ownership for one project. Connections made before that was enforced
+        may share a link; then neither may use it, and a disconnect leaves the link in place.
+        """
+        link_id = connection.configuration.get("manager_link_id")
+        others = await self._database.list_integration_connections_by_external_id(
+            provider_key=ADS_PROVIDER, external_account_id=_ads_account(connection)
+        )
+        return any(
+            other.project_id != connection.project_id
+            and other.configuration.get("manager_link_id") in {None, link_id}
+            for other in others
+        )
+
     async def _cancel_google_ads_link(self, connection: IntegrationConnection) -> None:
         """Best effort: the local disconnect is authoritative even when Google is down."""
         link = connection.configuration.get("link_status")
         manager_link_id = connection.configuration.get("manager_link_id")
         if link not in {"pending", "active"} or not manager_link_id:
+            return
+        if await self._ads_link_shared(connection):
+            # Ending the link would cut off the other project too.
             return
         try:
             await self.google_ads.client_link_update(
@@ -4590,6 +4919,10 @@ class IntegrationService:
 
         if CUSTOM_KEY.fullmatch(provider_key):
             return custom_definition(provider_key)
+        from tin_lite.managed_services import DEFINITIONS as MANAGED_DEFINITIONS
+
+        if provider_key in MANAGED_DEFINITIONS:
+            return MANAGED_DEFINITIONS[provider_key]
         definition = next(
             (item for item in registered_integrations() if item.key == provider_key), None
         )

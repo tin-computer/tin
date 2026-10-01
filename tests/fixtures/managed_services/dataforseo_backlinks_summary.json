@@ -1,0 +1,59 @@
+{
+ "cost": 0.02004,
+ "result": [
+  {
+   "target": "example.com",
+   "first_seen": "2016-03-11 09:12:00 +00:00",
+   "lost_date": null,
+   "rank": 412,
+   "backlinks": 18234,
+   "backlinks_spam_score": 7,
+   "crawled_pages": 9123,
+   "info": {
+    "server": "cloudflare",
+    "cms": null,
+    "platform_type": [
+     "unknown"
+    ],
+    "ip_address": "104.18.1.1",
+    "country": "US",
+    "is_ip": false,
+    "target_spam_score": 2
+   },
+   "internal_links_count": 90211,
+   "external_links_count": 1201,
+   "broken_backlinks": 311,
+   "broken_pages": 12,
+   "referring_domains": 1873,
+   "referring_domains_nofollow": 402,
+   "referring_main_domains": 1611,
+   "referring_main_domains_nofollow": 350,
+   "referring_ips": 1502,
+   "referring_subnets": 1210,
+   "referring_pages": 15112,
+   "referring_pages_nofollow": 3302,
+   "referring_links_tld": {
+    "com": 1100,
+    "org": 90
+   },
+   "referring_links_types": {
+    "anchor": 17000,
+    "image": 1234
+   },
+   "referring_links_attributes": {
+    "nofollow": 3100
+   },
+   "referring_links_platform_types": {
+    "cms": 5000,
+    "blogs": 3000
+   },
+   "referring_links_semantic_locations": {
+    "article": 8000
+   },
+   "referring_links_countries": {
+    "US": 7000,
+    "": 1200
+   }
+  }
+ ]
+}

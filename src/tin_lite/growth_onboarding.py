@@ -112,6 +112,12 @@ SYSTEM_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+TIMEZONE_PATTERN = (
+    r"^(?:|(?!(?:posix|right)/|(?:localtime|posixrules|Factory)$)"
+    r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)*)$"
+)
+
+
 def _input_schema() -> dict[str, Any]:
     properties: dict[str, Any] = {
         "project_id": {"type": "string", "format": "uuid"},
@@ -167,6 +173,8 @@ def _input_schema() -> dict[str, Any]:
         "type": "string",
         "default": "UTC",
         "maxLength": 64,
+        # An IANA name schedules can use: not the host's `localtime` or a posix/ or right/ copy.
+        "pattern": TIMEZONE_PATTERN,
         "title": "Timezone",
         "description": (
             "IANA timezone for schedules, from the founder's machine (America/New_York)."
@@ -528,10 +536,23 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
             "repository delivery follows approval and opens an unmerged PR"
         ),
     },
+    "content.refresh": {
+        "first": "about fifteen minutes after an organic audit",
+        "lands": "Decisions, as the page's current and proposed text",
+        "watch": (
+            "approval changes exactly those lines in your site, as a PR or a commit; "
+            "a refreshed page waits six weeks before its next refresh"
+        ),
+    },
     "content.deliver": {
         "first": "after an approved source article and repository are selected",
         "lands": "your GitHub repository, as an unmerged pull request",
         "watch": "review and merge the PR; publication depends on your site",
+    },
+    "website.change": {
+        "first": "after an approved change and the website repository are selected",
+        "lands": "your GitHub repository: merged when you approved the change, else a PR",
+        "watch": "changes to protected pages such as /sign-in always wait for your merge",
     },
     "content.answer_page": {
         "first": "about ten minutes after a visibility audit",
@@ -551,7 +572,7 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
     "organic.technical_fix": {
         "first": "a pull request within the hour, after an audit",
         "lands": "your GitHub repository, unmerged",
-        "watch": "one finding per run",
+        "watch": "every fixable finding of the audit in one PR; review and merge it",
     },
     "outreach.email_shortlist": {
         "first": "about ten minutes",

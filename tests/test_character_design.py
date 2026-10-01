@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import shutil
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -387,10 +388,10 @@ async def test_an_unreachable_product_page_is_recorded_and_the_design_goes_on(mo
 
     client = httpx.AsyncClient
 
-    async def public(url):
-        return None
+    async def public(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
 
-    monkeypatch.setattr(character_design, "_require_public_hostname", public)
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", public)
     monkeypatch.setattr(
         character_design.httpx,
         "AsyncClient",

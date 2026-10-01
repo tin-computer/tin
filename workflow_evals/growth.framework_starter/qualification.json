@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The connected GitHub repository holds the product's published client, public API, webhook signing or embed snippet.",
+    "The starter is checked by reading and by the syntax checks the sandbox can run without installing; nobody installs or starts it during the run."
+  ],
+  "effects": [
+    "Opens one unmerged GitHub pull request adding at most ten files under one starter directory, or none for a no-change result.",
+    "Writes the receipt reports/framework-starter/{run_id}/RESULT.md in this project."
+  ],
+  "cost_drivers": [
+    "One bounded Codex procedure session.",
+    "Repository size and how far the public client or API is from its documentation."
+  ],
+  "rubric": [
+    {"id": "grounded", "question": "Is every product call in the starter defined at the repository path:line the receipt cites, with the same name and arguments?"},
+    {"id": "secrets_server_side", "question": "Do secret keys stay in server code, with only documented publishable keys under a public prefix?"},
+    {"id": "five_minutes", "question": "Could a developer with a key follow the README from clone to one successful result without asking anyone?"},
+    {"id": "honest_no", "question": "When the product has nothing a developer integrates, or every fitting framework already has a starter, does the run change nothing and say why?"}
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A TypeScript SDK with a secret API key and no examples directory: a Next.js starter whose route handler holds the key.",
+      "inputs": {},
+      "expect": {
+        "contains": ["## Outcome", "patch", "examples/nextjs-starter", "## Grounded in", "## Secrets", "```json framework-starter"],
+        "excludes": ["NEXT_PUBLIC_API_KEY", "## Outcome\n\nno_change"]
+      }
+    },
+    {
+      "id": "saas_without_developer_surface",
+      "description": "Boundary: a dashboard-only SaaS whose API only its own frontend calls. No files change.",
+      "inputs": {},
+      "expect": {
+        "contains": ["no_change", "nothing a developer integrates", "## Not changed"],
+        "excludes": ["examples/nextjs-starter"]
+      }
+    },
+    {
+      "id": "repeat_after_nextjs",
+      "description": "An earlier receipt already delivered the Next.js starter, and the product also publishes a Python client: the run adds FastAPI instead of repeating Next.js.",
+      "inputs": {},
+      "expect": {
+        "contains": ["patch", "examples/fastapi-starter", "nextjs"],
+        "excludes": ["Add a nextjs starter"]
+      }
+    },
+    {
+      "id": "browser_framework_for_secret_key",
+      "description": "Plausible but unusable request: vite-react for a product that only takes a secret key would put the key in the browser. It must refuse rather than ship it.",
+      "inputs": {"framework": "vite-react"},
+      "expect": {
+        "contains": ["no_change", "vite-react cannot demonstrate"],
+        "excludes": ["VITE_API_KEY"]
+      }
+    }
+  ]
+}

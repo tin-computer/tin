@@ -72,6 +72,10 @@ from tin_lite.workflows import (
     StyleCaptureWorkflow,
     VisibilityAuditWorkflow,
     WeeklyBriefWorkflow,
+    XDraftWorkflow,
+    XFeedbackWorkflow,
+    XPublishWorkflow,
+    XStyleWorkflow,
     registered_workflow_implementations,
     registered_workflows,
 )
@@ -502,6 +506,10 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         ContentDraftDeliveryWorkflow,
         ProjectCodexExecution,
         StyleCaptureWorkflow,
+        XDraftWorkflow,
+        XStyleWorkflow,
+        XFeedbackWorkflow,
+        XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -528,6 +536,10 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
     ]
     assert registered_workflow_implementations() == {
         "style.capture": StyleCaptureWorkflow,
+        "social.x_draft": XDraftWorkflow,
+        "social.x_revise": XFeedbackWorkflow,
+        "social.x_style": XStyleWorkflow,
+        "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
@@ -559,8 +571,14 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
 
 @pytest.mark.asyncio
 async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -> None:
-    # This fixture models the native catalog, not a deployment's selected public packages.
-    monkeypatch.setattr("tin_lite.public_workflows.PUBLIC_WORKFLOWS", ())
+    # Include the package child published atomically with the native X parent.
+    from tin_lite.public_workflows import PUBLIC_WORKFLOWS, load_public_workflows
+
+    monkeypatch.setattr(
+        "tin_lite.public_workflows.PUBLIC_WORKFLOWS",
+        tuple(item for item in PUBLIC_WORKFLOWS if item.key == "social.x_compose"),
+    )
+    packages = await load_public_workflows()
     _, workflow, _ = fixture_state()
 
     class FakeCatalogDatabase:
@@ -572,12 +590,14 @@ async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -
             self.synced_systems.append(values)
 
         async def get_workflow(self, workflow_id):
-            builtin = next(item for item in BUILTIN_WORKFLOWS if item.id == workflow_id)
+            builtin = next(
+                item for item in (*BUILTIN_WORKFLOWS, *packages) if item.id == workflow_id
+            )
             return replace(
                 workflow,
                 id=workflow_id,
                 key=builtin.key,
-                executor=builtin.executor,
+                executor=builtin.definition["executor"],
                 definition_path=builtin.definition_path,
             )
 

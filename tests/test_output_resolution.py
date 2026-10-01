@@ -527,7 +527,7 @@ async def test_mcp_uses_same_service_with_authenticated_provenance(publication_d
         ("get_run_output_resolution", args),
         ("resolve_run_output", {**args, **request.model_dump(mode="json")}),
     ]:
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool(tool, params)
     assert not storage.reads and storage.repo.writes == 0
     token.subject = "user_member"

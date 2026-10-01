@@ -81,8 +81,9 @@ audit, keyword research, planning, optional technical fix, and, for the current 
 continuation, drafting and optional delivery. The pinned definition and inputs determine
 the total in `service_pricing.py`; there is no separate orchestration charge. Project
 limits and the available balance must
-cover the configured estimate; neither is raised automatically. No whole-run
-amount is removed from available credits at admission.
+cover the configured estimate, alongside the estimates of runs already admitted
+that have not settled; neither is raised automatically. No whole-run amount is
+removed from available credits at admission.
 
 Model requests reserve a conservative input/output/cache-write/search envelope
 before dispatch. Tool requests use the existing trusted workflow's per-step
@@ -163,8 +164,10 @@ the worst case one run can reach, so a normal run is never refused. Charges stay
 | --- | --- | --- | --- |
 | `organic.keyword_plan` (new runs) | $10 default, $5 floor | $2 default and floor | Keyword policy v6 reserves at most $1.65 for a full run |
 | `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
-| `organic.traffic_system` | $26 ($31 with a technical fix) | $15 ($20); $10 draft-only | $2 keywords + $2 audit + $1 content plan + $5 draft + $5 PR adaptation |
+| `organic.traffic_system` | $26 ($31 with a technical fix) | $12, with or without a technical fix; $10 draft-only | The keyword limit plus a $10 pool (see "The traffic system's pool" below) |
 | `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
+| `organic.traffic_system` 0.5.0 | — | $17.50 ($22.50); $12.50 draft-only | The above plus the first page refresh, $2.50 |
+| `content.refresh` | — | $2.50 | About $0.45 estimated at list price; the ceiling is about five times that |
 
 Keyword policy v6 (`keyword_plan_v6.py`) changes only reservations and the floor; v5 and older
 runs keep theirs. From list prices checked September 29, 2026:
@@ -190,7 +193,29 @@ search), 6,000 output tokens and three $0.01 searches per searched call, a v10 r
 content plan share is $1: its one call is under $0.10 at long-context rates. Standalone
 `content.plan` runs keep the $2 native maximum. These composition changes apply to every
 traffic definition; a saved configuration keeps its own keyword limit (for example $9 gives
-$22). Weekly `content.generate` occurrences stay outside the parent's ceiling.
+$19). Weekly `content.generate` occurrences stay outside the parent's ceiling.
+
+### The traffic system's pool
+
+A later production run spent $2.49 against $20: audit, keyword research, content plan and one
+draft. Its technical fix found nothing eligible and its page adaptation was refused, so both cost
+nothing. The children's ceilings add up to more than any run spends: keyword $2, audit $2,
+content plan $1, draft $5 and adaptation $5 are $15, and $20 with a $5 technical fix.
+
+Each paid call a child makes also reserves against the parent's maximum
+(`BillingService.begin_operation` checks the root's committed amount), so the parent's maximum
+is the run's real total, whatever the children's own ceilings are. The traffic system's maximum is
+now the smaller of the children's sum and the keyword limit plus a $10 pool
+(`TRAFFIC_SYSTEM_POOL_USD`): $12 at the default $2 keyword limit, with or without a technical
+fix, about five times the measured $2.49. Draft-only runs keep their $10 sum.
+
+Lowering the pool is admission-safe. Children under the parent are funded per operation, not as
+a session: each Codex request reserves the procedure contract's maximum (a 128,000-token context
+and 8,192 output tokens, about $0.41), not the session contract's maximal response, and a
+child's own ceiling still applies. A run whose early steps spend unusually much stops its later
+paid steps with "The next paid operation would exceed this run's maximum" rather than going over.
+Runs already admitted keep the terms they pinned; new admissions of every traffic definition use
+the pool, as the September 29 composition change did.
 
 `content.generate` keeps $5. Its session contract bounds a job by spend and sandbox time, not by
 tokens or requests. One maximal GPT-6 Sol response (a 1,050,000-token context and 128,000 output
@@ -210,7 +235,7 @@ same $5. At the measured $0.97 a draft, five Tuesday drafts fit: the fifth needs
 Every other charge in the month counts against the same $10. When each approved draft also opens
 a PR adaptation costing about as much, charges pass $5 during the third week and later drafts
 that month do not start. A Start here traffic run is included and not counted; one started
-directly is estimated at $15 and needs a higher per-run limit ($10 when drafts stay in Tin).
+directly is estimated at $12 and needs a higher per-run limit ($10 when drafts stay in Tin).
 
 The Start here handoff now says this. When the report is written, Tin reads the project's
 limits, every active saved schedule's maximum as admission prices it, and the weekly articles

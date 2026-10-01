@@ -12,6 +12,7 @@ from tin_lite import (
     content_draft,
     content_plan,
     content_plan_editorial,
+    content_refresh,
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
@@ -21,6 +22,11 @@ from tin_lite import (
     paid_ads_monitor,
     style_capture,
     technical_fix,
+    website_change,
+    x_draft,
+    x_feedback,
+    x_posts,
+    x_style,
 )
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.code_storage import CodeStorage
@@ -126,6 +132,7 @@ COLD_OUTREACH_SYSTEM = "cold-outreach"
 PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
+X_SYSTEM = "x"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -206,6 +213,7 @@ WORKFLOW_SYSTEMS = (
         name="Paid ads system",
         display_order=5,
     ),
+    WorkflowSystem(id=X_SYSTEM, name="X", display_order=6),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -263,6 +271,17 @@ PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     ),
     queue_clause="Public article draft ready to finish",
     revision_adapter="content-revision.v1",
+)
+
+CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Changes the title, snippet or opening copy of a live page.",
+    review_label="Review refresh",
+    defer_label="Not now",
+    summary=(
+        "A refresh of one of your pages is ready. Compare each current line with the proposed "
+        "one; after you approve, Tin changes exactly those lines in your site's source."
+    ),
+    queue_clause="Page refresh ready to review",
 )
 
 GROWTH_ONBOARDING_REVIEW_POLICY = HumanReviewPolicy(
@@ -421,6 +440,19 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+        if self.key == x_draft.KEY:
+            definition["x_draft_policy"] = dict(x_draft.POLICY)
+        if self.key == x_feedback.KEY:
+            definition["public_discovery"] = False
+            definition["x_feedback_contract"] = {
+                "policy": x_feedback.POLICY,
+                "instructions": x_feedback.INSTRUCTIONS,
+                "schema": x_feedback.SCHEMA,
+            }
+        if self.key == x_style.KEY:
+            definition["x_style_policy"] = dict(x_style.POLICY)
+            definition["x_style_instructions"] = x_style.INSTRUCTIONS
+            definition["x_style_schema"] = x_style.MODEL_SCHEMA
         if self.key == organic_system.KEY:
             definition["organic_system_policy"] = dict(organic_system.POLICY)
         if self.key == growth_onboarding.KEY:
@@ -465,7 +497,9 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key == "content.public_article":
+        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME}:
+            # Site health is folded into the technical fix: saved configurations and schedules
+            # keep running at their pinned revision, but new setups use the technical fix.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -510,10 +544,11 @@ BUILTIN_WORKFLOWS = (
             "plan and draft its next article for review. With GitHub connected, adapt the "
             "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
             "Then draft the next planned article each week, one review at a time. "
+            "Before new articles, refresh one existing page now and again each week. "
             "Optionally propose one technical fix. Never merges, publishes or sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.4.0",
+        version_label="0.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -526,9 +561,10 @@ BUILTIN_WORKFLOWS = (
         "connected website repository's own format, adding a Markdown route once when the "
         "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
         "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
-        "to main and the PR adds nothing but the page.",
+        "to main and the PR adds nothing but the page, or the page at the route you chose "
+        "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -596,6 +632,101 @@ BUILTIN_WORKFLOWS = (
         ),
     ),
     BuiltinWorkflow(
+        id=content_repository_delivery.WEBSITE_CHANGE_ID,
+        key=website_change.KEY,
+        title="Change the website",
+        description="Make one approved change to your website repository. Today that is an "
+        "approved article, answer page or public article, adapted to the site's own format at "
+        "the route you chose, with its copy unchanged. A change you approved with commit to main "
+        "publishes: Tin merges its pull request once GitHub reports it clean. Anything else, "
+        "and any change to a protected page such as /sign-in, opens a pull request for you to "
+        "merge.",
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand",),
+        # Agents start it for an approved change; the catalog has no picker for change rows.
+        agent_only=True,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "source": {
+                    "type": "string",
+                    "enum": list(website_change.IMPLEMENTED_SOURCES),
+                    "default": "content_draft",
+                    "title": "Change source",
+                    "description": "Where the change comes from: an approved page for now.",
+                },
+                "source_run_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "title": "Approved page run",
+                    "description": "An approved planned article, answer page or public article.",
+                },
+                "expected_repository": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 140,
+                    "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+                    "title": "Website repository",
+                },
+                "protected_paths": {
+                    "type": "array",
+                    "title": "Protected paths",
+                    "description": "Site paths whose changes always wait for the founder's "
+                    "merge, on top of /sign-in, /sign-up and /auth-complete, such as pages "
+                    "another app shares.",
+                    "items": {"type": "string", "pattern": website_change.PROTECTED_PATH_PATTERN},
+                    "maxItems": website_change.MAX_PROTECTED_PATHS,
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "retry_run_id": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
+                    "title": "Failed change to retry",
+                    "description": "Internal retry context. A fresh attempt is a new "
+                    "metered run; retrying a saved PR delivery does not use this input.",
+                },
+                "direction": {
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Site instructions",
+                    "description": "Optional site root or conventions. Does not authorize "
+                    "changing the approved copy, the route or a protected path.",
+                },
+            },
+            "required": ["project_id", "source_run_id", "expected_repository"],
+        },
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=GITHUB_PROVIDER,
+                capabilities=(
+                    "contents.read",
+                    "contents.write",
+                    "pull_requests.read",
+                    "pull_requests.write",
+                ),
+                required=True,
+            ),
+        ),
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / website_change.KEY,
+            entry_skill="site-change",
+            github_pull_request=GitHubPullRequestProcedure(
+                receipt_path_template="website/changes/{run_id}.md",
+                verification_commands=(content_repository_delivery.CHECK_COMMAND,),
+                # content.deliver's caps: a 300 KB public article, its listing and a route.
+                max_files=5,
+                max_bytes=400_000,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000031"),
         key=content_draft.KEY,
         public_mcp=PublicMCPExposure("start_content_draft", destructive=True, open_world=True),
@@ -606,7 +737,7 @@ BUILTIN_WORKFLOWS = (
         "Optional GitHub PR delivery follows article approval. "
         "Nothing is merged or published and the roadmap stays unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -685,6 +816,65 @@ BUILTIN_WORKFLOWS = (
         ),
     ),
     BuiltinWorkflow(
+        id=content_refresh.WORKFLOW_ID,
+        key=content_refresh.KEY,
+        title="Refresh an existing page",
+        description=(
+            "Pick the page from your latest audit with the most search impressions at stake: "
+            "searchers see it near the top but rarely click, or it ranks just below the top "
+            "results. Propose a new title, meta description and, where they miss the search, "
+            "H1 and opening answer, in your positioning and voice. After you approve in "
+            "Decisions, Tin changes exactly those lines in your site's source and follows your "
+            "delivery setting. A page waits six weeks after a refresh goes live, and later "
+            "runs report its clicks before and after."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand", "weekly"),
+        review_policy=CONTENT_REFRESH_REVIEW_POLICY,
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="run",
+                workflow="organic.audit",
+                level="recommended",
+                reason="The refresh picks its page from the latest audit's search findings.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=STYLE_PATH,
+                producer=style_capture.KEY,
+                reason="The writing guide shapes expression, not product facts.",
+            ),
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to add?",
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+            },
+            "required": ["project_id"],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / content_refresh.KEY,
+            entry_skill="page-refresh",
+            output_path_template=content_refresh.PATH_TEMPLATE,
+            output_validator=content_refresh.VALIDATOR,
+            output_max_bytes=40_000,
+            project_skills=(
+                ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000030"),
         key=style_capture.KEY,
         public_mcp=PublicMCPExposure("start_style_capture", destructive=True, open_world=False),
@@ -734,31 +924,138 @@ BUILTIN_WORKFLOWS = (
         },
     ),
     BuiltinWorkflow(
+        id=x_feedback.WORKFLOW_ID,
+        key=x_feedback.KEY,
+        title="Revise X writing",
+        description="Revise an X draft and remember clear writing preferences from feedback.",
+        executor=x_feedback.KEY,
+        version_label="1.0.0",
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        agent_only=True,
+        input_schema=x_feedback.INPUT_SCHEMA,
+        model_route=x_feedback.ROUTE,
+    ),
+    BuiltinWorkflow(
+        id=x_draft.WORKFLOW_ID,
+        key=x_draft.KEY,
+        title="Draft for X",
+        description=(
+            "Describe a product update. Tin sets up your voice if needed, then writes a draft."
+        ),
+        executor=x_draft.KEY,
+        version_label="1.0.0",
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        input_schema=x_draft.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
+        key=x_style.KEY,
+        title="Learn my X writing style",
+        description=(
+            "Learn from up to 50 of your own public X posts, favoring recent writing, "
+            "or use samples you supply. Review the proposed guide before future X drafts use it."
+        ),
+        executor=x_style.KEY,
+        version_label="1.0.0",
+        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
+        system=X_SYSTEM,
+        schedule_modes=("on_demand",),
+        model_route=x_style.ROUTE,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "sample_source": {
+                    "type": "string",
+                    "enum": ["auto", "connected", "supplied"],
+                    "default": "auto",
+                    "title": "Learn from",
+                    "description": (
+                        "Use the connected account, supplied samples/preferences, "
+                        "or infer from the supplied inputs."
+                    ),
+                },
+                "supplied_samples": {
+                    "type": "string",
+                    "maxLength": 32000,
+                    "default": "",
+                    "title": "Your writing samples",
+                    "description": "Optional; otherwise samples your connected public X account.",
+                    "x-tin-ui": {"control": "textarea", "order": 10},
+                },
+                "source_path": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "default": "",
+                    "title": "Samples in project Files",
+                },
+                "account_id": {
+                    "type": "string",
+                    "pattern": "^(|[0-9]{1,19})$",
+                    "default": "",
+                    "title": "X account ID",
+                    "description": "Optional for samples; connected sampling uses your account.",
+                },
+                "preferences": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "default": "",
+                    "title": "Writing preferences",
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to change?",
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+            },
+            "required": ["project_id"],
+        },
+    ),
+    BuiltinWorkflow(
+        id=x_posts.WORKFLOW_ID,
+        key=x_posts.KEY,
+        title="Publish an approved X post",
+        description="Publish the exact post and media confirmed through Tin's X preview.",
+        executor=x_posts.KEY,
+        version_label="1.0.0",
+        schedule_modes=("on_demand",),
+        system=X_SYSTEM,
+        agent_only=True,
+        input_schema=x_posts.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
         public_mcp=PublicMCPExposure("start_technical_fix", destructive=True, open_world=True),
-        title="Fix an audited technical issue",
+        title="Fix what the audit found",
         description=(
-            "Recheck one missing-title or missing-description finding and propose a verified PR. "
-            "Supports exact static HTML and bounded Python-wheel HTML templates. "
-            "Lists unsupported pages separately. "
-            "If no safe repair is available, explain why "
-            "without a PR. Never merges or deploys; GitHub may run its configured PR checks."
+            "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
+            "indexing, the sitemap and robots.txt, redirects and merges, page structure, "
+            "accessibility, structured data, social previews and internal links, in any "
+            "framework. Your coding agent answers the judgment calls first. Copy stays with "
+            "the content workflows, and steps outside the repository are listed. Tin checks "
+            "each finding on the live site after you deploy. Never merges or deploys."
         ),
-        version_label="0.4.1",
+        version_label="0.6.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
                 level="required",
                 workflow=AUDIT_KEY,
                 via_input="audit_run_id",
-                reason="A technical fix repairs one finding from a successful, pinned audit.",
+                reason="A technical fix repairs findings from a successful, pinned audit.",
             ),
         ),
         executor="codex.procedure",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
-        input_schema=technical_fix.INPUT_SCHEMA,
+        input_schema=technical_fix.BATCH_INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=GITHUB_PROVIDER,
@@ -773,11 +1070,14 @@ BUILTIN_WORKFLOWS = (
         ),
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / technical_fix.KEY,
-            entry_skill="audit-title-repair",
+            entry_skill="audit-batch-repair",
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-                verification_commands=(technical_fix.CHECK_COMMAND,),
-                repair_policy=technical_fix.POLICY,
+                verification_commands=tuple(
+                    technical_fix.policy_commands(technical_fix.BATCH_POLICY)
+                ),
+                repair_policy=technical_fix.BATCH_POLICY,
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
             ),
         ),
     ),
@@ -791,7 +1091,7 @@ BUILTIN_WORKFLOWS = (
             "Save to My system to prepare weekly batches. Does not write articles or publish."
         ),
         executor=content_plan.KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -939,7 +1239,7 @@ BUILTIN_WORKFLOWS = (
             "No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.6.0",
+        version_label="0.8.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1039,12 +1339,13 @@ BUILTIN_WORKFLOWS = (
         ),
         title="Improve site health",
         description=(
-            "Inspect one public site against its selected GitHub repository, make one bounded "
-            "mechanical improvement, and open a pull request for review. "
-            "When no safe change is justified, save a no-change report without opening a PR."
+            "Retired: use Fix what the audit found, which repairs every finding of an organic "
+            "audit in one pull request. Saved schedules of this workflow keep running: it "
+            "inspects one public site against its GitHub repository, makes one bounded "
+            "mechanical improvement and opens a pull request for review."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.2.2",
+        version_label="2.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         presentation=WorkflowDiagram(
             nodes=(
@@ -1171,13 +1472,16 @@ BUILTIN_WORKFLOWS = (
             "findings; not for general advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.4.0",
+        version_label="1.6.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
                 level="recommended",
-                workflow=VISIBILITY_AUDIT_WORKFLOW_NAME,
-                reason="The latest AI visibility audit supplies the questions the page answers.",
+                workflow=AUDIT_KEY,
+                reason=(
+                    "The latest organic audit's AI buyer questions supply the questions the "
+                    "page answers."
+                ),
             ),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,
@@ -1343,7 +1647,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -2424,7 +2728,9 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
-    organic_system.KEY: tuple(organic_system.STEPS.values()),
+    x_draft.KEY: tuple(x_draft.STEPS.values()),
+    # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
+    organic_system.KEY: (*organic_system.STEPS.values(), organic_system.REFRESH_KEY),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
 
@@ -2479,6 +2785,9 @@ async def sync_builtin_workflows(
         validate_prerequisite_graph(prerequisites)
     except ValueError as exc:
         raise RuntimeError(f"built-in workflow prerequisites are invalid: {exc}") from exc
+    for parent, children in PARENT_CHILD_KEYS.items():
+        if parent in prepared and (missing := set(children) - prepared.keys()):
+            raise RuntimeError(f"workflow {parent} needs selected children: {sorted(missing)}")
     for system in WORKFLOW_SYSTEMS:
         await database.upsert_workflow_system(
             system_id=system.id,

@@ -40,6 +40,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Organic search content |
 | `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | AI visibility |
 | `competitor.watch` | its last report, keyword plan and ads competitors, Feature map | `content.public_article`, `content.plan`, `research.deep_dive` | Pricing and packaging |
+| `competitor.sunset_rescue` | its earlier reports, competitor-watch reports, onboarding plan, Feature map, Code map, keyword plan | `content.public_article`, `project.task`, `outreach.community_threads` | Pricing and packaging |
 | `qa.buyer_trust` | signup walkthrough, Feature map, onboarding plan | `site.health_improve` (code), founder (policy, host) | Conversion and trust |
 | `growth.score_quiz` | Feature map, style guide (filled in by the agent) | founder embeds the widget | Conversion and trust |
 | `product.analytics_brief` | PostHog connection (`analytics.posthog`) | its next scheduled brief | Product-led growth |
@@ -51,6 +52,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.newsletter_placements` | onboarding plan, Feature map, style guide, its earlier reports | founder submits or books the placement | Earned media and launches |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
 | `outreach.awesome_lists` | onboarding plan, Code map, its earlier reports | `outreach.awesome_submit` sends the approved entries from the founder's GitHub account | Platform and marketplaces |
+| `growth.framework_starter` | connected repository, Code map, Feature map, onboarding plan, style guide, its earlier receipts | founder merges the PR; `content.plan` (`context_files`) for a tutorial; `outreach.awesome_lists` once the starter has its own repository | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
@@ -163,6 +165,7 @@ This one validates. Copy it and change the parts that describe your workflow.
 ```
 
 Every text input needs a `maxLength`, every array a `maxItems`, and `project_id` stays as it is.
+A `"format": "uri"` input accepts only an http(s) URL with a host, and no input may contain NUL.
 A package declares one output: either a file in the project, as above, or a GitHub pull request.
 
 For a complete minimal example, save this as `PROMPT.md`:

@@ -28,6 +28,7 @@ from tin_lite.executor_gates import (
 )
 from tin_lite.integrations import parse_integration_requirements, registered_integrations
 from tin_lite.keyword_plan import KEY as KEYWORD_KEY
+from tin_lite.managed_services import configured, is_managed, not_configured
 from tin_lite.organic_audit import AUDIT_KEY
 from tin_lite.paid_ads import KEY as PAID_ADS_KEY
 from tin_lite.workflow_inputs import client_input_schema
@@ -67,8 +68,20 @@ def tin_state(
             continue
         requirements = parse_integration_requirements(definition.get("integration_requirements"))
         required_providers = sorted({item.provider_key for item in requirements if item.required})
-        missing = [provider for provider in required_providers if provider not in connected]
-        reason = _executor_reason(workflow.executor, settings)
+        # Tin holds the keys for managed services; there is nothing for the founder to connect.
+        missing = [
+            provider
+            for provider in required_providers
+            if provider not in connected and not is_managed(provider)
+        ]
+        reason = _executor_reason(workflow.executor, settings) or next(
+            (
+                not_configured(provider)
+                for provider in required_providers
+                if is_managed(provider) and not configured(settings, provider)
+            ),
+            None,
+        )
         unblock: dict[str, str] | None = None
         if reason is not None:
             unblock = {"kind": "tin_operator", "detail": reason}

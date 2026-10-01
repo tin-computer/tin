@@ -276,6 +276,7 @@ def observation(row, facts, *, legacy=False):
         "dataforseo",
         "gak",
         "google_ads",
+        "pagespeed",
     }:
         provider = "dataforseo" if kind == "tool" else "unknown"
     model = (

@@ -213,6 +213,33 @@ async def test_saved_configuration_uses_existing_pinned_contract(fixture):
     f.start.assert_not_called()
 
 
+async def test_old_single_finding_saved_repair_is_not_retargeted_to_batch_repair(fixture):
+    from tin_lite.technical_fix import INPUT_SCHEMA
+
+    f = fixture
+    entry = next(w for w in published_workflows().values() if w.key == "organic.technical_fix")
+    f.db.get_workflow.return_value = workflow(entry)
+    saved = SimpleNamespace(
+        id=uuid4(),
+        project_id=f.project,
+        workflow_id=entry.id,
+        input_schema=INPUT_SCHEMA,
+        definition_commit_sha="historical-single-finding-revision",
+    )
+    f.db.get_project_workflow.return_value = saved
+    with pytest.raises(ToolError, match="unsupported"):
+        await f.server.call_tool(
+            "start_technical_fix",
+            {
+                "project_id": str(f.project),
+                "request_id": str(uuid4()),
+                "project_workflow_id": str(saved.id),
+            },
+        )
+    f.start.assert_not_called()
+    assert saved.definition_commit_sha == "historical-single-finding-revision"
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -571,7 +598,7 @@ ADDED_INPUTS = {
     "organic.technical_fix": {
         "audit_run_id": str(uuid4()),
         "audit_revision": "a" * 40,
-        "finding_id": "oa_" + "b" * 20,
+        "finding_ids": ["oa_" + "b" * 20],
         "expected_repository": "fixture/product",
         "repository_serves_site": True,
     },
@@ -603,19 +630,29 @@ ADDED_INPUTS = {
 }
 
 
-def test_complete_public_catalog_coverage_and_only_four_native_exclusions():
+def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
     assert len(entries) == 47
-    assert {w.id for w in PUBLIC_WORKFLOWS} <= entries.keys()
+    assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
+        "social.x_compose",
+        "competitor.sunset_rescue",
+        "growth.framework_starter",
+    }
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
         "content.deliver",
+        "website.change",
+        "content.refresh",
+        "social.x_revise",
+        "social.x_draft",
+        "social.x_style",
+        "social.x_publish",
         "project.task",
         "growth.onboarding",
         "growth.onboarding_plan",
     }
-    assert {w.key for w in PUBLIC_WORKFLOWS} | {
+    assert {w.key for w in PUBLIC_WORKFLOWS if w.id in entries} | {
         "style.capture",
         "organic.technical_fix",
     } == ADDED_INPUTS.keys()
@@ -689,6 +726,8 @@ async def test_published_package_schemas_match_registry_publication():
 
     entries = published_workflows()
     for package in await load_public_workflows():
+        if package.id not in entries:
+            continue
         entry = entries[package.id]
         assert entry.definition == package.definition
         assert entry.definition_path == package.definition_path
@@ -709,18 +748,21 @@ async def test_code_package_unknown_inputs_rejected_before_admission(fixture):
     fixture.start.assert_not_called()
 
 
+@pytest.mark.parametrize("has_repairs", [True, False])
 async def test_technical_preflight_uses_existing_selection_and_redacts_binding_ids(
-    fixture, monkeypatch
+    fixture, monkeypatch, has_repairs
 ):
     f = fixture
     from tin_lite.technical_fix_sources import TechnicalFixSources
 
-    selection = ADDED_INPUTS["organic.technical_fix"]
+    selection = dict(ADDED_INPUTS["organic.technical_fix"])
+    selection["finding_id"] = selection.pop("finding_ids")[0]
     f.runtime.storage = SimpleNamespace()
     f.runtime.integrations = SimpleNamespace()
     preview = AsyncMock(
         return_value={
             "source": {"audit_revision": selection["audit_revision"]},
+            "summary": {"fixable": 1},
             "live_verification": "not_performed",
             "repository_binding": {
                 "connection_id": str(uuid4()),
@@ -732,7 +774,11 @@ async def test_technical_preflight_uses_existing_selection_and_redacts_binding_i
             },
         }
     )
-    monkeypatch.setattr(TechnicalFixSources, "preflight", preview)
+    if not has_repairs:
+        preview.return_value.pop("repository_binding")
+        preview.return_value["summary"] = {"fixable": 0}
+        preview.return_value["execution_available"] = False
+    monkeypatch.setattr(TechnicalFixSources, "batch", preview)
     result = await f.server.call_tool(
         "preflight_technical_fix",
         {
@@ -742,12 +788,17 @@ async def test_technical_preflight_uses_existing_selection_and_redacts_binding_i
     )
     assert preview.call_args.kwargs["project_id"] == f.project
     assert str(preview.call_args.kwargs["audit_run_id"]) == selection["audit_run_id"]
-    assert preview.call_args.kwargs["finding_id"] == selection["finding_id"]
-    assert result.structured_content["repository_binding"] == {
-        "repository": "fixture/product",
-        "default_branch": "main",
-        "head_sha": "c" * 40,
-    }
+    assert preview.call_args.kwargs["finding_ids"] == [selection["finding_id"]]
+    if has_repairs:
+        assert result.structured_content["repository_binding"] == {
+            "repository": "fixture/product",
+            "default_branch": "main",
+            "head_sha": "c" * 40,
+        }
+    else:
+        assert "repository_binding" not in result.structured_content
+        assert result.structured_content["execution_available"] is False
+    assert "relay" not in result.structured_content
     f.start.assert_not_called()
     preview.reset_mock()
     f.db.has_project_access.return_value = False

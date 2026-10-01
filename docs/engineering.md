@@ -126,6 +126,17 @@ facts; there is no separate run-inspector page. Email campaign runs additionally
 delivery projection for recipient, touch, schedule, send, reply, and failure state. Provider message
 and request identifiers are not returned to the browser.
 
+Files requests `GET /api/projects/{project_id}/files?include_modified=true` to show each
+file's last saved change. Dates come from code.storage's per-file commit metadata at the
+same revision as the listing; bulk pages reuse the immutable revision cache. An unrelated
+project commit does not change a file's date. Missing timestamps remain unknown. Dates use
+the browser's local timezone, with an exact timestamp on hover; narrow and search views
+show the same metadata. The default API listing remains path-only for existing clients.
+
+Background workflow polling updates run facts while preserving an open configuration form,
+its unsaved inputs, focus and setup result. Code setup is checked on opening and when workflow
+inputs change; changing the name or schedule alone does not repeat the server check.
+
 All product API routes require a Clerk session token and enforce the requested project's local
 membership. Project membership has one access level: any current member can use the project and
 create a seven-day invitation for another verified email address. Invitation tokens are stored only
@@ -423,7 +434,7 @@ are disabled so workflow-level receipts and Temporal retries remain the only amb
 `TIN_LITE_LUNA_API_KEY` remains the switchboard-only OpenAI credential and continues to serve Luna;
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OPENROUTER_API_KEY` configure the other adapters. Identity-linked Anthropic
 keys also require `ANTHROPIC_WORKSPACE_ID`; workspace-scoped keys may omit it. None of these
-credentials is sent to Temporal, code.storage, the broker, or E2B. No model routes are silently created merely
+credentials is sent to Temporal, code.storage, or E2B. No model routes are silently created merely
 because a key exists; each workflow definition must deliberately select a registered route.
 
 Shared-service calls now retain trusted per-run usage receipts, including rejected output and
@@ -515,10 +526,12 @@ Codex runs receive only short-lived run-scoped access in the protected controlle
 reusable provider key. Tin no longer requires a pooled login or `auth.json`. Product Clerk
 login and model-provider authentication are separate systems.
 
-MCP and OAuth-based connection setup also require `TIN_LITE_MCP_OAUTH_CLIENT_IDS`, an explicit
-comma-separated list of approved Clerk OAuth client IDs or exact CIMD URLs. Empty disables
-OAuth access. Configure approved IDs before deployment; browser sessions do not require this
-setting. See [client admission](clerk-agent-connection.md#oauth-client-admission).
+MCP and OAuth-based connection setup accept Clerk access tokens bound to Tin's resource
+(`TIN_LITE_PUBLIC_URL` plus `/mcp`); new clients need no per-client setting.
+`TIN_LITE_MCP_OAUTH_CLIENT_IDS` is optional: a comma-separated list of exact Clerk OAuth client
+IDs or CIMD URLs whose tokens may lack that resource binding (legacy clients). Empty, the
+default, refuses only those unbound tokens; it does not disable MCP OAuth. Browser sessions do
+not use this setting. See [OAuth resource binding](clerk-agent-connection.md#oauth-resource-binding).
 
 The trusted switchboard may also read `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
 `OPENROUTER_API_KEY` for native workflow
@@ -673,6 +686,10 @@ Markdown receipt is also committed to project state; Activity links directly to 
 human review. Repository content and live-page evidence remain untrusted inputs, while installation
 credentials remain entirely on the switchboard. The older native site-health executor stays
 registered only for already-recorded Temporal history compatibility.
+
+Site health is now folded into `organic.technical_fix` (policy `site-fix-v5`), which fixes
+every fixable finding of an organic audit in one pull request under the same delivery path; its
+checks run in the audit. Site health leaves discovery but saved configurations keep running.
 
 Sandbox profiles are built by `sandbox/template.py`. API execution uses the isolated,
 browser API or Studio API templates. Historical OAuth compute is refused. Select only the template required for a reviewed change with

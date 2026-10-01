@@ -30,11 +30,13 @@ checking it.
 The shared Clerk instance advertises Dynamic Client Registration so MCP clients that do not support
 Client ID Metadata Documents can connect. Clerk requires consent for those clients and applies only
 the standard `openid` scope when a client omits scopes. Tin does not use that scope as a substitute
-for authorization: Tin requires an exact client ID in `TIN_LITE_MCP_OAUTH_CLIENT_IDS`, checks
-returned audience/resource claims, and every MCP tool still resolves the Clerk user to a local
-project membership. The same OAuth policy protects connection setup. The empty client list
-disables OAuth access while preserving browser sessions; see
-[client admission and rollout](clerk-agent-connection.md#oauth-client-admission). When
+for authorization: an access token must be bound to Tin's resource (`TIN_LITE_PUBLIC_URL` plus
+`/mcp`) in its audience or resource claims, checked against both Clerk's introspection and the
+signature-verified token, and every MCP tool still resolves the Clerk user to a local project
+membership. The same OAuth policy protects connection setup. `TIN_LITE_MCP_OAUTH_CLIENT_IDS` is
+only an optional exception for legacy clients whose tokens carry no resource binding. Leaving it
+empty refuses those unbound tokens; it does not turn MCP OAuth off. See
+[OAuth resource binding](clerk-agent-connection.md#oauth-resource-binding). When
 CIMD is generally available, prefer explicitly allowed CIMD clients and turn off public dynamic
 registration if the supported client set makes that practical.
 
@@ -62,7 +64,11 @@ provider as a special workflow:
 2. A provider adapter owns authorization, token refresh, revocation, health checks, and provider API
    translation. LinkedIn-specific behavior stops at that adapter.
    GitHub uses OAuth-on-install only to verify that the current GitHub user can access the returned
-   installation ID; the short-lived user token is discarded and is never stored. Tin keeps
+   installation ID and to list the repositories there that the user can push to; the
+   short-lived user token is discarded and is never stored. Tin reads and changes the selected
+   repository with the installation's token, so it offers only those repositories
+   (`user_repositories` in the connection). A connection made before Tin recorded that list
+   keeps its selected repository; choosing another needs a reconnect. Tin keeps
    only that user's numeric GitHub ID and login (`tin_user_github_identities`) so the
    [contributor check](contributing-workflows.md) can match a pull-request author to a Tin
    user. A failed lookup leaves the identity unlinked and the connection unaffected.

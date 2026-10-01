@@ -15,6 +15,7 @@ from tin_lite import (
     paid_ads,
     paid_ads_launch,
     style_capture,
+    x_feedback,
 )
 from tin_lite.activities import TinActivities
 from tin_lite.activity_lanes import (
@@ -69,6 +70,10 @@ from tin_lite.visibility import VisibilityAuditor
 from tin_lite.weekly_brief import WeeklyBriefReporter
 from tin_lite.worker_group import WorkerGroup
 from tin_lite.workflows import registered_workflows
+from tin_lite.x_draft_activities import XDraftActivities
+from tin_lite.x_feedback_activities import XFeedbackActivities
+from tin_lite.x_publish_activities import XPublishActivities
+from tin_lite.x_style_activities import XStyleActivities
 
 ROOT = Path(__file__).parents[2]
 
@@ -130,6 +135,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             SITE_HEALTH_MODEL_ROUTE,
             CHARACTER_MODEL_ROUTE,
             style_capture.ROUTE,
+            x_feedback.ROUTE,
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
@@ -222,6 +228,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
         temporal=temporal,
     )
+    from tin_lite.ai_answers_activities import AIAnswersActivities
+
+    # Registered for the organic audit to call; no workflow uses it yet.
+    ai_answers = AIAnswersActivities(database=database, settings=settings)
     organic = OrganicAuditActivities(
         database=database,
         storage=storage,
@@ -254,6 +264,18 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     )
     style_activities = StyleCaptureActivities(
         database=database, storage=storage, router=model_router
+    )
+    x_draft_activities = XDraftActivities(
+        database=database, storage=storage, integrations=integrations, settings=settings
+    )
+    x_feedback_activities = XFeedbackActivities(
+        database=database, storage=storage, router=model_router
+    )
+    x_style_activities = XStyleActivities(
+        database=database, storage=storage, router=model_router, x_connection=integrations.x
+    )
+    x_publish_activities = XPublishActivities(
+        database=database, storage=storage, integrations=integrations
     )
     plan_activities = GrowthPlanActivities(
         database=database,
@@ -313,6 +335,21 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         style_activities.record_approval,
         style_activities.publish,
         style_activities.failure,
+        x_draft_activities.prepare,
+        x_draft_activities.step,
+        x_draft_activities.finish,
+        x_draft_activities.failure,
+        x_feedback_activities.generate,
+        x_feedback_activities.publish,
+        x_feedback_activities.failure,
+        x_style_activities.prepare,
+        x_style_activities.extract,
+        x_style_activities.propose,
+        x_style_activities.record_approval,
+        x_style_activities.publish,
+        x_style_activities.failure,
+        x_publish_activities.execute,
+        x_publish_activities.failure,
         plan_activities.prepare,
         plan_activities.write,
         plan_activities.publish,
@@ -354,6 +391,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic_system.organic_system_finish,
         organic_system.organic_system_failure,
         organic_system.organic_system_weekly_articles,
+        organic_system.organic_system_refresh,
         organic_system.organic_system_weekly_articles_failure,
         onboarding.growth_onboarding_prepare,
         onboarding.growth_onboarding_step,
@@ -388,6 +426,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic.organic_publish,
         organic.organic_project,
         organic.organic_failure,
+        ai_answers.ai_answers_measure,
         activity_instance.dispatch_scheduled_workflow,
         activity_instance.prerequisite_wait,
         activity_instance.create_design_sandbox,

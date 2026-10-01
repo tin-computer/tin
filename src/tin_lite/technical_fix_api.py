@@ -22,14 +22,34 @@ class TechnicalFixSelection(BaseModel):
     repository_serves_site: StrictBool
 
 
+class BatchPreview(BaseModel):
+    """site-fix-v5: the whole audit, or one finding, with the answers given so far."""
+
+    model_config = ConfigDict(extra="forbid")
+    audit_run_id: UUID
+    audit_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    finding_id: str = Field(default="", pattern=r"^(|oa_[0-9a-f]{20})$")
+    expected_repository: str = Field(min_length=3, max_length=140)
+    repository_serves_site: StrictBool
+    decisions: list[str] = Field(default_factory=list, max_length=30)
+
+
 async def service(request, project_id, user):
     runtime = request.app.state.runtime
     if not await runtime.database.has_project_access(
         project_id=project_id, clerk_user_id=user.clerk_user_id
     ):
         raise HTTPException(status_code=404, detail="project not found")
+    from tin_lite import technical_fix
+
+    # The catalog's repair policy decides what the preview covers.
+    policy = technical_fix.current_policy()
     return TechnicalFixSources(
-        database=runtime.database, storage=runtime.storage, integrations=runtime.integrations
+        database=runtime.database,
+        storage=runtime.storage,
+        integrations=runtime.integrations,
+        supported_checks=technical_fix.supported_checks(policy),
+        batch=technical_fix.batches(policy),
     )
 
 
@@ -61,6 +81,21 @@ async def stop_control(request, project_id, run_id, user, control):
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/runs/{run_id}/live")
+async def live_check(
+    project_id: UUID, run_id: UUID, request: Request, check: bool = False, user: AuthContext = USER
+):
+    """After the fix's PR merges, whether the live site still shows the finding. `check`
+    asks GitHub and the site again, at most every ten minutes per run."""
+    from tin_lite.technical_fix_live import live_service
+
+    await service(request, project_id, user)
+    run = await request.app.state.runtime.database.get_run(run_id)
+    if run is None or run.project_id != project_id:
+        raise HTTPException(status_code=404, detail="run not found")
+    return {"live_check": await live_service(request.app.state.runtime).view(run, check=check)}
 
 
 @router.post("/runs/{run_id}/stop")
@@ -103,10 +138,23 @@ async def inspect(project_id: UUID, audit_run_id: UUID, request: Request, user: 
 
 @router.post("/preflight")
 async def preflight(
-    project_id: UUID, payload: TechnicalFixSelection, request: Request, user: AuthContext = USER
+    project_id: UUID, payload: BatchPreview, request: Request, user: AuthContext = USER
 ):
     preparation = await service(request, project_id, user)
     try:
-        return await preparation.preflight(project_id=project_id, **payload.model_dump())
+        if preparation.batch_mode:
+            values = payload.model_dump()
+            finding_id = values.pop("finding_id")
+            return await preparation.batch(
+                project_id=project_id, finding_ids=[finding_id] if finding_id else [], **values
+            )
+        if not payload.finding_id:
+            raise TechnicalFixError(
+                "invalid_selection", "Choose an exact audit finding.", status_code=422
+            )
+        return await preparation.preflight(
+            project_id=project_id,
+            **payload.model_dump(exclude={"decisions"}),
+        )
     except TechnicalFixError as exc:
         raise http_error(exc) from exc

@@ -260,9 +260,12 @@ def package_policy(definition):
 
 
 def model_execution_ready(settings, definition):
-    from tin_lite.workflow_code import MODEL_POLICY
+    if definition.get("executor") != "workflow.code":
+        return True
+    from tin_lite.workflow_code import validate_code_definition
 
-    return package_policy(definition) != MODEL_POLICY or bool(
+    # Paid managed reads share the metered policy but need no model key.
+    return not validate_code_definition(definition).model_routes or bool(
         getattr(settings, "luna_api_key", None)
     )
 
@@ -661,7 +664,8 @@ def authoring_guide(*, settings, project_id):
             "Refresh list_workflows. Call start_workflow with its UUID, project_id and inputs; "
             "do not put project_id inside inputs.",
             "Call get_code_workflow_setup for code input, connection and cost readiness. "
-            "Optionally create_project_workflow to save inputs and an eligible code schedule. "
+            "Optionally create_project_workflow to save inputs and an eligible code schedule; "
+            "a saved schedule also runs once right away. "
             "Saves choose the active definition automatically; existing saves/runs do not move.",
             "Code definitions may opt into daily/weekly schedule_modes alongside on_demand. "
             "Schedules use local time/timezone, optional start_at/end_at and selected weekdays. "
@@ -792,6 +796,8 @@ def authoring_guide(*, settings, project_id):
             "call_service; no browser, Studio or test-identity combinations.",
             "costs": "Codex uses existing model pricing. Connected-provider costs are separate "
             "and unknown unless independently verified; call limits are not dollar ceilings.",
+            "managed": "managed.pagespeed (free) works through call_service. Paid managed "
+            "services such as managed.dataforseo are for workflow.code packages only.",
         },
         "code_contract": {
             "executor": "workflow.code",
@@ -799,7 +805,8 @@ def authoring_guide(*, settings, project_id):
             "model_policy": "managed-code-model-v1",
             "timeout_seconds": 60,
             "network": "none",
-            "credits": "Code-only compute is included. Declared model calls use metered credits.",
+            "credits": "Code-only compute is included. Declared model calls and paid managed "
+            "reads (managed.dataforseo) use metered credits.",
             "result": "Return exactly {path, content}; one declared UTF-8 artifact.",
             "authoring": "Export run(ctx, inputs); ctx has run_id and created_at. "
             "Only declared package files and the Python standard library are available.",
@@ -809,6 +816,11 @@ def authoring_guide(*, settings, project_id):
                 "bindings": "code.services maps a name to provider_key, max_calls (1-8) and "
                 "max_response_bytes (1024-64000). Declare matching required "
                 "integration_requirements; at most eight calls total.",
+                "provider_cost": "An optional provider_cost on a service binding has "
+                "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
+                "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
+                "pricing and the workflow's usage bounds; omit when unknown. This is an "
+                "advisory creator estimate, not a Tin credit charge or a provider spending cap.",
                 "custom_api": "await ctx.services.request(service=..., step=..., path=..., "
                 "method='GET', params={}, body=None). Custom API bindings use custom.api.<name> "
                 "and http.read/http.write capabilities. Connection methods must also permit it.",
@@ -829,12 +841,27 @@ def authoring_guide(*, settings, project_id):
                 "has_more, truncated}. Stripe customer records include full email and name. "
                 "Arguments, fields and errors: docs/stripe-and-posthog-connections.md in "
                 "Tin's source.",
+                "managed": "Tin holds the key; there is nothing to connect. Declare the provider "
+                "in integration_requirements with its capabilities and bind it in code.services. "
+                "managed.pagespeed (pagespeed.read, crux.read; $0): pagespeed.run {url, "
+                "strategy: mobile|desktop, categories} returns scores, lab lcp_ms/cls/tbt_ms and "
+                "field data or field_status no_field_data; a run over 22 s returns status "
+                "timed_out. crux.query {origin|url, form_factor} returns p75 and good/poor "
+                "shares, or status no_field_data. managed.dataforseo (serp.read, keywords.read, "
+                "backlinks.read; charged per call at DataForSEO's reported cost, $0.05 "
+                "reserved per call): serp.organic {keyword, location_code, language_code, "
+                "device, depth}, keywords.ideas {keywords, location_code, language_code, limit, "
+                "offset}, keywords.overview {keywords, location_code, language_code}, "
+                "backlinks.summary {target, include_subdomains}, backlinks.referring_domains "
+                "{target, include_subdomains, limit, offset}. Lists come back as records that "
+                "fit max_response_bytes, with truncated and next_offset. Details: "
+                "docs/project-api-connections.md in Tin's source.",
                 "recovery": "Stable steps replay completed bounded responses. Changed "
                 "requests/connections and uncertain attempts fail closed. Credential rotation "
                 "retains the binding. An oversized response, or a provider refusal such as a "
                 "rate limit or missing permission, is a named error for that step "
-                "and does not block later steps. Provider costs remain separate from Tin model "
-                "credits.",
+                "and does not block later steps. Connected-provider costs remain separate from "
+                "Tin credits; managed.dataforseo reads are charged to Tin credits.",
             },
             "files": {
                 "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern)",

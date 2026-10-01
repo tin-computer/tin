@@ -70,7 +70,12 @@ class WorkflowReviews:
             "assessment": content_editorial_judgment.no_draft(receipt.result),
         }
 
-    async def view(self, run_id, actor):
+    async def view(self, run_id, actor, post_id=""):
+        from tin_lite.x_feedback_service import XFeedback, supports
+
+        candidate = await self.db.get_run(run_id)
+        if await supports(self.db, candidate):
+            return await XFeedback(self.runtime, self.settings).view(run_id, actor, post_id)
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)
@@ -148,7 +153,29 @@ class WorkflowReviews:
         trigger_client=None,
         trigger_source="manual",
         oauth_client_id=None,
+        post_id="",
     ):
+        from tin_lite.x_feedback_service import XFeedback, supports
+
+        candidate = await self.db.get_run(run_id)
+        if await supports(self.db, candidate):
+            if reference_files:
+                raise ValueError(
+                    "X revisions use the draft's existing supporting facts. Put factual "
+                    "corrections in feedback."
+                )
+            return await XFeedback(self.runtime, self.settings).request_changes(
+                run_id=run_id,
+                actor=actor,
+                feedback=feedback,
+                request_id=request_id,
+                token=token,
+                post_id=post_id,
+                billing_quote_id=billing_quote_id,
+                trigger_client=trigger_client,
+                trigger_source=trigger_source,
+                oauth_client_id=oauth_client_id,
+            )
         run, definition = await self.source(run_id, actor)
         if not isinstance(feedback, str) or not feedback.strip() or len(feedback) > 8000:
             raise ValueError("Describe the changes in 1–8,000 characters.")
@@ -333,6 +360,14 @@ class WorkflowReviews:
         return await self.db.get_run(run.id)
 
     async def approve(self, *, run_id, actor, token=None):
+        from tin_lite.x_feedback_service import XFeedback
+
+        candidate = await self.db.get_run(run_id)
+        if candidate and candidate.executor == "social.x_style":
+            return await XFeedback(self.runtime, self.settings).approve(
+                run_id=run_id, actor=actor, token=token
+            )
+
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)

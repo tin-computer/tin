@@ -32,7 +32,10 @@ mode, or approval step. Private Codex procedures remain manual. Existing definit
    }
    ```
 
-5. `start_project_workflow` runs the saved configuration now. The calendar continues independently
+5. Saving a schedule over MCP also runs the configuration once right away: `create_project_workflow`
+   returns `first_run` with that run's id, or why it could not start (the schedule is saved either
+   way), billed like any run. The dashboard keeps its choice between "Set up" and "Set up and run
+   now". `start_project_workflow` runs a saved configuration again. The calendar continues independently
    of the coding agent or browser. My System shows next run, latest result, editable inputs,
    connection/setup issues and the estimate. Code forms preserve multiple weekdays and existing
    start/end bounds; date bounds are authored through MCP/API and displayed in the editor.
@@ -54,8 +57,18 @@ mode, or approval step. Private Codex procedures remain manual. Existing definit
   Custom API 401/403 responses mark the connection for attention only if the credential and
   configuration revisions still match; rotating the key clears that authentication issue.
 - Temporal retains skip-overlap and a 24-hour catch-up window. Older/ended occurrences are
-  skipped. Calendar projections omit nonexistent DST times and include repeated local times.
-  End bounds retain the product's existing exclusive-end behavior.
+  skipped. The next-run projection follows Temporal's own calendar walk across DST changes:
+  depending on the zone a repeated local time fires once or twice, and a nonexistent one is
+  skipped or moved. End bounds retain the product's existing exclusive-end behavior.
+- Postgres decides what runs. A configuration becomes `active` only after Temporal accepted
+  its calendar; a failed sync marks it `failed` with no next run and pauses the old Temporal
+  calendar when it can, and any occurrence Temporal still fires for a failed, mid-save or
+  paused configuration starts nothing. A failed configuration can be paused; resuming sends
+  the saved calendar to Temporal again rather than unpausing whatever Temporal held. A pause
+  made while a settings save is in flight stays in force.
+- New or changed schedules must use an IANA zone name (not the host's `localtime`, `Factory`,
+  or a `posix/` or `right/` copy) and must still have a run before their end. Schedules saved
+  earlier keep loading and dispatching, and an edit that leaves them unchanged is accepted.
 - Code-only bounded compute remains included at zero credits. Model schedules require the
   existing credit account and sufficient standing schedule spending limit; each occurrence and
   paid call still passes authoritative ledger admission. A setup estimate grants no spending.

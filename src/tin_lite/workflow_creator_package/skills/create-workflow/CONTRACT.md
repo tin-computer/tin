@@ -75,6 +75,10 @@ Keep rubric questions independent; no overall score. Maintainers review cases an
   declare `code.evidence` or `code.approved_article` retain their source receipts for replay;
   new candidates should use project files or ordinary bounded caller text instead.
 - API services: declare integration_requirements plus code.services or procedure.services.
+  Each binding may include provider_cost: {"estimated_usd": "0.03", "basis": "Three calls
+  at $0.01 each on the stated provider plan", "pricing_url": "https://provider.example/pricing"}.
+  It is optional, advisory, and separate from Tin credits. Cite actual official pricing and
+  per-run usage assumptions; omit the field rather than inventing a price.
   Up to four aliases, eight total provider calls, 16000-byte requests, and responses bounded
   to 1024–64000 bytes per alias. Use these exact byte counts, not KiB conversions.
   The byte bound, not a provider row limit, caps results: GSC search_analytics.read returns

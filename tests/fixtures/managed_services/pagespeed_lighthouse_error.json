@@ -1,0 +1,14 @@
+{
+ "error": {
+  "code": 500,
+  "message": "Lighthouse returned error: NO_FCP. The page did not paint any content. Please ensure you keep the browser window in the foreground during the load and try again. (NO_FCP)",
+  "errors": [
+   {
+    "message": "Lighthouse returned error: NO_FCP.",
+    "domain": "lighthouse",
+    "reason": "lighthouseUserError"
+   }
+  ],
+  "status": "INTERNAL"
+ }
+}

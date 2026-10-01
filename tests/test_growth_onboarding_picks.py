@@ -18,6 +18,7 @@ from test_service_billing import install
 from tin_lite import growth_onboarding
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.growth_onboarding import PLAN_PATH, plan_readiness
 from tin_lite.mcp_server import _run_allowed_actions, create_mcp_app
 from tin_lite.project_files import ProjectFileService
@@ -53,7 +54,7 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
 
     async def commit(*, repo_id, branch, expected_head_sha, request_id, message, changes):
         if storage.repo.head != expected_head_sha:
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         sha = storage.repo.edit({c.path: c.content.encode() for c in changes}, message)
         return sha, tuple(c.path for c in changes)
 
@@ -208,7 +209,9 @@ async def test_picks_need_a_run_that_is_waiting(publication_db, monkeypatch):
 async def test_picks_need_project_access(publication_db, monkeypatch):
     h = await harness(publication_db, monkeypatch)
     h.token.subject = OUTSIDER
-    assert "project not found" in await refused(h, "record_onboarding_picks", **picks_args(h))
+    assert "not_found: run not found" in await refused(
+        h, "record_onboarding_picks", **picks_args(h)
+    )
 
 
 async def test_approval_waits_for_the_picks_on_both_surfaces(publication_db, monkeypatch):

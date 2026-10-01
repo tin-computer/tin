@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
 from test_organic_content import system_fixture
@@ -13,8 +14,12 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft, organic_system
 from tin_lite.catalog import BUILTIN_WORKFLOWS
-from tin_lite.organic_system_activities import founder_timezone, weekly_section
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.organic_system_activities import (
+    first_weekly_start,
+    founder_timezone,
+    weekly_section,
+)
+from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 
@@ -77,6 +82,43 @@ async def test_founder_timezone_prefers_start_here_then_schedules_then_project()
     assert await founder_timezone(database(None, None, project=None), project_id) == "UTC"
 
 
+def test_the_first_weekly_draft_comes_the_same_weekday_next_week():
+    # A system that finishes Tuesday 29 September at 17:00 in the founder's timezone, with
+    # drafting on Tuesdays at 10:00, first drafts on 6 October, not 13 October.
+    finished = datetime(2026, 9, 29, 17, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+    start = first_weekly_start("America/Los_Angeles", finished)
+    assert start == datetime(2026, 10, 6, 0, 0, tzinfo=ZoneInfo("America/Los_Angeles"))
+    schedule = WorkflowSchedule(
+        cadence="weekly",
+        weekdays=["tuesday"],
+        local_time="10:00",
+        timezone="America/Los_Angeles",
+        start_at=start,
+    )
+    first = next_run_after(schedule, finished)
+    assert first.astimezone(ZoneInfo("America/Los_Angeles")) == datetime(
+        2026, 10, 6, 10, 0, tzinfo=ZoneInfo("America/Los_Angeles")
+    )
+    # The old rule (now plus seven days) skipped to the week after.
+    old = WorkflowSchedule(
+        cadence="weekly",
+        weekdays=["tuesday"],
+        local_time="10:00",
+        timezone="America/Los_Angeles",
+        start_at=finished + timedelta(days=7),
+    )
+    assert next_run_after(old, finished).date().isoformat() == "2026-10-13"
+    # A drafting day later this week still waits for next week.
+    thursday = WorkflowSchedule(
+        cadence="weekly",
+        weekdays=["thursday"],
+        local_time="10:00",
+        timezone="America/Los_Angeles",
+        start_at=start,
+    )
+    assert next_run_after(thursday, finished).date().isoformat() == "2026-10-08"
+
+
 def test_weekly_section_names_days_time_and_the_review_hold():
     text = "\n".join(
         weekly_section(
@@ -117,8 +159,9 @@ async def test_system_saves_one_weekly_schedule_for_its_program(publication_db, 
     schedule = WorkflowSchedule.model_validate(configured.schedule)
     assert schedule.weekdays == ["tuesday", "thursday"] and schedule.local_time == "09:30"
     assert schedule.timezone == result["timezone"] == "UTC"
-    # Never on top of the system's own first article.
-    assert schedule.start_at >= before + timedelta(days=7)
+    # Never on top of the system's own first article: the start of the day a week out.
+    assert schedule.start_at == first_weekly_start("UTC", before)
+    assert schedule.start_at > before + timedelta(days=6)
     assert configured.next_run_at >= schedule.start_at
     assert result["next_run_at"] == configured.next_run_at.isoformat()
     client.create_schedule.assert_awaited_once()

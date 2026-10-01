@@ -191,9 +191,15 @@ outside marketing, or were written without ever being run. Full rules:
   preserve safe download, sandbox and preview behavior.
 - Approved GitHub delivery follows the project's delivery setting through the selected
   integration: an unmerged PR, or a commit to main. Tin merges its own adaptation PR only when
-  the setting is commit to main, the PR adds nothing but the approved page and GitHub reports it
-  clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
+  the setting is commit to main, the PR adds nothing but the approved page (or the page at the
+  route the founder chose for such pages, with the site code that serves it) and GitHub reports
+  it clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
   Email-send approval, recipients and pacing are a separate contract.
+- `website.change` puts approved changes on a founder's site (phase 1: pages). It merges its own
+  PR only under the same commit-to-main rule, for a change with a recorded approval in Postgres
+  (a page's review that names its approver, or a decided `website_changes` row), never one read
+  from a project file, and never for a protected path (/sign-in, /sign-up, /auth-complete, plus
+  `protected_paths`). See [website.change](docs/website-change.md).
 
 ## Verification and contributions
 
