@@ -687,6 +687,10 @@ human review. Repository content and live-page evidence remain untrusted inputs,
 credentials remain entirely on the switchboard. The older native site-health executor stays
 registered only for already-recorded Temporal history compatibility.
 
+Site health is now folded into `organic.technical_fix` (policy `site-fix-v5`), which fixes
+every fixable finding of an organic audit in one pull request under the same delivery path; its
+checks run in the audit. Site health leaves discovery but saved configurations keep running.
+
 Sandbox profiles are built by `sandbox/template.py`. API execution uses the isolated,
 browser API or Studio API templates. Historical OAuth compute is refused. Select only the template required for a reviewed change with
 `--only <alias>`; inspect the aliases and pinned versions in the script.

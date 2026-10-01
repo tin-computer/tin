@@ -36,7 +36,8 @@ description: Assess current coverage, then draft only useful, fact-grounded plan
 Before broad research, inspect the exact destination and nearest competing page. If they already
 answer the intent, save an already-covered assessment immediately; do not pay for a replacement
 article. For a genuine gap, save an argument outline in the declared generation-notes file
-before writing: buyer decision, direct answer, plan positioning, proof, objection, next step.
+before writing: buyer decision, direct answer, the project's positioning (from the files in
+`content_draft.positioning`, never the plan's), proof, objection, next step.
 Use that outline to remove tangents. Reuse verified project evidence and read focused excerpts
 before whole files. Record dated official competitor facts in the notes. Compare total costs on
 like-for-like usage and distinguish customer-owned from provider-operated hardware. Never infer

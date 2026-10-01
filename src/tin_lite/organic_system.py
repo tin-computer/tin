@@ -31,8 +31,17 @@ WEEKLY_POLICY = {
 }
 # v4: when this run's content plan does not finish, the draft and the weekly articles use
 # the project's most recent content program whose plan did finish, and the report says so.
-POLICY = {**WEEKLY_POLICY, "version": "organic-traffic-v4", "content_fallback": "latest_saved_plan"}
-DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, POLICY)
+FALLBACK_POLICY = {
+    **WEEKLY_POLICY,
+    "version": "organic-traffic-v4",
+    "content_fallback": "latest_saved_plan",
+}
+# v5 also refreshes existing pages before drafting new ones. The system starts the first page
+# refresh itself, as a child run, before its first draft; that run is the refresh schedule's
+# first run, so the saved weekly refresh schedule's first occurrence comes a week later.
+POLICY = {**FALLBACK_POLICY, "version": "organic-traffic-v5", "refresh": "weekly_refresh"}
+DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, POLICY)
+REFRESH_KEY = "content.refresh"
 
 
 def policy_steps(policy):
@@ -48,10 +57,14 @@ def drafts_articles(policy):
 
 
 def schedules_articles(policy):
-    return policy in (WEEKLY_POLICY, POLICY)
+    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, POLICY)
 
 
 def falls_back_to_saved_plan(policy):
+    return policy in (FALLBACK_POLICY, POLICY)
+
+
+def refreshes_pages(policy):
     return policy == POLICY
 
 

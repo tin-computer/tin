@@ -132,6 +132,9 @@ AUDIT_POLICY = {
     # shortlisted, picked first. Each question also gets one answer without web search.
     "answer_ladder": True,
     "unsearched_answers": True,
+    # Each finding's next_action says where the technical fix's repair plan puts it, so the
+    # report and the fix never disagree about who handles a finding.
+    "next_action_from_repair_plan": True,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -164,6 +167,7 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "url_inspection_max_urls",
         "access_check_pages",
         "content_review_pages",
+        "next_action_from_repair_plan",
     }
 )
 
@@ -1345,6 +1349,10 @@ def site_check_documents(
         search_previous=search_previous,
     )
     findings = sorted([*technical, *content, *analysis["findings"]], key=order_key)
+    if policy.get("next_action_from_repair_plan"):
+        from tin_lite.technical_repair_plan import next_action
+
+        findings = [{**f, "next_action": next_action(f["check_id"])} for f in findings]
     evidence = {
         "schema_version": 1,
         "run_id": run_id,
