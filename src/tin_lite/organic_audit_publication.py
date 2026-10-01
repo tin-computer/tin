@@ -8,7 +8,7 @@ import re
 from collections.abc import Awaitable, Callable
 
 from tin_lite.code_storage import CodeStorage
-from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_paths
+from tin_lite.organic_audit import AUDIT_POLICY, audit_policy, publication_contract
 from tin_lite.publication import OutputConflictError, PublicationPendingError
 
 
@@ -26,18 +26,22 @@ async def publish_audit(
     intent: dict | None,
     save_intent: Callable[[dict], Awaitable[None]],
     validate_active: Callable[[], Awaitable[None]],
+    policy_version: str = AUDIT_POLICY["version"],
 ) -> str:
+    """The run's files per its pinned policy; from v12 that includes the replaced LATEST.json."""
+    paths, limits, replaceable = publication_contract(run_id, audit_policy(policy_version))
     return await publish_artifacts(
         storage=storage,
         repo_id=repo_id,
         branch=branch,
         documents=documents,
-        paths=audit_paths(run_id),
-        limits=ARTIFACT_LIMITS,
+        paths=paths,
+        limits=limits,
         message=f"organic.audit {run_id} [organic:{run_id}:publish]",
         intent=intent,
         save_intent=save_intent,
         validate_active=validate_active,
+        replaceable=replaceable,
     )
 
 
@@ -53,8 +57,13 @@ async def publish_artifacts(
     intent: dict | None,
     save_intent: Callable[[dict], Awaitable[None]],
     validate_active: Callable[[], Awaitable[None]],
+    replaceable: frozenset[str] = frozenset(),
 ) -> str:
-    """Shared create-only bundle writer; each caller owns its exact path/size contract."""
+    """Shared create-only bundle writer; each caller owns its exact path/size contract.
+
+    `replaceable` names stable pointer paths the bundle overwrites, such as the organic
+    audit's LATEST.json; every other path must not exist yet.
+    """
     if set(documents) != set(paths.values()):
         raise ValueError("Publication must contain exactly its declared run-scoped artifacts.")
     for name, path in paths.items():
@@ -82,6 +91,8 @@ async def publish_artifacts(
             if original is not None:
                 return original
         for path in documents:
+            if path in replaceable:
+                continue
             if await storage._publication_file(repo, ref=head, path=path) is not None:
                 raise OutputConflictError(
                     "An audit output path already exists; it was left unchanged."

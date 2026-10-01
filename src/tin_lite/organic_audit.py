@@ -331,6 +331,41 @@ def audit_paths(run_id: str) -> dict[str, str]:
     return {name: f"reports/organic-audit/{run_id}/{name}" for name in ARTIFACT_LIMITS}
 
 
+# Audit policy v12's summary, for code workflows. They read project files of at most 64,000
+# bytes (code_project_files.MAX_FILE_BYTES); the pinned budget keeps each copy below that.
+# LATEST.json is the newest published audit's SUMMARY.json, byte for byte, at a path a reader
+# can find without listing runs. Each v12 publication replaces it; every other path is new.
+SUMMARY_READ_LIMIT = 64_000
+LATEST_SUMMARY_PATH = "reports/organic-audit/LATEST.json"
+
+
+def summary_paths(run_id: str) -> dict[str, str]:
+    run_id = str(UUID(run_id))
+    return {
+        "SUMMARY.json": f"reports/organic-audit/{run_id}/SUMMARY.json",
+        "LATEST.json": LATEST_SUMMARY_PATH,
+    }
+
+
+def bundle_sha256(run_id: str, documents: dict[str, str]) -> str:
+    """The publish receipt's `documents_sha256`: AUDIT.md, findings.json and evidence.json.
+
+    Downstream workflows verify an audit by reading exactly those three files back, so the
+    v12 summary files stay outside it; LATEST.json also changes with every later audit.
+    """
+    return digest({path: documents[path] for path in audit_paths(run_id).values()})
+
+
+def publication_contract(run_id: str, policy: dict) -> tuple[dict, dict, frozenset[str]]:
+    """The run's paths, their byte limits and the paths it may replace, per its pinned policy."""
+    paths, limits = audit_paths(run_id), dict(ARTIFACT_LIMITS)
+    if not policy.get("summary_max_bytes"):
+        return paths, limits, frozenset()
+    paths |= summary_paths(run_id)
+    limits |= {"SUMMARY.json": SUMMARY_READ_LIMIT, "LATEST.json": SUMMARY_READ_LIMIT}
+    return paths, limits, frozenset({LATEST_SUMMARY_PATH})
+
+
 def public_site(value: str) -> tuple[str, str]:
     """Require an explicit HTTPS origin, never a guessed or credential-bearing URL."""
     if not isinstance(value, str) or len(value) > 500 or any(ord(c) < 33 for c in value):
@@ -1298,6 +1333,7 @@ def _fit_evidence(evidence: dict, limit: int) -> dict:
     Findings are computed before this step; dropped rows are counted, never silently lost.
     """
     steps = (
+        ("internal_links", None),
         ("search_console_queries", 1000),
         ("site_pages", None),
         ("sitemap_urls", 1000),
@@ -1306,6 +1342,18 @@ def _fit_evidence(evidence: dict, limit: int) -> dict:
     for step, keep in steps:
         if len(canonical_json(evidence)) <= limit:
             break
+        if step == "internal_links":
+            # v12 page links; SUMMARY.json already holds the inbound counts and click depth
+            # computed from them. Pages before v12 carry none, and this step records nothing.
+            pages = evidence["site"].get("pages", [])
+            listed = sum("internal_links" in row for row in pages)
+            if listed:
+                evidence.setdefault("trimmed_for_size", {})[step] = listed
+                evidence["site"]["pages"] = [
+                    {key: value for key, value in row.items() if key != "internal_links"}
+                    for row in pages
+                ]
+            continue
         trimmed = evidence.setdefault("trimmed_for_size", {})
         if step == "search_console_queries":
             value = (evidence.get("search_console_queries") or {}).get("value")
@@ -1450,7 +1498,26 @@ def site_check_documents(
         and technical_status == "complete"
         and cover["status"] == "complete"
     )
-    paths = audit_paths(run_id)
+    paths, limits, _ = publication_contract(run_id, policy)
+    summary = None
+    if policy.get("summary_max_bytes"):
+        from tin_lite.organic_audit_summary import summary_document
+
+        summary = summary_document(
+            run_id=run_id,
+            scope=scope,
+            hosts=hosts,
+            policy=policy,
+            view=analysis["view"],
+            crawl_pages=pages,
+            cover=cover,
+            findings=findings,
+            top_issue_ids=inventory["summary"]["top_issue_ids"],
+            ai=ai,
+            paths=paths,
+            findings_sha256=digest(inventory),
+            evidence_sha256=inventory["evidence_sha256"],
+        )
     for evidence_limit in (8, 3, 1):
         lines = report_lines(
             scope=scope,
@@ -1479,6 +1546,18 @@ def site_check_documents(
                 "",
                 "The adjacent `findings.json` and `evidence.json` contain bounded, "
                 "machine-readable evidence.",
+                *(
+                    [
+                        "",
+                        "Code workflows read files of at most 64,000 bytes. The adjacent "
+                        "`SUMMARY.json`, copied to `reports/organic-audit/LATEST.json`, fits: "
+                        "one row per crawled page with its status, indexability, inbound "
+                        "links and click depth, finding counts by check and the AI "
+                        "visibility headline.",
+                    ]
+                    if summary is not None
+                    else []
+                ),
             ]
         )
         report = ("\n".join(lines) + "\n").encode()
@@ -1489,7 +1568,9 @@ def site_check_documents(
         paths["findings.json"]: canonical_json(inventory),
         paths["evidence.json"]: canonical_json(evidence),
     }
-    for name, limit in ARTIFACT_LIMITS.items():
+    if summary is not None:
+        documents[paths["SUMMARY.json"]] = documents[paths["LATEST.json"]] = summary
+    for name, limit in limits.items():
         if name == "evidence.json":
             limit = policy["max_evidence_bytes"]
         if not 0 < len(documents[paths[name]]) <= limit:

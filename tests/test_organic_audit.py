@@ -24,6 +24,7 @@ from tin_lite.organic_audit import (
     canonical_json,
     normalize_pages,
     public_site,
+    summary_paths,
     technical_findings,
 )
 from tin_lite.organic_audit_activities import OrganicAuditActivities
@@ -122,7 +123,8 @@ def test_three_bounded_artifacts_and_stable_downstream_inventory():
     run_id = str(uuid4())
     docs = document_fixture(run_id)
     paths = audit_paths(run_id)
-    assert set(docs) == set(paths.values())
+    # The bundle downstream workflows verify, plus v12's summary for code workflows.
+    assert set(docs) == {*paths.values(), *summary_paths(run_id).values()}
     assert all(
         len(docs[paths[name]]) <= limit <= 3_000_000 for name, limit in ARTIFACT_LIMITS.items()
     )

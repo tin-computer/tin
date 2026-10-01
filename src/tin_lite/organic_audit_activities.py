@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -31,12 +32,14 @@ from tin_lite.organic_audit import (
     audit_paths,
     audit_policy,
     build_documents,
+    bundle_sha256,
     digest,
     grounded_preparation,
     in_scope_url,
     normalize_pages,
     panel_repetitions,
     question_results,
+    summary_paths,
 )
 from tin_lite.organic_audit_ai import (
     AnswerGrade,
@@ -1380,15 +1383,28 @@ class OrganicAuditActivities:
                     intent=(existing.result or {}).get("publication") if existing else None,
                     save_intent=save_intent,
                     validate_active=validate_active,
+                    policy_version=await self._policy_version(run_id),
                 )
+            summary_file = summary_paths(run_id)["SUMMARY.json"]
             await self.db.complete_effect(
                 conn,
                 execution_key=key,
                 result={
                     "canonical_commit_sha": revision,
                     "artifact_path": audit_paths(run_id)["AUDIT.md"],
-                    "documents_sha256": digest(artifacts),
+                    "documents_sha256": bundle_sha256(run_id, artifacts),
                     **({"summary": summary} if summary is not None else {}),
+                    # v12: the summary for code workflows, outside the verified bundle.
+                    **(
+                        {
+                            "summary_path": summary_file,
+                            "summary_sha256": hashlib.sha256(
+                                artifacts[summary_file].encode()
+                            ).hexdigest(),
+                        }
+                        if summary_file in artifacts
+                        else {}
+                    ),
                 },
             )
 

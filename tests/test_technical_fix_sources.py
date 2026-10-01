@@ -12,6 +12,7 @@ from tin_lite.organic_audit import (
     CHECKS,
     audit_paths,
     build_documents,
+    bundle_sha256,
     canonical_json,
     digest,
     normalize_pages,
@@ -88,7 +89,10 @@ def source_fixture(
         docs[paths["findings.json"]] = canonical_json(inventory)
         receipt.result = {
             "canonical_commit_sha": run.canonical_commit_sha,
-            "documents_sha256": digest({path: value.decode() for path, value in docs.items()}),
+            # Like the publish receipt: the three audit files, not v12's summary files.
+            "documents_sha256": bundle_sha256(
+                str(run.id), {path: value.decode() for path, value in docs.items()}
+            ),
         }
 
     seal()
