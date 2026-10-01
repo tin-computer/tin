@@ -176,6 +176,17 @@ def revision_wait_seconds(pending_for: timedelta) -> int:
     return REVISION_LONG_WAIT_SECONDS
 
 
+# Run admission locks the project row FOR NO KEY UPDATE, not FOR UPDATE. It still serializes
+# admissions with each other and with deletion, but no longer blocks foreign-key checks
+# (FOR KEY SHARE). Settlement holds the workspace's billing account and then inserts ledger
+# rows that reference the project; admission holds the project and then locks that account.
+# With FOR UPDATE here the two waited on each other and Postgres aborted one, usually the
+# founder's run start.
+PROJECT_ADMISSION_LOCK = (
+    "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"
+)
+
+
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -2409,10 +2420,7 @@ class Database:
                     f"content-program:{UUID(input_payload['program_id'])}",
                 )
             # Deletion tombstones under the same row lock, so admission never outlives it.
-            exists = await conn.fetchval(
-                "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
-                project_id,
-            )
+            exists = await conn.fetchval(PROJECT_ADMISSION_LOCK, project_id)
             if not exists:
                 raise LookupError(f"project {project_id} does not exist")
             if review_transition is not None:
