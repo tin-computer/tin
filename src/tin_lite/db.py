@@ -6675,6 +6675,7 @@ class Database:
             "(SELECT project_workflow_id FROM content_programs WHERE project_id = $1)",
             "DELETE FROM content_programs WHERE project_id = $1",
             "DELETE FROM workflow_review_commands WHERE project_id = $1",
+            "DELETE FROM capture_proposal_revisions WHERE project_id = $1",
             "DELETE FROM outreach_campaigns WHERE project_id = $1",
             "DELETE FROM run_tool_grants WHERE project_id = $1",
             "DELETE FROM run_decisions WHERE project_id = $1",

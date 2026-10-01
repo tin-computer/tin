@@ -254,6 +254,46 @@ def render_guide(
     return result
 
 
+# The sections render_guide always writes, in order. A revised proposal keeps the same shape.
+GUIDE_SECTIONS = (
+    "Intended use",
+    "Basis and confidence",
+    "Explicit preferences",
+    "Voice and rhythm",
+    "Structure",
+    "Vocabulary",
+    "Avoid",
+    "Demonstration",
+    "Boundaries",
+)
+
+
+def validate_guide(content: bytes) -> None:
+    """Check a revised guide against the contract a captured guide meets; say what is wrong."""
+    if not 0 < len(content) <= MAX_GUIDE_BYTES:
+        raise ValueError(f"The guide must contain 1 to {MAX_GUIDE_BYTES:,} bytes.")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("The guide must be UTF-8 text.") from None
+    if "\x00" in text:
+        raise ValueError("The guide must be plain text.")
+    if found := credential_findings(text):
+        raise ValueError(f"The guide appears to contain {found[0]}; remove it.")
+    if not re.match(r"---\nname: writing-style\ndescription: [^\n]+\n---\n", text):
+        raise ValueError(
+            "Keep the front matter: name: writing-style and a description line between --- lines."
+        )
+    if not re.search(r"^# Writing style\s*$", text, re.M):
+        raise ValueError("Keep the '# Writing style' title.")
+    position = 0
+    for title in GUIDE_SECTIONS:
+        match = re.compile(rf"^## {re.escape(title)}\s*$", re.M).search(text, position)
+        if match is None:
+            raise ValueError(f"Keep the '## {title}' section, in the captured order.")
+        position = match.end()
+
+
 def explicit_preferences(guide: str) -> str:
     match = re.search(r"^## Explicit preferences\s*\n(.*?)(?=^## |\Z)", guide, re.M | re.S)
     value = match[1].strip() if match else ""

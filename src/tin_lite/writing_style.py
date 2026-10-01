@@ -184,8 +184,8 @@ def writing_style_guide():
             "commit_project_changes, then get_workflow with workflow_key='style.capture' "
             "and start_workflow with source_path and optional direction. Use stable request IDs. "
             "The run proposes the editable guide and waits for the user's approval in Decisions "
-            "or approve_workflow_run; the current guide stays in place until then. Return the "
-            "real receipt, not a claimed success.",
+            "or approve_workflow_run with get_workflow_review's review_token; the current guide "
+            "stays in place until then. Return the real receipt, not a claimed success.",
             "Alternatively, if your agent has already extracted a complete guide and the user "
             "wants to save it without hosted extraction, save only that ordinary file through "
             "commit_project_changes using the current "
@@ -193,10 +193,11 @@ def writing_style_guide():
             "rather than overwriting concurrent edits. Sample files stay unchanged.",
             "Show the user the proposed guide and distinguish provisional inference from "
             "confirmed preferences. Show the demonstration and ask what feels wrong or missing "
-            "before claiming a validated personal voice. Corrections made to the proposal before "
-            "approval are what gets saved; after approval, amend the guide through Files or the "
-            "same MCP file tools. No activation, new version picker or workflow creation is "
-            "required.",
+            "before claiming a validated personal voice. To correct the waiting proposal, call "
+            "get_workflow_review, then revise_capture_proposal with the complete revised guide "
+            "in the same sections; the user still approves or discards it in Decisions. After "
+            "approval, amend the guide through Files or the same MCP file tools. No activation, "
+            "new version picker or workflow creation is required.",
         ],
         "template": (
             "---\nname: writing-style\n"
