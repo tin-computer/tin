@@ -574,7 +574,8 @@ receipt adds `summary_path` and `summary_sha256`.
   answer is unknown) or `observed` counts, the ladder counts and main break, answers
   without web search, the question set, and the top five sites cited instead.
 - `links`: how many read pages had links, how many links, and whether depth is `exact`
-  (every sitemap page read, no link list capped) or `at_most`.
+  (every sitemap page read, no link list capped, cut short or missing a link too long to
+  keep) or `at_most`.
 - `pages`: one row per crawled page, as lists under `columns`: `path`, `status`, `read`
   (Tin's own read), `indexable`, `noindex`, `canonical` (`self`, `missing` or the target),
   `title` and `description` present, `words`, `inbound`, `depth` and `checks` (positions

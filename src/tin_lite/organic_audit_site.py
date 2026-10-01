@@ -397,11 +397,14 @@ class _FactsParser(HTMLParser):
         self._fields: list[str | None] = []
 
     def _internal_link(self, target) -> None:
-        """One distinct link to the audited site; the page itself and very long keys are skipped."""
+        """One distinct link to the audited site; the page itself is skipped.
+
+        A list missing a link, past the cap or too long to keep, is marked capped.
+        """
         key = url_key(target.geturl())
-        if key in self._link_keys or len(key) > MAX_LINK_KEY_CHARS:
+        if key in self._link_keys:
             return
-        if len(self.internal_links) >= self.max_links:
+        if len(self.internal_links) >= self.max_links or len(key) > MAX_LINK_KEY_CHARS:
             self.internal_links_capped = True
             return
         self._link_keys.add(key)
@@ -816,7 +819,8 @@ def html_facts(
         **(
             {
                 "internal_links": parser.internal_links,
-                "internal_links_capped": parser.internal_links_capped,
+                # A body cut at the read limit may hold more links than were seen.
+                "internal_links_capped": parser.internal_links_capped or truncated,
             }
             if max_links
             else {}

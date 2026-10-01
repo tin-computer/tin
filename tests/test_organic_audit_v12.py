@@ -38,7 +38,12 @@ from tin_lite.organic_audit_checks import SiteView
 from tin_lite.organic_audit_completion import NEUTRAL_KEYS
 from tin_lite.organic_audit_fetch import read_pages, read_site_files
 from tin_lite.organic_audit_publication import publish_audit
-from tin_lite.organic_audit_site import V12_PAGE_FACTS, parse_robots
+from tin_lite.organic_audit_site import (
+    MAX_LINK_KEY_CHARS,
+    V12_PAGE_FACTS,
+    html_facts,
+    parse_robots,
+)
 from tin_lite.organic_audit_summary import (
     DROP_ORDER,
     MAX_CHECKS,
@@ -333,6 +338,29 @@ async def test_click_depth_and_inbound_links_on_a_small_link_graph():
         "unreached": 1,
         "note": None,
     }
+
+
+def test_a_link_list_missing_a_link_is_capped_so_depth_is_not_exact():
+    def facts(body, *, truncated=False):
+        return html_facts(
+            f"<html><body>{body}</body></html>".encode(),
+            url=f"{BASE}/",
+            charset="utf-8",
+            truncated=truncated,
+            max_links=AUDIT_POLICY["max_internal_links"],
+        )
+
+    plain = facts('<a href="/a">A</a>')
+    assert plain["internal_links"] == ["/a"] and plain["internal_links_capped"] is False
+    # A link too long to keep is missing from the list, and so is anything past a cut body.
+    long = facts(f'<a href="/a">A</a><a href="/{"x" * MAX_LINK_KEY_CHARS}">B</a>')
+    assert long["internal_links"] == ["/a"] and long["internal_links_capped"] is True
+    cut = facts('<a href="/a">A</a>', truncated=True)
+    assert cut["internal_links"] == ["/a"] and cut["internal_links_capped"] is True
+    # v11 pages carry neither field.
+    assert not V12_PAGE_FACTS & set(
+        html_facts(b"<a href='/a'>A</a>", url=f"{BASE}/", charset="utf-8", truncated=True)
+    )
 
 
 def test_a_redirect_costs_no_click_and_a_run_without_links_reports_none():
