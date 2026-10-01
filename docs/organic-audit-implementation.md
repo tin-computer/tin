@@ -70,6 +70,10 @@ workflows should receive the immutable artifact revision, findings digest, and s
 finding IDs; recheck the issue and repository ownership before proposing changes.
 Content planning can also consume the frozen questions. Nothing starts automatically.
 
+From `organic-audit-v12` the same commit also writes `SUMMARY.json` beside these files
+and copies it to `reports/organic-audit/LATEST.json`, both under 64,000 bytes, for code
+workflows; see 0.8 below.
+
 Existing run paths are never overwritten without a saved intent proving this run's
 publication. Lost responses reconcile against first-parent history, all three file
 contents, and exact changed paths. Later edits/deletion never cause resurrection.
@@ -521,3 +525,66 @@ is discarded and the review is reported as unavailable.
 - Subdomains are still out of scope. Backlinks, competitor pages and search features are
   not measured; they need a paid data source.
 
+## 0.8 — a summary code workflows can read (organic-audit-v12)
+
+Code workflows read project files through `ctx.files`, at most 64,000 bytes per file. On
+tin.computer the audit's `evidence.json` was 188 KB, and `findings.json` can pass 64 KB too,
+so weekly code workflows such as page decisions and the page tree could not read the crawl.
+v11 is on main and may deploy at any time, so the summary is a new pinned policy,
+`organic-audit-v12` (catalog organic.audit 0.8.0). A run pinned to v11 reads and writes
+exactly what it did before; tests freeze its policy, AI contract and output digests.
+
+### The files
+
+```text
+reports/organic-audit/{run_id}/SUMMARY.json   this run, never rewritten
+reports/organic-audit/LATEST.json             the newest published audit's SUMMARY.json
+```
+
+Both stay under the pinned `summary_max_bytes` (60,000). A code workflow reads
+`LATEST.json` in one call, without listing runs, and checks `host` before using it: the
+file is per project, and the newest publication replaces it whatever site it audited. It is
+the only path an audit publication may replace; every run path stays create-only. The
+publish receipt's `documents_sha256` still covers only AUDIT.md, findings.json and
+evidence.json, so technical fix, keyword and content plans verify v12 audits unchanged; the
+receipt adds `summary_path` and `summary_sha256`.
+
+### What it holds
+
+- `run_id`, `host`, `hosts`, `site_url`, `market`, `audited_at`, `policy_version`, the
+  paths of the full files, and the findings and evidence digests.
+- `coverage`: the report's coverage counts, plus crawled and read pages.
+- `findings`: the total, counts by priority, the top five finding IDs, and `by_check`: per
+  check its findings, the pages they affect and how many rows name it (`listed`; fewer than
+  `pages` means the finding named only examples).
+- `ai_visibility`: planned and completed answers, full-panel `metrics` (null while any
+  answer is unknown) or `observed` counts, the ladder counts and main break, answers
+  without web search, the question set, and the top five sites cited instead.
+- `links`: how many read pages had links, how many links, and whether depth is `exact`
+  (every sitemap page read, no link list capped) or `at_most`.
+- `pages`: one row per crawled page, as lists under `columns`: `path`, `status`, `read`
+  (Tin's own read), `indexable`, `noindex`, `canonical` (`self`, `missing` or the target),
+  `title` and `description` present, `words`, `inbound`, `depth` and `checks` (positions
+  in `findings.by_check`). Unknown values are null, never a guess.
+
+Tin's page reader now keeps up to 250 distinct links to the audited site per page. Click
+depth is the fewest clicks from the homepage through the pages Tin read, a redirect
+costing none; inbound links count the read pages that link to a page. Neither looks past
+the crawl or sees links that JavaScript adds. The link lists stay in `evidence.json`, and
+are the first detail dropped when evidence nears its bound.
+
+### Staying under 64 KB
+
+Rows come in order of use: the homepage, then pages by search impressions, then by click
+depth. Over budget, Tin drops columns in this order: `description`, `title`, `read`,
+`canonical`, `words`, `checks`. It then drops the last rows. `truncated` is false, or names
+the dropped columns and how many pages were left out; `pages.total` still counts every
+crawled page. In the tests a synthetic crawl of 500 pages with 130-character paths comes to
+59,913 bytes: all six columns dropped and 381 rows kept.
+
+### For the weekly workflows
+
+The page tree (`organic.site_architecture`) can read click depth and inbound links from
+`LATEST.json` instead of reporting click depth as not measured, and page decisions and the
+traffic snapshot can take the per-page checks from it instead of globbing
+`reports/organic-audit/*/findings.json`. Those workflows need a change of their own to do so.
