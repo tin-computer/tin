@@ -193,6 +193,42 @@ async def test_duplicate_and_approval_race_is_one_transaction(publication_db, mo
     )
 
 
+async def test_duplicate_committed_during_view_replays_before_stale_rejection(
+    publication_db, monkeypatch
+):
+    f = await setup(publication_db, monkeypatch)
+    source = await save(f, await start(f))
+    token = (await f.reviews.view(source.id, ACTOR))["review_token"]
+    request_id = uuid4()
+    original_view = f.reviews.view
+    competing = False
+    accepted = None
+
+    async def submit(feedback="Keep the opening."):
+        return await f.reviews.request_changes(
+            run_id=source.id,
+            actor=ACTOR,
+            feedback=feedback,
+            request_id=request_id,
+            token=token,
+        )
+
+    async def view_after_competing_commit(*args, **kwargs):
+        nonlocal competing, accepted
+        if not competing:
+            competing = True
+            accepted = await submit()
+        return await original_view(*args, **kwargs)
+
+    monkeypatch.setattr(f.reviews, "view", view_after_competing_commit)
+    replayed = await submit()
+    assert replayed.id == accepted.id
+    assert not (await original_view(source.id, ACTOR))["can_request_changes"]
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_review_commands") == 1
+    with pytest.raises(ReviewConflict, match="different feedback"):
+        await submit("Different feedback must not replay.")
+
+
 async def test_admission_failure_keeps_review_and_reference_pin(publication_db, monkeypatch):
     f = await setup(publication_db, monkeypatch)
     source = await save(f, await start(f))

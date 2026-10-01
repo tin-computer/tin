@@ -1415,6 +1415,15 @@ async def standalone_markdown_viewer(run_id: UUID, request: Request) -> HTMLResp
     return _static_page("viewer.html", request)
 
 
+@router.get("/.well-known/openai-apps-challenge", include_in_schema=False)
+async def openai_apps_challenge(request: Request) -> Response:
+    """Serve the operator's exact public domain-verification challenge, if configured."""
+    challenge = getattr(request.app.state.settings, "openai_apps_challenge", None)
+    if not challenge:
+        raise HTTPException(status_code=404)
+    return Response(challenge, media_type="text/plain", headers={"Cache-Control": "no-store"})
+
+
 @router.get("/healthz")
 async def health(request: Request) -> dict[str, str]:
     try:

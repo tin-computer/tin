@@ -108,7 +108,7 @@ from tin_lite.procedures import (
     SandboxProfile,
     TestIdentityPolicy,
 )
-from tin_lite.public_workflows import load_public_workflows
+from tin_lite.public_workflows import PublicMCPExposure, load_public_workflows
 from tin_lite.studio import STUDIO_VOICES
 from tin_lite.studio_contracts import (
     DEMO_VIDEO_MEDIA_TYPE,
@@ -378,6 +378,7 @@ class BuiltinWorkflow:
     prerequisites: tuple[WorkflowPrerequisite, ...] = ()
     # Agents run it through the MCP; the product UI does not list it in the catalog.
     agent_only: bool = False
+    public_mcp: PublicMCPExposure | None = None
 
     @property
     def definition_path(self) -> str:
@@ -534,6 +535,9 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000027"),
         key=organic_system.KEY,
+        public_mcp=PublicMCPExposure(
+            "start_organic_traffic_system", destructive=True, open_world=True
+        ),
         title="Run the organic traffic system",
         description=(
             "Audit your website and research buyer searches, then save an editable content "
@@ -725,6 +729,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000031"),
         key=content_draft.KEY,
+        public_mcp=PublicMCPExposure("start_content_draft", destructive=True, open_world=True),
         title="Draft planned content",
         description="Check current coverage before drafting the next planned article "
         "in your style. "
@@ -872,6 +877,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000030"),
         key=style_capture.KEY,
+        public_mcp=PublicMCPExposure("start_style_capture", destructive=True, open_world=False),
         title="Capture writing style",
         description=(
             "Use your coding agent to select writing samples, or add samples here. "
@@ -1026,6 +1032,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
+        public_mcp=PublicMCPExposure("start_technical_fix", destructive=True, open_world=True),
         title="Fix what the audit found",
         description=(
             "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
@@ -1077,6 +1084,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000025"),
         key=content_plan.KEY,
+        public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
         title="Plan upcoming content",
         description=(
             "Turn an audit and keyword research into an editable two-week to six-month roadmap. "
@@ -1113,6 +1121,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000024"),
         key=KEYWORD_KEY,
+        public_mcp=PublicMCPExposure("start_keyword_plan", destructive=True, open_world=True),
         title="Plan keyword opportunities",
         description=(
             "Research buyer searches, competitor keywords, and a bounded sample of Google results. "
@@ -1220,6 +1229,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ORGANIC_AUDIT_WORKFLOW_ID,
         key=AUDIT_KEY,
+        public_mcp=PublicMCPExposure("start_organic_audit", destructive=True, open_world=True),
         title="Audit organic visibility",
         description=(
             "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
@@ -1284,6 +1294,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=DESIGN_MD_WORKFLOW_ID,
         key=WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_design", destructive=True, open_world=False),
         title="Generate project design",
         description="Analyze a project repository and publish its DESIGN.md.",
         executor=WORKFLOW_NAME,
@@ -1292,6 +1303,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PROJECT_MEMORY_WORKFLOW_ID,
         key=PROJECT_MEMORY_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_memory", destructive=True, open_world=False),
         title="Garden project memory",
         description="Consolidate durable project outputs into the project wiki.",
         executor=PROJECT_MEMORY_WORKFLOW_NAME,
@@ -1300,6 +1312,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=SCAN_REPORT_WORKFLOW_ID,
         key=SCAN_REPORT_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_scan", destructive=True, open_world=True),
         title="Scan project",
         description=(
             "Review durable project knowledge against the system scanning guide and publish "
@@ -1321,6 +1334,9 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=SITE_HEALTH_WORKFLOW_ID,
         key=SITE_HEALTH_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure(
+            "start_site_health_improvement", destructive=True, open_world=True
+        ),
         title="Improve site health",
         description=(
             "Retired: use Fix what the audit found, which repairs every finding of an organic "
@@ -1416,6 +1432,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=VISIBILITY_AUDIT_WORKFLOW_ID,
         key=VISIBILITY_AUDIT_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_visibility_audit", destructive=True, open_world=True),
         title="Audit AI visibility",
         description=(
             "Measure whether Luna finds and recommends a chosen target across five target-blind "
@@ -1448,6 +1465,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ANSWER_PAGE_WORKFLOW_ID,
         key=ANSWER_PAGE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_answer_page", destructive=True, open_world=True),
         title="Draft an answer page",
         description=(
             "Create a public-facing Markdown content draft from the latest AI visibility "
@@ -1472,6 +1490,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=WEEKLY_BRIEF_WORKFLOW_ID,
         key=WEEKLY_BRIEF_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_weekly_brief", destructive=True, open_world=False),
         title="Create a weekly project brief",
         description=(
             "Summarize what moved, what needs attention, and the smallest useful next steps "
@@ -1557,6 +1576,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=RESEARCH_DEEP_DIVE_WORKFLOW_ID,
         key=RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_deep_research", destructive=True, open_world=True),
         title="Research a question deeply",
         description=(
             "Test a project question and its upstream assumptions against current, "
@@ -1620,6 +1640,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PUBLIC_ARTICLE_WORKFLOW_ID,
         key=PUBLIC_ARTICLE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_public_article", destructive=True, open_world=True),
         title="Draft a public article",
         description=(
             "Turn durable project evidence and original thinking into a rigorous, reviewable "
@@ -1711,6 +1732,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CONTENT_DIAGRAM_WORKFLOW_ID,
         key=CONTENT_DIAGRAM_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_content_diagram", destructive=True, open_world=False),
         title="Create a diagram",
         description=(
             "Turn a process or system into one clear diagram using approved brand guidance. "
@@ -1773,6 +1795,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=EMAIL_SHORTLIST_WORKFLOW_ID,
         key=EMAIL_SHORTLIST_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_email_shortlist", destructive=True, open_world=True),
         title="Build an email outreach shortlist",
         description=(
             "Review the connected Gmail and Calendar history to create a bounded, "
@@ -1846,6 +1869,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=EMAIL_CAMPAIGN_WORKFLOW_ID,
         key=EMAIL_CAMPAIGN_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_email_campaign", destructive=True, open_world=True),
         title="Run an email outreach campaign",
         description=(
             "Snapshot selected shortlist recipients and exact email copy for approval, then "
@@ -1978,6 +2002,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=QA_SIGNUP_WALKTHROUGH_WORKFLOW_ID,
         key=QA_SIGNUP_WALKTHROUGH_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_signup_walkthrough", destructive=True, open_world=True),
         title="Walk the signup as a new user",
         description=(
             "Sign up for your product as a stranger with a Tin-owned test account, verify the "
@@ -2039,6 +2064,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PRODUCT_CODE_MAP_WORKFLOW_ID,
         key=PRODUCT_CODE_MAP_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_code_map", destructive=True, open_world=False),
         title="Map the product from its code",
         description=(
             "Read the connected GitHub repository and write the Code map section of project "
@@ -2098,6 +2124,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PRODUCT_DEEP_DIVE_WORKFLOW_ID,
         key=PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_deep_dive", destructive=True, open_world=True),
         title="Map what the product actually does",
         description=(
             "Read the docs, sign in and use your product with a Tin-owned account, reconcile "
@@ -2205,6 +2232,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=QA_PRODUCT_AUDIT_WORKFLOW_ID,
         key=QA_PRODUCT_AUDIT_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_audit", destructive=True, open_world=True),
         title="Audit the product feature by feature",
         description=(
             "Exercise every feature in the project's Feature map as a user with a Tin-owned "
@@ -2309,6 +2337,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CREATIVE_CHARACTER_WORKFLOW_ID,
         key=CREATIVE_CHARACTER_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_brand_character", destructive=True, open_world=True),
         title="Design a brand character",
         description=(
             "Use when the founder has an explicit brand-design need. "
@@ -2381,6 +2410,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CREATIVE_PRODUCT_DEMO_WORKFLOW_ID,
         key=CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_demo", destructive=True, open_world=True),
         title="Make a product demo video",
         description=(
             "Capture the founder's live product at phone size and render a smooth 9:16 "
@@ -2548,6 +2578,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_ASSESSMENT_WORKFLOW_ID,
         key=paid_ads.KEY,
+        public_mcp=PublicMCPExposure("start_ads_assessment", destructive=True, open_world=True),
         title="Assess paid ads for this business",
         description=(
             "Decide whether Google Search ads fit: a verdict, the constraint that binds it, a "
@@ -2593,6 +2624,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_LAUNCH_WORKFLOW_ID,
         key=paid_ads_launch.KEY,
+        public_mcp=PublicMCPExposure("start_ads_launch", destructive=True, open_world=True),
         title="Launch a Google Ads campaign",
         description=(
             "Turn an assessment's campaign shape into one live Google Search campaign in your "
@@ -2627,6 +2659,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_MONITOR_WORKFLOW_ID,
         key=paid_ads_monitor.KEY,
+        public_mcp=PublicMCPExposure("start_ads_monitor", destructive=True, open_world=True),
         title="Check the Google Ads campaign",
         description=(
             "Read the launched campaign, add negatives from wasted search terms, pause "
@@ -2654,6 +2687,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=AWESOME_SUBMIT_WORKFLOW_ID,
         key=awesome_submit.KEY,
+        public_mcp=PublicMCPExposure("start_awesome_submission", destructive=True, open_world=True),
         title="Submit to awesome lists",
         description=(
             "Take the lists an awesome lists run found, place your entry in each list's "

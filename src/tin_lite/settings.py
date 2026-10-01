@@ -224,6 +224,7 @@ class Settings(BaseSettings):
         default="http://127.0.0.1:8000", alias="TIN_LITE_PUBLIC_URL"
     )
     app_url: str | None = Field(default=None, alias="TIN_LITE_APP_URL")
+    openai_apps_challenge: str | None = Field(default=None, alias="TIN_LITE_OPENAI_APPS_CHALLENGE")
     private_fonts_stylesheet_url: str | None = Field(
         default=None, alias="TIN_LITE_PRIVATE_FONTS_STYLESHEET_URL"
     )

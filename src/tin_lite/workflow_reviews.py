@@ -189,6 +189,10 @@ class WorkflowReviews:
         fingerprint = digest(
             {"run_id": str(run_id), "feedback": feedback, "files": paths, "token": token}
         )
+        # Read the view before the command: a concurrent identical request may
+        # supersede this version while the view is loading. Its committed command
+        # must still replay successfully before we reject the now-stale view.
+        view = await self.view(run_id, actor)
         existing = await self.db.pool.fetchrow(
             "SELECT * FROM workflow_review_commands WHERE project_id=$1 AND request_id=$2",
             run.project_id,
@@ -201,7 +205,6 @@ class WorkflowReviews:
             ):
                 raise ReviewConflict("This request ID already belongs to different feedback.")
             return await self.db.get_run(existing["successor_run_id"])
-        view = await self.view(run_id, actor)
         if token != view["review_token"] or not view["can_request_changes"]:
             raise ReviewConflict("This version cannot be revised. Open the current review first.")
         if (definition.definition.get("human_review") or {}).get("revision_adapter") != CAPABILITY:
