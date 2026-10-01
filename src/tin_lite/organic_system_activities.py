@@ -495,7 +495,10 @@ class OrganicSystemActivities:
                         "draft_only_selected",
                         "github_not_connected",
                         "github_repository_not_selected",
+                        # The draft's editorial judgment chose no article: a result, not a
+                        # failure. Its reason stays on the step and in the draft run.
                         "already_covered",
+                        "editorial_attention_required",
                     }
                     else "blocked",
                     "reason": reason,
