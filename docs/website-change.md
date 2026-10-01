@@ -9,18 +9,31 @@ them. Today it handles approved pages only; content.deliver and the technical fi
 their own pull requests.
 
 A change the founder approved with commit to main as its delivery publishes: Tin opens the
-pull request and merges it once GitHub reports it clean. Anything else opens a pull request
-that the founder merges. A change
-to a protected page, such as the sign-in page another app shares, always waits for the
-founder, approved or not.
+pull request and merges it once the repository's required checks pass. Anything else opens a
+pull request that the founder merges. A change to a protected page, such as the sign-in page
+another app shares or a page the founder listed in the project's settings, always waits for
+the founder, approved or not.
 
-Phase 1 (this version, 1.0.0) makes one kind of change: it puts an approved page on the site.
+Phase 1 (1.0.0, and 1.1.0 with the decisions below) makes one kind of change: it puts an
+approved page on the site.
+
+## Decided (Emre, 10/1)
+
+1. **Protected pages are a project setting.** The founder's extra protected pages live in
+   Postgres (`project_protected_paths`), with who changed them and when. website.change
+   protects the defaults, the project's pages and the run's `protected_paths` input together.
+   The defaults cannot be removed. See [Protected paths](#protected-paths).
+2. **Tin merges once the required checks pass.** A failing optional check no longer holds a
+   pre-approved change. See [Merging](#merging-once-the-required-checks-pass).
+3. **Answer pages and public articles both ask where they live.** Without a saved route,
+   website.change asks the founder rather than guessing, for both page types. See
+   [Pages land at the founder's route](#pages-land-at-the-founders-route).
 
 ## Two modes
 
 | The change is | Tin |
 | --- | --- |
-| pre-approved with commit to main, touches no protected path | opens the PR and merges it once GitHub reports it `clean` |
+| pre-approved with commit to main, touches no protected path | opens the PR and merges it once the required checks pass |
 | not pre-approved, or approved without commit to main | opens an unmerged PR; the founder merges |
 | pre-approved, but touches a protected path | opens an unmerged PR; the founder merges |
 
@@ -29,20 +42,42 @@ Tin decides the mode at admission and pins it in the run's source receipt (`publ
 opens, `hold_reason` checks again, from Postgres and the saved patch, before any merge:
 
 - the approval as it stands now still equals the pinned one;
-- no file in the patch serves a protected path, and the page's `Public URL:` is not under one;
+- no file in the patch serves a protected path, and the page's `Public URL:` is not under one.
+  The protected paths are the pinned ones plus the project's setting as it stands now, so a
+  page the founder protects after the run started still holds the merge;
 - the page sits at the founder's chosen route, when the page type has one;
-- then content.deliver's merge rules apply unchanged: `page_only` (the page as one Markdown
-  file) or `chosen_route` (the page plus site code inside the route's own folder), the
-  pinned branch and head, and GitHub's `clean` verdict within about three and a half minutes.
+- then content.deliver's merge rules apply: `page_only` (the page as one Markdown file) or
+  `chosen_route` (the page plus site code inside the route's own folder), the pinned branch
+  and head, and GitHub's verdict that the required checks passed, within about three and a
+  half minutes.
 
 Every outcome is recorded once under `content-delivery:{run}:merge`: `merged`, or
 `left_open` with the reason. Activity says `website_change_merged` or
 `website_change_left_open` on both the change run and the page run.
 
-"Publish directly" is implemented as "open the PR and merge it once clean", not as a commit
-straight to the default branch, so the repository's checks still run. `clean` means every
-check passed, which is stricter than "required checks": a failing optional check also leaves
-the PR open.
+"Publish directly" is implemented as "open the PR and merge it once the required checks
+pass", not as a commit straight to the default branch, so the repository's checks still run.
+
+### Merging once the required checks pass
+
+Tin reads GitHub's `mergeable_state` for the pull request (`github_pull_request_merge_state`)
+and merges only while `mergeable` is true and the state is one of these:
+
+| `mergeable_state` | GitHub means | website.change |
+| --- | --- | --- |
+| `clean` | every check passed | merges |
+| `has_hooks` | every check passed; the repository has pre-receive hooks | merges |
+| `unstable` | mergeable, but a check the repository does not require failed or is still running | merges |
+| `blocked` | a required check has not passed, or a required review is missing | waits, then leaves the PR open |
+| `unknown` | GitHub is still computing it | waits, then leaves the PR open |
+| `dirty`, `behind`, `draft` | conflicts, out of date, or a draft | leaves the PR open at once |
+
+A failing required check reports `blocked`, not `unstable`, so `clean`, `has_hooks` and
+`unstable` all mean the required checks passed. GitHub's merge call also enforces branch
+protection itself, so a merge it forbids is refused and the PR stays open. The merge receipt
+records the state that allowed the merge (`mergeable_state`).
+
+content.deliver keeps its own rule: it merges only on `clean` or `has_hooks`.
 
 ## Approvals
 
@@ -87,6 +122,8 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | read one | `GET /api/projects/{id}/website-changes/{change_id}` | |
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
+| read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
+| set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
 
 Project membership is the boundary on both transports. A page is still approved with
 `approve_workflow_run`; the new actions decide rows of the other sources.
@@ -97,18 +134,32 @@ These always open a pull request, even when approved, because on a site reposito
 a deploy:
 
 - `/sign-in`, `/sign-up` and `/auth-complete`, and any path under them: the auth pages a site
-  shares with another app;
+  shares with another app. They are always protected and cannot be removed;
+- the project's protected pages, a setting the founder keeps (up to 20 site paths);
 - the run's `protected_paths` input (up to 20 site paths), the same shape as the technical
-  fix's input in #239.
+  fix's input in #239. It adds pages for one run and stays for compatibility.
 
 A path is protected when it is, or sits under, one of these. A repository file serves one when
 its folders or name spell it (`src/app/(auth)/sign-in/[[...sign-in]]/page.tsx`,
 `pages/sign-up.tsx`; route groups in parentheses are skipped).
 
-The project stores no off-limits site paths today. Onboarding's hard no's are kinds of work
-(`no_paid_ads`, `no_cold_email`, …), the growth plan's `founder_limits` are free text, and
-#239's `protected_paths` is a per-run input. So the defaults plus the input are the whole list
-for now.
+### The project setting
+
+The setting lives in `project_protected_paths` (migration 054), not in a project file. Each
+save appends one revision: the paths, `changed_by_clerk_user_id`, `changed_at` and the
+`request_id`. The newest revision is the setting; the older ones are its history, which
+`get_protected_paths` returns newest first. A trigger refuses any update to a saved revision.
+
+- **Validation.** Site paths only. A full URL keeps its path; a query, a fragment, a trailing
+  slash and repeated slashes are dropped. Repeats and pages the defaults already cover are
+  dropped too. `/` (the whole site), route patterns such as `/blog/{slug}`, `..` and anything
+  else that is not a site path are refused, as is a list of more than 20 pages.
+- **Saving** names the revision the caller read (0 before the first save); a stale revision is
+  refused, so two people never overwrite each other unseen. A retried request ID returns what
+  it saved. `[]` keeps only the defaults.
+- **Admission** pins the effective list and the setting's revision
+  (`protected_paths_revision`) in the run's source receipt. Before any merge, Tin reads the
+  setting again and adds it to the pinned list.
 
 ## Pages land at the founder's route
 
@@ -116,7 +167,8 @@ website.change adapts the page into the site's own format, the way content.deliv
 articles: in the site's page registry or content folder, with the copy kept byte for byte.
 
 - An answer page or public article needs a chosen route (#244's `content/page-routes.json`).
-  website.change never guesses one: without it, admission refuses with #244's question
+  Emre confirmed on 10/1 that this covers both page types. website.change never guesses one:
+  without it, admission refuses with #244's question
   (`ask_the_founder`) and the `save_page_route` call to make, and MCP `get_workflow` shows the
   same question in its preparation. The route pinned at approval wins over one saved later.
 - A patch that puts the page under `content/answers/` fails: that is Tin's draft folder, not a
@@ -156,7 +208,7 @@ The organic traffic system still starts it, until the recipe switches later.
 
 website.change is built on content.deliver's machinery instead of beside it: the same page
 pinning (`page_source`), approval rechecks (`guard_page`), exact-copy proof, saved patch,
-recovery, merge-when-clean loop and status projection, now shared through
+recovery, merge loop and status projection, now shared through
 `content_repository_delivery.ADAPTER_WORKFLOW_IDS`. content.deliver does not delegate to
 website.change, because pinned runs and saved programs depend on its exact receipts and merge
 semantics, and delegating would change them. The one shared rule both now follow: a page has
@@ -175,7 +227,7 @@ two never open two pull requests for the same page.
   judgment calls become `technical_fix` rows per audit finding (`oa_` IDs), and
   `content.blog_index` hands its planned page over as a `blog_index` row. website.change
   takes their larger caps (20 files, 800 lines) under a new version, and its skill gains the
-  repair rules. `protected_paths` then comes from one project setting instead of each run.
+  repair rules.
 - **Later**: the approval path starts website.change instead of content.deliver, and the
   traffic system's recipe switches to it.
 
