@@ -30,8 +30,8 @@ class PublicWorkflow:
     key: str
     public_mcp: PublicMCPExposure | None = None
     # False keeps a package registered, so saved configurations and schedules keep running,
-    # while new setups, the organic system and discovery no longer offer it. A maintainer
-    # choice, like registration itself, not a field authors set in the package.
+    # while new setups, the organic system, discovery and the ChatGPT plugin no longer offer
+    # it (give it no public_mcp). A maintainer choice, not a field authors set in the package.
     public_discovery: bool = True
 
     @property
@@ -111,13 +111,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(
         UUID("4bf8c067-1709-427d-a00f-b0b53c871751"),
         "organic.error_surface",
-        PublicMCPExposure("start_error_surface_research", destructive=True, open_world=True),
         public_discovery=False,
     ),
     PublicWorkflow(
         UUID("2136b2ff-7570-40bf-97d3-e37889aea964"),
         "organic.mention_backlinks",
-        PublicMCPExposure("start_mention_backlinks", destructive=True, open_world=True),
         public_discovery=False,
     ),
     PublicWorkflow(

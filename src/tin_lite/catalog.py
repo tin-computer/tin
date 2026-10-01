@@ -1438,7 +1438,8 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=VISIBILITY_AUDIT_WORKFLOW_ID,
         key=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_visibility_audit", destructive=True, open_world=True),
+        # Hidden from discovery, so it has no ChatGPT plugin tool either; saved
+        # configurations keep running.
         title="Audit AI visibility",
         description=(
             "Retired: the organic audit measures AI visibility on the buyer prompt panel's "

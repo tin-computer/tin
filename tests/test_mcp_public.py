@@ -146,6 +146,10 @@ async def test_registered_surface_and_all_annotations(fixture):
         "record_onboarding_picks",
         "create_project_workflow",
         "get_workflow",
+        # Workflows hidden from discovery have no plugin tool.
+        "start_visibility_audit",
+        "start_error_surface_research",
+        "start_mention_backlinks",
     ],
 )
 async def test_hidden_tools_cannot_be_called_by_name(fixture, name):
@@ -613,8 +617,6 @@ ADDED_INPUTS = {
     },
     "competitor.watch": {"max_competitors": 2},
     "qa.buyer_trust": {"product_url": "https://product.example"},
-    "organic.error_surface": {},
-    "organic.mention_backlinks": {},
     "outreach.paying_segment": {"retention_days": 60},
     "outreach.speaking_shortlist": {},
     "outreach.syllabus_placement": {},
@@ -634,11 +636,14 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 47
+    assert len(entries) == 44
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
         "growth.framework_starter",
+        # Hidden from discovery, so hidden from the plugin too; saved configurations run.
+        "organic.error_surface",
+        "organic.mention_backlinks",
         # The organic loop's packages; no reviewed ChatGPT tools for them yet.
         "organic.traffic_snapshot",
         "organic.content_efficacy",
@@ -647,6 +652,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "organic.prompt_panel",
     }
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
+        "visibility.audit",
         "content.deliver",
         "website.change",
         "content.refresh",
