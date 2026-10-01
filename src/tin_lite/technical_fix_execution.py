@@ -18,6 +18,46 @@ from tin_lite.technical_fix_sources import TechnicalFixSources
 
 MAX_SITEMAP_READS = 6
 SITEMAP_GUESSES = ("/sitemap.xml", "/sitemap_index.xml")
+
+
+async def sitemap_files(target, robots, read):
+    """The site's urlset files: robots.txt's Sitemap lines, else the first guess, following
+    sitemap indexes on the audited hosts. `read(index, url)` returns one read; preparation
+    receipts each one, the live check after merge doesn't."""
+    hosts = target.get("site_hosts", [target["host"]])
+    referenced = (
+        parse_robots(body_of(robots))["sitemaps"]
+        if (robots or {}).get("status_code") == 200
+        else []
+    )
+    queue = [
+        url
+        for url in dict.fromkeys(referenced)
+        if urlsplit(url).scheme == "https" and urlsplit(url).hostname in hosts
+    ] or [f"https://{target['host']}{path}" for path in SITEMAP_GUESSES[:1]]
+    files, seen = [], set()
+    for index in range(MAX_SITEMAP_READS):
+        if not queue:
+            break
+        url = queue.pop(0)
+        if url in seen:
+            continue
+        seen.add(url)
+        response = await read(index, url)
+        if response.get("status_code") != 200:
+            continue
+        parsed = parse_sitemap(body_of(response), max_urls=50_000)
+        if parsed["kind"] == "index":
+            queue += [
+                row["loc"]
+                for row in parsed["entries"]
+                if urlsplit(row["loc"]).scheme == "https" and urlsplit(row["loc"]).hostname in hosts
+            ]
+        elif parsed["kind"] == "urlset":
+            files.append(response)
+    return files
+
+
 STATIC_SOURCE_EXTENSIONS = (".txt", ".xml", ".html", ".htm")
 
 
@@ -225,37 +265,11 @@ class TechnicalFixExecution:
 
     async def _sitemap_files(self, run, target, robots):
         """The urlset files a sitemap fix may touch: robots.txt's sitemaps, else a guess."""
-        host = target["host"]
-        referenced = (
-            parse_robots(body_of(robots))["sitemaps"] if robots.get("status_code") == 200 else []
-        )
-        queue = [
-            url
-            for url in dict.fromkeys(referenced)
-            if urlsplit(url).scheme == "https" and urlsplit(url).hostname in target["site_hosts"]
-        ] or [f"https://{host}{path}" for path in SITEMAP_GUESSES[:1]]
-        files, seen = [], set()
-        for index in range(MAX_SITEMAP_READS):
-            if not queue:
-                break
-            url = queue.pop(0)
-            if url in seen:
-                continue
-            seen.add(url)
-            read = await self._read(run, f"site:sitemap:{index}", url, target, "sitemap")
-            if read.get("status_code") != 200:
-                continue
-            parsed = parse_sitemap(body_of(read), max_urls=50_000)
-            if parsed["kind"] == "index":
-                queue += [
-                    row["loc"]
-                    for row in parsed["entries"]
-                    if urlsplit(row["loc"]).scheme == "https"
-                    and urlsplit(row["loc"]).hostname in target["site_hosts"]
-                ]
-            elif parsed["kind"] == "urlset":
-                files.append(read)
-        return files
+
+        def read(index, url):
+            return self._read(run, f"site:sitemap:{index}", url, target, "sitemap")
+
+        return await sitemap_files(target, robots, read)
 
     async def _sitemap_reference(self, run, target):
         """The sitemap robots.txt should name: the first guess the site actually serves."""
@@ -342,7 +356,9 @@ class TechnicalFixExecution:
                         fixed = False
                         continue
                     checked += 1
-                    if not batch_rules.page_fixed(predicate, body_of(read), url, entry):
+                    if not batch_rules.page_fixed(
+                        predicate, body_of(read), url, entry, hosts=target.get("site_hosts")
+                    ):
                         fixed = False
                 if checked and fixed:
                     resolved(entry)

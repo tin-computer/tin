@@ -19,6 +19,7 @@ from urllib.parse import urljoin, urlsplit
 from tin_lite.organic_audit_site import (
     AI_SEARCH_CRAWLERS,
     _example_path,
+    canonical_elsewhere,
     crawler_stances,
     html_facts,
     is_noindex,
@@ -83,8 +84,7 @@ def page_needs(kind: str, html: str, url: str) -> bool:
     if kind == "html_noindex":
         return not is_noindex(facts)
     if kind == "html_self_canonical":
-        canonical = facts.get("canonical")
-        return bool(canonical) and url_key(canonical) != url_key(url)
+        return bool(canonical_elsewhere(facts.get("canonical"), url, {urlsplit(url).hostname}))
     if kind == "html_one_canonical":
         return facts.get("canonical_count", 0) > 1
     if kind == "html_lang":

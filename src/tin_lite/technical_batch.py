@@ -31,14 +31,18 @@ from tin_lite import technical_repair_plan as plan
 from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit_site import (
     AI_SEARCH_CRAWLERS,
+    canonical_elsewhere,
     crawler_stances,
     html_facts,
     is_noindex,
+    lacks_description,
+    lacks_link_preview,
     language_prefix,
     named_groups_missing_wildcard_rules,
     parse_robots,
     path_allowed,
     robots_group,
+    schema_broken,
     url_key,
 )
 
@@ -306,21 +310,24 @@ def validate(manifest: dict, prepared: dict, originals: dict[str, str | None] | 
 # --- Live predicates ----------------------------------------------------------------------
 
 
-def page_fixed(predicate: str, html: str, url: str, entry: dict) -> bool:
-    """Whether a freshly read page no longer shows its finding."""
+def page_fixed(predicate: str, html: str, url: str, entry: dict, hosts=None) -> bool:
+    """Whether a freshly read page no longer shows its finding, by the audit's own test.
+    `hosts` are the audited site's hosts; a canonical elsewhere names another page."""
     facts = html_facts(html.encode(), url=url, charset="utf-8", truncated=False)
     if predicate == "noindex":
         return is_noindex(facts)
     if predicate == "indexable":
         return not is_noindex(facts)
     if predicate == "self_canonical":
-        return not facts.get("canonical") or url_key(facts["canonical"]) == url_key(url)
+        return not canonical_elsewhere(
+            facts.get("canonical"), url, set(hosts or ()) | {urlsplit(url).hostname}
+        )
     if predicate == "one_canonical":
         return facts.get("canonical_count", 0) <= 1
     if predicate == "title":
         return bool(facts.get("title"))
     if predicate == "description":
-        return facts.get("description_length") is not None
+        return not lacks_description(facts)
     if predicate == "h1":
         return facts.get("h1_count", 0) >= 1
     if predicate == "one_h1":
@@ -342,9 +349,9 @@ def page_fixed(predicate: str, html: str, url: str, entry: dict) -> bool:
     if predicate == "form_label":
         return not facts.get("unlabeled_fields")
     if predicate == "schema":
-        return not facts.get("schema_problems") and not facts.get("schema_invalid_blocks")
+        return not schema_broken(facts)
     if predicate == "open_graph":
-        return "title" in set(facts.get("open_graph") or [])
+        return not lacks_link_preview(facts)
     if predicate == "reachable":
         return True  # The read itself succeeded, so the loop is gone.
     raise ValueError(f"Unknown page check {predicate}.")

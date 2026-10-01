@@ -72,6 +72,13 @@ nothing ready to fix is refused with the count of decisions still waiting.
 - After the PR merges, `get_run`'s `live_check` lists each finding as fixed, waiting for
   the deploy, still broken a day after the merge, or confirmed by the next audit (redirect
   chains, internal links and other changes with no single-page check).
+- The run and the live check decide whether a problem is there with the audit's own tests
+  (`organic_audit_site`): a link preview needs og:title and og:image, structured data
+  fails only on JSON that doesn't parse or a missing required field, a canonical on
+  another host names another page, and an empty description is a missing one. Sitemaps
+  are found as the audit finds them: robots.txt's Sitemap lines, else `/sitemap.xml`,
+  following sitemap indexes. `tests/test_technical_audit_parity.py` runs the same pages
+  through both sides.
 
 The organic traffic system passes the whole audit under v5. Its run leaves judgment calls
 out and lists them; a later technical-fix run can take the coding agent's answers.
