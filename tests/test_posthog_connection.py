@@ -632,8 +632,11 @@ async def test_query_refusals_are_named_and_bounded() -> None:
                 "query.hogql", {"query": SIGNUPS}, execution_key="k:400", **common
             )
         assert rejected.value.code == "query_error"
-        assert str(rejected.value).startswith("PostHog rejected the query: Unable to resolve")
-        assert "\n" not in str(rejected.value) and len(str(rejected.value)) < 340
+        assert str(rejected.value) == "PostHog rejected the query (HTTP 400)."
+        said = rejected.value.provider_error
+        assert (said.provider, said.status) == ("PostHog", 400)
+        assert said.message.startswith("Unable to resolve field xxx")
+        assert "\n" not in said.message and len(said.message) <= 1500
         api.api_status["/api/projects/101/insights/"] = 403
         with pytest.raises(ph.PostHogPermissionDenied):
             await service.posthog.call("insights.list", {}, execution_key="k:403", **common)

@@ -338,8 +338,13 @@ class E2BRuntime:
                         if exc.fatal:
                             raise
                         # Settled refusals and uncertain results are the package's to handle;
-                        # the gateway already blocks any step that must not be retried.
+                        # the gateway already blocks any step that must not be retried. The
+                        # provider's own (redacted) words ride along as `provider_error`.
                         forwarded, response = exc, {"error": str(exc)}
+                        if exc.code:
+                            response["code"] = exc.code
+                        if exc.provider_error:
+                            response["provider_error"] = exc.provider_error
                     except CodeProjectFileError as exc:
                         if exc.code == "file_access_revoked":
                             raise

@@ -91,7 +91,10 @@ Keep rubric questions independent; no overall score. Maintainers review cases an
   most 1000, no OFFSET, at most 8000 bytes; Tin supplies the PostHog project, never an input.
   Code calls await ctx.services.call(service=..., step=..., operation=..., arguments=...);
   procedures use call_service with the same arguments. Operation reference:
-  docs/stripe-and-posthog-connections.md.
+  docs/stripe-and-posthog-connections.md. When a provider refuses, the error message ends
+  with what it said (status, error type and code, redacted message); code reads the same from
+  the ValueError's code and provider_error, and a procedure's tool error is that JSON. Report
+  the provider's words when a call fails instead of guessing why.
   Custom connections: code calls await ctx.services.request(service=..., step=..., method=...,
   path=..., params=..., body=...). Procedures use request_service with the same arguments.
   Provider keys stay in Tin. GET needs http.read; POST needs http.write and the connection's

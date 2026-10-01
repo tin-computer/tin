@@ -603,6 +603,15 @@ def workflow_source_view(workflow, settings):
     }
 
 
+SERVICE_ERRORS_GUIDE = (
+    "A failed call carries Tin's message. When the provider answered and refused, the "
+    "message ends with what it said (for example a HogQL error), and provider_error holds "
+    "{provider, status, type, code, message}: the message redacted (credentials, tokens, "
+    "the person part of email addresses) and cut to 1500 characters. Other failures keep "
+    "Tin's generic message."
+)
+
+
 def authoring_guide(*, settings, project_id):
     from tin_lite.workflow_code import MODEL_TARGETS, example_files
     from tin_lite.workflow_creator import creator_files
@@ -798,6 +807,9 @@ def authoring_guide(*, settings, project_id):
             "and unknown unless independently verified; call limits are not dollar ceilings.",
             "managed": "managed.pagespeed (free) works through call_service. Paid managed "
             "services such as managed.dataforseo are for workflow.code packages only.",
+            "errors": SERVICE_ERRORS_GUIDE
+            + " A call_service or request_service tool error is JSON with code, message "
+            "and provider_error.",
         },
         "code_contract": {
             "executor": "workflow.code",
@@ -862,6 +874,8 @@ def authoring_guide(*, settings, project_id):
                 "rate limit or missing permission, is a named error for that step "
                 "and does not block later steps. Connected-provider costs remain separate from "
                 "Tin credits; managed.dataforseo reads are charged to Tin credits.",
+                "errors": SERVICE_ERRORS_GUIDE
+                + " In code, catch ValueError and read its code and provider_error attributes.",
             },
             "files": {
                 "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern)",

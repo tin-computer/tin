@@ -37,7 +37,15 @@ other failure keeps the generic status. Must match e2b_runtime.SERVICE_ERROR_EXI
 
 
 class ServiceError(ValueError):
-    """A service error Tin handed to authored code, as the documented ValueError."""
+    """A service error Tin handed to authored code, as the documented ValueError.
+
+    `code` names Tin's refusal kind (for example `query_error`); `provider_error` is what the
+    provider said when it refused: {provider, status, type, code, message}, redacted.
+    """
+
+    def __init__(self, message, code=None, provider_error=None):
+        super().__init__(message)
+        self.code, self.provider_error = code, provider_error
 
 
 class ServiceErrorEscaped(Exception):
@@ -71,8 +79,11 @@ class Models:
                 if response["error"] == "file_not_found":
                     raise FileNotFoundError(request["path"])
                 raise ValueError(response["error"].replace("_", " "))
-            error = ServiceError if request.get("kind") == "service" else ValueError
-            raise error(response["error"])
+            if request.get("kind") == "service":
+                raise ServiceError(
+                    response["error"], response.get("code"), response.get("provider_error")
+                )
+            raise ValueError(response["error"])
         return response["result"]
 
 

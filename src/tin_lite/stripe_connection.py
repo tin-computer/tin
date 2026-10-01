@@ -44,6 +44,8 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
 )
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 
 STRIPE_API = "https://api.stripe.com"
 # Pinned so responses keep the shape the projections read; never the account's default version.
@@ -81,6 +83,8 @@ RESOURCE_NAMES = {
 }
 READ_PATHS = frozenset({"/v1/account", *RESOURCE_NAMES})
 MAX_UPSTREAM_BYTES = 8_000_000
+# An error body is read only for its type, code and message.
+MAX_ERROR_BYTES = 64_000
 RATE_REASONS = frozenset(
     {
         "global-rate",
@@ -456,20 +460,22 @@ class StripeWriteRefused(RuntimeError):
 
 
 class StripeAuthenticationFailed(ServiceCallRefused):
-    def __init__(self) -> None:
+    def __init__(self, provider_error: ProviderErrorDetail | None = None) -> None:
         super().__init__(
             "Stripe rejected the stored restricted key. Enter a new key in Integrations.",
             code="authentication_failed",
+            provider_error=provider_error,
         )
 
 
 class StripePermissionDenied(ServiceCallRefused):
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, provider_error: ProviderErrorDetail | None = None) -> None:
         resource = RESOURCE_NAMES.get(path, "that resource")
         super().__init__(
             f"Stripe's restricted key cannot read {resource}. Give the key Read access to "
             f"{resource} in Stripe, then press Check again in Integrations.",
             code="permission_denied",
+            provider_error=provider_error,
         )
         self.path = path
 
@@ -504,10 +510,18 @@ class StripeReader:
         ) as response:
             request_id = response.headers.get("request-id")
             status = response.status_code
+            if status != 200:
+                try:
+                    error = await read_bounded_json(
+                        response, maximum=MAX_ERROR_BYTES, provider="Stripe"
+                    )
+                except IntegrationError:
+                    error = None
+                detail = provider_error_detail("Stripe", status, error, secrets=(self._key,))
             if status == 401:
-                raise StripeAuthenticationFailed()
+                raise StripeAuthenticationFailed(detail)
             if status == 403:
-                raise StripePermissionDenied(path)
+                raise StripePermissionDenied(path, detail)
             if status == 429:
                 reason = response.headers.get("stripe-rate-limited-reason")
                 reason = reason if reason in RATE_REASONS else None
@@ -516,11 +530,13 @@ class StripeReader:
                     + (f" ({reason})" if reason else "")
                     + "; try again later in a new step.",
                     reason=reason,
+                    provider_error=detail,
                 )
             if status != 200:
                 raise ServiceCallRefused(
                     f"Stripe could not complete the read (HTTP {status}).",
                     code="provider_error",
+                    provider_error=detail,
                 )
             payload = await read_bounded_json(
                 response, maximum=MAX_UPSTREAM_BYTES, provider="Stripe"

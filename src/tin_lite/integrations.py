@@ -37,6 +37,8 @@ from tin_lite.domain import (
     Workflow,
 )
 from tin_lite.email_outreach import build_email_message, campaign_message_id
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 from tin_lite.repository_limits import (
     REPOSITORY_BLOB_FALLBACKS,
     REPOSITORY_DOWNLOAD_MAX_BYTES,
@@ -173,6 +175,18 @@ class IntegrationUpstreamError(IntegrationError):
     pass
 
 
+class IntegrationProviderError(IntegrationUpstreamError):
+    """The provider answered with an error status; the message stays Tin's own.
+
+    `provider_error` holds what the provider said (status, type, code and a redacted message).
+    Founder-facing routes keep showing Tin's message; the run gateway shows both.
+    """
+
+    def __init__(self, message: str, *, provider_error: ProviderErrorDetail) -> None:
+        super().__init__(message)
+        self.provider_error = provider_error
+
+
 class IntegrationInputError(IntegrationError):
     """The person's own input was rejected before anything was stored."""
 
@@ -185,21 +199,31 @@ class ServiceCallRefused(IntegrationError):
     """The provider answered and refused one read: a known outcome with a Tin-authored message.
 
     The service gateway settles the step with `code` instead of treating it as uncertain, so a
-    later step may try again. Messages never carry provider bodies or credentials.
+    later step may try again. The message is Tin's own and never carries a provider body or a
+    credential; `provider_error`, when the provider explained itself, holds its status, error
+    type and code and its message, cut and redacted (see provider_errors.py).
     """
 
-    def __init__(self, message: str, *, code: str) -> None:
+    def __init__(
+        self, message: str, *, code: str, provider_error: ProviderErrorDetail | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.provider_error = provider_error
 
 
 class IntegrationRateLimitedError(ServiceCallRefused):
     """The provider rate-limited a read; retry it later under a new step."""
 
     def __init__(
-        self, message: str, *, reason: str | None = None, retry_after: int | None = None
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        retry_after: int | None = None,
+        provider_error: ProviderErrorDetail | None = None,
     ) -> None:
-        super().__init__(message, code="rate_limited")
+        super().__init__(message, code="rate_limited", provider_error=provider_error)
         self.reason, self.retry_after = reason, retry_after
 
 
@@ -5157,29 +5181,33 @@ def _gmail_message_is_reply(value: dict[str, Any], *, sender_email: str, after: 
     return False
 
 
-def _provider_json(response: httpx.Response, *, provider: str) -> dict[str, Any]:
+def _provider_payload(response: httpx.Response, *, provider: str) -> Any:
+    """The parsed body; an error status keeps the provider's own words beside Tin's message."""
     try:
-        payload = response.json()
+        payload, invalid = response.json(), None
     except ValueError as exc:
-        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from exc
+        payload, invalid = None, exc
     if response.is_error:
-        raise IntegrationUpstreamError(
-            f"{provider} could not complete the request ({response.status_code})"
-        )
+        raise IntegrationProviderError(
+            f"{provider} returned an invalid response"
+            if invalid
+            else f"{provider} could not complete the request ({response.status_code})",
+            provider_error=provider_error_detail(provider, response.status_code, payload),
+        ) from invalid
+    if invalid is not None:
+        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from invalid
+    return payload
+
+
+def _provider_json(response: httpx.Response, *, provider: str) -> dict[str, Any]:
+    payload = _provider_payload(response, provider=provider)
     if not isinstance(payload, dict):
         raise IntegrationUpstreamError(f"{provider} returned an invalid response")
     return payload
 
 
 def _provider_list(response: httpx.Response, *, provider: str) -> list[Any]:
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from exc
-    if response.is_error:
-        raise IntegrationUpstreamError(
-            f"{provider} could not complete the request ({response.status_code})"
-        )
+    payload = _provider_payload(response, provider=provider)
     if not isinstance(payload, list):
         raise IntegrationUpstreamError(f"{provider} returned an invalid response")
     return payload
