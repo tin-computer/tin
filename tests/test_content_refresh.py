@@ -303,3 +303,74 @@ def test_results_compare_28_days_before_and_after_going_live():
         ]
     )
     assert "| /pricing | 2026-08-01 | 10 → 25 | 400 → 500 | 2.5% → 5.0% | 5 → 4.1 |" in table
+
+
+def test_a_text_matches_whole_words_only():
+    # A probe once turned PricingTable into teamsTable.
+    source = 'import { PricingTable } from "./table";\nexport const title = "Pricing";\n'
+    items = [{"field": "title", "old": "Pricing", "new": "Pricing for teams", "reason": "x"}]
+    changed = refresh.plan_patch({"app/pricing/page.tsx": source.encode()}, items)
+    text = changed["app/pricing/page.tsx"]
+    assert "{ PricingTable }" in text and 'title = "Pricing for teams";' in text
+
+
+def test_a_text_held_twice_in_one_file_stops_delivery():
+    source = 'export const metadata = { title: "Setup guide" };\nconst nav = "Setup guide";\n'
+    with pytest.raises(ValueError, match="appears 2 times in app/page.tsx"):
+        refresh.plan_patch({"app/page.tsx": source.encode()}, [GOOD[1]])
+
+
+@pytest.mark.parametrize(
+    ("path", "source", "new", "expected"),
+    [
+        # A string in code keeps its quote type, with the quote escaped.
+        ("app/page.tsx", "const t = 'Setup guide';\n", "Founder's guide", "'Founder\\'s guide'"),
+        (
+            "app/page.tsx",
+            'const t = "Setup guide";\n',
+            'The "fast" guide',
+            '"The \\"fast\\" guide"',
+        ),
+        ("app/page.ts", "const t = `Setup guide`;\n", "Costs $5", "`Costs $5`"),
+        ("site/seo.py", "TITLE = 'Setup guide'\n", "Founder's guide", "'Founder\\'s guide'"),
+        # JSON keeps valid string escapes.
+        (
+            "content/page.json",
+            '{"h1": "Setup guide"}\n',
+            'The "fast" guide',
+            '"The \\"fast\\" guide"',
+        ),
+        # YAML: double quotes escape like JSON; single quotes double up.
+        ("content/page.yaml", "h1: 'Setup guide'\n", "Founder's guide", "'Founder''s guide'"),
+        # An HTML attribute and HTML text are written as HTML.
+        (
+            "index.html",
+            '<meta content="Setup guide">\n',
+            'The "fast" & easy guide',
+            '"The &quot;fast&quot; &amp; easy guide"',
+        ),
+        (
+            "index.html",
+            "<h1>Setup guide</h1>\n",
+            "Tom & Jerry's guide",
+            ">Tom &amp; Jerry's guide<",
+        ),
+        # JSX text uses an entity for a quote the source did not already write raw.
+        ("app/page.tsx", "<h1>Setup guide</h1>\n", "Founder's guide", ">Founder&apos;s guide<"),
+    ],
+)
+def test_the_new_text_is_escaped_for_where_it_sits(path, source, new, expected):
+    items = [{"field": "h1", "old": "Setup guide", "new": new, "reason": "x"}]
+    changed = refresh.plan_patch({path: source.encode()}, items)
+    assert expected in changed[path]
+
+
+def test_a_quote_tin_cannot_place_safely_stops_delivery():
+    # A JSX attribute takes no backslash escape, and part of a longer string has no edges.
+    for path, source, new in [
+        ("app/page.tsx", '<Hero title="Setup guide" />\n', 'The "fast" guide'),
+        ("app/page.ts", 'const t = "Setup guide for teams";\n', 'The "fast" guide'),
+    ]:
+        items = [{"field": "h1", "old": "Setup guide", "new": new, "reason": "x"}]
+        with pytest.raises(ValueError, match="safely"):
+            refresh.plan_patch({path: source.encode()}, items)

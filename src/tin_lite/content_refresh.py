@@ -430,19 +430,101 @@ def _variants(value: str) -> list[tuple[str, Any]]:
 
 
 def _pattern(text: str) -> re.Pattern:
-    """Exact words; any run of source whitespace may separate them (wrapped JSX, HTML)."""
-    return re.compile(r"\s+".join(re.escape(word) for word in text.split()))
+    """Exact words; any run of source whitespace may separate them (wrapped JSX, HTML).
+
+    A text that starts or ends with a letter or digit must start or end a word in the
+    source too, so "Pricing" never matches inside "PricingTable".
+    """
+    body = r"\s+".join(re.escape(word) for word in text.split())
+    before = r"(?<!\w)" if re.match(r"\w", text) else ""
+    after = r"(?!\w)" if re.search(r"\w$", text) else ""
+    return re.compile(before + body + after)
 
 
-def occurrences(source: str, old: str, new: str) -> list[tuple[int, int, str]]:
-    """Non-overlapping (start, end, replacement) spans of `old`, in whichever encoding."""
-    spans: list[tuple[int, int, str]] = []
-    for _, encode in _variants(old):
-        encoded_new = encode(new)
+def matches(source: str, old: str) -> list[tuple[int, int, str, Any]]:
+    """Non-overlapping (start, end, encoding name, encoder) spans of `old` in the source."""
+    spans: list[tuple[int, int, str, Any]] = []
+    for name, encode in _variants(old):
         for match in _pattern(encode(old)).finditer(source):
-            if not any(start < match.end() and match.start() < end for start, end, _ in spans):
-                spans.append((match.start(), match.end(), encoded_new))
-    return sorted(spans)
+            if not any(start < match.end() and match.start() < end for start, end, *_ in spans):
+                spans.append((match.start(), match.end(), name, encode))
+    return sorted(spans, key=lambda span: span[:2])
+
+
+# Where the new text lands decides how it must be written: a quoted string in code, an HTML
+# attribute, element text, or a JSON value. A text Tin cannot place safely stops delivery.
+SCRIPT_SUFFIXES = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".py")
+JSX_SUFFIXES = (".js", ".jsx", ".tsx")
+MARKUP_SUFFIXES = (".astro", ".erb", ".hbs", ".htm", ".html", ".liquid", ".njk", ".php")
+YAML_SUFFIXES = (".yaml", ".yml")
+QUOTES = "'\"`"
+# Characters that can end or break a string in code. validate_document already refuses <, >,
+# braces and backticks in new text.
+SENSITIVE = frozenset("'\"\\")
+
+
+def _neighbours(source: str, start: int, end: int) -> tuple[str, str]:
+    left = source[:start].rstrip()
+    right = source[end:].lstrip()
+    return (left[-1] if left else "", right[0] if right else "")
+
+
+def placed(path: str, source: str, start: int, end: int, new: str, name: str, encode) -> str:
+    """`new` written so the file stays valid where the old text sat, or ValueError."""
+    encoded = encode(new)
+    before = source[start - 1] if start else ""
+    after = source[end] if end < len(source) else ""
+    attribute_name = re.search(r"[A-Za-z_:@][\w:.@-]*=$", source[max(0, start - 80) : start - 1])
+    unsafe = ValueError(
+        f"Tin cannot tell how to write the new text safely where it sits in {path}. "
+        "Change it by hand or ask your coding agent."
+    )
+    if before and before == after and before in QUOTES:
+        quote = before
+        if path.endswith(".json") or name == "json":
+            if quote != '"':
+                raise unsafe
+            return json.dumps(new, ensure_ascii=False)[1:-1]
+        if attribute_name and path.endswith(JSX_SUFFIXES):
+            # A JSX attribute string takes no backslash escapes.
+            if quote in new or "\\" in new:
+                raise unsafe
+            return encoded
+        if attribute_name and path.endswith(MARKUP_SUFFIXES + (".vue", ".svelte")):
+            return html.escape(new, quote=True)
+        if path.endswith(YAML_SUFFIXES):
+            return (
+                json.dumps(new, ensure_ascii=False)[1:-1]
+                if quote == '"'
+                else (encoded.replace("'", "''"))
+            )
+        if path.endswith(SCRIPT_SUFFIXES + MARKUP_SUFFIXES + (".vue", ".svelte", ".mdx")):
+            if "\n" in new and quote != "`":
+                raise unsafe
+            written = encoded.replace("\\", "\\\\").replace(quote, "\\" + quote)
+            return written.replace("${", "\\${") if quote == "`" else written
+        if quote in new:
+            raise unsafe
+        return encoded
+    left, right = _neighbours(source, start, end)
+    if left == ">" and right == "<":
+        if path.endswith(MARKUP_SUFFIXES + (".vue", ".svelte")):
+            return html.escape(new, quote=False)
+        if path.endswith(JSX_SUFFIXES):
+            # JSX text: keep a quote the source already writes raw, otherwise use its entity.
+            original = source[start:end]
+            for char, entity in (("'", "&apos;"), ('"', "&quot;")):
+                if char in encoded and char not in original:
+                    encoded = encoded.replace(char, entity)
+            return encoded
+        return encoded
+    if path.endswith((".md", ".mdx")):
+        return encoded
+    # Tin cannot see where this text begins or ends (part of a longer string or paragraph):
+    # it writes a quote or backslash only where the replaced source already writes one raw.
+    if name == "plain" and any(char not in source[start:end] for char in SENSITIVE & set(new)):
+        raise unsafe
+    return encoded
 
 
 def _source_path(path: str) -> bool:
@@ -467,9 +549,7 @@ def plan_patch(files: dict[str, bytes], items: list[dict[str, str]]) -> dict[str
             continue
     holders = {}
     for index, item in enumerate(items):
-        holders[index] = {
-            path for path, text in texts.items() if occurrences(text, item["old"], item["new"])
-        }
+        holders[index] = {path for path, text in texts.items() if matches(text, item["old"])}
         if not holders[index]:
             raise ValueError(
                 f"Tin could not find the page's current {item['field']} in the repository: "
@@ -507,11 +587,24 @@ def plan_patch(files: dict[str, bytes], items: list[dict[str, str]]) -> dict[str
         text = texts[path]
         spans = []
         for index, paths in chosen.items():
-            if path in paths:
-                item = items[index]
-                for span in occurrences(text, item["old"], item["new"]):
-                    if not any(s < span[1] and span[0] < e for s, e, _ in spans):
-                        spans.append(span)
+            if path not in paths:
+                continue
+            item = items[index]
+            found = matches(text, item["old"])
+            # One place per file: a second copy could be a different element or component.
+            if len(found) != 1:
+                raise ValueError(
+                    f"The page's current {item['field']} appears {len(found)} times in {path}, "
+                    "so Tin cannot tell which one the page shows. Change it by hand or ask "
+                    "your coding agent."
+                )
+            [(start, end, name, encode)] = found
+            try:
+                replacement = placed(path, text, start, end, item["new"], name, encode)
+            except ValueError as exc:
+                raise ValueError(f"The new {item['field']}: {exc}") from exc
+            if not any(s < end and start < e for s, e, _ in spans):
+                spans.append((start, end, replacement))
         out, cursor = [], 0
         for start, end, replacement in sorted(spans):
             out.append(text[cursor:start])
@@ -538,7 +631,12 @@ def verify_patch(
         original = originals[path]
         spans = []
         for index, item in enumerate(items):
-            for start, end, replacement in occurrences(original, item["old"], item["new"]):
+            for start, end, name, encode in matches(original, item["old"]):
+                try:
+                    replacement = placed(path, original, start, end, item["new"], name, encode)
+                except ValueError:
+                    # Text Tin could not place safely must stay exactly as it was.
+                    replacement = original[start:end]
                 spans.append((start, end, replacement, index))
         spans.sort()
         parts, cursor = [], 0
