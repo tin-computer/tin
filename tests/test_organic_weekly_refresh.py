@@ -31,7 +31,7 @@ async def refresh_fixture(db, monkeypatch, *, policy=None):
         version_label=spec.version_label,
         definition=spec.definition,
     )
-    if (policy or organic_system.POLICY) == organic_system.POLICY:
+    if organic_system.refreshes_pages(policy or organic_system.REFRESH_POLICY):
         await db.pool.execute(
             "UPDATE effect_receipts SET result=jsonb_set(result, '{definitions,refresh}', "
             "$2::jsonb) WHERE execution_key=$1",
@@ -52,10 +52,12 @@ async def refresh_runs(f):
 
 def test_the_v5_recipe_refreshes_pages_and_older_recipes_do_not():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY).definition
-    assert recipe["organic_system_policy"]["version"] == "organic-traffic-v5"
-    assert organic_system.refreshes_pages(organic_system.POLICY)
+    # New runs pin v6, which keeps v5's page refresh.
+    assert recipe["organic_system_policy"]["version"] == "organic-traffic-v6"
+    for policy in (organic_system.REFRESH_POLICY, organic_system.POLICY):
+        assert organic_system.refreshes_pages(policy)
+        assert organic_system.schedules_articles(policy)
     assert not organic_system.refreshes_pages(organic_system.FALLBACK_POLICY)
-    assert organic_system.schedules_articles(organic_system.POLICY)
 
 
 async def test_the_systems_refresh_is_the_schedules_first_run(publication_db, monkeypatch):

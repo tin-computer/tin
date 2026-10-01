@@ -408,7 +408,8 @@ def test_new_organic_parent_requires_priced_execution_before_research(billed):
 
 
 async def test_content_children_share_parent_budget_only_for_pinned_recipe(billed):
-    from tin_lite.organic_system import POLICY
+    # A recipe pinned to v5 delivers with content.deliver.
+    from tin_lite.organic_system import REFRESH_POLICY as POLICY
 
     f = billed
     await fund(f)

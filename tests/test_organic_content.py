@@ -48,7 +48,7 @@ async def system_fixture(
     definitions = {w.key: w.definition for w in BUILTIN_WORKFLOWS}
     definitions["content.generate"] = f.workflow.definition
     resources = {}
-    for key in (organic_system.KEY, "content.deliver"):
+    for key in (organic_system.KEY, "content.deliver", "website.change"):
         spec = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
         definition, files = spec.definition_and_resource_files()
         definitions[key] = definition
@@ -105,8 +105,14 @@ async def system_fixture(
         f"traffic:{f.parent.id}:prepare",
         {
             "definition_revision": "e" * 40,
-            "policy": policy or organic_system.POLICY,
-            "definitions": {step: definitions[key] for step, key in organic_system.STEPS.items()},
+            # These cases pin v5, whose delivery step is content.deliver.
+            "policy": policy or organic_system.REFRESH_POLICY,
+            "definitions": {
+                step: definitions[key]
+                for step, key in organic_system.policy_steps(
+                    policy or organic_system.REFRESH_POLICY
+                ).items()
+            },
             "input_sha256": digest(inputs),
             "content_delivery": intent,
         },

@@ -542,14 +542,16 @@ BUILTIN_WORKFLOWS = (
         title="Run the organic traffic system",
         description=(
             "Audit your website and research buyer searches, then save an editable content "
-            "plan and draft its next article for review. With GitHub connected, adapt the "
-            "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
-            "Then draft the next planned article each week, one review at a time. "
-            "Before new articles, refresh one existing page now and again each week. "
-            "Optionally propose one technical fix. Never merges, publishes or sends outreach."
+            "plan and draft its next article for review. With GitHub connected, website.change "
+            "puts the approved article on the site: Tin merges its PR once your required checks "
+            "pass when you approved it with commit to main, and otherwise leaves the PR for "
+            "you; without GitHub its Markdown stays in Tin. Then draft the next planned "
+            "article each week, one review at a time. Before new articles, refresh one "
+            "existing page now and again each week. Optionally fix what the audit found "
+            "through website.change; each fix waits for your approval. Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,

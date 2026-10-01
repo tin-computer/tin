@@ -39,9 +39,29 @@ FALLBACK_POLICY = {
 # v5 also refreshes existing pages before drafting new ones. The system starts the first page
 # refresh itself, as a child run, before its first draft; that run is the refresh schedule's
 # first run, so the saved weekly refresh schedule's first occurrence comes a week later.
-POLICY = {**FALLBACK_POLICY, "version": "organic-traffic-v5", "refresh": "weekly_refresh"}
-DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, POLICY)
+REFRESH_POLICY = {**FALLBACK_POLICY, "version": "organic-traffic-v5", "refresh": "weekly_refresh"}
+# v6 (Emre, 10/1): the recipe's two writer steps go through website.change, the one workflow
+# that edits the site. The technical step starts website.change with the latest audit's
+# fixes (`source: audit`) instead of organic.technical_fix, and the delivery step puts the
+# approved draft on the site with website.change (`source: content_draft`) instead of
+# content.deliver. Everything else is v5's. Runs pinned to v5 and earlier keep their steps.
+WEBSITE_KEY = "website.change"
+WEBSITE_STEPS = {**STEPS, "technical": WEBSITE_KEY, "delivery": WEBSITE_KEY}
+POLICY = {
+    **REFRESH_POLICY,
+    "version": "organic-traffic-v6",
+    "steps": WEBSITE_STEPS,
+    "site_writer": WEBSITE_KEY,
+}
+DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY)
 REFRESH_KEY = "content.refresh"
+# The executor each child must have; any other step's executor is its own key.
+CHILD_EXECUTORS = {
+    TECHNICAL_KEY: "codex.procedure",
+    "content.generate": "codex.procedure",
+    "content.deliver": "codex.procedure",
+    WEBSITE_KEY: "codex.procedure",
+}
 
 
 def policy_steps(policy):
@@ -49,23 +69,34 @@ def policy_steps(policy):
         return LEGACY_STEPS
     if policy in DRAFT_POLICIES:
         return STEPS
+    if policy == POLICY:
+        return WEBSITE_STEPS
     raise ValueError("Unsupported organic system policy.")
 
 
+def child_executor(workflow_key):
+    return CHILD_EXECUTORS.get(workflow_key, workflow_key)
+
+
+def writes_with_website_change(policy):
+    """Whether this recipe's technical and delivery steps start website.change (v6)."""
+    return policy == POLICY
+
+
 def drafts_articles(policy):
-    return policy in DRAFT_POLICIES
+    return policy in DRAFT_POLICIES or policy == POLICY
 
 
 def schedules_articles(policy):
-    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, POLICY)
+    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY, POLICY)
 
 
 def falls_back_to_saved_plan(policy):
-    return policy in (FALLBACK_POLICY, POLICY)
+    return policy in (FALLBACK_POLICY, REFRESH_POLICY, POLICY)
 
 
 def refreshes_pages(policy):
-    return policy == POLICY
+    return policy in (REFRESH_POLICY, POLICY)
 
 
 INPUT_SCHEMA = {
