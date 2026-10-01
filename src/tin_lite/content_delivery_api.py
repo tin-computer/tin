@@ -134,7 +134,7 @@ async def retry_delivery(*, runtime, settings, project_id, run_id):
         raise LookupError("Draft not found.")
     from tin_lite import content_repository_delivery
 
-    if run.workflow_id != content_repository_delivery.WORKFLOW_ID:
+    if not content_repository_delivery.adapts(run):
         status = await service.status(run)
         if not status or run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
             raise ValueError("This run has no approved GitHub delivery to retry.")
@@ -142,7 +142,7 @@ async def retry_delivery(*, runtime, settings, project_id, run_id):
             # The approval's adaptation exists: retrying means delivering its saved patch.
             # With no adaptation yet (a refused start), the page's own delivery retries it.
             run = await runtime.database.get_run(UUID(status["run_id"]))
-    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+    if content_repository_delivery.adapts(run):
         status = await content_repository_delivery.retry_status(runtime.database, run)
     if status["status"] == "completed":
         return status

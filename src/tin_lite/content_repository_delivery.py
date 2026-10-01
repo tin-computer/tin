@@ -6,6 +6,12 @@ Sources are approved planned articles (content.generate), answer pages and publi
 articles. An approval can start this procedure itself (see ContentDelivery.adapt); when
 the founder's delivery setting commits to main, Tin then merges the pull request, but
 only one that adds nothing except the approved page, once GitHub reports it clean.
+
+website.change (website_change.py) adapts pages with this same machinery: source pinning,
+the exact-copy proof, the saved patch, recovery and merging once GitHub reports the pull
+request clean. Its runs keep their pinned source under the same receipt key, and their own
+policy decides whether Tin merges (see publish_after_pull_request). content.deliver's own
+rules are unchanged.
 """
 
 import asyncio
@@ -31,6 +37,11 @@ from tin_lite.integrations import GitHubFileChange, GitHubRepositoryBinding
 KEY = "content.deliver"
 WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000036")
 OPERATION = "content_repository_delivery_source_v1"
+# website.change, the one workflow that edits a founder's website, reuses this machinery.
+WEBSITE_CHANGE_ID = UUID("00000000-0000-4000-8000-000000000045")
+WEBSITE_CHANGE_OPERATION = "website_change_source_v1"
+ADAPTER_WORKFLOW_IDS = frozenset({WORKFLOW_ID, WEBSITE_CHANGE_ID})
+SOURCE_OPERATIONS = {WORKFLOW_ID: OPERATION, WEBSITE_CHANGE_ID: WEBSITE_CHANGE_OPERATION}
 CHECK_COMMAND = "git diff --check"
 RECOVERY_OPERATION = "content_repository_delivery_recovery_v1"
 MERGE_OPERATION = "content_repository_delivery_merge_v1"
@@ -52,6 +63,11 @@ def recovery_key(run_id):
 
 def merge_key(run_id):
     return f"content-delivery:{UUID(str(run_id))}:merge"
+
+
+def adapts(run):
+    """Whether this run adapts an approved page to the site: content.deliver or website.change."""
+    return getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
 
 
 def status_projection(run, source, publication, recovery, merge=None):
@@ -90,6 +106,15 @@ def status_projection(run, source, publication, recovery, merge=None):
         "merge": merge,
         "merged": bool(merge and merge.get("status") == "merged"),
         "merged_at": merge.get("merged_at") if merge else None,
+        # A website.change run also says which change it made and whether it may publish.
+        **(
+            {
+                "change_id": source["change"]["change_id"],
+                "publish": (source.get("publish") or {}).get("mode"),
+            }
+            if source.get("change")
+            else {}
+        ),
     }
 
 
@@ -217,30 +242,40 @@ async def discover(database, project_id):
     }
 
 
+async def page_source(*, database, storage, project_id, source_run_id):
+    """The approved page's exact copy and provenance: a planned article, answer page or
+    public article. Refuses anything not approved in this project."""
+    candidate = await database.get_run(UUID(str(source_run_id)))
+    if approved_document.kind_for(candidate):
+        return await approved_document.select(
+            database=database,
+            storage=storage,
+            project_id=project_id,
+            source_run_id=source_run_id,
+        )
+    return {
+        "source_kind": "article",
+        **await approved_article.select(
+            database=database,
+            storage=storage,
+            project_id=project_id,
+            source_run_id=source_run_id,
+        ),
+    }
+
+
 async def select_source(*, database, storage, integrations, project_id, inputs, approval=False):
     """Pin the approved page and repository; `approval` marks a start by the page's approval.
 
     Only that start carries the founder's delivery (a pull request, or commit to main) into
     the run. Prepare PR and agent starts always leave their pull request open.
     """
-    candidate = await database.get_run(UUID(str(inputs["source_run_id"])))
-    if approved_document.kind_for(candidate):
-        source = await approved_document.select(
-            database=database,
-            storage=storage,
-            project_id=project_id,
-            source_run_id=inputs["source_run_id"],
-        )
-    else:
-        source = {
-            "source_kind": "article",
-            **await approved_article.select(
-                database=database,
-                storage=storage,
-                project_id=project_id,
-                source_run_id=inputs["source_run_id"],
-            ),
-        }
+    source = await page_source(
+        database=database,
+        storage=storage,
+        project_id=project_id,
+        source_run_id=inputs["source_run_id"],
+    )
     run = await database.get_run(UUID(source["source_run_id"]))
     selected = await database.get_effect(content_draft.selection_key(run.id))
     # The approval-time choice, else the pinned intent: the one the exact publisher uses.
@@ -277,26 +312,37 @@ async def select_source(*, database, storage, integrations, project_id, inputs, 
     return pinned
 
 
-async def guard_source(conn, *, project_id, inputs, source):
-    """Called under create_run's project lock, in the run/budget/receipt transaction."""
-    if inputs["source_run_id"] != source["source_run_id"]:
-        raise ValueError("The selected article is not approved for delivery.")
+async def guard_page(conn, *, project_id, source):
+    """Recheck the pinned page's approval under the project lock."""
     if source.get("source_kind") in {"answer_page", "public_article"}:
         await approved_document.guard(conn, project_id=project_id, source=source)
     else:
         await approved_article.guard(conn, project_id=project_id, source=source)
+
+
+async def guard_source(conn, *, project_id, inputs, source):
+    """Called under create_run's project lock, in the run/budget/receipt transaction."""
+    if inputs["source_run_id"] != source["source_run_id"]:
+        raise ValueError("The selected article is not approved for delivery.")
+    await guard_page(conn, project_id=project_id, source=source)
+    await guard_attempts(conn, project_id=project_id, inputs=inputs, source=source)
+
+
+async def guard_attempts(conn, *, project_id, inputs, source):
+    """One adaptation per page and repository, whether content.deliver or website.change
+    made it, so the two can never open two pull requests for the same page."""
     duplicate = await conn.fetchval(
         "SELECT r.id FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
-        "AND s.operation=$4 AND s.status='completed' "
-        "WHERE r.project_id=$1 AND r.workflow_id=$2 "
+        "AND s.operation = ANY($4::text[]) AND s.status='completed' "
+        "WHERE r.project_id=$1 AND r.workflow_id = ANY($2::uuid[]) "
         "AND s.result->>'source_run_id'=$3 "
         "AND s.result->'binding'->>'repository_id'=$5 "
         "ORDER BY r.created_at DESC LIMIT 1",
         project_id,
-        WORKFLOW_ID,
+        list(ADAPTER_WORKFLOW_IDS),
         source["source_run_id"],
-        OPERATION,
+        list(SOURCE_OPERATIONS.values()),
         str(source["binding"]["repository_id"]),
     )
     retry = inputs.get("retry_run_id")
@@ -407,7 +453,7 @@ async def recover_delivery(*, database, storage, integrations, run):
             ):
                 raise ValueError("The saved delivery no longer has an approved source.")
             manifest = validate_procedure_pull_request(checkpoint, spec=spec)
-            proof = validate_copy(manifest, source)
+            proof = validate_patch(manifest, source)
             binding = binding_from(source)
             result = await integrations.github_create_pull_request(
                 project_id=run.project_id,
@@ -609,7 +655,9 @@ async def publish_after_pull_request(
     the receipt says why. The outcome is recorded once; retries reuse it.
     """
     source = await saved_source(database, run.id)
-    if (source.get("approval") or {}).get("mode") != "github_commit":
+    # A website.change run always records its outcome: merged, or open and why.
+    website = bool(source.get("change"))
+    if not website and (source.get("approval") or {}).get("mode") != "github_commit":
         return None
     publication = await database.get_effect(f"{run.id}:procedure_canonical_commit")
     published = (publication.result or {}) if publication else {}
@@ -629,10 +677,17 @@ async def publish_after_pull_request(
         await database.start_effect(conn, execution_key=key, operation=MERGE_OPERATION)
         try:
             manifest = await saved_manifest(database, storage, run)
-            proof = validate_copy(manifest, source)
+            proof = validate_patch(manifest, source)
             number = published["pull_request_number"]
             base = {"pull_request": published["external_url"], "number": number}
-            route = (source.get("approval") or {}).get("route")
+            hold = None
+            if website:
+                from tin_lite import website_change
+
+                route = source.get("route")
+                hold = await website_change.hold_reason(database, run, source, manifest, proof)
+            else:
+                route = (source.get("approval") or {}).get("route")
             rule = merge_rule(manifest, proof, route)
             from tin_lite.page_routes import matches
 
@@ -641,7 +696,9 @@ async def publish_after_pull_request(
                 if route and matches(route, proof.get("public_route"))
                 else []
             )
-            if rule is None:
+            if hold:
+                result = {**base, "status": "left_open", "reason": hold}
+            elif rule is None:
                 result = {
                     **base,
                     "status": "left_open",
@@ -670,16 +727,17 @@ async def publish_after_pull_request(
                         clock=clock,
                     ),
                 }
+            prefix = "website_change" if website else "content_delivery"
             if result["status"] == "merged":
                 event, summary = (
-                    "content_delivery_merged",
+                    f"{prefix}_merged",
                     f"Tin merged PR #{number} into {manifest['default_branch']}."
                     if result.get("merged_by") == "tin"
                     else f"PR #{number} was merged into {manifest['default_branch']}.",
                 )
             else:
                 event, summary = (
-                    "content_delivery_left_open",
+                    f"{prefix}_left_open",
                     f"PR #{number} is open. {result['reason']}",
                 )
             async with conn.transaction():
@@ -834,6 +892,19 @@ def validate_copy(manifest, source):
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
+
+
+def validate_patch(manifest, source):
+    """The exact-copy proof, plus website.change's own rules when the source is a change row.
+
+    A content.deliver source has no change row, so its patch is checked exactly as before.
+    """
+    proof = validate_copy(manifest, source)
+    if source.get("change"):
+        from tin_lite.website_change import check_patch
+
+        check_patch(manifest, source, proof)
+    return proof
 
 
 async def delivery_history(executor, *, project_id, source_ids):

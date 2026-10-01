@@ -762,7 +762,7 @@ class ContentDelivery:
     async def status(self, run):
         from tin_lite import content_repository_delivery as repository_delivery
 
-        if run.workflow_id == repository_delivery.WORKFLOW_ID:
+        if repository_delivery.adapts(run):
             facts = await repository_delivery.adaptation_facts(self.db, [run.id])
             return repository_delivery.child_projection(run, facts.get(run.id))
         intent = await self.intent(run)
@@ -816,10 +816,7 @@ class ContentDelivery:
         from tin_lite.content_programs import decoded
 
         candidates = [
-            r
-            for r in runs
-            if r.workflow_id in CHOICE_WORKFLOW_IDS
-            or r.workflow_id == repository_delivery.WORKFLOW_ID
+            r for r in runs if r.workflow_id in CHOICE_WORKFLOW_IDS or repository_delivery.adapts(r)
         ]
         if not candidates:
             return {}
@@ -845,10 +842,10 @@ class ContentDelivery:
         output = {}
         children = await repository_delivery.adaptation_facts(
             self.db,
-            [run.id for run in candidates if run.workflow_id == repository_delivery.WORKFLOW_ID],
+            [run.id for run in candidates if repository_delivery.adapts(run)],
         )
         for run in candidates:
-            if run.workflow_id == repository_delivery.WORKFLOW_ID:
+            if repository_delivery.adapts(run):
                 if run.id in children:
                     output[run.id] = repository_delivery.child_projection(run, children[run.id])
                 continue
