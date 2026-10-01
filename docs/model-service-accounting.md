@@ -12,7 +12,9 @@ within the operator-enabled pilot. See [feature status](feature-status.md),
 
 Tin has two different ways to do model-backed work. The shared model service calls OpenAI,
 Anthropic, Gemini, or OpenRouter using credentials held on the Tin server. A Codex procedure
-runs the Codex coding agent in a sandbox using the existing pooled ChatGPT login mechanism.
+runs the Codex coding agent in a sandbox through the protected API relay. (At acceptance it
+used a pooled ChatGPT login; that mechanism has since been removed, see
+[API-only Codex execution](oauth-credential-security.md).)
 Adding a provider to the first does not change how the second authenticates or executes.
 
 Hosted users do not need their own model keys. Self-host operators configure their own keys
@@ -72,10 +74,10 @@ Nor are Codex's OAuth calls, E2B compute, DataForSEO or Studio media spending in
 Absence of a receipt must never be presented as a free run or complete platform-wide usage.
 No public usage dashboard or billing endpoint is added by this slice.
 
-Private package activation remains deferred. Before a private Codex pilot, reusable pooled
-OAuth credentials still need isolation from author-controlled commands, and usage/access
-policy must be bound to package admission and runtime grants. This implementation is not
-that isolation proof. Private workflows may still legitimately prepare GitHub PRs through
+At acceptance, private package activation was deferred until Codex no longer relied on
+reusable pooled OAuth credentials. That has since happened: new Codex compute is API-only and
+private packages use explicit activation (see [private activation](private-workflow-activation.md)).
+This implementation was not that isolation proof. Private workflows may still legitimately prepare GitHub PRs through
 the existing authorized integration gateway; there is no new prohibition on that outcome.
 
 ## Visibility response recovery

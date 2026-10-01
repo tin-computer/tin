@@ -121,6 +121,15 @@ def _path(url: str, host: str) -> str:
     return path if parts.hostname == host else f"{parts.hostname}{path}"
 
 
+def translation_key(url: str) -> str:
+    """One key for a page and its translations: /de/pricing and /pricing are the same page."""
+    key = url_key(url)
+    if language_prefix(url):
+        rest = key.split("/", 2)[2] if key.count("/") >= 2 else ""
+        return "/" + rest
+    return key
+
+
 def _aggregate_queries(queries: list[dict]) -> dict[str, dict[str, dict]]:
     """query → page key → summed clicks/impressions and impression-weighted position."""
     groups: dict[str, dict[str, dict]] = {}
@@ -151,8 +160,10 @@ def search_findings(
     titles: dict[str, str],
     policy: dict,
     brand: list[str],
+    previous: dict | None = None,
 ) -> list[dict]:
-    """Cannibalization, near-page-one queries, low CTR, and brand searches on the wrong page."""
+    """Cannibalization, near-page-one queries, low CTR, brand searches on the wrong page, and
+    pages losing clicks against the previous window."""
     findings = []
     total_impressions = sum(row["impressions"] for row in pages) or sum(
         row["impressions"] for row in queries
@@ -167,11 +178,16 @@ def search_findings(
         entry["clicks"] += row["clicks"]
         entry["impressions"] += row["impressions"]
 
-    # (a) Two or more pages competing for the same search.
+    # (a) Two or more pages competing for the same search. Translations of one page are
+    # linked with hreflang, not competitors; a search with few impressions is noise.
+    # Both rules are v11's (cannibalization_min_impressions); v10 counted every URL.
+    floor = policy.get("cannibalization_min_impressions")
+    page_key = translation_key if floor is not None else (lambda url: url)
     competing = {
         query: sorted(entries.values(), key=lambda e: (-e["impressions"], e["url"]))
         for query, entries in groups.items()
-        if len([e for e in entries.values() if e["impressions"] > 0]) >= 2
+        if len({page_key(e["url"]) for e in entries.values() if e["impressions"] > 0}) >= 2
+        and sum(e["impressions"] for e in entries.values()) >= (floor or 0)
     }
     if competing:
         ranked = sorted(
@@ -400,6 +416,7 @@ def search_findings(
         if key != "/" and (not named or is_utility_url(best["url"])):
             brand_rows.append({**best, "title": title, "named": named})
     brand_rows.sort(key=lambda e: (-e["impressions"], e["query"]))
+    findings.extend(_decay_findings(host, page_totals, previous, policy))
     if brand_rows:
         findings.append(
             site_finding(
@@ -432,3 +449,120 @@ def search_findings(
             )
         )
     return findings
+
+
+def _decay_findings(host: str, current: dict[str, dict], previous: dict | None, policy: dict):
+    """(e) Pages that lost a large share of their clicks since the previous window."""
+    if not previous or not previous.get("pages") or not policy.get("decay_min_previous_clicks"):
+        return []
+    before: dict[str, dict] = {}
+    for row in previous["pages"]:
+        entry = before.setdefault(
+            url_key(row["url"]),
+            {"url": row["url"], "clicks": 0, "impressions": 0, "position": row["position"]},
+        )
+        entry["clicks"] += row["clicks"]
+        entry["impressions"] += row["impressions"]
+    minimum, drop = policy["decay_min_previous_clicks"], policy["decay_drop_share"]
+    rows = []
+    for key, old in before.items():
+        new = current.get(key) or {"clicks": 0, "impressions": 0, "position": 0}
+        if old["clicks"] >= minimum and new["clicks"] <= old["clicks"] * (1 - drop):
+            rows.append({"url": old["url"], "before": old, "now": new})
+    rows.sort(key=lambda r: (-(r["before"]["clicks"] - r["now"]["clicks"]), r["url"]))
+    if not rows:
+        return []
+    lost = sum(r["before"]["clicks"] - r["now"]["clicks"] for r in rows)
+
+    def position(entry):
+        return f"{entry['position']:g}" if entry.get("position") else "none"
+
+    return [
+        site_finding(
+            host=host,
+            check_id="search.decay",
+            category="search",
+            area="content",
+            issue="Pages are losing search clicks",
+            impact="high" if lost >= 100 else "medium",
+            evidence=[
+                f"{count(len(rows), 'page')} lost at least {round(drop * 100)}% of their clicks "
+                f"({previous['start_date']} to {previous['end_date']} against the latest 28 "
+                f"days): {_fmt(lost)} clicks in all.",
+                *(
+                    f"{_path(r['url'], host)}: {_fmt(r['before']['clicks'])} → "
+                    f"{_fmt(r['now']['clicks'])} clicks, {_fmt(r['before']['impressions'])} → "
+                    f"{_fmt(r['now']['impressions'])} impressions, position "
+                    f"{position(r['before'])} → {position(r['now'])}"
+                    for r in rows[:10]
+                ),
+            ],
+            fix=(
+                "Refresh each page: update facts and dates, answer the searches it used to "
+                "win, check whether a newer page of yours now competes with it, and fix any "
+                "indexing change."
+            ),
+            priority="high_impact",
+            evidence_kind="search_console",
+            urls=[r["url"] for r in rows],
+            next_action="content_plan",
+            ownership="content_owner",
+            evidence_refs=["search_console.value.pages", "search_console_previous.value.pages"],
+        )
+    ]
+
+
+def inspection_row(url: str, payload: dict) -> dict:
+    """The fields of one URL Inspection answer the report uses, validated and bounded."""
+    result = (payload.get("inspectionResult") or {}) if isinstance(payload, dict) else {}
+    status = result.get("indexStatusResult") if isinstance(result, dict) else None
+    if not isinstance(status, dict):
+        raise ValueError("Invalid URL Inspection result")
+
+    def text(name: str) -> str | None:
+        value = status.get(name)
+        return " ".join(value.split())[:200] if isinstance(value, str) and value else None
+
+    def link(name: str) -> str | None:
+        value = status.get(name)
+        return value[:2000] if isinstance(value, str) and value.startswith("http") else None
+
+    verdict = text("verdict")
+    return {
+        "url": url,
+        "status": "observed",
+        "verdict": verdict,
+        "indexed": verdict == "PASS",
+        "coverage_state": text("coverageState"),
+        "robots_txt_state": text("robotsTxtState"),
+        "indexing_state": text("indexingState"),
+        "page_fetch_state": text("pageFetchState"),
+        "last_crawl_time": text("lastCrawlTime"),
+        "google_canonical": link("googleCanonical"),
+        "user_canonical": link("userCanonical"),
+    }
+
+
+def inspection_urls(
+    *, home: str, host: str, search_pages: list[dict], facts: dict, cap: int
+) -> list[str]:
+    """Key pages for URL Inspection: the homepage, the pages with the most impressions, then
+    pages Tin found noindexed or canonicalized elsewhere. Only the property's own host."""
+    chosen: dict[str, str] = {url_key(home): home}
+    for row in sorted(search_pages, key=lambda r: (-r["impressions"], r["url"])):
+        if len(chosen) >= max(1, cap - 3):
+            break
+        if urlsplit(row["url"]).hostname == host and row["impressions"] > 0:
+            chosen.setdefault(url_key(row["url"]), row["url"])
+    for record in sorted(facts.values(), key=lambda r: r["url"]):
+        if len(chosen) >= cap:
+            break
+        if record.get("fetch") != "observed" or urlsplit(record["url"]).hostname != host:
+            continue
+        canonical = record.get("canonical")
+        robots = set(record.get("robots", [])) | set(record.get("x_robots_tag", []))
+        if robots & {"noindex", "none"} or (
+            canonical and url_key(canonical) != url_key(record["url"])
+        ):
+            chosen.setdefault(url_key(record["url"]), record["url"])
+    return list(chosen.values())[:cap]

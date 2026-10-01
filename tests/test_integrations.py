@@ -1044,6 +1044,92 @@ async def test_workspace_send_reconciles_ambiguous_delivery_without_resending() 
     assert database.call_receipts["run:recipient:ambiguous"].status == "completed"
 
 
+def _gmail_values(key: str) -> dict:
+    return {
+        "project_id": PROJECT_ID,
+        "run_id": RUN_ID,
+        "execution_key": key,
+        "recipient_email": "ada@example.com",
+        "recipient_name": "Ada Lovelace",
+        "subject": "A precise hello",
+        "body": "Hello Ada.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_after_a_token_failure_is_not_treated_as_a_lost_send() -> None:
+    # The receipt used to be written before the token refresh, so a refresh blip made every
+    # retry look like a send whose answer was lost, and the recipient could never be sent.
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    token_calls = sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, sends
+        if request.url.path == "/token":
+            token_calls += 1
+            if token_calls == 1:
+                return httpx.Response(500, json={"error": "backend_error"})
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            return httpx.Response(200, json={"id": "gmail-message-1", "threadId": "t-1"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError) as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        assert "run:recipient:token" not in database.call_receipts
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+
+    assert sends == 1 and sent["id"] == "gmail-message-1"
+    assert database.call_receipts["run:recipient:token"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_refused_by_gmail_is_a_failure_that_may_be_retried() -> None:
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            if sends == 1:
+                return httpx.Response(429, json={"error": {"code": 429}})
+            return httpx.Response(200, json={"id": "gmail-message-2", "threadId": "t-2"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError, match="refused") as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        receipt = database.call_receipts["run:recipient:refused"]
+        assert receipt.status == "failed" and receipt.error_code == "gmail_http_429"
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+
+    assert sends == 2 and sent["id"] == "gmail-message-2"
+    assert database.call_receipts["run:recipient:refused"].status == "completed"
+
+
 @pytest.mark.asyncio
 async def test_workspace_reply_check_detects_only_external_mail_after_initial_send() -> None:
     database = FakeIntegrationDatabase()
@@ -2750,6 +2836,98 @@ async def test_github_commit_adapter_writes_the_default_branch_and_replays(tmp_p
     assert receipt.status == "completed" and receipt.capability == "contents.write"
     assert receipt.provider_request_id == "request-commit"
     assert receipt.response_summary["commit"] == sha
+
+
+@pytest.mark.asyncio
+async def test_github_commit_adapter_writes_several_files_as_one_commit(tmp_path) -> None:
+    configured, _private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    now = datetime.now(UTC)
+    database.connections[(PROJECT_ID, GITHUB_PROVIDER)] = IntegrationConnection(
+        id=uuid4(),
+        project_id=PROJECT_ID,
+        provider_key=GITHUB_PROVIDER,
+        status="connected",
+        external_account_id="42",
+        external_account_label="example-org/site",
+        configuration={
+            "selected_repository": "example-org/site",
+            "write_opted_in": True,
+            "permissions": {"contents": "write", "pull_requests": "write"},
+        },
+        credential_ciphertext=None,
+        credential_key_version=None,
+        connected_by_clerk_user_id=USER_ID,
+        last_checked_at=now,
+        last_error_code=None,
+        created_at=now,
+        updated_at=now,
+    )
+    head, sha = "b" * 40, "a" * 40
+    current = {"app/page.tsx": "old page\n", "app/layout.tsx": "old layout\n"}
+    requests: list[tuple[str, str]] = []
+    payloads: dict[str, dict] = {}
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        path = request.url.path
+        root = "/repos/example-org/site"
+        if request.method == "POST" and path.endswith("/access_tokens"):
+            return httpx.Response(201, json={"token": "installation-token"})
+        if request.method == "GET" and path == root:
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and path.startswith(f"{root}/contents/"):
+            name = path.removeprefix(f"{root}/contents/")
+            encoded = base64.b64encode(current[name].encode()).decode()
+            return httpx.Response(200, json={"sha": f"sha-{name}", "content": encoded})
+        if request.method == "GET" and path == f"{root}/git/ref/heads/main":
+            return httpx.Response(200, json={"object": {"sha": head}})
+        if request.method == "GET" and path == f"{root}/git/commits/{head}":
+            return httpx.Response(200, json={"tree": {"sha": "base-tree"}})
+        if request.method == "POST" and path == f"{root}/git/trees":
+            payloads["tree"] = json.loads(request.content)
+            return httpx.Response(201, json={"sha": "new-tree"})
+        if request.method == "POST" and path == f"{root}/git/commits":
+            payloads["commit"] = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={"sha": sha, "html_url": f"https://github.com/example-org/site/commit/{sha}"},
+            )
+        if request.method == "PATCH" and path == f"{root}/git/refs/heads/main":
+            payloads["ref"] = json.loads(request.content)
+            return httpx.Response(
+                200, json={"object": {"sha": sha}}, headers={"X-GitHub-Request-Id": "request-ref"}
+            )
+        raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        result = await service.github_commit_files(
+            project_id=PROJECT_ID,
+            execution_key="run-10:github-commit",
+            message="Refresh: /",
+            files=(
+                GitHubFileChange(path="app/page.tsx", content="new page\n"),
+                GitHubFileChange(path="app/layout.tsx", content="new layout\n"),
+            ),
+        )
+
+    assert result.commit == sha and result.branch == "main"
+    # One tree on top of the current head, one commit, one fast-forward; no per-file writes.
+    assert payloads["tree"]["base_tree"] == "base-tree"
+    assert [(item["path"], item["content"]) for item in payloads["tree"]["tree"]] == [
+        ("app/page.tsx", "new page\n"),
+        ("app/layout.tsx", "new layout\n"),
+    ]
+    assert payloads["commit"] == {"message": "Refresh: /", "tree": "new-tree", "parents": [head]}
+    assert payloads["ref"] == {"sha": sha, "force": False}
+    assert not any(method == "PUT" for method, _ in requests)
+    receipt = database.call_receipts["run-10:github-commit"]
+    assert receipt.status == "completed" and receipt.response_summary["commit"] == sha
 
 
 @pytest.mark.parametrize(

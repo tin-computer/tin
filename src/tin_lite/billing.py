@@ -380,7 +380,12 @@ class BillingService:
                     definition["executor"] == "growth.onboarding"
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
-                    in {"organic-traffic-v2", "organic-traffic-v3", "organic-traffic-v4"}
+                    in {
+                        "organic-traffic-v2",
+                        "organic-traffic-v3",
+                        "organic-traffic-v4",
+                        "organic-traffic-v5",
+                    }
                 ):
                     raise BillingError(
                         "unmetered_profile", "This system needs API-billed Codex execution enabled."
@@ -871,8 +876,18 @@ class BillingService:
                 and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
             )
         if parent["executor"] == "organic.traffic_system":
-            from tin_lite.organic_system import STEPS
+            from tin_lite.organic_system import REFRESH_KEY, STEPS, refreshes_pages
 
+            if definition["key"] == REFRESH_KEY:
+                # The v5 recipe's first page refresh, pinned at preparation like its steps.
+                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+                return bool(
+                    key == f"system:{parent_id}:refresh"
+                    and prepared
+                    and prepared.status == "completed"
+                    and refreshes_pages(prepared.result.get("policy"))
+                    and prepared.result["definitions"].get("refresh") == definition
+                )
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
                 from tin_lite.organic_system import drafts_articles
@@ -1362,7 +1377,13 @@ class BillingService:
         )
         return True
 
+    # Roots settled per reconciliation pass.
+    RECONCILE_BATCH = 100
+
     async def reconcile(self):
+        # Roots still inside their unknown-usage window can't settle yet, so they go last. Put
+        # first by their earlier deadlines, a provider incident's worth of them held every slot
+        # for up to a day and no other workspace's finished runs settled.
         rows = await self.db.pool.fetch(
             """SELECT b.run_id FROM billing_run_budgets b
                WHERE b.run_id=b.root_run_id AND b.status<>'settled'
@@ -1374,7 +1395,10 @@ class BillingService:
                                 AND (child.terms->>'kind'='parent'
                                      OR r.executor IN ('project.task', 'ads.launch')))
                             OR (r.lease_active AND r.status<>'needs_input')))
-               ORDER BY b.reconcile_by, b.created_at LIMIT 100"""
+               ORDER BY (b.status = 'pending' AND b.reconcile_by > now()),
+                        b.reconcile_by, b.created_at
+               LIMIT $1""",
+            self.RECONCILE_BATCH,
         )
         for row in rows:
             await self.settle(row["run_id"])

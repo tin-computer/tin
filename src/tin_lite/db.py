@@ -163,6 +163,30 @@ def _email_campaign_progress_text(
     return "waiting", "Waiting for the next approved email"
 
 
+# A copy revision waiting for review holds every recipient's next send. Checking every minute
+# for as long as it waits grew each recipient's history without bound, so the wait lengthens.
+REVISION_WAITS = ((timedelta(minutes=10), 60), (timedelta(days=1), 15 * 60))
+REVISION_LONG_WAIT_SECONDS = 60 * 60
+
+
+def revision_wait_seconds(pending_for: timedelta) -> int:
+    for limit, seconds in REVISION_WAITS:
+        if pending_for < limit:
+            return seconds
+    return REVISION_LONG_WAIT_SECONDS
+
+
+# Run admission locks the project row FOR NO KEY UPDATE, not FOR UPDATE. It still serializes
+# admissions with each other and with deletion, but no longer blocks foreign-key checks
+# (FOR KEY SHARE). Settlement holds the workspace's billing account and then inserts ledger
+# rows that reference the project; admission holds the project and then locks that account.
+# With FOR UPDATE here the two waited on each other and Postgres aborted one, usually the
+# founder's run start.
+PROJECT_ADMISSION_LOCK = (
+    "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"
+)
+
+
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -2396,10 +2420,7 @@ class Database:
                     f"content-program:{UUID(input_payload['program_id'])}",
                 )
             # Deletion tombstones under the same row lock, so admission never outlives it.
-            exists = await conn.fetchval(
-                "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
-                project_id,
-            )
+            exists = await conn.fetchval(PROJECT_ADMISSION_LOCK, project_id)
             if not exists:
                 raise LookupError(f"project {project_id} does not exist")
             if review_transition is not None:
@@ -4655,15 +4676,16 @@ class Database:
             row = await conn.fetchrow(
                 """
                 SELECT delivery.execution_key, delivery.status,
-                       delivery.campaign_run_id,
+                       delivery.campaign_run_id, campaign.status AS campaign_status,
                        campaign.external_account_id, campaign.daily_send_cap,
                        campaign.send_interval_seconds, campaign.send_window_start,
                        campaign.send_window_end, campaign.send_timezone,
-                       EXISTS (
-                           SELECT 1 FROM outreach_campaign_revisions AS revision
+                       (
+                           SELECT min(revision.requested_at)
+                           FROM outreach_campaign_revisions AS revision
                            WHERE revision.campaign_run_id = campaign.run_id
                              AND revision.status = 'pending'
-                       ) AS revision_pending
+                       ) AS revision_pending_since
                 FROM outreach_deliveries AS delivery
                 JOIN outreach_campaigns AS campaign
                   ON campaign.run_id = delivery.campaign_run_id
@@ -4680,6 +4702,9 @@ class Database:
                 return 0
             if row["status"] != "pending":
                 raise RuntimeError("outreach delivery cannot be reserved")
+            if row["campaign_status"] == "stopped":
+                # No slot is taken; the send step records the delivery as skipped.
+                return 0
 
             async def defer(seconds: int) -> int:
                 await conn.execute(
@@ -4694,8 +4719,8 @@ class Database:
                 await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
                 return seconds
 
-            if row["revision_pending"]:
-                return await defer(60)
+            if row["revision_pending_since"] is not None:
+                return await defer(revision_wait_seconds(current - row["revision_pending_since"]))
 
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -4776,6 +4801,18 @@ class Database:
             await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
         return 0
 
+    async def skip_outreach_delivery(self, *, execution_key: str, reason: str) -> None:
+        """Record that a reserved or pending delivery was never handed to the provider."""
+        await self.pool.execute(
+            """
+            UPDATE outreach_deliveries
+            SET status = 'skipped', error_code = $2, updated_at = now()
+            WHERE execution_key = $1 AND status IN ('pending', 'started')
+            """,
+            execution_key,
+            reason[:200],
+        )
+
     async def fail_outreach_delivery(
         self, *, execution_key: str, error_code: str, unknown: bool
     ) -> None:
@@ -4843,7 +4880,7 @@ class Database:
             error_code[:200],
         )
 
-    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any]:
+    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as conn, conn.transaction():
             counts = await conn.fetchrow(
                 """
@@ -4864,8 +4901,11 @@ class Database:
                 run_id,
             )
             assert counts is not None
-            if counts["failed_count"]:
-                raise RuntimeError("one or more email recipients failed")
+            status = await conn.fetchval(
+                "SELECT status FROM outreach_campaigns WHERE run_id = $1", run_id
+            )
+            if status == "stopped":
+                return None
             campaign = await conn.fetchrow(
                 """
                 UPDATE outreach_campaigns
@@ -4903,6 +4943,11 @@ class Database:
                 (
                     f"Email campaign delivered {counts['sent_count']} message(s) "
                     f"to {campaign['recipient_count']} recipient(s)."
+                    + (
+                        f" {counts['failed_count']} recipient(s) could not be sent."
+                        if counts["failed_count"]
+                        else ""
+                    )
                 ),
                 f"{run_id}:email_campaign_completed",
             )
@@ -6877,6 +6922,7 @@ class Database:
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
+            "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
         }[workflow_key]
         if final_status == "failed":
             event = "organic_system_incomplete"
@@ -6894,7 +6940,20 @@ class Database:
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
                   AND status NOT IN ('failed', 'stopped', 'superseded')
-                  AND (NOT review_required OR review_decision = 'approved')
+                  AND (NOT review_required OR review_decision = 'approved' OR (
+                    -- A page refresh with no page due ends before compute: nothing exists
+                    -- to review, and its saved preparation says so.
+                    workflow_id = '00000000-0000-4000-8000-000000000044'
+                    AND review_requested_at IS NULL AND review_decision IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM effect_receipts preparation
+                      WHERE preparation.execution_key = workflow_runs.id::text
+                        || ':content_refresh_prepare'
+                        AND preparation.operation = 'content_refresh_prepare'
+                        AND preparation.status = 'completed'
+                        AND preparation.result->'page' = 'null'::jsonb
+                    )
+                  ))
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
                 """,
@@ -6903,7 +6962,9 @@ class Database:
                 artifact_path,
                 artifact_ref,
                 summary,
-                "codex.procedure" if workflow_key == "organic.technical_fix" else workflow_key,
+                "codex.procedure"
+                if workflow_key in {"organic.technical_fix", "content.refresh"}
+                else workflow_key,
                 final_status,
             )
             if projected is None:

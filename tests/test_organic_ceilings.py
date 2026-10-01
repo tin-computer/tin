@@ -10,7 +10,13 @@ import pytest
 from tin_lite import content_plan_editorial as editorial
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import AUDIT_POLICY
-from tin_lite.organic_audit_ai import AnswerJudgment, BuyerPanel, PanelValidation, payload
+from tin_lite.organic_audit_ai import (
+    AnswerGrade,
+    BuyerPanel,
+    ContentReview,
+    PanelReview,
+    payload,
+)
 from tin_lite.service_pricing import (
     AUDIT_MAXIMUM_USD,
     CARD,
@@ -30,25 +36,30 @@ def usd(nanos):
 
 def test_audit_ceiling_covers_every_call_at_every_bound():
     policy, total = AUDIT_POLICY, Decimal(AUDIT_POLICY["crawl_reservation_usd"])
+    questions = policy["max_questions"]
     calls = (
         ("research", policy["max_research_attempts"], None, True),
-        (
-            "answer",
-            policy["max_questions"] * policy["repetitions"] + policy["brand_checks"],
-            None,
-            True,
-        ),
+        ("answer", questions * policy["repetitions"] + policy["brand_checks"], None, True),
         ("panel", policy["max_panel_attempts"], BuyerPanel, False),
-        ("interpret", policy["max_panel_attempts"] * policy["max_questions"], None, False),
-        ("validate", policy["max_panel_attempts"], PanelValidation, False),
-        ("judge", policy["max_questions"] * policy["repetitions"], AnswerJudgment, False),
+        ("interpret", policy["max_panel_attempts"] * questions, None, False),
+        # v11 reviews each question: the schema names rejected questions and why.
+        ("validate", policy["max_panel_attempts"], PanelReview, False),
+        ("judge_graded", questions * policy["repetitions"], AnswerGrade, False),
+        # One answer per question without web search, and its grade. Its input is the
+        # question (at most 400 characters); the grade reads an answer of at most 32 KB.
+        ("answer_memory", questions, None, False),
+        ("judge_graded", questions, AnswerGrade, False),
+        # One review of at most five page outlines with capped fields.
+        ("content_review", 1, ContentReview, False),
     )
+    bounds = {"answer_memory": 400, "content_review": 25_000}
     rate = LUNA["standard"]
-    for stage, count, schema, search in calls:
+    for index, (stage, count, schema, search) in enumerate(calls):
+        size = bounds.get(stage, 33_000 if index == 7 else 60_000)
         data = (
             {"website": "https://example.com/", "focus_hint": "x" * 59_000}
             if stage == "research"
-            else "x" * 60_000
+            else "x" * size
         )
         request = payload(stage=stage, data=data, schema=schema, market="US", search=search)
         searches = policy["max_tool_calls"] if search else 0
@@ -59,8 +70,9 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
             + policy["max_output_tokens"] * rate["output"]
             + searches * CARD["web_search_call_nanos"]
         )
-    # v10 asks at most 8 questions three times: 28 searched and 44 unsearched calls, $1.83.
-    assert Decimal("1.8") < total < AUDIT_MAXIMUM_USD
+    # v10 asks at most 8 questions three times with web search and once without, plus a
+    # review of the top pages: 28 searched and 61 unsearched calls, about $1.92.
+    assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
     terms = service_terms(SPECS["organic.audit"].definition)
     assert terms["maximum_nanos"] == AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR == 2 * NANOS_PER_DOLLAR
 
@@ -88,12 +100,16 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 = $15,
-        # and $20 with a technical fix; the pool caps the run at the keyword limit + $10.
-        ({}, 12),
-        ({"content_delivery": "draft_only"}, 10),  # $10 of children, under the pool
-        ({"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"}, 12),
-        ({"keyword_max_cost_usd": 9}, 19),  # a founder's higher keyword limit raises the pool
+        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 + first
+        # refresh $2.50 = $17.50 ($22.50 with a technical fix); the pool caps the run at the
+        # keyword limit + $10 + the refresh's $2.50.
+        ({}, 14.5),
+        ({"content_delivery": "draft_only"}, 12.5),  # $12.50 of children, under the pool
+        (
+            {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
+            14.5,
+        ),
+        ({"keyword_max_cost_usd": 9}, 21.5),  # a founder's higher keyword limit raises the pool
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
@@ -110,14 +126,20 @@ def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
         },
     )
     terms = service_terms(spec.definition, inputs=normalized)
-    assert terms["maximum_nanos"] == dollars * NANOS_PER_DOLLAR
+    assert terms["maximum_nanos"] == int(dollars * NANOS_PER_DOLLAR)
 
 
 def test_the_pool_is_about_five_times_a_measured_run():
+    from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
     from tin_lite.service_pricing import TRAFFIC_SYSTEM_POOL_USD
 
     measured = Decimal("2.49")  # a production run: audit, keywords, plan and one draft
-    pool = 2 + TRAFFIC_SYSTEM_POOL_USD  # at the default keyword limit
-    assert 4.5 < pool / measured < 5.5
+    refresh = Decimal("0.45")  # the first page refresh, estimated at list price
+    pool = (
+        2
+        + TRAFFIC_SYSTEM_POOL_USD
+        + Decimal(PROCEDURE_MAXIMUMS["content-refresh.v1"]) / NANOS_PER_DOLLAR
+    )
+    assert Decimal("4.5") < pool / (measured + refresh) < Decimal("5.5")
     # Every child still fits on its own: the largest single child ceiling is $5.
     assert pool > 5
