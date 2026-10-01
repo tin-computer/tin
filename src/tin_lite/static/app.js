@@ -4460,11 +4460,12 @@ function isProposal(decision) {
   return decision.kind === "review" && ["style.capture", "brand.capture"].includes(decision.workflow_key);
 }
 
-// Answer pages and public articles that Tin adapts to the site (a metered content.deliver run)
-// get one Publish button. The server says whether adaptation applies and, from the saved
-// delivery setting and the cost preview, the footer line: what Publish does and about what it
-// costs. Everything about that card lives here so its wording and layout stay easy to change.
-const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page"]);
+// Answer pages and public articles that Tin adapts to the site (a metered content.deliver or
+// website.change run) get one Publish button. The server says whether adaptation applies (for
+// content.generate, only its answer pages) and, from the saved delivery setting and the cost
+// preview, the footer line: what Publish does and about what it costs. Everything about that
+// card lives here so its wording and layout stay easy to change.
+const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page", "content.generate"]);
 const publishPreviews = new Map();
 
 function publishPreview(run) {

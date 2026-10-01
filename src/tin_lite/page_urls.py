@@ -447,7 +447,8 @@ class PageUrls:
         service = ContentDelivery(
             database=self.db, storage=self.storage, integrations=self.integrations
         )
-        if self.settings is not None and adaptable(self.settings, run):
+        answer = await service.plan_kind(run) == "answer"
+        if answer or (self.settings is not None and adaptable(self.settings, run)):
             # Publish adapts the page into the site's own folder; no file path is known yet.
             connection = await self.db.get_integration_connection(
                 project_id=run.project_id, provider_key="infra.github"

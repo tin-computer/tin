@@ -183,6 +183,20 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
     }
 
 
+def _entry(key: str, entry: dict, rows: dict, evidence: dict) -> dict[str, Any]:
+    row = rows.get(key, {"clicks": 0.0, "impressions": 0.0, "position": 0.0})
+    ctr = row["clicks"] / row["impressions"] if row["impressions"] else 0.0
+    return {
+        "url": entry["url"],
+        "path": key,
+        "checks": sorted(entry["checks"]),
+        "metrics": {**row, "ctr": round(ctr, 4)},
+        "searches": top_searches(evidence, key),
+        "body_allowed": bool(entry["checks"] & BODY_CHECKS),
+        **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
+    }
+
+
 def plan_candidates(
     findings_document: dict, evidence: dict, planned: dict | None = None, *, limit: int = 10
 ) -> list[dict]:
@@ -200,26 +214,18 @@ def plan_candidates(
         entry = pages.setdefault(url_key(path), {"url": f"https://{host}{path}", "checks": set()})
         entry["checks"] |= set(checks) & REFRESH_CHECKS
         entry["planned"] = True
-    empty = {"clicks": 0.0, "impressions": 0.0, "position": 0.0}
     ranked = sorted(
-        pages.items(), key=lambda pair: (-rows.get(pair[0], empty)["impressions"], pair[0])
+        pages.items(), key=lambda pair: (-rows.get(pair[0], {}).get("impressions", 0.0), pair[0])
     )
-    found = []
-    for key, entry in ranked[:limit]:
-        row = rows.get(key, empty)
-        ctr = row["clicks"] / row["impressions"] if row["impressions"] else 0.0
-        found.append(
-            {
-                "url": entry["url"],
-                "path": key,
-                "checks": sorted(entry["checks"]),
-                "metrics": {**row, "ctr": round(ctr, 4)},
-                "searches": top_searches(evidence, key),
-                "body_allowed": bool(entry["checks"] & BODY_CHECKS),
-                **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
-            }
-        )
-    return found
+    return [_entry(key, entry, rows, evidence) for key, entry in ranked[:limit]]
+
+
+def page_entry(findings_document: dict, evidence: dict, url: str) -> dict[str, Any]:
+    """The page a plan item names, with the audit's search checks for it (none when the latest
+    audit no longer flags it: then only the title and snippet may change) and its metrics."""
+    key = url_key(url)
+    entry = candidates(findings_document).get(key) or {"url": url, "checks": set()}
+    return _entry(key, {**entry, "url": url}, page_rows(evidence), evidence)
 
 
 # Reading the page as it is today.

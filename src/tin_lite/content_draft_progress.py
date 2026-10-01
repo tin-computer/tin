@@ -165,7 +165,8 @@ def check_existing(progress, *, rewrite=False, item=None):
 def next_item(items):
     """A manual start may work ahead of a date, but never past an unfinished/held item."""
     for item in items:
-        if item["readiness"] == "deferred":
+        if item["readiness"] == "deferred" or item.get("passed_over"):
+            # Another definition's kind, or a refresh whose page still waits.
             continue
         progress = item.get("draft") or {}
         if progress.get("stage") == "already_covered" and not item.get("brief_changed"):

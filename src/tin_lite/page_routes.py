@@ -102,6 +102,16 @@ def ask_the_founder(kind: PageType, host: str | None) -> dict[str, Any]:
     }
 
 
+def route_question(kind: PageType, host: str | None, workflow: str) -> str:
+    """Why `workflow` will not start before the founder chooses where these pages live."""
+    question = ask_the_founder(kind, host)
+    return (
+        f"{question['question']} Nobody has chosen yet, and Tin will not guess. Ask the founder "
+        f"(suggest {question['suggestion']} or the folder the site's articles already use), "
+        f"save the answer with save_page_route(page_type={kind}), then start {workflow} again."
+    )
+
+
 class PageRouteService:
     def __init__(self, *, database: Any, storage: Any) -> None:
         self.db, self.storage = database, storage
@@ -121,8 +131,10 @@ class PageRouteService:
         routes = PageRoutes.model_validate_json(raw) if raw else PageRoutes()
         return {"revision": revision, "path": PATH, "routes": dict(routes.routes)}
 
-    async def route_for(self, run: Any) -> str | None:
-        kind = page_type(run)
+    async def route_for(self, run: Any, *, page_type: PageType | None = None) -> str | None:
+        """The saved route for the run's page type: its workflow's, or `page_type` (a
+        content.generate answer page passes "answer_page")."""
+        kind = page_type or PAGE_TYPES.get(getattr(run, "workflow_id", None))
         if kind is None:
             return None
         try:

@@ -313,8 +313,9 @@ async def select_source(*, database, storage, integrations, project_id, inputs, 
 
 
 async def guard_page(conn, *, project_id, source):
-    """Recheck the pinned page's approval under the project lock."""
-    if source.get("source_kind") in {"answer_page", "public_article"}:
+    """Recheck the pinned page's approval under the project lock. A planned item (it carries
+    its brief) is a content.generate run, whatever kind of page it drafted."""
+    if source.get("source_kind") in {"answer_page", "public_article"} and "item" not in source:
         await approved_document.guard(conn, project_id=project_id, source=source)
     else:
         await approved_article.guard(conn, project_id=project_id, source=source)
@@ -505,6 +506,25 @@ async def start_approved_adaptation(*, runtime, settings, run, intent):
     from tin_lite.page_routes import direction
     from tin_lite.run_service import start_workflow_run
 
+    if intent.get("via") == "website.change":
+        # A content.generate answer page goes to the site through website.change.
+        workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
+        if workflow is None:
+            raise LookupError("website.change is not installed on this Tin.")
+        return await start_workflow_run(
+            runtime=runtime,
+            settings=settings,
+            workflow=workflow,
+            project_id=run.project_id,
+            started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
+            start_idempotency_key=adaptation_start_key(run.id),
+            input_payload={
+                "source": "content_draft",
+                "source_run_id": str(run.id),
+                "expected_repository": intent["settings"]["repository"],
+            },
+            trigger_source=intent.get("trigger_source") or "manual",
+        )
     workflow = await runtime.database.get_workflow(WORKFLOW_ID)
     if workflow is None:
         raise LookupError("Page adaptation is not installed on this Tin.")

@@ -53,7 +53,7 @@ def test_listing_does_not_excuse_a_missing_title():
     ("key", "version", "skill"),
     [
         ("content.public_article", "1.6.0", "search-and-answer-engines"),
-        ("content.generate", "1.8.0", "search-and-answer-engines"),
+        ("content.generate", "1.9.0", "search-and-answer-engines"),
     ],
 )
 def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
