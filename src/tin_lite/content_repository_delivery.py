@@ -72,9 +72,22 @@ def merge_key(run_id):
     return f"content-delivery:{UUID(str(run_id))}:merge"
 
 
+# A website.change run whose changes come from the latest audit (website_change_audit) rather
+# than an approved page. Its source receipt sits under the same key; nothing else is shared.
+AUDIT_SOURCE = "audit"
+
+
+def repairs_site(run):
+    """Whether this is a website.change run that repairs what the latest audit found."""
+    return (
+        getattr(run, "workflow_id", None) == WEBSITE_CHANGE_ID
+        and ((getattr(run, "input", None) or {}).get("source")) == AUDIT_SOURCE
+    )
+
+
 def adapts(run):
     """Whether this run adapts an approved page to the site: content.deliver or website.change."""
-    return getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
+    return getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS and not repairs_site(run)
 
 
 def status_projection(run, source, publication, recovery, merge=None):
@@ -785,7 +798,7 @@ async def publish_after_pull_request(
                         run=run,
                         source=source,
                         manifest=manifest,
-                        page=proof["article_path"],
+                        new_paths=(proof["article_path"],),
                         number=number,
                         branch=published.get("pull_request_branch"),
                         sleep=sleep,
@@ -840,7 +853,7 @@ async def _merge_when_clean(
     run,
     source,
     manifest,
-    page,
+    new_paths,
     number,
     branch,
     sleep,
@@ -849,6 +862,8 @@ async def _merge_when_clean(
     record_state=False,
 ):
     """Merge once GitHub reports one of the `ready` states, or say why the PR stays open.
+
+    Each of `new_paths` must be a file the pull request adds (a page), never one it rewrites.
 
     `dirty`, `behind` and `draft` stop at once. `blocked` and `unknown` never merge; Tin
     waits for them to change until the deadline. With `record_state`, the merge receipt
@@ -899,7 +914,7 @@ async def _merge_when_clean(
                     files=tuple(GitHubFileChange(**item) for item in manifest["files"]),
                     expected_binding=binding,
                     commit_title=f"{manifest['title']} (#{number})"[:200],
-                    new_paths=(page,),
+                    new_paths=tuple(new_paths),
                 )
             except IntegrationAuthorizationError as exc:
                 # A changed branch or connection is final; the PR stays for the founder.

@@ -1937,7 +1937,8 @@ class IntegrationService:
             raise IntegrationError("GitHub pull request to merge is invalid")
         if not commit_title.strip() or len(commit_title) > 200 or not _safe_github_ref(branch):
             raise IntegrationError("GitHub merge request is invalid")
-        if not 1 <= len(files) <= 10 or not all(_safe_github_path(item.path) for item in files):
+        # Up to 20: a website.change technical batch (site-fix-v5's file cap).
+        if not 1 <= len(files) <= 20 or not all(_safe_github_path(item.path) for item in files):
             raise IntegrationError("GitHub merge must name the pull request's files")
 
         def request_fingerprint(repository):
