@@ -374,3 +374,71 @@ def test_a_quote_tin_cannot_place_safely_stops_delivery():
         items = [{"field": "h1", "old": "Setup guide", "new": new, "reason": "x"}]
         with pytest.raises(ValueError, match="safely"):
             refresh.plan_patch({path: source.encode()}, items)
+
+
+# Realistic upside: near the top results first, pages beyond position 30 last.
+
+MOZ_EVIDENCE = {
+    "scope": {"host": "example.com"},
+    "search_console": {
+        "value": {
+            "pages": [
+                # The organic audit of 1 October: /alternatives/moz sat at position 8.3 with 324
+                # impressions, listed under near_page_one, yet the refresh picked a page at 53.5.
+                {
+                    "url": f"{HOST}/alternatives/moz",
+                    "clicks": 1,
+                    "impressions": 324,
+                    "position": 8.3,
+                },
+                {"url": f"{HOST}/blog/deep", "clicks": 0, "impressions": 1500, "position": 53.5},
+                {"url": f"{HOST}/guides/mid", "clicks": 3, "impressions": 600, "position": 24},
+                {"url": f"{HOST}/docs/close", "clicks": 2, "impressions": 90, "position": 11},
+            ]
+        }
+    },
+}
+
+
+def test_a_page_near_the_top_beats_a_far_page_with_more_impressions():
+    findings = audit(
+        finding("search.near_page_one", "/alternatives/moz"),
+        finding("aeo.answer_structure", "/blog/deep", "/guides/mid", "/docs/close", "/new"),
+    )
+    ranked = refresh.plan_candidates(findings, MOZ_EVIDENCE)
+    assert [page["path"] for page in ranked] == [
+        "/alternatives/moz",  # near_page_one, position 8.3
+        "/docs/close",  # position 11: inside 4 to 20, fewer impressions
+        "/guides/mid",  # position 24
+        "/new",  # no Search Console position
+        "/blog/deep",  # position 53.5, most impressions, last
+    ]
+    assert [page["upside"]["tier"] for page in ranked] == [
+        "near_top",
+        "near_top",
+        "possible",
+        "possible",
+        "far",
+    ]
+    assert ranked[0]["upside"]["reason"].startswith("Average position 8.3 with 324 impressions")
+    assert "just below the top results" in ranked[0]["upside"]["reason"]
+    # A far page drops out of a short list first, and is still offered when nothing else is.
+    assert "/blog/deep" not in [
+        p["path"] for p in refresh.plan_candidates(findings, MOZ_EVIDENCE, limit=4)
+    ]
+    alone = audit(finding("aeo.answer_structure", "/blog/deep"))
+    assert [p["path"] for p in refresh.plan_candidates(alone, MOZ_EVIDENCE)] == ["/blog/deep"]
+    # content.generate's refresh item carries the same verdict for its page.
+    entry = refresh.page_entry(findings, MOZ_EVIDENCE, f"{HOST}/blog/deep")
+    assert entry["upside"]["tier"] == "far"
+
+
+def test_content_refresh_keeps_its_own_impressions_order():
+    # content.refresh 1.0.0 (on main) and its retired 1.1.0 keep choosing by impressions; the
+    # upside rule applies to content.plan's candidates and content.generate's refresh items.
+    findings = audit(
+        finding("search.near_page_one", "/alternatives/moz"),
+        finding("aeo.answer_structure", "/blog/deep"),
+    )
+    chosen = refresh.choose(findings, MOZ_EVIDENCE, blocked=set())
+    assert chosen["path"] == "/blog/deep" and "upside" not in chosen

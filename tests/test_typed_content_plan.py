@@ -126,7 +126,7 @@ def test_the_plan_offers_only_the_kinds_its_evidence_supports():
         jsonschema.validate(typed(1, "answer"), schema)
 
 
-def test_refresh_sources_rank_by_impressions_and_lead_the_page_inventory():
+def test_refresh_sources_rank_by_upside_and_lead_the_page_inventory():
     rows = refresh_rows(FINDINGS, EVIDENCE, planned={"/guides/setup": {"search.near_page_one"}})
     assert [row["data"]["path"] for row in rows] == ["/guides/setup", "/pricing", "/blog/old"]
     assert rows[0]["data"]["planned_by"] == "organic.content_efficacy"

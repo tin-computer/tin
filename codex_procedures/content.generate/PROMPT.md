@@ -146,11 +146,12 @@ the route the founder chose for answer pages (`content_draft.answer.route`).
 
 When `content_draft.kind` is `refresh`, the item is an existing page that searchers see but
 rarely click, that ranks just below the top results, or that a page decision marked.
-`content_draft.refresh` pins the page (`page`: URL, path, audit checks, metrics, searches), the
-text it shows today (`current`), `limits`, `max_paragraphs`, `results_markdown`,
-`positioning_sources` and `style_guide`. Use the `page-refresh` skill. Inspect the page itself
-(`content_draft.item.destination`) before deciding. When its title, meta description, H1 and
-opening answer already meet its main searches, the outcome is `already_covered`.
+`content_draft.refresh` pins the page (`page`: URL, path, audit checks, metrics, upside,
+searches), the text it shows today (`current`), `limits`, `max_paragraphs`,
+`results_markdown`, `positioning_sources` and `style_guide`. Use the `page-refresh` skill.
+Inspect the page itself (`content_draft.item.destination`) before deciding. When its title,
+meta description, H1 and opening answer already meet its main searches, the outcome is
+`already_covered`.
 
 For `draft`, the primary file is the refresh proposal, in exactly this order:
 1. `# Refresh: <page path>`, then a blank line.

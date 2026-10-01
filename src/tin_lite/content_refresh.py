@@ -183,6 +183,61 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
     }
 
 
+# Realistic upside: what a refresh can do for a page. A refresh rewrites the title, snippet,
+# H1 and opening answer, which earns clicks for a page searchers already see near the top and
+# does little for one five pages down. Refresh candidates rank by tier, then by impressions:
+#   near_top  the audit flagged it near page one or for low click-through, or it ranks at
+#             roughly positions 4 to 20;
+#   possible  any other page up to position 30, or one without a Search Console position;
+#   far       beyond position 30. Far pages come last, so one is planned only when no better
+#             candidate is left.
+# content.plan's refresh candidates and content.generate's refresh items use this rule.
+# content.refresh's own weekly pick (`choose`) keeps sorting by impressions, as it did in 1.0.0.
+UPSIDE_CHECKS = {
+    "search.near_page_one": "it ranks just below the top results",
+    "search.low_ctr": "searchers see it but rarely click",
+}
+UPSIDE_POSITIONS = (4.0, 20.0)
+FAR_POSITION = 30.0
+UPSIDE_TIERS = ("near_top", "possible", "far")
+
+
+def upside(checks, metrics: dict) -> dict[str, str]:
+    """The page's realistic upside from a refresh: a tier and the reason, in plain words."""
+    position = float(metrics.get("position") or 0)
+    impressions = float(metrics.get("impressions") or 0)
+    where = (
+        f"Average position {position:.1f} with {impressions:.0f} impressions"
+        if position
+        else "No Search Console position for this page"
+    )
+    flagged = sorted(set(checks) & UPSIDE_CHECKS.keys())
+    low, high = UPSIDE_POSITIONS
+    if flagged or low <= position <= high:
+        tier = "near_top"
+        why = (
+            "the audit found " + " and ".join(UPSIDE_CHECKS[check] for check in flagged)
+            if flagged
+            else "close enough to the top results for a better title and opening to earn clicks"
+        )
+    elif position > FAR_POSITION:
+        tier = "far"
+        why = "a new title or opening rarely moves a page this far down, so it comes last"
+    else:
+        tier = "possible"
+        why = "a refresh may help, after the pages nearer the top"
+    return {"tier": tier, "reason": f"{where}: {why}."}
+
+
+def upside_order(entry: dict) -> tuple:
+    """Sort key: tier first, then most impressions, then path."""
+    return (
+        UPSIDE_TIERS.index(entry["upside"]["tier"]),
+        -float(entry["metrics"].get("impressions") or 0),
+        entry["path"],
+    )
+
+
 def _entry(key: str, entry: dict, rows: dict, evidence: dict) -> dict[str, Any]:
     row = rows.get(key, {"clicks": 0.0, "impressions": 0.0, "position": 0.0})
     ctr = row["clicks"] / row["impressions"] if row["impressions"] else 0.0
@@ -191,6 +246,7 @@ def _entry(key: str, entry: dict, rows: dict, evidence: dict) -> dict[str, Any]:
         "path": key,
         "checks": sorted(entry["checks"]),
         "metrics": {**row, "ctr": round(ctr, 4)},
+        "upside": upside(entry["checks"], row),
         "searches": top_searches(evidence, key),
         "body_allowed": bool(entry["checks"] & BODY_CHECKS),
         **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
@@ -200,12 +256,13 @@ def _entry(key: str, entry: dict, rows: dict, evidence: dict) -> dict[str, Any]:
 def plan_candidates(
     findings_document: dict, evidence: dict, planned: dict | None = None, *, limit: int = 10
 ) -> list[dict]:
-    """Pages a refresh could fix, for content.plan, most search impressions at stake first.
+    """Pages a refresh could fix, for content.plan, in order of realistic upside.
 
     The same pool content.refresh chooses from: the audit's search findings, plus `planned`,
     the refresh rows of a current Page decisions file as site paths with the audit checks
-    each stands for. Waiting pages are not removed here; content.generate skips them when it
-    selects the item.
+    each stands for. Pages near the top results come first, most impressions first within a
+    tier, and pages beyond position 30 last (see `upside`). Waiting pages are not removed here;
+    content.generate skips them when it selects the item.
     """
     rows = page_rows(evidence)
     pages = candidates(findings_document)
@@ -215,9 +272,9 @@ def plan_candidates(
         entry["checks"] |= set(checks) & REFRESH_CHECKS
         entry["planned"] = True
     ranked = sorted(
-        pages.items(), key=lambda pair: (-rows.get(pair[0], {}).get("impressions", 0.0), pair[0])
+        (_entry(key, entry, rows, evidence) for key, entry in pages.items()), key=upside_order
     )
-    return [_entry(key, entry, rows, evidence) for key, entry in ranked[:limit]]
+    return ranked[:limit]
 
 
 def page_entry(findings_document: dict, evidence: dict, url: str) -> dict[str, Any]:

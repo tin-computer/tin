@@ -196,6 +196,7 @@ POLICY = {
     "plan_kinds": "typed-v1",
     "max_refresh_sources": MAX_REFRESH_SOURCES,
     "competitor_items": MAX_COMPETITOR_ITEMS,
+    "refresh_order": "realistic-upside-v1",
 }
 INSTRUCTIONS = (
     V6_INSTRUCTIONS
@@ -210,6 +211,9 @@ ranks just below the top results, or a page decision marked it for a refresh. A 
 update_page with the inspected page_id of exactly that page, and its brief names the searches
 the title, meta description, H1 and opening answer should meet. Never plan a refresh and an
 article update for the same page. Use answer and refresh only with those sources.
+Refresh sources come in order of realistic upside, and each says why in upside: pages near the
+top results or seen but rarely clicked first, then other pages, and pages beyond position 30
+last. Plan a far page only when no nearer one is left.
 Rows whose source_id starts with competitor: are material changes the newest competitor.watch
 report found at a named competitor. Tin adds comparison or refresh items for them itself, so do
 not plan another page about those competitors.
