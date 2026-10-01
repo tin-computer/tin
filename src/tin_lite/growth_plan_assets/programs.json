@@ -569,6 +569,7 @@
   "workflow_titles": {
     "brand.capture": "Capture brand and design",
     "content.deliver": "Prepare article PR",
+    "website.change": "Change the website",
     "organic.traffic_system": "Run the organic traffic system",
     "style.capture": "Capture writing style",
     "organic.technical_fix": "Fix what the audit found",
@@ -629,6 +630,7 @@
     "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
+    "website.change": "Make one approved change to the connected website repository: today an approved article, answer page or public article, adapted at the route the founder chose with its copy unchanged. A change approved in Tin publishes (Tin merges the PR once GitHub reports it clean); anything else, and any change to a protected page such as /sign-in, opens a PR for the founder to merge. Never touches dependencies or lockfiles.",
     "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
     "organic.technical_fix": "Recheck an audit's findings on the live site and fix every one Tin can in one pull request, in the site's own framework: indexing, sitemap, robots.txt, redirects, page structure, accessibility, structured data and internal links. The coding agent answers judgment calls first; copy goes to the content workflows and steps outside the repository are listed. Never merges or deploys.",

@@ -184,6 +184,7 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
 
     assert set(procedures) == {
         "content.deliver",
+        "website.change",
         "content.generate",
         "content.refresh",
         "organic.technical_fix",

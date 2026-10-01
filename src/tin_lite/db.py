@@ -2693,12 +2693,16 @@ class Database:
             elif code_project_files_source is not None:
                 raise ValueError("Project file revisions belong only to code workflows.")
 
-            if workflow_id == content_repository_delivery.WORKFLOW_ID:
+            if workflow_id in content_repository_delivery.ADAPTER_WORKFLOW_IDS:
                 if content_delivery_source is None:
                     raise ValueError(
                         "Select the approved article before creating its delivery run."
                     )
-                await content_repository_delivery.guard_source(
+                if workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    guard = content_repository_delivery.guard_source
+                else:
+                    from tin_lite.website_change import guard_source as guard
+                await guard(
                     conn,
                     project_id=project_id,
                     inputs=input_payload,
@@ -2810,7 +2814,9 @@ class Database:
             if content_delivery_source is not None:
                 key = content_repository_delivery.source_key(run_id)
                 await self.start_effect(
-                    conn, execution_key=key, operation=content_repository_delivery.OPERATION
+                    conn,
+                    execution_key=key,
+                    operation=content_repository_delivery.SOURCE_OPERATIONS[workflow_id],
                 )
                 await self.complete_effect(conn, execution_key=key, result=content_delivery_source)
             if approved_article_source is not None:
@@ -6672,6 +6678,7 @@ class Database:
             "DELETE FROM outreach_campaigns WHERE project_id = $1",
             "DELETE FROM run_tool_grants WHERE project_id = $1",
             "DELETE FROM run_decisions WHERE project_id = $1",
+            "DELETE FROM website_changes WHERE project_id = $1",
             "DELETE FROM broker_grants WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM run_rollouts WHERE run_id IN "

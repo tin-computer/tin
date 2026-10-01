@@ -1260,6 +1260,88 @@ def create_mcp_app(
         }
 
     @server.tool()
+    async def list_website_changes(
+        project_id: str, status: Literal["pending", "approved", "declined"] | None = None
+    ) -> dict[str, Any]:
+        """List proposed changes to the project's website and the founder's decision on each.
+
+        A change row has a source, a stable change_id, a kind, the site paths it touches and
+        its status. Pending rows wait for the founder: show each one and ask; never decide
+        for them. A decided row stays decided and is never proposed again. Approved pages
+        are not listed here: approve_workflow_run approves a page.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="list_website_changes")
+        return {
+            "changes": await website_change.list_changes(
+                runtime().database, project_id=project, status=status
+            )
+        }
+
+    async def _decide_website_change(
+        tool: str, action: str, project_id: str, change_id: str, content_sha256: str, request_id
+    ) -> dict[str, Any]:
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name=tool)
+        try:
+            row = await website_change.decide(
+                runtime().database,
+                project_id=project,
+                change_id=change_id,
+                action=action,
+                actor=token.subject,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+                content_sha256=content_sha256,
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: change not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        said = (
+            "Approved. When website.change makes this change, Tin publishes it, unless it "
+            "touches a protected page; then it opens a pull request for the founder to merge."
+            if action == "approve"
+            else "Declined. Tin will not make this change, and later runs will not propose it."
+        )
+        return {"change": row, **_founder_words(relay=[said])}
+
+    @server.tool()
+    async def approve_website_change(
+        project_id: str, change_id: str, content_sha256: str, request_id: str
+    ) -> dict[str, Any]:
+        """Record the founder's approval of one proposed website change, once.
+
+        Only after the founder says yes to this exact row. Pass the content_sha256 you showed
+        them from list_website_changes, so the approval covers the content they read. An
+        approved change publishes when website.change makes it, unless it touches a protected
+        page such as /sign-in. Reuse request_id when retrying.
+        """
+        return await _decide_website_change(
+            "approve_website_change", "approve", project_id, change_id, content_sha256, request_id
+        )
+
+    @server.tool()
+    async def decline_website_change(
+        project_id: str, change_id: str, content_sha256: str, request_id: str
+    ) -> dict[str, Any]:
+        """Record the founder's decision not to make one proposed website change, once.
+
+        Tin never makes a declined change, and later runs do not propose it again. Pass the
+        content_sha256 from list_website_changes. Reuse request_id when retrying.
+        """
+        return await _decide_website_change(
+            "decline_website_change", "decline", project_id, change_id, content_sha256, request_id
+        )
+
+    @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
@@ -3952,6 +4034,42 @@ def create_mcp_app(
                     "If delivery fails, retry_content_delivery reconciles a saved patch without "
                     "another model purchase; reuse request_id for ambiguous starts. "
                     "WordPress/CMS publication is not part of this GitHub workflow.",
+                }
+            }
+        if (
+            parsed_project_id is not None
+            and workflow.key == "website.change"
+            and workflow.project_id is None
+        ):
+            from tin_lite.content_repository_delivery import discover
+            from tin_lite.page_routes import PageRouteService, ask_the_founder
+
+            try:
+                routes = (
+                    await PageRouteService(
+                        database=runtime().database, storage=runtime().storage
+                    ).read(parsed_project_id)
+                )["routes"]
+            except (LookupError, ValueError):
+                routes = {}
+            # One question at a time: answer pages first, then articles.
+            unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            draft_preparation = {
+                "preparation": {
+                    **await discover(runtime().database, parsed_project_id),
+                    "page_routes": routes,
+                    **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
+                    "instruction": "Choose an approved article, answer page or public article "
+                    "by title from preparation.articles, and confirm the website repository "
+                    "with get_integration(infra.github). Start website.change with "
+                    "source_run_id and expected_repository through the ordinary quote/start "
+                    "flow. An answer page or public article needs a chosen route first: when "
+                    "preparation.page_routes has none for its type, ask the founder as "
+                    "ask_the_founder describes and call save_page_route. A page approved in "
+                    "Tin by a named reviewer publishes (Tin merges the PR once GitHub reports "
+                    "it clean); otherwise, and for protected pages such as /sign-in, the PR "
+                    "waits for the founder. Add protected_paths for pages another app shares. "
+                    "Never approve a draft just to publish it.",
                 }
             }
         if (

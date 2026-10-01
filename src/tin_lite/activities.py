@@ -2800,7 +2800,7 @@ class TinActivities:
             return False
         from tin_lite import content_repository_delivery
 
-        if _definition.id == content_repository_delivery.WORKFLOW_ID:
+        if _definition.id in content_repository_delivery.ADAPTER_WORKFLOW_IDS:
             run = await self._require_run(run_id)
             if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                 return False
@@ -3126,7 +3126,7 @@ class TinActivities:
 
             api_attempt = await self._db.get_effect(attempt_key(run_id), conn=conn)
 
-            repository_delivery = run.workflow_id == content_repository_delivery.WORKFLOW_ID
+            repository_delivery = content_repository_delivery.adapts(run)
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
                 or procedure.repair_policy
@@ -3187,7 +3187,7 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(recovered, spec=procedure)
                     if repository_delivery:
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        content_repository_delivery.validate_copy(manifest, source)
+                        content_repository_delivery.validate_patch(manifest, source)
                 if procedure.identity.enabled:
                     await self._reject_identity_leak(run_id=run_id, content=recovered)
                     await self._reject_card_leak(
@@ -3415,7 +3415,7 @@ class TinActivities:
                     from tin_lite import content_repository_delivery
 
                     content_source = None
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         content_source = await content_repository_delivery.saved_source(
                             self._db, run_id
                         )
@@ -3446,7 +3446,12 @@ class TinActivities:
                     if technical is not None:
                         workspace_context["technical_fix"] = technical
                     if content_source is not None:
-                        workspace_context["content_delivery"] = content_source
+                        # website.change reads its change row, route and protected paths too.
+                        workspace_context[
+                            "website_change"
+                            if run.workflow_id == content_repository_delivery.WEBSITE_CHANGE_ID
+                            else "content_delivery"
+                        ] = content_source
                 elif procedure.workspace_kind == GITHUB_REPOSITORY_WORKSPACE:
                     from tin_lite.procedure_repository import select_repository
 
@@ -3602,9 +3607,9 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(checkpoint, spec=procedure)
                     from tin_lite import content_repository_delivery
 
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        content_repository_delivery.validate_copy(manifest, source)
+                        content_repository_delivery.validate_patch(manifest, source)
                 if procedure.identity.enabled:
                     await self._reject_identity_leak(run_id=run_id, content=checkpoint)
                     await self._reject_card_leak(
@@ -3777,9 +3782,9 @@ class TinActivities:
                     raise RuntimeError("procedure result has no checkpoint path")
                 from tin_lite import content_repository_delivery
 
-                immutable_checkpoint = bool(procedure.repair_policy) or (
-                    run.workflow_id == content_repository_delivery.WORKFLOW_ID
-                )
+                immutable_checkpoint = bool(
+                    procedure.repair_policy
+                ) or content_repository_delivery.adapts(run)
                 checkpoint = (
                     b""
                     if immutable_checkpoint
@@ -3808,9 +3813,9 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(checkpoint, spec=procedure)
                     technical, expected_binding = None, None
                     copy_proof = None
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        copy_proof = content_repository_delivery.validate_copy(manifest, source)
+                        copy_proof = content_repository_delivery.validate_patch(manifest, source)
                         expected_binding = content_repository_delivery.binding_from(source)
                     if procedure.repair_policy:
                         from tin_lite import technical_fix
@@ -4428,10 +4433,11 @@ class TinActivities:
         from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
-        if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+        if content_repository_delivery.adapts(run):
             if run.status == RunStatus.SUCCEEDED:
                 # The procedure already opened its PR. When the page's approval asked to
-                # commit to main, Tin merges a page-only PR once GitHub calls it clean.
+                # commit to main, Tin merges a page-only PR once GitHub calls it clean; a
+                # website.change run merges a pre-approved change the same way.
                 await self._await_with_heartbeats(
                     content_repository_delivery.publish_after_pull_request(
                         database=self._db,
