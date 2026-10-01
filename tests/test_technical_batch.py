@@ -81,6 +81,45 @@ def test_every_audit_check_has_a_place():
     )
 
 
+def test_v11_audit_findings_name_the_plans_next_step_and_v10_keeps_its_own():
+    from test_organic_audit_findings import facts as page_facts
+    from test_organic_audit_findings import v10_documents
+
+    from tin_lite.organic_audit import AUDIT_POLICY, V10_AUDIT_POLICY
+
+    crawl = [
+        {
+            "url": f"{BASE}{path}",
+            "resource_type": "html",
+            "status_code": 200,
+            "meta": {"title": title},
+            "checks": {"canonical": True, "no_title": not title, "duplicate_description": True},
+        }
+        for path, title in (("/", ""), ("/b", "B"))
+    ]
+    long_title = "A title much too long to show in full on any search results page at all"
+    site = {
+        "files": audit_files(urls=["/", "/b"]),
+        "plan": None,
+        "pages": [page_facts("/", h1_count=0, title="Hi"), page_facts("/b", title=long_title)],
+        "pages_status": "complete",
+        "pagespeed": {"status": "not_configured", "results": []},
+    }
+    _, _, v11, _ = v10_documents(pages=crawl, site=site, policy=AUDIT_POLICY)
+    actions = {item["check_id"]: item["next_action"] for item in v11["findings"]}
+    assert actions == {check: plan.next_action(check) for check in actions}
+    # Copy goes to the content workflows, never the technical fix.
+    assert actions["onpage.title_length"] == actions["metadata.description_duplicate"]
+    assert actions["metadata.description_duplicate"] == "content_plan"
+    assert actions["metadata.title_missing"] == "technical_fix"
+    # A run pinned to the deployed v10 keeps the next steps it was released with.
+    _, _, v10, _ = v10_documents(pages=crawl, site=site, policy=V10_AUDIT_POLICY)
+    v10_actions = {item["check_id"]: item["next_action"] for item in v10["findings"]}
+    assert v10_actions["metadata.description_duplicate"] == "technical_fix"
+    assert {plan.next_action(check) for check in plan.MANUAL} == {"manual"}
+    assert {plan.next_action(check) for check in plan.NO_CHANGE} == {"review"}
+
+
 def test_copy_manual_and_review_findings_are_listed_not_repaired():
     planned = plan.build_plan(
         [

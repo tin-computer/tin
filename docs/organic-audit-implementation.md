@@ -416,7 +416,8 @@ v10: its policy, AI instructions and schemas are unchanged (tests freeze their d
 and every addition below is read from v11-only policy keys (`site_angles`,
 `answer_ladder`, `unsearched_answers`, `access_check_pages`, `url_inspection_max_urls`,
 `content_review_pages`, `decay_min_previous_clicks`, `max_redirect_hops`,
-`cannibalization_min_impressions`, `min_panel_questions`). Under v10 Tin makes none of
+`cannibalization_min_impressions`, `min_panel_questions`, `next_action_from_repair_plan`).
+Under v10 Tin makes none of
 the new reads, runs none of the new checks, saves v10's page facts and evidence shape,
 and asks PageSpeed for performance only.
 
@@ -481,6 +482,11 @@ constraint), and v10 discards the whole panel. Under v11:
 | `search.decay` | Pages that lost at least 40% of 10+ clicks since the previous 28 days |
 | `aeo.answer_structure` | The model's review of the top five content pages (see below) |
 | `ai.cited_instead` | The sites AI answers cite when they cite yours in fewer than half |
+
+Each v11 finding's `next_action` comes from the technical fix's repair plan
+(`technical_repair_plan.next_action`): `technical_fix` for findings it repairs,
+`content_plan` for copy, `manual` for steps outside the repository and `review` for
+findings that ask for no change. v10 findings keep the values they were released with.
 
 Cannibalization now treats translations of one page (`/de/pricing` and `/pricing`) as one
 page and needs 10 impressions for a search before two pages count as competing.

@@ -554,6 +554,20 @@ def classify(check_id: str) -> str:
     return "unknown"
 
 
+# An audit finding's next_action, by where this plan puts it (organic-audit-v11 onward).
+NEXT_ACTIONS = {
+    "fix": "technical_fix",
+    "copy": "content_plan",
+    "manual": "manual",
+    "no_change": "review",
+    "unknown": "manual",
+}
+
+
+def next_action(check_id: str) -> str:
+    return NEXT_ACTIONS[classify(check_id)]
+
+
 def supported_checks() -> frozenset[str]:
     return frozenset(REPAIRS)
 
