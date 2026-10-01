@@ -11,7 +11,9 @@ import json
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import pytest
+from mcp.server.mcpserver.exceptions import ToolError
 from test_adapted_page_delivery import (
     PR_URL,
     answer_page,
@@ -19,7 +21,7 @@ from test_adapted_page_delivery import (
     clean,
 )
 from test_adapted_page_delivery import fixture as page_fixture
-from test_private_workflows import ACTOR
+from test_private_workflows import ACTOR, app, mcp, structured
 from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_repository_delivery as delivery
@@ -514,6 +516,17 @@ async def test_an_answer_page_without_a_chosen_route_asks_the_founder(publicatio
     assert not await f.db.pool.fetchval(
         "SELECT count(*) FROM workflow_runs WHERE workflow_id=$1", website_change.WORKFLOW_ID
     )
+    shown = structured(
+        await mcp(f, monkeypatch).call_tool(
+            "get_workflow", {"project_id": str(f.project.id), "workflow_key": "website.change"}
+        )
+    )
+    preparation = shown["preparation"]
+    assert preparation["page_routes"] == {}
+    assert preparation["ask_the_founder"]["then"]["name"] == "save_page_route"
+    assert {"run_id": str(page.id), "title": "How to keep recurring AI work reliable"} in (
+        preparation["articles"]
+    )
 
 
 async def test_answer_pages_go_to_the_registry_route_never_content_answers(
@@ -628,3 +641,71 @@ async def test_one_page_is_never_adapted_by_both_workflows(publication_db, monke
     await start(f, other)
     with pytest.raises(WorkflowInputError, match="still working"):
         await start(f, other, workflow=f.content_deliver)
+
+
+# The founder decides one change row over HTTP or MCP.
+
+
+async def test_http_and_mcp_approve_or_decline_one_change_row(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    sha = "d" * 64
+    rows = [
+        ChangeRow(f"oa_{n * 20}", "planned_url_change", "noindex", f"Hide {n}", (f"/{n}",), sha)
+        for n in ("4", "5")
+    ]
+    await website_change.propose(f.db, project_id=f.project.id, rows=rows)
+    base = f"/api/projects/{f.project.id}/website-changes"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        listed = await client.get(base, params={"status": "pending"})
+        assert [item["change_id"] for item in listed.json()] == [r.change_id for r in rows]
+        body = {"request_id": str(uuid4()), "content_sha256": sha}
+        approved = await client.post(f"{base}/{rows[0].change_id}/approve", json=body)
+        assert approved.status_code == 200 and approved.json()["status"] == "approved"
+        again = await client.post(
+            f"{base}/{rows[0].change_id}/decline", json={**body, "request_id": str(uuid4())}
+        )
+        assert again.status_code == 409 and "stays decided" in again.text
+        missing = await client.get(f"{base}/oa_{'9' * 20}")
+        assert missing.status_code == 404
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f, "user_stranger")), base_url="https://tin.test"
+    ) as client:
+        assert (await client.get(base)).status_code == 404
+        denied = await client.post(
+            f"{base}/{rows[1].change_id}/approve",
+            json={"request_id": str(uuid4()), "content_sha256": sha},
+        )
+        assert denied.status_code == 404
+    server = mcp(f, monkeypatch)
+    declined = structured(
+        await server.call_tool(
+            "decline_website_change",
+            {
+                "project_id": str(f.project.id),
+                "change_id": rows[1].change_id,
+                "content_sha256": sha,
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    assert declined["change"]["status"] == "declined"
+    assert any("will not propose it" in item for item in declined["relay"])
+    listed = structured(
+        await server.call_tool("list_website_changes", {"project_id": str(f.project.id)})
+    )
+    assert {item["change_id"]: item["status"] for item in listed["changes"]} == {
+        rows[0].change_id: "approved",
+        rows[1].change_id: "declined",
+    }
+    with pytest.raises(ToolError, match="conflict"):
+        await server.call_tool(
+            "approve_website_change",
+            {
+                "project_id": str(f.project.id),
+                "change_id": rows[1].change_id,
+                "content_sha256": sha,
+                "request_id": str(uuid4()),
+            },
+        )

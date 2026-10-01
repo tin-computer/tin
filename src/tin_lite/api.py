@@ -115,6 +115,7 @@ from tin_lite.run_service import (
 from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
+from tin_lite.website_change_api import router as website_change_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
@@ -148,6 +149,7 @@ router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
 router.include_router(public_catalog_router)
+router.include_router(website_change_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)
