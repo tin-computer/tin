@@ -5617,6 +5617,7 @@ class Database:
                 "paid_ads_monitor_stopped",
                 "Google Ads check",
             ),
+            "social.x_draft": ("x-draft", "x_draft_stopped", "X draft"),
         }[workflow_key]
         async with self.pool.acquire() as conn, self.project_state_lock(conn, project_id):
             async with conn.transaction():

@@ -3023,7 +3023,7 @@ def create_mcp_app(
 
     @server.tool()
     async def stop_procedure(run_id: str) -> dict[str, Any]:
-        """Stop a code workflow or Codex procedure and its sandbox before publication starts.
+        """Stop a code workflow, Codex procedure or X draft before publication starts.
 
         Saved output is retained. Never recalls a PR or undoes an external action.
         If cleanup is pending, call again to retry cleanup. Does not pause or resume tasks.

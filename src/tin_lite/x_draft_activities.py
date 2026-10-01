@@ -296,8 +296,28 @@ class XDraftActivities:
 
     @activity.defn(name="x_draft_failure")
     async def failure(self, run_id: str):
+        from tin_lite.db import SideEffectConflictError
+
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == x_draft.KEY:
+            style = await self.saved(run.id, "style")
+            voice = (
+                await self.db.get_run(UUID(style["run_id"]))
+                if style and style.get("run_id")
+                else None
+            )
+            if voice and voice.review_decision == "declined":
+                # The founder discarded the voice guide: the draft stops; nothing failed.
+                try:
+                    await self.db._stop_paid_report(
+                        run_id=run.id,
+                        project_id=run.project_id,
+                        actor=voice.reviewed_by_clerk_user_id or run.started_by_clerk_user_id,
+                        workflow_key=x_draft.KEY,
+                    )
+                except SideEffectConflictError:
+                    pass  # Already finished.
+                return
             await self.db.project_failure(
                 run_id=run.id,
                 error_message=(
