@@ -70,6 +70,17 @@ def github_key(run_id):
     return f"{delivery_key(run_id)}:github"
 
 
+# A refresh retried after the default branch moved reads the repository again under a new
+# attempt's keys, up to this many times.
+MAX_REFRESH_ATTEMPTS = 20
+
+
+def refresh_keys(run_id, attempt):
+    """The repository read and GitHub write keys of one refresh delivery attempt."""
+    suffix = f":{attempt}" if attempt else ""
+    return f"{run_id}:refresh_repository{suffix}", f"{github_key(run_id)}{suffix}"
+
+
 def choice_key(run_id):
     return f"{delivery_key(run_id)}:choice"
 
@@ -842,10 +853,13 @@ class ContentDelivery:
                     raise ValueError(
                         "The GitHub connection changed after this refresh was approved."
                     )
+                read_key, write_key = refresh_keys(
+                    run.id, await self.refresh_attempt(run.id, binding.head_sha)
+                )
                 bundle = await self.integrations.github_repository_bundle(
                     project_id=run.project_id,
                     run_id=run.id,
-                    execution_key=f"{run.id}:refresh_repository",
+                    execution_key=read_key,
                     expected_binding=binding,
                 )
                 if not getattr(bundle, "complete", True):
@@ -863,7 +877,7 @@ class ContentDelivery:
                     result = await self.integrations.github_commit_files(
                         project_id=run.project_id,
                         run_id=run.id,
-                        execution_key=github_key(run.id),
+                        execution_key=write_key,
                         message=title,
                         files=files,
                         base_branch=binding.default_branch,
@@ -873,7 +887,7 @@ class ContentDelivery:
                     result = await self.integrations.github_create_pull_request(
                         project_id=run.project_id,
                         run_id=run.id,
-                        execution_key=github_key(run.id),
+                        execution_key=write_key,
                         title=title,
                         body=content_refresh.patch_body(context, items),
                         files=files,
@@ -931,6 +945,34 @@ class ContentDelivery:
                 )
                 await self.db.fail_effect(conn, execution_key=key, error_message=error)
                 raise
+
+    async def refresh_attempt(self, run_id, head_sha):
+        """Which delivery attempt a refresh uses now.
+
+        An attempt that committed, opened a pull request, or may have done either keeps its
+        keys, so a retry replays or recovers it. When the attempt's write failed or never
+        started and the default branch has moved since its repository read, a new attempt
+        reads the current head instead of replaying the old one.
+        """
+        for attempt in range(MAX_REFRESH_ATTEMPTS):
+            read_key, write_key = refresh_keys(run_id, attempt)
+            write = await self.db.get_integration_call_receipt(write_key)
+            if write is not None and write.status != "failed":
+                return attempt
+            read = await self.db.get_integration_call_receipt(read_key)
+            summary = read.response_summary if read is not None else None
+            if read is None or (
+                write is None
+                and (
+                    read.status != "completed"
+                    or (isinstance(summary, dict) and summary.get("head_sha") == head_sha)
+                )
+            ):
+                return attempt
+        raise ValueError(
+            "This refresh failed to deliver too many times. Apply it by hand or ask your "
+            "coding agent."
+        )
 
     async def record_choice(self, run, record):
         key = choice_key(run.id)

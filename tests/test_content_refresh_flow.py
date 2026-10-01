@@ -16,7 +16,7 @@ from tin_lite import content_refresh as refresh
 from tin_lite.activities import TinActivities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS, api_terms
-from tin_lite.content_delivery import OPERATION, ContentDelivery, delivery_key
+from tin_lite.content_delivery import OPERATION, ContentDelivery, delivery_key, refresh_keys
 from tin_lite.content_refresh_sources import ContentRefreshSources
 from tin_lite.integrations import GitHubCommitResult, GitHubPullRequestResult
 from tin_lite.organic_audit import audit_paths, canonical_json
@@ -350,6 +350,78 @@ async def test_text_the_source_does_not_hold_stops_delivery_with_the_reason(
     receipt = await f.db.get_effect(delivery_key(run.id))
     assert receipt.status == "failed" and "current title" in receipt.error_message
     f.integrations.github_commit_files.assert_not_awaited()
+
+
+async def test_a_failed_delivery_retries_against_the_current_head(publication_db, monkeypatch):
+    f = await fixture(publication_db)
+    monkeypatch.setattr(
+        f.db,
+        "get_integration_connection",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                status="connected", configuration={"selected_repository": "acme/site"}
+            )
+        ),
+    )
+    run = await refresh_run(f)
+    context = await f.sources.prepare(run)
+    moved = SimpleNamespace(**{**vars(binding()), "head_sha": "c" * 40})
+    f.integrations.github_repository_binding = AsyncMock(return_value=binding())
+    f.integrations.github_repository_bundle = AsyncMock(
+        return_value=SimpleNamespace(
+            archive=archive({"app/guides/setup/page.tsx": PAGE_TSX}), complete=True
+        )
+    )
+    f.integrations.github_create_pull_request = AsyncMock(
+        side_effect=ValueError("GitHub refused the branch.")
+    )
+    delivery = ContentDelivery(database=f.db, storage=f.storage, integrations=f.integrations)
+    await delivery.choose(run=run, mode="github_pr", remember=False, actor=ACTOR)
+    path = refresh.PATH_TEMPLATE.format(run_folder="2026-09-29-retry")
+    revision = f.storage.repo.edit({path: document(GOOD, context)})
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='succeeded', review_decision='approved', "
+        "reviewed_at=now(), artifact_path=$2, canonical_commit_sha=$3, lease_active=false "
+        "WHERE id=$1",
+        run.id,
+        path,
+        revision,
+    )
+
+    async def receipt(key, status, head=None):
+        await f.db.record_integration_call(
+            execution_key=key,
+            project_id=f.project.id,
+            run_id=run.id,
+            connection_id=None,
+            provider_key="infra.github",
+            capability="contents.read" if head else "pull_requests.write",
+            request_fingerprint="f" * 64,
+            status=status,
+            response_summary={"head_sha": head} if head else None,
+        )
+
+    first_read, first_write = refresh_keys(run.id, 0)
+    await receipt(first_read, "completed", head="b" * 40)
+    with pytest.raises(ValueError, match="refused the branch"):
+        await delivery.deliver(run.id)
+    # Nothing was written and main has not moved: the retry may reuse the same read.
+    assert await delivery.refresh_attempt(run.id, "b" * 40) == 0
+    # The write failed and main moved on: the retry reads the current head under new keys.
+    await receipt(first_write, "failed")
+    f.integrations.github_repository_binding = AsyncMock(return_value=moved)
+    f.integrations.github_create_pull_request = AsyncMock(
+        return_value=GitHubPullRequestResult("acme/site", "tin/refresh", 8, "https://github.test/8")
+    )
+    await delivery.deliver(run.id)
+    second_read, second_write = refresh_keys(run.id, 1)
+    assert f.integrations.github_repository_bundle.await_args.kwargs["execution_key"] == second_read
+    call = f.integrations.github_create_pull_request.await_args.kwargs
+    assert call["execution_key"] == second_write and call["expected_base_sha"] == "c" * 40
+    assert (await f.db.get_effect(delivery_key(run.id))).result["number"] == 8
+    # A write that may have opened a pull request keeps its keys, so a retry recovers it.
+    await receipt(second_write, "started")
+    assert await delivery.refresh_attempt(run.id, "d" * 40) == 1
 
 
 def test_refresh_compute_has_its_own_ceiling_about_five_times_the_estimate():
