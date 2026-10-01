@@ -2,8 +2,8 @@
 
 `src/tin_lite/ai_answers.py` asks a panel of buyer questions on several AI answer engines
 and returns one row per question and engine. `src/tin_lite/ai_answers_activities.py` runs
-it as a trusted Temporal activity, `ai_answers_measure`. Nothing calls it yet: the organic
-audit will, after audit v11 (#245) merges. See [Calling it from the audit](#calling-it-from-the-audit).
+it as a trusted Temporal activity, `ai_answers_measure`. Nothing calls it yet; a later change
+wires it into the organic audit. See [Calling it from the audit](#calling-it-from-the-audit).
 
 ## What each engine measures
 
@@ -121,8 +121,8 @@ without calling DataForSEO. It sits on the trusted worker lane (`activity_lanes.
 
 ## Calling it from the audit
 
-After #245 merges, a later change wires it into `organic.audit` under a new pinned policy,
-so v11 stays as released:
+A later change wires it into `organic.audit` under a new pinned audit policy, so released
+policies stay as they are:
 
 1. In the panel step, after the panel is reviewed, call `save_request` with the panel's
    questions, the scope's host as `domain`, the resolved brand name and aliases, the scope's
