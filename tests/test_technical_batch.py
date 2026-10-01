@@ -172,8 +172,16 @@ def test_dependencies_ci_deploy_settings_and_secrets_are_off_limits():
         "Dockerfile",
         "fly.toml",
         ".gitmodules",
+        "bun.lock",
+        "npm-shrinkwrap.json",
+        ".npmrc",
+        ".yarnrc.yml",
+        "pnpm-workspace.yaml",
+        "wrangler.json",
+        "apps/web/.dev.vars",
     ):
         assert rules.blocked(path), path
+    assert rules.blocked(".dev.vars") == "secrets"
     assert rules.blocked("app/robots.ts") is None
     assert rules.blocked("vercel.json") is None  # its redirect list only; checked below.
 
@@ -189,6 +197,24 @@ def test_a_host_config_may_change_only_its_redirect_list():
     sneaky = json.dumps({"cleanUrls": False, "redirects": []}, indent=2)
     with pytest.raises(ValueError, match="Only the redirect list"):
         rules.check_bounds([{"path": "vercel.json", "content": sneaky}], {"vercel.json": before})
+
+
+def test_a_new_host_config_holds_only_redirects():
+    redirects = {"redirects": [{"source": "/a", "destination": "/b", "permanent": True}]}
+    assert rules.check_bounds(
+        [{"path": "vercel.json", "content": json.dumps(redirects)}], {"vercel.json": None}
+    )
+    toml = '[[redirects]]\nfrom = "/a"\nto = "/b"\nstatus = 301\n'
+    assert rules.check_bounds([{"path": "netlify.toml", "content": toml}], {})
+    # Plausible but unusable: a new file that also sets headers, builds or rewrites.
+    for path, content in (
+        ("vercel.json", json.dumps({**redirects, "buildCommand": "curl x | sh"})),
+        ("vercel.json", json.dumps({"headers": []})),
+        ("netlify.toml", toml + '[build]\ncommand = "make"\n'),
+        ("netlify.toml", '[build]\ncommand = "make"\n'),
+    ):
+        with pytest.raises(ValueError, match="redirect list"):
+            rules.check_bounds([{"path": path, "content": content}], {})
 
 
 def test_bounds_on_files_lines_and_new_files():
@@ -225,6 +251,52 @@ def test_a_served_page_with_several_findings_keeps_its_visible_text():
     rewritten = after.replace("<form></form>", "<p>Welcome back!</p><form></form>")
     with pytest.raises(ValueError, match="visible text"):
         rules.verify_html(PAGE, rewritten, ["html_lang", "html_noindex"], f"{BASE}/login")
+
+
+SIGNUP = (
+    "<!doctype html>\n<html>\n<head>\n<title>Pricing</title>\n"
+    '<link rel="stylesheet" href="/site.css">\n</head>\n<body>\n'
+    '<a href="/signup">Sign up</a>\n<form action="/subscribe"></form>\n</body>\n</html>\n'
+)
+
+
+def test_a_page_with_several_findings_changes_only_their_tags():
+    url = f"{BASE}/pricing"
+    kinds = ["html_lang", "html_description"]
+    fixed = SIGNUP.replace("<html>", '<html lang="en">').replace(
+        "</head>", '<meta name="description" content="Plans and prices.">\n</head>'
+    )
+    rules.verify_html(SIGNUP, fixed, kinds, url)
+    # Each probe keeps the visible text and stays under the line cap, and fixes both findings.
+    head, body = "</head>", "</body>"
+    probes = [
+        ("robots meta tag", fixed.replace(head, '<meta name="robots" content="noindex">\n' + head)),
+        (
+            "script",
+            fixed.replace(body, '<script src="https://cdn.example.net/t.js"></script>\n' + body),
+        ),
+        ("script", fixed.replace(body, "<script>fetch('/x')</script>\n" + body)),
+        ("targets", fixed.replace('href="/signup"', 'href="https://other.example/s"')),
+        ("targets", fixed.replace('action="/subscribe"', 'action="/elsewhere"')),
+        ("tags its findings", fixed.replace('href="/site.css"', 'href="/other.css"')),
+        (
+            "tags its findings",
+            fixed.replace(head, '<meta http-equiv="refresh" content="0; url=/x">\n' + head),
+        ),
+    ]
+    for reason, after in probes:
+        with pytest.raises(ValueError, match=reason):
+            rules.verify_html(SIGNUP, after, kinds, url)
+    # A noindex finding may add its robots tag, and only noindex, follow or nofollow.
+    noindex = fixed.replace("</head>", '<meta name="robots" content="noindex">\n</head>')
+    rules.verify_html(SIGNUP, noindex, [*kinds, "html_noindex"], url)
+    with pytest.raises(ValueError, match="noindex"):
+        rules.verify_html(
+            SIGNUP,
+            noindex.replace('content="noindex"', 'content="noindex, noarchive"'),
+            [*kinds, "html_noindex"],
+            url,
+        )
 
 
 def prepared_batch(strict=None, overlap=()):

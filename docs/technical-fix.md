@@ -60,13 +60,17 @@ nothing ready to fix is refused with the count of decisions still waiting.
 - Before the PR opens, the worker checks the patch:
   - at most 20 files and 800 changed lines, files at most 200 KB and new files at most
     20 KB, text only;
-  - no dependencies, lockfiles, CI, deploy or build settings, secrets, `.github/` or
-    `.gitmodules`; the one deploy setting it may edit is a host's redirect list
-    (`redirects` in `vercel.json` or `netlify.toml`), and only that list;
+  - no dependencies, lockfiles, package manager or workspace settings, CI, deploy or
+    build settings, secrets (`.env*`, `.dev.vars`), `.github/` or `.gitmodules`; the one
+    deploy setting it may edit is a host's redirect list (`redirects` in `vercel.json` or
+    `netlify.toml`), and only that list. A new `vercel.json` or `netlify.toml` holds
+    nothing but redirects;
   - no file an open PR already changes;
   - files the site serves byte for byte (robots.txt, sitemaps, static pages) change only
-    as their findings call for, checked from the diff, and a served
-    page with several findings keeps its visible text; the live file must still match
+    as their findings call for, checked from the diff. A served page with several
+    findings keeps its visible text, and its meta tags, `<link>`s, scripts, link and form
+    targets, frames and `<base>` stay as they were, except the tags its findings call for
+    (a description, a noindex robots tag, a canonical). The live file must still match
     what was read;
   - any other change carries the sentence that Tin couldn't build the site.
 - After the PR merges, `get_run`'s `live_check` lists each finding as fixed, waiting for
