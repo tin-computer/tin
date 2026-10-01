@@ -10,15 +10,19 @@ from uuid import UUID
 
 from tin_lite.keyword_plan import LIMITS as KEYWORD_LIMITS
 from tin_lite.keyword_plan import paths as keyword_paths
-from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, digest
+from tin_lite.organic_audit import ARTIFACT_LIMITS, audit_hosts, audit_paths, canonical_json, digest
 from tin_lite.project_files import safe_project_file_path
 
 
-async def research_sources(*, database, storage, project, inputs, typed=False, planned=None):
+async def research_sources(
+    *, database, storage, project, inputs, typed=False, planned=None, published=()
+):
     """The pinned audit and keyword research as source rows.
 
     `typed` (content-editorial-v7) adds one row per page a refresh could fix, from the audit's
-    search findings and `planned`, Page decisions' refresh rows (see page_decision_refreshes).
+    search findings and `planned`, Page decisions' refresh rows (see page_decision_refreshes),
+    and the whole site's page list (`site_pages`), with `published`, the pages Tin put on the
+    site itself (see published_pages).
     """
     sources, loaded = {}, {}
     for kind, executor, prefix, source_paths, limits in (
@@ -120,9 +124,12 @@ async def research_sources(*, database, storage, project, inputs, typed=False, p
                 },
             }
         )
+    extra = {}
     if typed:
         rows.extend(refresh_rows(findings, audit, planned))
+        extra["site_pages"] = site_pages(audit, keywords=keywords, published=published)
     return {
+        **extra,
         "sources": sources,
         "scope": {
             key: keywords["scope"][key] for key in ("host", "market", "language", "buyer_context")
@@ -155,6 +162,120 @@ def refresh_rows(findings, evidence, planned=None):
         }
         for page in plan_candidates(findings, evidence, planned, limit=MAX_REFRESH_SOURCES)
     ]
+
+
+# The whole site as Tin knows it (content-editorial-v7). The bounded page inspection reads at
+# most 60 pages; this list holds every page address Tin has evidence for, so the plan never
+# proposes a page the site already has. Each page appears once, by normalized path, with every
+# source that lists it.
+SITE_SOURCES = {
+    "sitemap": "the audit's sitemap read",
+    "search_console": "Search Console pages with impressions",
+    "crawl": "the audit's crawl and page reads",
+    "tin_published": "pages Tin published and found live",
+    "keywords": "ranking pages in the keyword research",
+}
+MAX_SITE_PAGES = 2000
+SITE_PAGES_BYTES = 200_000
+SITE_TITLE_CHARS = 120
+# Addresses that are files, not pages.
+NOT_PAGES = (".xml", ".txt", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico")
+PUBLISHED_PAGES_SQL = """
+    SELECT receipt.result->'check'->>'url' AS url, receipt.result->'base'->>'title' AS title
+    FROM effect_receipts AS receipt
+    JOIN workflow_runs AS run ON receipt.execution_key = 'page-url:' || run.id::text
+    WHERE run.project_id = $1 AND receipt.operation = 'page_url_projection_v1'
+      AND receipt.result->'check'->>'live' = 'true'
+    ORDER BY receipt.updated_at DESC
+    LIMIT 500
+"""
+
+
+async def published_pages(database, project):
+    """Pages Tin published to the site itself and then found live (its page URL records)."""
+    rows = await database.pool.fetch(PUBLISHED_PAGES_SQL, project.id)
+    return [{"url": row["url"], "title": row["title"]} for row in rows if row["url"]]
+
+
+def site_path(url, host, aliases=()):
+    """The page's normalized path on the audited site, or None for another site or a file."""
+    from tin_lite.content_refresh import url_key
+    from tin_lite.organic_audit import in_scope_url
+
+    if not in_scope_url(url, host, aliases=aliases):
+        return None
+    path = url_key(url)
+    if len(path) > 500 or "//" in path or path.casefold().endswith(NOT_PAGES):
+        return None
+    return path
+
+
+def site_pages(evidence, *, keywords=None, published=()):
+    """Every page Tin knows on the audited site: one row per normalized path, with its sources.
+
+    Reads the audit's sitemap URLs, its Search Console pages with impressions, its crawl and page
+    reads, `published` (pages Tin published and found live) and the ranking pages in the keyword
+    research. At most MAX_SITE_PAGES rows and SITE_PAGES_BYTES are kept, pages with the most
+    impressions and the most sources first; the rest are counted in `omitted`.
+    """
+    scope = evidence.get("scope") or {}
+    host = scope.get("host")
+    aliases = tuple(name for name in audit_hosts(scope) if name != host) if host else ()
+    pages = {}
+
+    def add(url, source, *, title=None, impressions=None):
+        path = site_path(url, host, aliases) if isinstance(url, str) and host else None
+        if path is None:
+            return
+        page = pages.setdefault(path, {"path": path, "sources": []})
+        if source not in page["sources"]:
+            page["sources"].append(source)
+        if title and not page.get("title"):
+            page["title"] = " ".join(str(title).split())[:SITE_TITLE_CHARS]
+        if impressions:
+            page["impressions"] = max(page.get("impressions", 0), impressions)
+
+    site = evidence.get("site") or {}
+    sitemaps = (site.get("files") or {}).get("sitemaps") or {}
+    for entry in sitemaps.get("urls") or []:
+        add(entry.get("loc") if isinstance(entry, dict) else entry, "sitemap")
+    console = (evidence.get("search_console") or {}).get("value") or {}
+    for row in console.get("pages") or []:
+        impressions = row.get("impressions") if isinstance(row, dict) else None
+        if isinstance(impressions, int | float) and impressions > 0:
+            add(row.get("url"), "search_console", impressions=impressions)
+    for page in (evidence.get("crawl") or {}).get("pages") or []:
+        status = page.get("status_code")
+        if not isinstance(status, int) or 200 <= status < 400:
+            add(page.get("url"), "crawl", title=page.get("title"))
+    for page in site.get("pages") or []:
+        if page.get("fetch") == "observed":
+            add(page.get("url"), "crawl", title=page.get("title"))
+    for page in published:
+        add(page.get("url"), "tin_published", title=page.get("title"))
+    for keyword in (keywords or {}).get("keywords") or []:
+        for observation in keyword.get("observations") or []:
+            add(observation.get("ranking_url"), "keywords")
+    ranked = sorted(
+        pages.values(),
+        key=lambda page: (-page.get("impressions", 0), -len(page["sources"]), page["path"]),
+    )
+    kept, size = [], 0
+    for page in ranked[:MAX_SITE_PAGES]:
+        size += len(canonical_json(page)) + 1
+        if size > SITE_PAGES_BYTES:
+            break
+        kept.append(page)
+    return {
+        "host": host,
+        "pages": sorted(kept, key=lambda page: page["path"]),
+        "omitted": len(pages) - len(kept),
+        "by_source": {
+            source: sum(source in page["sources"] for page in kept) for source in SITE_SOURCES
+        },
+        "sitemap_capped": bool(sitemaps.get("urls_capped"))
+        or bool((evidence.get("trimmed_for_size") or {}).get("sitemap_urls")),
+    }
 
 
 # competitor.watch: the newest succeeded report's material changes, for comparison items.

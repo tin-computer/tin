@@ -65,6 +65,14 @@ def item_kind(item: dict) -> str:
 
 # How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
 KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+# How PLAN.md names the sources of the site's page list (v7).
+SITE_SOURCE_LABELS = {
+    "sitemap": "sitemap",
+    "search_console": "Search Console",
+    "crawl": "crawl",
+    "tin_published": "published by Tin",
+    "keywords": "keyword research",
+}
 # A workflow whose report Tin turned into this item itself, with the page that backs it.
 COMPETITOR_WATCH = "competitor.watch"
 OPTIONAL_FIELDS = ("kind", "source", "evidence")
@@ -223,6 +231,15 @@ def paths(run_id: str) -> dict[str, str]:
     }
 
 
+# A typed (v7) plan also saves the whole site's page list beside its evidence.
+SITE_PAGES_FILE = "pages.json"
+SITE_PAGES_FILE_BYTES = 250_000
+
+
+def site_pages_path(run_id: str) -> str:
+    return f"reports/content-plan/{UUID(run_id)}/{SITE_PAGES_FILE}"
+
+
 def empty_plan(program_id, inputs, scope) -> dict:
     start = date.fromisoformat(inputs["start_date"])
     end = end_date(start, inputs.get("duration", "6_months"))
@@ -352,6 +369,23 @@ def render_plan(
             "This is not proof that other pages do not exist or that product claims are true.",
             "",
         ]
+        inventory = editorial.get("site_inventory")
+        if inventory:
+            counted = ", ".join(
+                f"{label} {inventory['by_source'][key]}"
+                for key, label in SITE_SOURCE_LABELS.items()
+                if inventory["by_source"].get(key)
+            )
+            lines += [
+                f"The site's page list holds {inventory['pages']} pages ({counted}), saved in "
+                f"{markdown_text(inventory['path'])}"
+                + (
+                    f"; {inventory['omitted']} more were over its bound."
+                    if inventory["omitted"]
+                    else "."
+                ),
+                "",
+            ]
         for heading, key in (
             ("Evidence needed for more work", "gaps"),
             ("Excluded opportunities", "excluded"),
@@ -359,6 +393,13 @@ def render_plan(
             if editorial[key]:
                 lines += [f"### {heading}", ""]
                 lines += [f"- {markdown_text(value)}" for value in editorial[key]] + [""]
+        if editorial.get("already_on_site"):
+            lines += ["### Already on the site", ""]
+            lines += [
+                f"- {markdown_text(entry['title'])}: left out, the site has "
+                f"{markdown_text(entry['page'])} ({entry['match']} match)."
+                for entry in editorial["already_on_site"]
+            ] + [""]
         decisions = {d["item_id"]: d for d in editorial["decisions"]}
         if editorial.get("consolidations"):
             lines += [

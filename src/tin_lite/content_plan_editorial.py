@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from pydantic import Field
 
 from tin_lite import content_plan as legacy
+from tin_lite.content_plan_sources import MAX_SITE_PAGES, SITE_PAGES_BYTES
 from tin_lite.organic_audit import canonical_json, digest
 
 ROUTE_KEY = "content.plan.v2"
@@ -190,6 +191,10 @@ COMPARISON_WORDS = frozenset(
     {"vs", "versus", "alternative", "alternatives", "compare", "comparison", "comparisons"}
 )
 
+# The whole site's page list (content_plan_sources.site_pages): at most this many addresses
+# reach the model, fewer when its bounded input needs the room for page excerpts.
+MAX_MODEL_SITE_PAGES = 800
+
 POLICY = {
     **V6_POLICY,
     "version": "content-editorial-v7",
@@ -197,6 +202,10 @@ POLICY = {
     "max_refresh_sources": MAX_REFRESH_SOURCES,
     "competitor_items": MAX_COMPETITOR_ITEMS,
     "refresh_order": "realistic-upside-v1",
+    "site_inventory": "full-v1",
+    "max_site_pages": MAX_SITE_PAGES,
+    "max_site_pages_bytes": SITE_PAGES_BYTES,
+    "max_model_site_pages": MAX_MODEL_SITE_PAGES,
 }
 INSTRUCTIONS = (
     V6_INSTRUCTIONS
@@ -214,6 +223,11 @@ article update for the same page. Use answer and refresh only with those sources
 Refresh sources come in order of realistic upside, and each says why in upside: pages near the
 top results or seen but rarely clicked first, then other pages, and pages beyond position 30
 last. Plan a far page only when no nearer one is left.
+site_pages lists every page address Tin knows on the site, by path, with the sources that list
+it. It is an address list, not page content: only the pages under pages were read. Never plan
+a new page for a topic a listed path already serves; plan an update of it when it was read, or
+name it in gaps when it was not. Tin leaves out a new page whose address, title or topic words
+match a listed page.
 Rows whose source_id starts with competitor: are material changes the newest competitor.watch
 report found at a named competitor. Tin adds comparison or refresh items for them itself, so do
 not plan another page about those competitors.
@@ -405,6 +419,8 @@ def model_context(context, pages, *, readable_aliases=False):
     research.pop("sources", None)
     # Candidate titles aren't content. The inspected inventory is the authority for updates.
     research.pop("page_candidates", None)
+    # v7: the whole site's addresses travel separately, bounded below.
+    site = research.pop("site_pages", None)
     research["limitations"] = [
         "Keyword groups/exclusions are hypotheses; observations are not product verification.",
         "Only supplied excerpts were inspected; uncrawled/unavailable pages remain unknown.",
@@ -438,6 +454,9 @@ def model_context(context, pages, *, readable_aliases=False):
         "end_date": context["plan"]["end_date"],
         "capacity": len(editable) * context["capacity"],
     }
+    listed = site_rows(site) if site is not None else []
+    if site is not None:
+        data["site_pages"] = model_site_pages(site, listed, MAX_MODEL_SITE_PAGES)
     # Full observations (timestamps, hashes and original excerpts) stay in evidence.
     # Budget only the model's excerpts; never silently drop research rows or member files.
     original_pages = data["pages"]["pages"]
@@ -452,10 +471,14 @@ def model_context(context, pages, *, readable_aliases=False):
 
     low = POLICY["min_page_text_bytes"]
     high = context.get("page_text_limit", POLICY["page_text_bytes"])
-    if not excerpt(low):
-        raise ValueError(
-            "Planning sources exceed the bounded model input. Use smaller context files."
-        )
+    while not excerpt(low):
+        # The site's address list gives way before the planning sources do.
+        shown = len((data.get("site_pages") or {}).get("pages") or [])
+        if not shown:
+            raise ValueError(
+                "Planning sources exceed the bounded model input. Use smaller context files."
+            )
+        data["site_pages"] = model_site_pages(site, listed, shown // 2)
     while low < high:
         middle = (low + high + 1) // 2
         if excerpt(middle):
@@ -464,6 +487,123 @@ def model_context(context, pages, *, readable_aliases=False):
             high = middle - 1
     excerpt(low)
     return data, aliases
+
+
+# How the model reads each source of a site page: one letter per source.
+SITE_SOURCE_CODES = {
+    "sitemap": "s",
+    "search_console": "g",
+    "crawl": "c",
+    "tin_published": "t",
+    "keywords": "k",
+}
+
+
+def site_rows(site):
+    """The site's pages, most impressions and most sources first: the order the model keeps."""
+    return sorted(
+        site.get("pages") or [],
+        key=lambda page: (-page.get("impressions", 0), -len(page["sources"]), page["path"]),
+    )
+
+
+def model_site_pages(site, listed, limit):
+    """The first `limit` of the site's pages, by path, as [path, source letters] pairs."""
+    shown = sorted(listed[: max(0, limit)], key=lambda page: page["path"])
+    return {
+        "sources": {code: name for name, code in SITE_SOURCE_CODES.items()},
+        "pages": [
+            [page["path"], "".join(SITE_SOURCE_CODES[name] for name in page["sources"])]
+            for page in shown
+        ],
+        "omitted": site.get("omitted", 0) + len(listed) - len(shown),
+    }
+
+
+# Words that say nothing about a page's topic, for matching a new page against the site's.
+TOPIC_STOPWORDS = frozenset(
+    "a an and are as at be best by can do does for from get guide how i in into is it its my "
+    "of on or our should the their this to use using what when where which who why with you "
+    "your".split()
+)
+TITLE_SUFFIX = re.compile(r"\s+[|·–—-]\s+[^|·–—-]{1,60}$")
+
+
+def topic_words(text):
+    """A text's topic words: lowercase, without filler words, plural s dropped."""
+    words = re.findall(r"[a-z0-9]+", (text or "").casefold())
+    return {
+        word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
+        for word in words
+        if word not in TOPIC_STOPWORDS
+    }
+
+
+def plain_title(title):
+    """A title without its site name suffix (" | Example"), in lowercase words."""
+    return " ".join(re.findall(r"[a-z0-9]+", TITLE_SUFFIX.sub("", title or "").casefold()))
+
+
+def existing_page(opportunity, site, *, topics=True):
+    """The site page a proposed new page duplicates, and how it matched, or None.
+
+    `address`: the title's slug is the page's last path segment. `title`: the page's crawl title
+    is the proposed title. `topic` (articles only): the page's last path segment has at least
+    two topic words, all in the title, and the title adds at most two more, so
+    "How to audit AI visibility for a SaaS brand" matches /learn/ai-visibility-audit while
+    "AI visibility tools: choose tracking or an actionable audit" does not.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", opportunity["title"].casefold()).strip("-")
+    title = plain_title(opportunity["title"])
+    wanted = topic_words(opportunity["title"])
+    best = None
+    for page in site.get("pages") or []:
+        last = page["path"].rstrip("/").rsplit("/", 1)[-1].casefold()
+        if last and last == slug:
+            return page, "address"
+        if title and page.get("title") and plain_title(page["title"]) == title:
+            return page, "title"
+        words = topic_words(last.replace("-", " ").replace("_", " "))
+        if (
+            topics
+            and len(words) >= 2
+            and words <= wanted
+            and len(wanted - words) <= 2
+            and (best is None or len(words) > best[1])
+        ):
+            best = (page, len(words))
+    return (best[0], "topic") if best else None
+
+
+def dedupe_new_pages(opportunities, site, *, host, retained):
+    """Leave out proposed new pages the site already has (v7).
+
+    Only new items are checked: a retained item keeps its place. Answers match by address or
+    title only, since an answer page may answer a buyer question an existing page leaves open.
+    Returns the kept opportunities and one record per page left out.
+    """
+    kept, left_out = [], []
+    for opportunity in opportunities:
+        if opportunity["action"] != "new_page" or opportunity["id"] in retained:
+            kept.append(opportunity)
+            continue
+        found = existing_page(
+            opportunity, site, topics=opportunity.get("kind", legacy.ARTICLE) == legacy.ARTICLE
+        )
+        if found is None:
+            kept.append(opportunity)
+            continue
+        page, match = found
+        left_out.append(
+            {
+                "item_id": opportunity["id"],
+                "title": opportunity["title"],
+                "page": f"https://{host}{page['path']}",
+                "sources": page["sources"],
+                "match": match,
+            }
+        )
+    return kept, left_out
 
 
 def bound_schema(pages, aliases, schema=PORTFOLIO_SCHEMA, kinds=None):
@@ -504,6 +644,15 @@ def allocate(context, proposed, pages, aliases, *, typed=False):
         raise ValueError("The editorial portfolio exceeds the selected batch capacity.")
     if len(opportunities) < slots and not portfolio["gaps"]:
         raise ValueError("An underfilled portfolio must explain its evidence shortfall.")
+    site = (context["research"] or {}).get("site_pages") if typed else None
+    already_on_site = []
+    if site is not None:
+        opportunities, already_on_site = dedupe_new_pages(
+            opportunities,
+            site,
+            host=plan["host"],
+            retained={i["id"] for b in context["plan"]["batches"] for i in b["items"]},
+        )
     observed = {p["page_id"]: p for p in pages["pages"] if p["status"] == "inspected"}
     destinations = {
         item["destination"].rstrip("/")
@@ -613,6 +762,7 @@ def allocate(context, proposed, pages, aliases, *, typed=False):
         "decisions": decisions,
         "consolidations": consolidations,
         **({"positioning_removed": positioning_removed} if "positioning" in context else {}),
+        **({"already_on_site": already_on_site} if site is not None else {}),
     }
     plan["strategy"] = portfolio["strategy"]
     if coverage["unused_capacity"]:
@@ -660,14 +810,21 @@ def competitor_items(context, plan, pages, *, cap=MAX_COMPETITOR_ITEMS):
     items = [item for batch in plan["batches"] for item in batch["items"]]
     # The site's own pages, by address (and crawl title): never by body text, which may only
     # mention a competitor in passing.
-    site = [
-        (page.get("url"), page.get("title") or "")
-        for page in (context["research"] or {}).get("page_candidates", [])
-    ] + [
-        (page.get("url"), "")
-        for page in pages.get("pages", [])
-        if page.get("status") == "inspected"
-    ]
+    site = (
+        [
+            (page.get("url"), page.get("title") or "")
+            for page in (context["research"] or {}).get("page_candidates", [])
+        ]
+        + [
+            (page.get("url"), "")
+            for page in pages.get("pages", [])
+            if page.get("status") == "inspected"
+        ]
+        + [
+            (f"https://{plan['host']}{page['path']}", page.get("title") or "")
+            for page in ((context["research"] or {}).get("site_pages") or {}).get("pages", [])
+        ]
+    )
     site = [(url, title) for url, title in site if clean_url(url, plan["host"])]
     editable = [b for b in plan["batches"] if b["id"] in context["editable"]]
     added = []
