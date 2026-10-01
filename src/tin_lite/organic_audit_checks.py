@@ -16,15 +16,18 @@ from tin_lite.organic_audit_site import (
     FETCH_AGENT,
     GOOGLE_AGENT,
     ai_crawlers,
+    canonical_elsewhere,
     client_rendered,
     crawler_stances,
     is_ad_landing_url,
     is_noindex,
     is_utility_url,
+    lacks_link_preview,
     language_prefix,
     named_groups_missing_wildcard_rules,
     path_allowed,
     robots_allows,
+    schema_broken,
     segments,
     url_key,
 )
@@ -169,12 +172,9 @@ class SiteView:
 
     def canonical_elsewhere(self, key: str) -> str | None:
         facts = self.facts.get(key) or {}
-        canonical = facts.get("canonical")
-        if facts.get("fetch") != "observed" or not canonical:
+        if facts.get("fetch") != "observed":
             return None
-        if not self.in_scope(canonical) or url_key(canonical) != key:
-            return canonical
-        return None
+        return canonical_elsewhere(facts.get("canonical"), key, self.hosts)
 
     def search_note(self, key: str) -> str:
         entry = self.search.get(key)
@@ -1595,11 +1595,7 @@ def _page_basics_findings(view: SiteView, host: str) -> list[dict]:
                 evidence_refs=["site.pages"],
             )
         )
-    no_og = [
-        f
-        for f in pages
-        if f.get("open_graph") is not None and not {"title", "image"} <= set(f["open_graph"])
-    ]
+    no_og = [f for f in pages if lacks_link_preview(f)]
     if no_og:
         findings.append(
             site_finding(
@@ -1627,12 +1623,7 @@ def _page_basics_findings(view: SiteView, host: str) -> list[dict]:
 
 def _schema_findings(view: SiteView, host: str) -> list[dict]:
     # Missing recommended fields alone are advice, not an error; they only add detail here.
-    pages = [
-        f
-        for f in view.observed()
-        if f.get("schema_invalid_blocks")
-        or any(problem["missing"] for problem in f.get("schema_problems", []))
-    ]
+    pages = [f for f in view.observed() if schema_broken(f)]
     if not pages:
         return []
     lines = []

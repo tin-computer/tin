@@ -25,20 +25,25 @@ import posixpath
 import re
 import tomllib
 from datetime import UTC, datetime
+from html.parser import HTMLParser
 from urllib.parse import urlsplit
 
 from tin_lite import technical_repair_plan as plan
 from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit_site import (
     AI_SEARCH_CRAWLERS,
+    canonical_elsewhere,
     crawler_stances,
     html_facts,
     is_noindex,
+    lacks_description,
+    lacks_link_preview,
     language_prefix,
     named_groups_missing_wildcard_rules,
     parse_robots,
     path_allowed,
     robots_group,
+    schema_broken,
     url_key,
 )
 
@@ -83,9 +88,18 @@ BLOCKED_NAMES = frozenset(
         "app.yaml",
         "Procfile",
         "wrangler.toml",
+        "wrangler.json",
+        "wrangler.jsonc",
         "firebase.json",
+        "bun.lock",
+        "npm-shrinkwrap.json",
+        ".npmrc",
+        ".yarnrc.yml",
+        "pnpm-workspace.yaml",
     }
 )
+# Local secrets files that don't follow the .env naming.
+SECRET_NAMES = frozenset({".dev.vars"})
 BLOCKED_PREFIXES = (".github/", ".circleci/", ".husky/", ".git/")
 # Host settings whose redirect list, and nothing else, a merge or redirect repair may edit.
 REDIRECT_KEYS = {"vercel.json": "redirects", "netlify.toml": "redirects"}
@@ -96,7 +110,7 @@ def blocked(path: str) -> str | None:
     name = posixpath.basename(path)
     if path.startswith(BLOCKED_PREFIXES) or "/.github/" in path:
         return "CI settings"
-    if name.startswith(".env"):
+    if name.startswith(".env") or name in SECRET_NAMES:
         return "secrets"
     if name in BLOCKED_NAMES and name not in REDIRECT_KEYS:
         return "dependencies, CI or deploy settings"
@@ -111,18 +125,23 @@ def changed_lines(before: str, after: str) -> int:
     )
 
 
-def _redirects_only(path: str, before: str, after: str) -> None:
+def _redirects_only(path: str, before: str | None, after: str) -> None:
+    """A host config may gain or change its redirect list and nothing else. A new file holds
+    only that list."""
     name = posixpath.basename(path)
     key = REDIRECT_KEYS[name]
+    load = json.loads if name.endswith(".json") else tomllib.loads
     try:
-        old = json.loads(before) if name.endswith(".json") else tomllib.loads(before)
-        new = json.loads(after) if name.endswith(".json") else tomllib.loads(after)
+        old = {} if before is None else load(before)
+        new = load(after)
     except (ValueError, tomllib.TOMLDecodeError) as exc:
         raise ValueError(f"{path} must stay valid.") from exc
     if not isinstance(old, dict) or not isinstance(new, dict):
         raise ValueError(f"{path} must stay valid.")
     if {k: v for k, v in old.items() if k != key} != {k: v for k, v in new.items() if k != key}:
         raise ValueError(f"Only the redirect list in {path} may change.")
+    if before is None and not isinstance(new.get(key), list):
+        raise ValueError(f"A new {name} holds only a redirect list.")
 
 
 def check_bounds(files: list[dict], originals: dict[str, str | None]) -> int:
@@ -141,6 +160,8 @@ def check_bounds(files: list[dict], originals: dict[str, str | None]) -> int:
         if before is None:
             if len(content.encode()) > plan.MAX_NEW_FILE_BYTES:
                 raise ValueError(f"{path} is too large for a new file in a technical fix.")
+            if posixpath.basename(path) in REDIRECT_KEYS:
+                _redirects_only(path, None, content)
             total += len(content.splitlines())
         else:
             if len(content.encode()) > plan.MAX_FILE_BYTES:
@@ -232,15 +253,112 @@ def _visible_text(html: str) -> list[str]:
     return htmllib.unescape(re.sub(r"<[^>]+>", " ", body)).split()
 
 
+class _Behaviour(HTMLParser):
+    """The tags that change what a page does rather than what it says: meta tags, <link>s,
+    scripts, link and form targets, frames and <base>. Each is (group, normalized tag)."""
+
+    TARGETS = {"a": "href", "area": "href", "form": "action", "iframe": "src", "base": "href"}
+
+    def __init__(self, text: str):
+        super().__init__(convert_charrefs=True)
+        self.tags: list[tuple[str, str]] = []
+        self._script: list | None = None
+        self.feed(text)
+        self.close()
+
+    def handle_starttag(self, tag, attrs):
+        values = {key.lower(): (value or "").strip() for key, value in attrs}
+        normalized = json.dumps(sorted(values.items()))
+        if tag == "meta":
+            name = values.get("name") or values.get("http-equiv") or values.get("property") or ""
+            name = name.lower()
+            self.tags.append(("robots" if name in {"robots", "googlebot"} else name, normalized))
+        elif tag == "link":
+            rel = values.get("rel", "").lower().split()
+            self.tags.append(("canonical" if "canonical" in rel else "link", normalized))
+        elif tag == "script":
+            self._script = [normalized]
+        elif tag in self.TARGETS:
+            self.tags.append((tag, values.get(self.TARGETS[tag], "")))
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag == "script":
+            self.handle_endtag(tag)
+
+    def handle_data(self, data):
+        if self._script is not None:
+            self._script.append(data)
+
+    def handle_endtag(self, tag):
+        if tag == "script" and self._script is not None:
+            self.tags.append(("script", "".join(self._script)))
+            self._script = None
+
+
+# The tag groups each served-page finding may change; every other behaviour tag stays as it is.
+HTML_CHANGES = {
+    "html_description": {"description"},
+    "html_noindex": {"robots"},
+    "html_self_canonical": {"canonical"},
+    "html_one_canonical": {"canonical"},
+}
+
+
+NOINDEX = frozenset({"noindex", "follow", "nofollow"})
+
+
+def _directives(tags) -> set[str]:
+    return {
+        part.strip().lower()
+        for _, normalized in tags
+        for key, value in json.loads(normalized)
+        if key == "content"
+        for part in value.split(",")
+        if part.strip()
+    }
+
+
+def _same_behaviour(before: str, after: str, kinds: list[str]) -> None:
+    allowed = set().union(*(HTML_CHANGES.get(kind, set()) for kind in kinds))
+    tags_before, tags_after = _Behaviour(before).tags, _Behaviour(after).tags
+    if "robots" in allowed:
+        old_robots = _directives(t for t in tags_before if t[0] == "robots")
+        if _directives(t for t in tags_after if t[0] == "robots") - old_robots - NOINDEX:
+            raise ValueError('Use <meta name="robots" content="noindex">.')
+    if "canonical" in allowed and "html_self_canonical" not in kinds:
+        kept = {t for t in tags_after if t[0] == "canonical"}
+        if not kept <= {t for t in tags_before if t[0] == "canonical"}:
+            raise ValueError("Keep one of the page's existing canonical tags as it was.")
+    old = [tag for tag in tags_before if tag[0] not in allowed]
+    new = [tag for tag in tags_after if tag[0] not in allowed]
+    if old == new:
+        return
+    changed = {
+        group
+        for group in {g for g, _ in old + new}
+        if [t for t in old if t[0] == group] != [t for t in new if t[0] == group]
+    }
+    if "robots" in changed:
+        raise ValueError("A served page may gain a robots meta tag only for a noindex finding.")
+    if "script" in changed:
+        raise ValueError("A served page may not gain, lose or change a script.")
+    if changed & set(_Behaviour.TARGETS):
+        raise ValueError("A served page's link and form targets may not change.")
+    raise ValueError("A served page changes only in the tags its findings call for.")
+
+
 def verify_html(before: str, after: str, kinds: list[str], page_url: str) -> None:
     """One change: the exact tag check in technical_site_rules. Several: each finding gone,
-    the visible text unchanged (an added H1 aside), and the diff small."""
+    the visible text unchanged (an added H1 aside), no other meta, link, script or target
+    changed, and the diff small."""
     if len(kinds) == 1:
         return site_rules.verify_html_change(before, after, kinds[0], page_url)
     site_rules._same_page(before, after)
     for kind in kinds:
         if site_rules.page_needs(kind, after, page_url):
             raise ValueError(f"The page still needs its {kind.replace('_', ' ')} change.")
+    _same_behaviour(before, after, kinds)
     old, new = _visible_text(before), _visible_text(after)
     if new != old:
         added = [word for word in new]
@@ -306,21 +424,24 @@ def validate(manifest: dict, prepared: dict, originals: dict[str, str | None] | 
 # --- Live predicates ----------------------------------------------------------------------
 
 
-def page_fixed(predicate: str, html: str, url: str, entry: dict) -> bool:
-    """Whether a freshly read page no longer shows its finding."""
+def page_fixed(predicate: str, html: str, url: str, entry: dict, hosts=None) -> bool:
+    """Whether a freshly read page no longer shows its finding, by the audit's own test.
+    `hosts` are the audited site's hosts; a canonical elsewhere names another page."""
     facts = html_facts(html.encode(), url=url, charset="utf-8", truncated=False)
     if predicate == "noindex":
         return is_noindex(facts)
     if predicate == "indexable":
         return not is_noindex(facts)
     if predicate == "self_canonical":
-        return not facts.get("canonical") or url_key(facts["canonical"]) == url_key(url)
+        return not canonical_elsewhere(
+            facts.get("canonical"), url, set(hosts or ()) | {urlsplit(url).hostname}
+        )
     if predicate == "one_canonical":
         return facts.get("canonical_count", 0) <= 1
     if predicate == "title":
         return bool(facts.get("title"))
     if predicate == "description":
-        return facts.get("description_length") is not None
+        return not lacks_description(facts)
     if predicate == "h1":
         return facts.get("h1_count", 0) >= 1
     if predicate == "one_h1":
@@ -342,9 +463,9 @@ def page_fixed(predicate: str, html: str, url: str, entry: dict) -> bool:
     if predicate == "form_label":
         return not facts.get("unlabeled_fields")
     if predicate == "schema":
-        return not facts.get("schema_problems") and not facts.get("schema_invalid_blocks")
+        return not schema_broken(facts)
     if predicate == "open_graph":
-        return "title" in set(facts.get("open_graph") or [])
+        return not lacks_link_preview(facts)
     if predicate == "reachable":
         return True  # The read itself succeeded, so the loop is gone.
     raise ValueError(f"Unknown page check {predicate}.")

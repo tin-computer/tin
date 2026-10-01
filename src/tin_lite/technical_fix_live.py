@@ -19,7 +19,7 @@ from tin_lite import technical_batch as batch_rules
 from tin_lite import technical_fix as contract
 from tin_lite import technical_repair_plan as repair_plan
 from tin_lite.organic_audit_site import url_key
-from tin_lite.technical_fix_execution import body_of
+from tin_lite.technical_fix_execution import body_of, sitemap_files
 
 logger = logging.getLogger(__name__)
 
@@ -224,6 +224,14 @@ class LiveRecheck:
                     pages[url] = None
             return pages[url]
 
+        async def read_sitemap(_index, url):
+            try:
+                return await self.fetch_file(
+                    url, host=contract.verified_page_host(url, target), kind="sitemap"
+                )
+            except (ValueError, OSError, TimeoutError, UnicodeError):
+                return {"url": url, "status_code": None}
+
         for entry in prepared["batch"]["repairs"]:
             predicate = entry.get("live")
             live = "next_audit"
@@ -235,7 +243,9 @@ class LiveRecheck:
                         if read is None:
                             live = "unknown"
                             break
-                        if not batch_rules.page_fixed(predicate, read["html"], url, entry):
+                        if not batch_rules.page_fixed(
+                            predicate, read["html"], url, entry, hosts=target.get("site_hosts")
+                        ):
                             live = "not_fixed"
                             break
                 elif predicate in batch_rules.ROBOTS_PREDICATES:
@@ -252,13 +262,16 @@ class LiveRecheck:
                     )
                 elif predicate in batch_rules.SITEMAP_PREDICATES:
                     if sitemaps is None:
-                        sitemaps = [
-                            await self.fetch_file(
-                                f"https://{host}/sitemap.xml", host=host, kind="sitemap"
+                        if robots is None:
+                            robots = await self.fetch_file(
+                                f"https://{host}/robots.txt", host=host, kind="robots"
                             )
-                        ]
+                        sitemaps = await sitemap_files(target, robots, read_sitemap)
                     live = (
-                        "fixed"
+                        # No readable sitemap proves nothing about which pages it lists.
+                        "unknown"
+                        if not sitemaps and predicate != "sitemap_exists"
+                        else "fixed"
                         if batch_rules.sitemap_fixed(
                             predicate, [body_of(f) for f in sitemaps], entry
                         )
