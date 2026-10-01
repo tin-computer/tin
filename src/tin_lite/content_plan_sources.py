@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from tin_lite.keyword_plan import LIMITS as KEYWORD_LIMITS
@@ -153,6 +155,130 @@ def refresh_rows(findings, evidence, planned=None):
         }
         for page in plan_candidates(findings, evidence, planned, limit=MAX_REFRESH_SOURCES)
     ]
+
+
+# competitor.watch: the newest succeeded report's material changes, for comparison items.
+WATCH_KEY = "competitor.watch"
+WATCH_FOLDER = "reports/competitor-watch/"
+WATCH_MAX_BYTES = 80_000
+WATCH_FENCE = re.compile(r"^```tin-competitor-watch[ \t]*\n(.*?)\n```[ \t]*$", re.S | re.M)
+WATCH_LINE = re.compile(r"^- \*\*(?P<name>[^*\n]{1,120})\*\*:\s*(?P<text>\S.*)$")
+WATCH_URL = re.compile(r"\((https://[^\s)]{4,490})\)")
+LATEST_WATCH_SQL = """
+    SELECT run.id, run.canonical_commit_sha, run.artifact_path
+    FROM workflow_runs AS run
+    JOIN workflows AS workflow ON workflow.id = run.workflow_id
+    WHERE run.project_id = $1 AND workflow.key = 'competitor.watch'
+      AND workflow.project_id IS NULL
+      AND run.status = 'succeeded' AND run.canonical_commit_sha IS NOT NULL
+      AND run.artifact_path IS NOT NULL
+    ORDER BY run.finished_at DESC NULLS LAST, run.created_at DESC
+    LIMIT 1
+"""
+
+
+def _belongs(url, host):
+    """Whether a URL is on the competitor's own site (its host or a subdomain of it)."""
+    found = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+    return found == host or found.endswith("." + host)
+
+
+def watch_changes(text):
+    """The material changes a competitor.watch report lists, each tied to a watched competitor
+    and a page on that competitor's own site; [] for a quiet, baseline or unreadable report.
+
+    Reads the report's `## What changed` lines and its evidence block. A line about a name the
+    block does not hold, or without a page of that competitor's to cite, is left out: Tin turns
+    only backed changes into plan items.
+    """
+    status = re.search(r"(?m)^Status:\s*(\S+)\s*$", text)
+    blocks = WATCH_FENCE.findall(text)
+    if not status or status.group(1) != "changes" or len(blocks) != 1:
+        return []
+    try:
+        evidence = json.loads(blocks[0])
+        competitors = [
+            {
+                "id": str(item["id"]).casefold().removeprefix("www."),
+                "name": " ".join(str(item["name"]).split())[:120],
+                "pages": [
+                    page["url"]
+                    for page in item.get("pages") or []
+                    if isinstance(page, dict) and page.get("status") == "read"
+                ],
+            }
+            for item in evidence["competitors"]
+        ]
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return []
+    section = re.search(r"(?ms)^## What changed\s*\n(.*?)(?=^## |\Z)", text)
+    changes = []
+    for line in (section.group(1) if section else "").splitlines():
+        match = WATCH_LINE.match(line.strip())
+        if not match:
+            continue
+        name = " ".join(match.group("name").split()).casefold()
+        competitor = next((c for c in competitors if name in {c["name"].casefold(), c["id"]}), None)
+        if competitor is None:
+            continue
+        cited = [
+            url for url in WATCH_URL.findall(match.group("text")) if _belongs(url, competitor["id"])
+        ]
+        pages = [url for url in competitor["pages"] if url.startswith("https://")]
+        url = (cited or pages or [None])[0]
+        if url is None:
+            continue
+        changes.append(
+            {
+                "competitor": competitor["id"],
+                "name": competitor["name"],
+                "change": match.group("text").strip()[:400],
+                "url": url,
+            }
+        )
+    return changes
+
+
+async def competitor_watch(*, database, storage, project):
+    """The newest succeeded competitor.watch report's backed material changes, or None."""
+    row = await database.pool.fetchrow(LATEST_WATCH_SQL, project.id)
+    if row is None or not str(row["artifact_path"]).startswith(WATCH_FOLDER):
+        return None
+    raw = await _read_if_exists(storage, project, row["canonical_commit_sha"], row["artifact_path"])
+    if not raw or len(raw) > WATCH_MAX_BYTES:
+        return None
+    changes = watch_changes(raw.decode("utf-8", errors="replace"))
+    if not changes:
+        return None
+    return {
+        "run_id": str(row["id"]),
+        "revision": row["canonical_commit_sha"],
+        "path": row["artifact_path"],
+        "changes": changes,
+    }
+
+
+def competitor_rows(watch):
+    """One source row per competitor with backed changes, so plan items can cite it."""
+    rows = {}
+    for change in (watch or {}).get("changes", []):
+        row = rows.setdefault(
+            change["competitor"],
+            {
+                "source_id": f"competitor:{change['competitor']}"[:500],
+                "data": {
+                    "kind": "competitor_change",
+                    "title": f"competitor {change['name']}",
+                    "competitor": change["competitor"],
+                    "name": change["name"],
+                    "report": watch["path"],
+                    "run_id": watch["run_id"],
+                    "changes": [],
+                },
+            },
+        )
+        row["data"]["changes"].append({"change": change["change"], "url": change["url"]})
+    return list(rows.values())
 
 
 async def page_decision_refreshes(*, storage, project, revision, today):

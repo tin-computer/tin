@@ -46,6 +46,11 @@ to itself. If that cannot be done faithfully within this writing contract, use n
 For a new page, explain its distinct reader need versus the nearest existing pages. Do not
 claim ranking/citation gains merely because another article could be written.
 
+An item with `source: competitor.watch` comes from a competitor report, and its `evidence` is
+that competitor's own page. Check every claim about the competitor against that page as it reads
+today, cite it beside the claim, and leave out what it no longer supports; never copy a claim
+from the report itself.
+
 Check the selected item's factual requirements against current first-party public sources,
 using web search where useful. The frozen research establishes why a topic was selected,
 not that a claim is true today. Do not edit the website. Do not manufacture claims,

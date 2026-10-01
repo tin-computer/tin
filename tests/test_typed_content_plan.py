@@ -21,9 +21,10 @@ from tin_lite import content_plan_editorial as editorial
 from tin_lite import content_refresh as refresh
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_plan_activities import plan_kinds
-from tin_lite.content_plan_sources import refresh_rows
+from tin_lite.content_plan_sources import competitor_rows, refresh_rows, watch_changes
 from tin_lite.model_providers import ModelUsage
 from tin_lite.organic_audit import canonical_json, digest
+from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
 GAP = {
     "source_id": "audit:oa_gap",
@@ -235,6 +236,32 @@ async def test_the_planner_schedules_all_three_kinds_from_its_research(publicati
 
     monkeypatch.setattr("tin_lite.content_plan_activities.research_sources", research)
     activities.router = Model()
+    # The newest succeeded competitor.watch report, read server-side from its output file.
+    watcher = next(w for w in PUBLIC_WORKFLOWS if w.key == "competitor.watch")
+    await db.upsert_registry_workflow(
+        workflow_id=watcher.id,
+        key=watcher.key,
+        title=watcher.title,
+        description=watcher.description,
+        executor=watcher.executor,
+        definition_repo_id="registry/workflows",
+        definition_path=watcher.definition_path,
+        current_commit_sha="f" * 40,
+        version_label=watcher.definition["version"],
+        definition=watcher.definition,
+    )
+    watched, _ = await db.create_run(
+        project_id=project.id, workflow_id=watcher.id, input_payload={}
+    )
+    report = f"reports/competitor-watch/{watched.id}.md"
+    revision = storage.repo.edit({report: watch_report().encode()})
+    await db.pool.execute(
+        "UPDATE workflow_runs SET status='succeeded', canonical_commit_sha=$2, artifact_path=$3, "
+        "finished_at=now(), lease_active=false WHERE id=$1",
+        watched.id,
+        revision,
+        report,
+    )
     run = await create()
     await activities.content_plan_execute(str(run.id))
     saved = await db.get_run(run.id)
@@ -249,10 +276,14 @@ async def test_the_planner_schedules_all_three_kinds_from_its_research(publicati
             path=legacy.plan_path(configured.id),
         )
     )
-    items = [i for b in plan["batches"] for i in b["items"]]
+    items = [i for b in plan["batches"] for i in b["items"] if not i.get("source")]
     assert [legacy.item_kind(i) for i in items] == ["article", "answer", "refresh"]
     assert items[2]["destination"] == "https://example.com/pricing"
     assert any(source.startswith("refresh:") for source in items[2]["source_ids"])
+    watched_items = [i for b in plan["batches"] for i in b["items"] if i.get("source")]
+    assert [i["title"] for i in watched_items] == ["Linear alternative", "Height alternative"]
+    context = await activities.saved(run.id, "context")
+    assert context["competitor_watch"]["path"] == report
     report = (
         await storage.read_canonical_artifact(
             repo_id=project.state_repo_id,
@@ -261,3 +292,141 @@ async def test_the_planner_schedules_all_three_kinds_from_its_research(publicati
         )
     ).decode()
     assert "Kind: answer page" in report and "Kind: page refresh" in report
+
+
+# competitor.watch: material competitor changes become comparison items.
+
+WATCH_EVIDENCE = {
+    "version": 1,
+    "checked_at": "2026-09-28T10:00:00Z",
+    "competitors": [
+        {
+            "id": "linear.app",
+            "name": "Linear",
+            "source": "input",
+            "pages": [{"url": "https://linear.app/pricing", "kind": "pricing", "status": "read"}],
+        },
+        {
+            "id": "height.app",
+            "name": "Height",
+            "source": "keyword_plan",
+            "pages": [{"url": "https://height.app/pricing", "kind": "pricing", "status": "read"}],
+        },
+    ],
+}
+
+
+def watch_report(status="changes", evidence=WATCH_EVIDENCE):
+    block = json.dumps(evidence, separators=(",", ":"))
+    return f"""# Competitor watch, 2026-09-28
+
+Status: {status}
+Watched: Linear (linear.app, from input); Height (height.app, from keyword_plan)
+Previous check: 2026-09-21T10:00:00Z in reports/competitor-watch/earlier.md
+Coverage: 2 of 2 pages read
+
+Linear raised its Standard plan; a comparison page fits while the gap is fresh.
+
+## What changed
+- **Linear**: Standard price_monthly 8 -> 10 (https://linear.app/pricing). Pro costs less.
+- **Height**: free tier removed (https://height.app/pricing). The free plan still holds.
+- **Height**: Pro seat_minimum 1 -> 3 (https://elsewhere.example/height). Seats matter.
+- **Unknown Co**: price cut (https://unknown.example/pricing). Not watched.
+
+## Suggested responses
+Nothing needs a response this week.
+
+```tin-competitor-watch
+{block}
+```
+"""
+
+
+def watch(report=None):
+    return {
+        "run_id": "r1",
+        "revision": "c" * 40,
+        "path": "reports/competitor-watch/r1.md",
+        "changes": watch_changes(report or watch_report()),
+    }
+
+
+def watched_context(*extra_pages):
+    data = typed_context()
+    data["research"]["rows"] += competitor_rows(watch())
+    data["research"]["page_candidates"] += [{"url": url} for url in extra_pages]
+    return data
+
+
+def test_a_watch_report_yields_only_backed_material_changes():
+    changes = watch_changes(watch_report())
+    assert [(c["competitor"], c["url"]) for c in changes] == [
+        ("linear.app", "https://linear.app/pricing"),
+        ("height.app", "https://height.app/pricing"),
+        # A line citing another site is backed by the competitor's own page instead.
+        ("height.app", "https://height.app/pricing"),
+    ]
+    rows = competitor_rows(watch())
+    assert [row["source_id"] for row in rows] == ["competitor:linear.app", "competitor:height.app"]
+    assert len(rows[1]["data"]["changes"]) == 2
+    for quiet in ("no-change", "baseline", "diagnostic"):
+        assert watch_changes(watch_report(status=quiet)) == []
+    assert watch_changes(watch_report().replace("```tin-competitor-watch", "```json")) == []
+
+
+def test_competitor_changes_become_comparison_items_that_cite_the_report():
+    data = watched_context("https://example.com/vs/linear")
+    plan, added = editorial.competitor_items(data, data["plan"], pages())
+    items = {i["id"]: i for b in plan["batches"] for i in b["items"]}
+    assert len(added) == 2 and all(items[i]["source"] == "competitor.watch" for i in added)
+    linear, height = (items[i] for i in added)
+    # The site already compares against Linear: refresh that page; Height gets a new page.
+    assert linear["kind"] == "refresh" and linear["destination"] == "https://example.com/vs/linear"
+    assert height["title"] == "Height alternative" and "kind" not in height
+    assert height["source_ids"] == ["competitor:height.app"]
+    assert height["evidence"] == "https://height.app/pricing"
+    assert "against https://height.app/pricing" in height["verification"][0]
+    assert legacy.parse_plan(canonical_json(plan)) == plan
+    assert "From: competitor.watch" in legacy.render_plan(plan, label="Plan")
+
+
+def test_competitor_items_are_deduplicated_and_capped():
+    data = watched_context()
+    data["plan"]["batches"][3]["items"] = [
+        {**item("existing"), "title": "Linear vs Example", "intent": "Compare with Linear"}
+    ]
+    data["editable"] = [b["id"] for b in data["plan"]["batches"] if b["id"] != "week_04"]
+    plan, added = editorial.competitor_items(data, data["plan"], pages())
+    assert [i["title"] for b in plan["batches"] for i in b["items"] if i["id"] in added] == [
+        "Height alternative"
+    ]
+    # A second pass over the same report adds nothing.
+    again, more = editorial.competitor_items({**data, "plan": plan}, plan, pages())
+    assert more == [] and again == plan
+    many = deepcopy(WATCH_EVIDENCE)
+    many["competitors"] = [
+        {
+            **many["competitors"][0],
+            "id": f"rival{i}.com",
+            "name": f"Rival {i}",
+            "pages": [
+                {"url": f"https://rival{i}.com/pricing", "kind": "pricing", "status": "read"}
+            ],
+        }
+        for i in range(5)
+    ]
+    report = watch_report(evidence=many).replace(
+        "- **Linear**",
+        "\n".join(f"- **Rival {i}**: price up (https://rival{i}.com/pricing)." for i in range(5))
+        + "\n- **Linear**",
+    )
+    capped = typed_context()
+    capped["research"]["rows"] += competitor_rows(watch(report))
+    _, added = editorial.competitor_items(capped, capped["plan"], pages())
+    assert len(added) == editorial.MAX_COMPETITOR_ITEMS == 3
+
+
+def test_no_competitor_report_changes_nothing():
+    data = typed_context()
+    plan, added = editorial.competitor_items(data, data["plan"], pages())
+    assert added == [] and plan == data["plan"]

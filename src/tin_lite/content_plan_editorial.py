@@ -183,11 +183,19 @@ class TypedPortfolio(legacy.Strict):
     opportunities: list[TypedOpportunity] = Field(max_length=81)
 
 
+# competitor.watch rows: a named competitor's material changes, from its newest report.
+COMPETITOR_SOURCE_PREFIX = "competitor:"
+MAX_COMPETITOR_ITEMS = 3
+COMPARISON_WORDS = frozenset(
+    {"vs", "versus", "alternative", "alternatives", "compare", "comparison", "comparisons"}
+)
+
 POLICY = {
     **V6_POLICY,
     "version": "content-editorial-v7",
     "plan_kinds": "typed-v1",
     "max_refresh_sources": MAX_REFRESH_SOURCES,
+    "competitor_items": MAX_COMPETITOR_ITEMS,
 }
 INSTRUCTIONS = (
     V6_INSTRUCTIONS
@@ -202,6 +210,9 @@ ranks just below the top results, or a page decision marked it for a refresh. A 
 update_page with the inspected page_id of exactly that page, and its brief names the searches
 the title, meta description, H1 and opening answer should meet. Never plan a refresh and an
 article update for the same page. Use answer and refresh only with those sources.
+Rows whose source_id starts with competitor: are material changes the newest competitor.watch
+report found at a named competitor. Tin adds comparison or refresh items for them itself, so do
+not plan another page about those competitors.
 """
 )
 MODEL_SCHEMA = TypedPortfolio.model_json_schema()
@@ -504,10 +515,17 @@ def allocate(context, proposed, pages, aliases, *, typed=False):
         for item in b["items"]
     }
     rows = {row["source_id"]: row for row in (context["research"] or {}).get("rows", [])}
+    retained = {i["id"]: i for b in context["plan"]["batches"] for i in b["items"]}
     items, decisions, positioning_removed = [], [], 0
     for opportunity in opportunities:
         item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale", "kind"}}
         kind = opportunity.get("kind", legacy.ARTICLE)
+        # A retained item Tin added from a report keeps where it came from.
+        provenance = {
+            key: retained[opportunity["id"]][key]
+            for key in ("source", "evidence")
+            if typed and retained.get(opportunity["id"], {}).get(key)
+        }
         if "positioning" in context:
             # Positioning comes from the project's files, so a brief never carries its own.
             brief, removed = without_positioning(item["brief"])
@@ -541,6 +559,7 @@ def allocate(context, proposed, pages, aliases, *, typed=False):
         item.update(destination=destination, readiness="needs_verification")
         if kind != legacy.ARTICLE:
             item["kind"] = kind
+        item.update(provenance)
         items.append(item)
         decisions.append(
             {
@@ -601,6 +620,118 @@ def allocate(context, proposed, pages, aliases, *, typed=False):
     return legacy.validate_change(
         context["plan"], plan, editable=set(context["editable"])
     ), coverage
+
+
+def _words(text):
+    return set(re.findall(r"[a-z0-9]+", (text or "").casefold()))
+
+
+def _about(text, competitor):
+    """Whether text compares against this competitor: its name or host label, and a
+    comparison word (vs, alternative, compare)."""
+    words = _words(text)
+    names = [_words(competitor["name"]), {competitor["competitor"].split(".")[0]}]
+    return bool(words & COMPARISON_WORDS) and any(name and name <= words for name in names)
+
+
+def competitor_items(context, plan, pages, *, cap=MAX_COMPETITOR_ITEMS):
+    """Comparison items for the newest competitor.watch report's material changes (v7).
+
+    One item per competitor with backed changes, at most `cap` a run, in the earliest editable
+    batch with room: an article ("<name> alternative") when the site has no comparison page
+    for that competitor, else a refresh of that page. A competitor some plan item already
+    compares against, or whose comparison page an item already updates, adds nothing. Every
+    item cites the report's row, carries `source: competitor.watch` and the competitor page
+    that backs it, and asks the draft to check each claim against that page.
+    Returns the plan and the IDs added; no report adds nothing.
+    """
+    rows = [
+        row
+        for row in (context["research"] or {}).get("rows", [])
+        if row["source_id"].startswith(COMPETITOR_SOURCE_PREFIX)
+    ]
+    if not rows:
+        return plan, []
+    plan = deepcopy(plan)
+    items = [item for batch in plan["batches"] for item in batch["items"]]
+    # The site's own pages, by address (and crawl title): never by body text, which may only
+    # mention a competitor in passing.
+    site = [
+        (page.get("url"), page.get("title") or "")
+        for page in (context["research"] or {}).get("page_candidates", [])
+    ] + [
+        (page.get("url"), "")
+        for page in pages.get("pages", [])
+        if page.get("status") == "inspected"
+    ]
+    site = [(url, title) for url, title in site if clean_url(url, plan["host"])]
+    editable = [b for b in plan["batches"] if b["id"] in context["editable"]]
+    added = []
+    for row in rows:
+        if len(added) >= cap:
+            break
+        competitor = row["data"]
+        url = competitor["changes"][0]["url"]
+        if any(
+            _about(" ".join([i["title"], i["intent"], i["destination"]]), competitor)
+            or (
+                i.get("source")
+                and urlsplit(i.get("evidence", "")).hostname == urlsplit(url).hostname
+            )
+            for i in items
+        ):
+            continue
+        page = next(
+            (
+                address
+                for address, title in site
+                if _about(urlsplit(address).path.replace("-", " ").replace("/", " "), competitor)
+                or _about(title or "", competitor)
+            ),
+            None,
+        )
+        if page and any(i["destination"].rstrip("/") == page.rstrip("/") for i in items):
+            continue
+        batch = next((b for b in editable if len(b["items"]) < context["capacity"]), None)
+        if batch is None:
+            break
+        name = competitor["name"]
+        seen = "; ".join(f"{c['change']} ({c['url']})" for c in competitor["changes"][:3])
+        identity = re.sub(r"[^a-z0-9]+", "-", competitor["competitor"].casefold()).strip("-")
+        item = {
+            "id": f"competitor-{identity}"[:48] + "-" + digest([row, plan["program_id"]])[:8],
+            "title": f"Refresh the {name} comparison page" if page else f"{name} alternative",
+            "brief": (
+                f"competitor.watch reported a material change at {name}: {seen}. "
+                + (
+                    "Bring this comparison page's title, meta description, H1 and opening "
+                    "answer in line with what changed."
+                    if page
+                    else f"Write a comparison page for buyers weighing {name} after this change."
+                )
+                + f" Compare like for like from {name}'s own page as it reads today, and present "
+                "the product the way the positioning files do."
+            )[:1800],
+            "intent": f"Buyers weighing {name} after its latest change compare alternatives."[:500],
+            "action": "update_page" if page else "new_page",
+            "destination": page or "",
+            "source_ids": [row["source_id"]],
+            "verification": [
+                f"Check every claim about {name} against {url} as it reads today, and cite it "
+                "beside the claim; leave out anything that page no longer supports."[:500],
+                "Take the product's own plans, prices and capabilities from the positioning "
+                "files and the site, never from the competitor report.",
+            ],
+            "readiness": "needs_verification",
+            **({"kind": legacy.REFRESH} if page else {}),
+            "source": legacy.COMPETITOR_WATCH,
+            "evidence": url,
+        }
+        batch["items"].append(item)
+        items.append(item)
+        added.append(item["id"])
+    plan = legacy.validate_change(context["plan"], plan, editable=set(context["editable"]))
+    return plan, added
 
 
 def check_answer(item, rows):

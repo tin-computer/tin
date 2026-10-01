@@ -27,6 +27,8 @@ from tin_lite.content_plan import (
     validate_change,
 )
 from tin_lite.content_plan_sources import (
+    competitor_rows,
+    competitor_watch,
     context_files,
     page_decision_refreshes,
     positioning_files,
@@ -456,6 +458,17 @@ class ContentPlanActivities:
                 files = await context_files(
                     storage=self.storage, project=project, revision=head, paths=selected
                 )
+                watch = None
+                if getattr(contract, "TYPED", False) and research.get("rows") is not None:
+                    # Material competitor changes become comparison items (v7).
+                    watch = await competitor_watch(
+                        database=self.db, storage=self.storage, project=project
+                    )
+                    if watch:
+                        research = {
+                            **research,
+                            "rows": [*research["rows"], *competitor_rows(watch)],
+                        }
                 context = await self.save(
                     run_id,
                     "context",
@@ -479,6 +492,9 @@ class ContentPlanActivities:
                             }
                             if contract.POLICY.get("positioning_files") == "project-v1"
                             else {}
+                        ),
+                        **(
+                            {"competitor_watch": watch} if getattr(contract, "TYPED", False) else {}
                         ),
                         "editable": editable,
                         "instruction": amendment["instruction"]
@@ -537,6 +553,18 @@ class ContentPlanActivities:
                         aliases,
                         typed=getattr(contract, "TYPED", False),
                     )
+                    if getattr(contract, "TYPED", False):
+                        plan, added = editorial.competitor_items(
+                            context, plan, pages, cap=contract.POLICY["competitor_items"]
+                        )
+                        quality["competitor_items"] = added
+                        quality["planned_items"] += len(added)
+                        quality["unused_capacity"] -= len(added)
+                        quality["empty_batches"] = sum(
+                            not b["items"]
+                            for b in plan["batches"]
+                            if b["id"] in context["editable"]
+                        )
                     quality["model_page_text_limit"] = data["model_page_text_limit"]
                 else:
                     proposed = await self.model(run, context, contract=contract)

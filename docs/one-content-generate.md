@@ -33,6 +33,15 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
   refresh targets a marked page (code adds the page's `refresh:` source when the model left it
   out). An article update and a refresh of one page merge into the article.
 - Older contracts (v1 to v6) keep their untyped schema and allocation.
+- **Competitor changes.** When a plan is built or amended, Tin reads the newest succeeded
+  `competitor.watch` report (`reports/competitor-watch/{run}.md`) server-side. Each named
+  competitor with a material change in its `## What changed` lines, backed by a page on that
+  competitor's own site, becomes one item: a `refresh` of the site's comparison or alternatives
+  page for that competitor when one exists (by URL or crawl title), else an article
+  ("<name> alternative"). Items carry `source: competitor.watch`, the `evidence` page and a
+  `competitor:<host>` research row with the report path; their first check is every claim
+  about the competitor against that page. A competitor some item already compares against adds
+  nothing, at most three are added a run, and no report (or a quiet one) changes nothing.
 
 ## content.generate 1.9.0 drafts all three
 
@@ -94,13 +103,14 @@ did when its children moved before: its next published revision carries the new 
 ## Merging with #239
 
 PR #239 (`feat/public-loop-workflows`, rebased on main at d69d337) merges with this branch with
-two conflicts, and needs three changes:
+four conflicts, and needs these changes (checked by a trial merge and the full suite):
 
 - **programs.json conflicts.** Both branches change the organic program's workflow list next to
   each other. Keep both: drop `content.refresh` and `content.answer_page` (here) and
   `organic.mention_backlinks` and `organic.error_surface` (#239), and keep #239's five loop
   packages.
 - **docs/workflows.md conflicts.** Regenerate it with `scripts/dump_catalog.py`.
+- **docs/public-plugin.md and test_mcp_public.py conflict** over the plugin count (below).
 - **#239's freeze test must allow the retirement.** `test_planned_url_changes.py` pins
   content.refresh's definition at main's 1.0.0 digest. Here it is 1.1.0 with
   `public_discovery: false` and a "Retired:" description, and nothing else changed
@@ -110,6 +120,8 @@ two conflicts, and needs three changes:
   reader for this work. `content_plan_sources.page_decision_refreshes` should return it:
   read `planned_url_changes.EFFICACY_PATH` at the plan's revision and pass the text and `today`.
   `content_refresh.plan_candidates` already merges those rows into the refresh sources.
+- **#239's onboarding test.** `test_onboarding.py` reads `rows["content.refresh"]` as a visible
+  sample; content.refresh is hidden here, so it needs another sample (`content.generate`).
 - **Plugin count.** Both branches remove ChatGPT tools, so `docs/public-plugin.md` and
   `test_mcp_public.py` need one recount: 27 native workflows and 16 packages, for 43 starts,
   with `start_answer_page` among the hidden tools.

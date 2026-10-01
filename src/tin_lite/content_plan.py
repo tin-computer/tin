@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import calendar
+import re
 from copy import deepcopy
 from datetime import date, timedelta
 from typing import Literal
@@ -64,6 +65,9 @@ def item_kind(item: dict) -> str:
 
 # How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
 KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+# A workflow whose report Tin turned into this item itself, with the page that backs it.
+COMPETITOR_WATCH = "competitor.watch"
+OPTIONAL_FIELDS = ("kind", "source", "evidence")
 
 
 class ContentItem(Strict):
@@ -79,12 +83,17 @@ class ContentItem(Strict):
     # Hidden from the JSON schema, so the pinned v1 model contract stays byte for byte, and
     # left out of the file when absent, so older plans and their brief digests are unchanged.
     kind: SkipJsonSchema[Kind | None] = None
+    # Set only on items Tin adds from another workflow's report (competitor.watch), with the
+    # public page that backs the item. Hidden and left out when absent, like kind.
+    source: SkipJsonSchema[Literal["competitor.watch"] | None] = None
+    evidence: SkipJsonSchema[str | None] = Field(default=None, max_length=500)
 
     @model_serializer(mode="wrap")
-    def _without_absent_kind(self, handler):
+    def _without_absent_fields(self, handler):
         data = handler(self)
-        if data.get("kind") is None:
-            data.pop("kind", None)
+        for name in OPTIONAL_FIELDS:
+            if data.get(name) is None:
+                data.pop(name, None)
         return data
 
 
@@ -135,6 +144,14 @@ class ContentPlan(Strict):
                     )
                 if item.kind == REFRESH and item.action != "update_page":
                     raise ValueError("A page refresh updates an existing page at its URL.")
+                if (item.source is None) != (item.evidence is None) or (
+                    item.evidence is not None
+                    and not re.fullmatch(r"https://[^\s]{4,490}", item.evidence)
+                ):
+                    raise ValueError(
+                        "An item from another workflow's report names that report and the "
+                        "public HTTPS page that backs it."
+                    )
                 if item.destination:
                     url = urlsplit(item.destination)
                     if (
@@ -368,6 +385,11 @@ def render_plan(
                 *(
                     [f"Kind: {KIND_LABELS[item['kind']]}", ""]
                     if item.get("kind") in KIND_LABELS
+                    else []
+                ),
+                *(
+                    [f"From: {item['source']} · {markdown_text(item['evidence'])}", ""]
+                    if item.get("source")
                     else []
                 ),
                 f"Destination: {markdown_text(item['destination']) or 'To be decided'}",
