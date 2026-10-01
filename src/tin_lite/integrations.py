@@ -1900,8 +1900,11 @@ class IntegrationService:
         expected_binding: GitHubRepositoryBinding,
         commit_title: str,
         run_id: UUID | None = None,
+        new_paths: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Merge one pull request Tin opened, only while its branch holds exactly `files`.
+
+        Each of `new_paths` must be a file the pull request adds, never one it rewrites.
 
         GitHub merges only if the head is still `expected_head_sha`, so nothing pushed after
         Tin checked the branch can ride along. The effect is receipted under `execution_key`;
@@ -2005,7 +2008,12 @@ class IntegrationService:
             headers = self._github_headers(token)
             root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
             await self._github_validate_pull_request_files(
-                headers=headers, root=root, number=number, head_sha=expected_head_sha, files=files
+                headers=headers,
+                root=root,
+                number=number,
+                head_sha=expected_head_sha,
+                files=files,
+                new_paths=new_paths,
             )
             state = await self.github_pull_request_merge_state(
                 project_id=project_id, repository=repository, number=number
@@ -2074,8 +2082,11 @@ class IntegrationService:
             )
             return {"merged": True, **summary}
 
-    async def _github_validate_pull_request_files(self, *, headers, root, number, head_sha, files):
-        """The pull request changes exactly `files`, with exactly their content, at head_sha."""
+    async def _github_validate_pull_request_files(
+        self, *, headers, root, number, head_sha, files, new_paths=()
+    ):
+        """The pull request changes exactly `files`, with exactly their content, at head_sha,
+        and adds each of `new_paths` rather than rewriting an existing file."""
         response = await self._client.get(
             f"{root}/pulls/{number}/files", headers=headers, params={"per_page": 100}
         )
@@ -2088,6 +2099,9 @@ class IntegrationService:
             for item in changes
         ):
             raise IntegrationAuthorizationError("The pull request changed after Tin opened it")
+        added = {item["filename"] for item in changes if item["status"] == "added"}
+        if not set(new_paths) <= added:
+            raise IntegrationAuthorizationError("The page would replace an existing file")
         for path, content in expected.items():
             response = await self._client.get(
                 f"{root}/contents/{quote(path, safe='/')}",

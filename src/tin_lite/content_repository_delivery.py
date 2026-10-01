@@ -638,10 +638,11 @@ async def publish_after_pull_request(
     """Honor a commit-to-main setting after the adaptation's PR opens, or leave it open.
 
     Only a run started by the page's approval, with the founder's setting to commit to
-    main, is merged: when its patch is the approved page alone, its branch still holds
-    exactly that patch, and GitHub calls it clean (no conflicts, no failing or pending
-    checks, no required review) within a few minutes. Otherwise the PR stays open and
-    the receipt says why. The outcome is recorded once; retries reuse it.
+    main, is merged: when its patch passes `merge_rule`, the page is a file it adds rather
+    than one it rewrites, its branch still holds exactly that patch, and GitHub calls it
+    clean (no conflicts, no failing or pending checks, no required review) within a few
+    minutes. Otherwise the PR stays open and the receipt says why. The outcome is recorded
+    once; retries reuse it.
     """
     source = await saved_source(database, run.id)
     if (source.get("approval") or {}).get("mode") != "github_commit":
@@ -699,6 +700,7 @@ async def publish_after_pull_request(
                         run=run,
                         source=source,
                         manifest=manifest,
+                        page=proof["article_path"],
                         number=number,
                         branch=published.get("pull_request_branch"),
                         sleep=sleep,
@@ -744,7 +746,9 @@ async def publish_after_pull_request(
             raise
 
 
-async def _merge_when_clean(*, integrations, run, source, manifest, number, branch, sleep, clock):
+async def _merge_when_clean(
+    *, integrations, run, source, manifest, page, number, branch, sleep, clock
+):
     binding = binding_from(source)
     deadline = clock().timestamp() + MERGE_WAIT_SECONDS
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
@@ -789,6 +793,7 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
                     files=tuple(GitHubFileChange(**item) for item in manifest["files"]),
                     expected_binding=binding,
                     commit_title=f"{manifest['title']} (#{number})"[:200],
+                    new_paths=(page,),
                 )
             except IntegrationAuthorizationError as exc:
                 # A changed branch or connection is final; the PR stays for the founder.
