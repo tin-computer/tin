@@ -40,7 +40,9 @@ balance and project limits. It charges verified usage, not the estimate.
    and durable files. Do not invent automatic resume support or blindly repurchase
    uncertain calls. Existing bounded unknown-cost reconciliation still applies.
    A terminal run's unresolved bill retains monetary liability but no execution slot;
-   active children and leases still count toward the project's concurrency limit.
+   active children and leases still count toward the project's concurrency limit. A run
+   waiting for review or an answer takes no slot either. When it resumes it counts again
+   but is not admitted again, so it continues even over the limit and new starts wait.
    Parent steps aggregate once, and terminal settlement creates one ledger charge.
 5. **Quiet UI.** Remove the per-run approval dialog and the reserved-balance line.
    Preserve stable request IDs through ambiguous responses. Show configured estimated

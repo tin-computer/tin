@@ -56,16 +56,24 @@ _COMMITTED_LIABILITY_SQL = """LEAST(maximum_nanos,
     ((committed_nanos + CASE WHEN committed_nanos>0
       THEN (terms->>'execution_fee_nanos')::bigint ELSE 0 END
       + 9999999) / 10000000) * 10000000)"""
-# The admitted estimate of a per-call root (aliased b) that can buy work now. begin_operation
-# needs a 'reserved' root and a pending or running run, so only those count. A root awaiting
-# reconciliation ('pending'), one whose runs have all ended but that has not settled yet, and
-# one whose runs wait on the founder (needs_input, paused) count at their committed liability
-# alone: nothing in them buys a call until a person acts, and each call is then checked
-# against the wallet again.
-_UNSTARTED_ESTIMATE_SQL = """CASE WHEN b.status='reserved' AND EXISTS (
+# A run that can do work now: it is pending or running, or it still holds its sandbox lease
+# without waiting on its founder. Only these runs buy calls (begin_operation needs pending or
+# running) or occupy an execution slot. A run waiting on its founder (needs_input, paused)
+# does neither until a person acts, and one that has ended does neither once its lease is
+# released, even before its bill settles.
+_RUN_CAN_WORK_SQL = """(tree_run.status IN ('pending','running')
+    OR (tree_run.lease_active AND tree_run.status NOT IN ('needs_input','paused')))"""
+# A root budget (aliased b) with such a run anywhere in its tree. One fragment for the wallet's
+# set-aside, the monthly limit and the concurrent-run limit, so they cannot drift apart.
+_ROOT_CAN_WORK_SQL = f"""EXISTS (
         SELECT 1 FROM billing_run_budgets tree JOIN workflow_runs tree_run
           ON tree_run.id=tree.run_id
-        WHERE tree.root_run_id=b.run_id AND tree_run.status IN ('pending','running'))
+        WHERE tree.root_run_id=b.run_id AND {_RUN_CAN_WORK_SQL})"""  # noqa: S608 — static SQL, no caller text
+# The admitted estimate of a per-call root that can buy work now ('reserved' and working).
+# A root awaiting reconciliation ('pending'), one whose runs have ended, and one whose runs
+# wait on the founder count at their committed liability alone; each later call is checked
+# against the wallet again.
+_UNSTARTED_ESTIMATE_SQL = f"""CASE WHEN b.status='reserved' AND {_ROOT_CAN_WORK_SQL}
     THEN COALESCE((b.terms->'estimate'->>'amount_nanos')::bigint, b.maximum_nanos)
     ELSE 0 END"""
 
@@ -89,7 +97,8 @@ def project_limit_message(policy, estimate, usage) -> str | None:
         active = usage["active"]
         return (
             f"{active} run{'' if active == 1 else 's'} {'is' if active == 1 else 'are'} "
-            f"already active; the project's concurrent-run limit is {policy['concurrency']}. "
+            f"already in progress; the project's concurrent-run limit is "
+            f"{policy['concurrency']}. Runs waiting for your review or answer don't count. "
             "Wait for a run to finish, or raise the limit with set_project_spending_limits "
             "or on the Billing page."
         )
@@ -755,6 +764,10 @@ class BillingService:
         # wallet_credits. Otherwise any number of parallel starts pass before their first
         # paid call and then fail mid-work. begin_operation keeps checking actual
         # commitments for runs already admitted.
+        # Only a root with a run that can do work now takes a concurrent-run slot, so runs
+        # waiting for review or an answer don't block new work. A waiting run that resumes
+        # is not admitted again: it continues even if that puts the project over its limit,
+        # and new starts wait until the count drops below it.
         usage = await conn.fetchrow(
             f"""SELECT COALESCE(sum(CASE WHEN status='settled'
                                         AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
@@ -765,12 +778,8 @@ class BillingService:
                                                       {_COMMITTED_LIABILITY_SQL})
                                       WHEN status<>'settled' THEN maximum_nanos
                                       ELSE 0 END),0) AS exposure,
-                      count(*) FILTER(WHERE status<>'settled' AND EXISTS (
-                        SELECT 1 FROM billing_run_budgets child
-                        JOIN workflow_runs r ON r.id=child.run_id
-                        WHERE child.root_run_id=b.root_run_id
-                          AND (r.status NOT IN ('succeeded','failed','stopped')
-                               OR r.lease_active))) AS active
+                      count(*) FILTER(WHERE status<>'settled'
+                                        AND {_ROOT_CAN_WORK_SQL}) AS active
                FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
             run["project_id"],
             period,

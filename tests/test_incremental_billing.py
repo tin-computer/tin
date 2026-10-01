@@ -216,11 +216,13 @@ def test_project_limit_message_names_the_limit_that_blocks_admission():
         "$10.00 project limit ($7.25 already committed)."
     )
     one = project_limit_message(policy, 5_000_000_000, {"exposure": 0, "active": 1})
-    assert one.startswith("1 run is already active; the project's concurrent-run limit is 1.")
+    assert one.startswith("1 run is already in progress; the project's concurrent-run limit is 1.")
     many = project_limit_message(
         {**policy, "concurrency": 2}, 5_000_000_000, {"exposure": 0, "active": 3}
     )
-    assert many.startswith("3 runs are already active; the project's concurrent-run limit is 2.")
+    assert many.startswith(
+        "3 runs are already in progress; the project's concurrent-run limit is 2."
+    )
     assert "set_project_spending_limits" in many
 
 
@@ -601,3 +603,82 @@ async def test_start_check_and_billing_page_agree_on_held_and_available(billed):
     assert (view["reserved_usd"], set_aside, available) == ("1.00", "2.50", "6.50")
     await direct(f, "organic.keyword_plan", plan(6))
     assert await wallet_view(f) == ("1.00", "8.50", "0.50")
+
+
+async def set_status(f, runs, status, *, lease=False, executor=None):
+    await f.db.pool.execute(
+        """UPDATE workflow_runs SET status=$2, lease_active=$3,
+           executor=COALESCE($4, executor) WHERE id = ANY($1::uuid[])""",
+        [run.id for run in runs],
+        status,
+        lease,
+        executor,
+    )
+
+
+async def ten_slot_project(f):
+    await fund(f, 3000)
+    await limits(f, monthly_usd=500, revision=1, concurrency=10)
+
+
+async def test_runs_waiting_for_review_do_not_hold_concurrent_run_slots(billed):
+    """Founder, 10/1: '10 runs are already active' with 8 running and 2 waiting for review.
+
+    A founder who has not reviewed yet must not block new work, including scheduled loops.
+    """
+    f = billed
+    await ten_slot_project(f)
+    running = [await direct(f) for _ in range(8)]
+    await set_status(f, running, "running", lease=True)
+    quiz, social_plan = await direct(f), await direct(f)
+    # A procedure waiting on review, and a task in review that keeps its sandbox lease.
+    await set_status(f, [quiz], "needs_input")
+    await set_status(f, [social_plan], "needs_input", lease=True, executor="project.task")
+    paused = await direct(f)
+    await set_status(f, [paused], "paused")
+    ended = await direct(f)
+    await committed(f, ended, 100_000_000)
+    await set_status(f, [ended], "failed")  # Ended; its bill has not settled yet.
+    ninth = await direct(f)
+    assert ninth.status.value == "pending"
+    await direct(f)  # The tenth in progress.
+    with pytest.raises(BillingError) as error:
+        await direct(f)
+    assert error.value.code == "project_limit"
+    assert str(error.value).startswith(
+        "10 runs are already in progress; the project's concurrent-run limit is 10. "
+        "Runs waiting for your review or answer don't count."
+    )
+
+
+async def test_ten_running_runs_fill_ten_slots(billed):
+    f = billed
+    await ten_slot_project(f)
+    running = [await direct(f) for _ in range(9)]
+    await set_status(f, running, "running", lease=True)
+    # An ended run whose sandbox lease has not been released still occupies its slot.
+    releasing = await direct(f)
+    await set_status(f, [releasing], "failed", lease=True)
+    with pytest.raises(BillingError, match="10 runs are already in progress") as error:
+        await direct(f)
+    assert error.value.code == "project_limit"
+
+
+async def test_a_resumed_run_continues_over_the_limit_and_new_starts_wait(billed):
+    """Resuming is not a new start: the run was admitted already, so it is not refused."""
+    f = billed
+    await ten_slot_project(f)
+    waiting = await direct(f)
+    await set_status(f, [waiting], "needs_input", lease=True, executor="project.task")
+    running = [await direct(f) for _ in range(10)]
+    await set_status(f, running, "running", lease=True)
+    # The founder answers: the task runs again and buys its next call without admission.
+    await set_status(f, [waiting], "running", lease=True)
+    await operation(f, waiting, "after-answer", 100_000_000)
+    with pytest.raises(BillingError, match="11 runs are already in progress"):
+        await direct(f)
+    await finish(f, running[0])
+    with pytest.raises(BillingError, match="10 runs are already in progress"):
+        await direct(f)
+    await finish(f, running[1])
+    await direct(f)

@@ -111,7 +111,12 @@ subscription, key, or webhook was changed.
   Hosted default policies start with $10.
 - A start blocked by project limits keeps the `project_limit` code (HTTP 402) and names the one
   limit that applies: no spending policy, the per-run limit against the estimate, this month's
-  limit with the amount already committed, or the concurrent-run limit with the active count.
+  limit with the amount already committed, or the concurrent-run limit with the count of runs in
+  progress. Only a root with a pending or running run, or one still holding its sandbox lease
+  outside a wait on its founder, takes a slot; runs waiting for review or an answer, paused runs
+  and ended runs do not, whether or not their bill has settled. A waiting run that resumes is
+  not admitted again: it continues even if the project is then over its limit, and new starts
+  wait until the count drops below it.
 - Direct plan-file edits remain ordinary project-file operations. Paid **AI amendments** through
   the content-program revision API are not enrolled yet: that alternate start cannot supply an
   accepted quote, so it is rejected in billed workspaces. Audit, keyword planning, the organic
