@@ -5,12 +5,14 @@
 `website.change` is meant to become the one workflow in the organic traffic system that writes
 to the founder's website: content drafts, page decisions (URL changes), the page tree, the
 blog index and technical fixes would all reach the site through it, after the founder approves
-them. Today it makes two kinds of change, approved pages and the technical fixes the latest
-audit found; content.deliver still opens its own pull requests for pages its approval starts.
+them. Today it makes four kinds of change: approved pages, the technical fixes the latest
+audit found, the URL changes page decisions and the site plan made, and the blog index plan.
+content.deliver still opens its own pull requests for pages its approval starts.
 
 A change the founder approved publishes: Tin opens the pull request and merges it once the
 repository's required checks pass. For a page, approved means approved with commit to main as
-its delivery; for a technical fix, a recorded approval of its change row. Anything else opens
+its delivery; for every other change, a recorded approval of its change row, given in
+Decisions or over MCP. Anything else opens
 a pull request that the founder merges. A change to a protected page, such as the sign-in page
 another app shares or a page the founder listed in the project's settings, always waits for
 the founder, approved or not.
@@ -18,6 +20,9 @@ the founder, approved or not.
 - Phase 1 (1.0.0) puts an approved page on the site.
 - 1.1.0 adds the decisions below and phase 2: the audit finds; website.change plans, fixes and
   publishes ([Technical changes](#phase-2-technical-changes-from-the-latest-audit)).
+- 1.2.0 adds phase 3: planned URL changes and the blog index
+  ([Phase 3](#phase-3-planned-url-changes-and-the-blog-index)), and change rows get cards in
+  Decisions ([Decisions](#decisions-cards)).
 
 ## Decided (Emre, 10/1)
 
@@ -139,7 +144,8 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | read one | `GET /api/projects/{id}/website-changes/{change_id}` | |
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
-| preview technical changes | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
+| preview a source's changes (`source`: `audit`, `planned`, `blog_index`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
+| open judgment calls | `GET /api/projects/{id}/website-changes/questions` | (in `preflight_website_change`) |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
 
@@ -204,8 +210,8 @@ and the route-folder check treats them as site-wide wherever they sit.
 
 | Field | Meaning |
 | --- | --- |
-| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; #239's `oa_` IDs for planned URL changes. |
-| `source` | `content_draft`, `audit`, `planned_url_change` or `blog_index` (migration 056 renamed the unused `technical_fix` placeholder to `audit`). |
+| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; `planned_url_changes.finding_id`'s `oa_` IDs for planned URL changes; `bi_` for a blog index plan. |
+| `source` | `content_draft`, `audit`, `planned` or `blog_index` (migration 056 renamed the unused `technical_fix` placeholder to `audit`, migration 057 `planned_url_change` to `planned`). |
 | `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`. |
 | `title` | What the founder reads. |
 | `paths` | Site paths or route patterns it touches (`/blog/{slug}`). |
@@ -303,6 +309,82 @@ longer starts, stops or lists technical fixes; `preflight_technical_fix` keeps w
 and in Tin's MCP for older clients. The organic traffic system's technical step still starts
 it on its pinned definition.
 
+## Phase 3: planned URL changes and the blog index
+
+### Planned URL changes (`source: planned`)
+
+`planned_url_changes.py` (moved here from #239, which drops its copy) reads two planner files
+from the project at its current revision. Either may not exist yet; a project that never ran
+the planner contributes nothing, and the preview says so.
+
+| File | Block | Fresh for | Changes |
+| --- | --- | --- | --- |
+| `content/efficacy.md` (page decisions, `organic.content_efficacy`) | `## Decisions block` with a fenced `content.efficacy/1` JSON object; `url_changes[]` of `{from, to, kind: 301 or noindex, reason, confirmed}` | 14 days | redirect, noindex |
+| `reports/organic/site-architecture/SITE_ARCHITECTURE.md` (`organic.site_architecture`) | fenced `site_architecture.redirects/1` JSON between `<!-- redirects.json:start -->` and `<!-- redirects.json:end -->`; `redirects[]` of `{old, new, status: 301 or 308, reason}` | 60 days | redirect |
+
+Each change gets a stable `oa_` ID (`finding_id`: source, kind, from, to) and Tin's suggestion:
+`ask` when either end is a protected page (defaults, the project setting and the run's input),
+else `apply`. A plan redirect wins over the same weekly proposal; a 302 is not a permanent
+move and is left out.
+
+- Each change is one `planned` row: kind `redirect` or `noindex`, both ends as paths. An
+  approval covers the change itself, both ends included.
+- It is planned as a site-fix-v5 repair (`website_change_planned.entry_for`): a redirect as a
+  merge redirect in the site's own redirect config (`vercel.json` or `netlify.toml` redirects,
+  a `_redirects` file, or the framework's redirect config), a noindex in the page's own
+  metadata. From there the audit source's machinery runs unchanged: caps, patch checks, the
+  mode rules, the merge rule and the live check after merge (a redirect is fixed when the old
+  URL redirects to the new one).
+- Deleting a page stays with the founder: the reader never plans one, and the preview lists
+  the plan's deletions under `left_out.manual`.
+- Decided rows stay decided; rows in an open or merged website.change PR are skipped; pending
+  rows the plan no longer proposes are retired.
+
+### The blog index (`source: blog_index`)
+
+`content.blog_index` (#239) is a planner that opens no pull request. Its run writes
+`reports/blog-index/{run_id}/PLAN.md` with one fenced JSON block between
+`<!-- blog-index-patch.json:start -->` and `<!-- blog-index-patch.json:end -->`:
+
+```json
+{"schema": "blog-index-patch/1", "repository": "owner/repo", "base_ref": "<branch>",
+ "base_sha": "<sha the plan read>", "route": "/blog", "summary": "…",
+ "files": [{"path": "…", "action": "create|update", "content": "<full file text>"}],
+ "caps": {"max_files": 5}}
+```
+
+- website.change reads the newest succeeded content.blog_index run's PLAN.md server-side
+  (`website_change_blog_index`). Without one, the source finds no runs and says so.
+- It records one row: change ID `bi_` plus the first 20 hex digits of the SHA-256 of the
+  canonical JSON of `files` (the 20 fit the change-ID shape), kind `index`, the route as its
+  path, and the full SHA-256 as the content an approval covers.
+- Nothing needs judgment, so no Codex session runs: the run opens the pull request with
+  exactly the plan's files and, under the same mode rules, merges it once the required checks
+  pass when the row was approved and touches no protected page (the route, or a file that
+  serves one). The files are re-read from the pinned plan and checked against the approved
+  SHA-256 first.
+- When `base_sha` is not the branch head, Tin asks GitHub what changed since (compare). If any
+  of the plan's files changed upstream, or Tin can't tell, the row stays pending and the start
+  says which file moved. A plan for another branch is refused the same way.
+- Never more than five files, never `package.json`, lockfiles, package-manager settings, CI,
+  deploy settings or secrets, and at most 400 KB.
+
+### Decisions cards
+
+Pending rows and open judgment calls wait in Decisions beside run reviews, in the same list
+and detail card:
+
+- A change card shows its source (Audit fix, Planned URL change, Blog index) and kind, what it
+  does in one line, its pages, the blog index's files, and "Protected: … opens a pull request
+  for you to merge" when a protected page touches it. The list endpoint reports that page
+  (`protected`).
+- Its button row is Decline and Approve, nothing else. Either posts to the existing
+  approve/decline route with a new request ID and the `content_sha256` the card showed, so
+  the decision records who, when and the exact content.
+- A judgment call from the latest preview (`GET …/website-changes/questions`) shows its
+  question and options, with Tin's suggestion marked. It has no buttons: the coding agent
+  answers it with the next run and asks the founder when unsure.
+
 ## How content.deliver relates
 
 content.deliver stays registered and unchanged. Its definition (1.3.0), inputs, prompt, receipt
@@ -322,20 +404,12 @@ two never open two pull requests for the same page.
 
 ## What comes next
 
-- **Phase 3, planned URL changes and the blog index** (after #239): #239's
-  `planned_url_changes.as_selections` already shapes page decisions and the page tree as
-  findings (`planned.redirect`, `planned.noindex`, stable `oa_` IDs). Fed into the same plan,
-  `website_change_audit.row_source` records them as `planned_url_change` rows of kind
-  `redirect` or `noindex`, with both ends of the redirect as paths, so approval, protected
-  paths and publishing work as for audit rows. Still needed: the REPAIRS entries for the two
-  checks, and reading the plan files at a pinned revision. `content.blog_index` hands its
-  planned page over as a `blog_index` row.
-- **The recipe rewrite**: organic.traffic_system's technical step should start website.change
-  with `source: audit` (and the system's `expected_repository` and `repository_serves_site`)
-  instead of organic.technical_fix, and stop reading the technical fix's preview itself. Its
-  judgment calls then go through `preflight_website_change`.
-- **Later**: Decisions cards for pending rows, and the approval path starts website.change
-  instead of content.deliver.
+- **The recipe rewrite**: the organic traffic system's weekly loop should run website.change
+  for each source: `audit` (instead of organic.technical_fix's technical step), `planned`,
+  `blog_index` and the approved pages (`content_draft`), with the system's
+  `expected_repository` and `repository_serves_site`. Judgment calls go through
+  `preflight_website_change`; approvals come from Decisions or MCP.
+- **Later**: the approval path starts website.change instead of content.deliver.
 
 ## Verification limits
 
