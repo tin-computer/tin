@@ -51,7 +51,9 @@ def preparation(project_id, *, include_guide=False):
             "intent": "capture preserves observed identity; develop permits modest supporting "
             "marketing guidance within explicit notes. Assessment never overrides preferences.",
             "review": "Read both proposals, then approve their exact pair. Neither is active "
-            "before adoption. If both active files exist, use Files for small edits.",
+            "before adoption. To change a waiting pair, call get_workflow_review, then "
+            "revise_capture_proposal with the complete text; the founder still approves or "
+            "discards it in Decisions. If both active files exist, use Files for small edits.",
         }
     return result
 
