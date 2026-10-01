@@ -351,7 +351,7 @@ class BillingService:
         if definition.get("executor") == "workflow.code":
             from tin_lite.workflow_code import POLICY, validate_code_definition
 
-            if validate_code_definition(definition).model_routes:
+            if validate_code_definition(definition).metered:
                 from tin_lite.code_models import model_terms
 
                 return model_terms(definition)
@@ -801,7 +801,7 @@ class BillingService:
         if code_only:
             from tin_lite.workflow_code import validate_code_definition
 
-            code_only = not validate_code_definition(definition).model_routes
+            code_only = not validate_code_definition(definition).metered
         if not parent_included and not code_only and not onboarding_is_free(definition):
             return False
         await self.require_spending_actor(conn, run, run["project_id"])

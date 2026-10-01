@@ -1167,6 +1167,14 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                 )
             ],
         )
+        from tin_lite.managed_services import paid
+
+        if any(paid(service.provider_key) for service in services):
+            # A procedure's session budget funds its own model calls only.
+            raise ValueError(
+                "paid managed services such as managed.dataforseo are available to "
+                "workflow.code packages, not procedures"
+            )
 
     return CodexProcedureSpec(
         prompt_path=prompt_path,

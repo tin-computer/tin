@@ -1,0 +1,879 @@
+{
+ "cost": 0.0132,
+ "result": [
+  {
+   "se_type": "google",
+   "seed_keywords": [
+    "project management"
+   ],
+   "location_code": 2840,
+   "language_code": "en",
+   "total_count": 5412,
+   "items_count": 20,
+   "offset": 0,
+   "offset_token": "eyJDdXJyZW50T2Zmc2V0Ijo...",
+   "items": [
+    {
+     "se_type": "google",
+     "keyword": "project management idea 0",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.2,
+      "search_volume": 9900,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 30,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 1",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.3,
+      "search_volume": 9600,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 31,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 2",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.4,
+      "search_volume": 9300,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 32,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 3",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.5,
+      "search_volume": 9000,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 33,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 4",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.6000000000000005,
+      "search_volume": 8700,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 34,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 5",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.7,
+      "search_volume": 8400,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 35,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 6",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.8,
+      "search_volume": 8100,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 36,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 7",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 4.9,
+      "search_volume": 7800,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 37,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 8",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.0,
+      "search_volume": 7500,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 38,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 9",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.1000000000000005,
+      "search_volume": 7200,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 39,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 10",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.2,
+      "search_volume": 6900,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 40,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 11",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.300000000000001,
+      "search_volume": 6600,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 41,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 12",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.4,
+      "search_volume": 6300,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 42,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 13",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.5,
+      "search_volume": 6000,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 43,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 14",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.6,
+      "search_volume": 5700,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 44,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 15",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.7,
+      "search_volume": 5400,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 45,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 16",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.800000000000001,
+      "search_volume": 5100,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 46,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 17",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 5.9,
+      "search_volume": 4800,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 47,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 18",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 6.0,
+      "search_volume": 4500,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 48,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "informational",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    },
+    {
+     "se_type": "google",
+     "keyword": "project management idea 19",
+     "location_code": 2840,
+     "language_code": "en",
+     "keyword_info": {
+      "se_type": "google",
+      "last_updated_time": "2026-09-14 04:55:39 +00:00",
+      "competition": 0.4,
+      "competition_level": "MEDIUM",
+      "cpc": 6.1,
+      "search_volume": 4200,
+      "low_top_of_page_bid": 2.1,
+      "high_top_of_page_bid": 9.4,
+      "categories": [
+       10019,
+       10276
+      ],
+      "search_volume_trend": {
+       "monthly": 0,
+       "quarterly": 22,
+       "yearly": 22
+      }
+     },
+     "keyword_properties": {
+      "se_type": "google",
+      "core_keyword": null,
+      "keyword_difficulty": 49,
+      "detected_language": "en",
+      "is_another_language": false
+     },
+     "search_intent_info": {
+      "se_type": "google",
+      "main_intent": "commercial",
+      "foreign_intent": [
+       "navigational"
+      ]
+     },
+     "avg_backlinks_info": {
+      "backlinks": 1203.4,
+      "referring_domains": 210.2
+     }
+    }
+   ]
+  }
+ ]
+}

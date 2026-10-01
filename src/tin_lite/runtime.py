@@ -228,6 +228,10 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
         temporal=temporal,
     )
+    from tin_lite.ai_answers_activities import AIAnswersActivities
+
+    # Registered for the organic audit to call; no workflow uses it yet.
+    ai_answers = AIAnswersActivities(database=database, settings=settings)
     organic = OrganicAuditActivities(
         database=database,
         storage=storage,
@@ -422,6 +426,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic.organic_publish,
         organic.organic_project,
         organic.organic_failure,
+        ai_answers.ai_answers_measure,
         activity_instance.dispatch_scheduled_workflow,
         activity_instance.prerequisite_wait,
         activity_instance.create_design_sandbox,

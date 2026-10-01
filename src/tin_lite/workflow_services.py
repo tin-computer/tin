@@ -15,6 +15,9 @@ SERVICE_CAPABILITIES = {
         {"subscriptions.read", "customers.read", "invoices.read", "prices.read", "charges.read"}
     ),
     "analytics.posthog": frozenset({"query.read", "definitions.read", "insights.read"}),
+    # Services Tin holds the key for (managed_services.py); no founder connection.
+    "managed.pagespeed": frozenset({"pagespeed.read", "crux.read"}),
+    "managed.dataforseo": frozenset({"serp.read", "keywords.read", "backlinks.read"}),
 }
 
 

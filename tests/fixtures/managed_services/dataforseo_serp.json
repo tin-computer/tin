@@ -1,0 +1,182 @@
+{
+ "cost": 0.0024,
+ "result": [
+  {
+   "keyword": "project management software",
+   "type": "organic",
+   "se_domain": "google.com",
+   "location_code": 2840,
+   "language_code": "en",
+   "check_url": "https://www.google.com/search?q=project+management+software&num=10&hl=en&gl=US",
+   "datetime": "2026-09-30 18:10:02 +00:00",
+   "spell": null,
+   "refinement_chips": null,
+   "item_types": [
+    "organic",
+    "people_also_ask",
+    "featured_snippet"
+   ],
+   "se_results_count": 1840000000,
+   "items_count": 12,
+   "items": [
+    {
+     "type": "organic",
+     "rank_group": 1,
+     "rank_absolute": 1,
+     "position": "left",
+     "domain": "site1.example",
+     "title": "Result 1 about project management tools about project management tools about project management tools ",
+     "url": "https://site1.example/guide/1",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "featured_snippet",
+     "rank_group": 1,
+     "rank_absolute": 2,
+     "domain": "site1.example",
+     "title": "Snippet"
+    },
+    {
+     "type": "organic",
+     "rank_group": 2,
+     "rank_absolute": 3,
+     "position": "left",
+     "domain": "site2.example",
+     "title": "Result 2 about project management tools about project management tools about project management tools ",
+     "url": "https://site2.example/guide/2",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 3,
+     "rank_absolute": 4,
+     "position": "left",
+     "domain": "site3.example",
+     "title": "Result 3 about project management tools about project management tools about project management tools ",
+     "url": "https://site3.example/guide/3",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 4,
+     "rank_absolute": 5,
+     "position": "left",
+     "domain": "site4.example",
+     "title": "Result 4 about project management tools about project management tools about project management tools ",
+     "url": "https://site4.example/guide/4",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 5,
+     "rank_absolute": 6,
+     "position": "left",
+     "domain": "site5.example",
+     "title": "Result 5 about project management tools about project management tools about project management tools ",
+     "url": "https://site5.example/guide/5",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 6,
+     "rank_absolute": 7,
+     "position": "left",
+     "domain": "site6.example",
+     "title": "Result 6 about project management tools about project management tools about project management tools ",
+     "url": "https://site6.example/guide/6",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 7,
+     "rank_absolute": 8,
+     "position": "left",
+     "domain": "site7.example",
+     "title": "Result 7 about project management tools about project management tools about project management tools ",
+     "url": "https://site7.example/guide/7",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 8,
+     "rank_absolute": 9,
+     "position": "left",
+     "domain": "site8.example",
+     "title": "Result 8 about project management tools about project management tools about project management tools ",
+     "url": "https://site8.example/guide/8",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 9,
+     "rank_absolute": 10,
+     "position": "left",
+     "domain": "site9.example",
+     "title": "Result 9 about project management tools about project management tools about project management tools ",
+     "url": "https://site9.example/guide/9",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "organic",
+     "rank_group": 10,
+     "rank_absolute": 11,
+     "position": "left",
+     "domain": "site10.example",
+     "title": "Result 10 about project management tools about project management tools about project management tools ",
+     "url": "https://site10.example/guide/10",
+     "description": "A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description A long description ",
+     "breadcrumb": "x",
+     "is_image": false,
+     "links": null,
+     "rating": null
+    },
+    {
+     "type": "people_also_ask",
+     "rank_group": 1,
+     "rank_absolute": 12,
+     "items": [
+      {
+       "title": "What is the best tool?"
+      }
+     ]
+    }
+   ]
+  }
+ ]
+}

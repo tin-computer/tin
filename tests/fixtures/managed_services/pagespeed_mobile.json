@@ -1,0 +1,3352 @@
+{
+ "captchaResult": "CAPTCHA_NOT_NEEDED",
+ "kind": "pagespeedonline#result",
+ "id": "https://example.com/",
+ "loadingExperience": {
+  "id": "https://example.com/",
+  "metrics": {
+   "CUMULATIVE_LAYOUT_SHIFT_SCORE": {
+    "percentile": 7,
+    "distributions": [
+     {
+      "min": 0,
+      "max": 10,
+      "proportion": 0.81
+     },
+     {
+      "min": 10,
+      "max": 25,
+      "proportion": 0.12
+     },
+     {
+      "min": 25,
+      "proportion": 0.07
+     }
+    ],
+    "category": "FAST"
+   },
+   "EXPERIMENTAL_TIME_TO_FIRST_BYTE": {
+    "percentile": 910,
+    "category": "AVERAGE"
+   },
+   "FIRST_CONTENTFUL_PAINT_MS": {
+    "percentile": 1750,
+    "category": "FAST"
+   },
+   "INTERACTION_TO_NEXT_PAINT": {
+    "percentile": 180,
+    "category": "FAST"
+   },
+   "LARGEST_CONTENTFUL_PAINT_MS": {
+    "percentile": 2710,
+    "category": "AVERAGE"
+   }
+  },
+  "overall_category": "AVERAGE",
+  "initial_url": "https://example.com/"
+ },
+ "originLoadingExperience": {
+  "id": "https://example.com",
+  "metrics": {},
+  "overall_category": "AVERAGE"
+ },
+ "lighthouseResult": {
+  "requestedUrl": "https://example.com/",
+  "finalUrl": "https://example.com/",
+  "finalDisplayedUrl": "https://example.com/",
+  "lighthouseVersion": "12.8.2",
+  "userAgent": "Mozilla/5.0 (Linux; Android 11; moto g power (2022)) Chrome-Lighthouse",
+  "fetchTime": "2026-09-30T18:02:11.412Z",
+  "environment": {
+   "networkUserAgent": "Chrome-Lighthouse",
+   "benchmarkIndex": 1203
+  },
+  "runWarnings": [],
+  "configSettings": {
+   "emulatedFormFactor": "mobile",
+   "formFactor": "mobile",
+   "locale": "en-US",
+   "onlyCategories": [
+    "performance",
+    "seo"
+   ]
+  },
+  "audits": {
+   "largest-contentful-paint": {
+    "id": "largest-contentful-paint",
+    "score": 0.52,
+    "numericValue": 3912.4,
+    "numericUnit": "millisecond",
+    "displayValue": "3.9 s"
+   },
+   "cumulative-layout-shift": {
+    "id": "cumulative-layout-shift",
+    "score": 0.99,
+    "numericValue": 0.0312,
+    "numericUnit": "unitless"
+   },
+   "total-blocking-time": {
+    "id": "total-blocking-time",
+    "score": 0.71,
+    "numericValue": 318.5,
+    "numericUnit": "millisecond"
+   },
+   "first-contentful-paint": {
+    "id": "first-contentful-paint",
+    "score": 0.83,
+    "numericValue": 1811.2,
+    "numericUnit": "millisecond"
+   },
+   "speed-index": {
+    "id": "speed-index",
+    "score": 0.76,
+    "numericValue": 4120.9,
+    "numericUnit": "millisecond"
+   },
+   "bootup-time": {
+    "id": "bootup-time",
+    "score": 0.4,
+    "numericValue": 2210.0,
+    "details": {
+     "type": "table",
+     "headings": [],
+     "items": [
+      {
+       "url": "https://example.com/asset-0.js",
+       "wastedMs": 0
+      },
+      {
+       "url": "https://example.com/asset-1.js",
+       "wastedMs": 3
+      },
+      {
+       "url": "https://example.com/asset-2.js",
+       "wastedMs": 6
+      },
+      {
+       "url": "https://example.com/asset-3.js",
+       "wastedMs": 9
+      },
+      {
+       "url": "https://example.com/asset-4.js",
+       "wastedMs": 12
+      },
+      {
+       "url": "https://example.com/asset-5.js",
+       "wastedMs": 15
+      },
+      {
+       "url": "https://example.com/asset-6.js",
+       "wastedMs": 18
+      },
+      {
+       "url": "https://example.com/asset-7.js",
+       "wastedMs": 21
+      },
+      {
+       "url": "https://example.com/asset-8.js",
+       "wastedMs": 24
+      },
+      {
+       "url": "https://example.com/asset-9.js",
+       "wastedMs": 27
+      },
+      {
+       "url": "https://example.com/asset-10.js",
+       "wastedMs": 30
+      },
+      {
+       "url": "https://example.com/asset-11.js",
+       "wastedMs": 33
+      },
+      {
+       "url": "https://example.com/asset-12.js",
+       "wastedMs": 36
+      },
+      {
+       "url": "https://example.com/asset-13.js",
+       "wastedMs": 39
+      },
+      {
+       "url": "https://example.com/asset-14.js",
+       "wastedMs": 42
+      },
+      {
+       "url": "https://example.com/asset-15.js",
+       "wastedMs": 45
+      },
+      {
+       "url": "https://example.com/asset-16.js",
+       "wastedMs": 48
+      },
+      {
+       "url": "https://example.com/asset-17.js",
+       "wastedMs": 51
+      },
+      {
+       "url": "https://example.com/asset-18.js",
+       "wastedMs": 54
+      },
+      {
+       "url": "https://example.com/asset-19.js",
+       "wastedMs": 57
+      },
+      {
+       "url": "https://example.com/asset-20.js",
+       "wastedMs": 60
+      },
+      {
+       "url": "https://example.com/asset-21.js",
+       "wastedMs": 63
+      },
+      {
+       "url": "https://example.com/asset-22.js",
+       "wastedMs": 66
+      },
+      {
+       "url": "https://example.com/asset-23.js",
+       "wastedMs": 69
+      },
+      {
+       "url": "https://example.com/asset-24.js",
+       "wastedMs": 72
+      },
+      {
+       "url": "https://example.com/asset-25.js",
+       "wastedMs": 75
+      },
+      {
+       "url": "https://example.com/asset-26.js",
+       "wastedMs": 78
+      },
+      {
+       "url": "https://example.com/asset-27.js",
+       "wastedMs": 81
+      },
+      {
+       "url": "https://example.com/asset-28.js",
+       "wastedMs": 84
+      },
+      {
+       "url": "https://example.com/asset-29.js",
+       "wastedMs": 87
+      },
+      {
+       "url": "https://example.com/asset-30.js",
+       "wastedMs": 90
+      },
+      {
+       "url": "https://example.com/asset-31.js",
+       "wastedMs": 93
+      },
+      {
+       "url": "https://example.com/asset-32.js",
+       "wastedMs": 96
+      },
+      {
+       "url": "https://example.com/asset-33.js",
+       "wastedMs": 99
+      },
+      {
+       "url": "https://example.com/asset-34.js",
+       "wastedMs": 102
+      },
+      {
+       "url": "https://example.com/asset-35.js",
+       "wastedMs": 105
+      },
+      {
+       "url": "https://example.com/asset-36.js",
+       "wastedMs": 108
+      },
+      {
+       "url": "https://example.com/asset-37.js",
+       "wastedMs": 111
+      },
+      {
+       "url": "https://example.com/asset-38.js",
+       "wastedMs": 114
+      },
+      {
+       "url": "https://example.com/asset-39.js",
+       "wastedMs": 117
+      },
+      {
+       "url": "https://example.com/asset-40.js",
+       "wastedMs": 120
+      },
+      {
+       "url": "https://example.com/asset-41.js",
+       "wastedMs": 123
+      },
+      {
+       "url": "https://example.com/asset-42.js",
+       "wastedMs": 126
+      },
+      {
+       "url": "https://example.com/asset-43.js",
+       "wastedMs": 129
+      },
+      {
+       "url": "https://example.com/asset-44.js",
+       "wastedMs": 132
+      },
+      {
+       "url": "https://example.com/asset-45.js",
+       "wastedMs": 135
+      },
+      {
+       "url": "https://example.com/asset-46.js",
+       "wastedMs": 138
+      },
+      {
+       "url": "https://example.com/asset-47.js",
+       "wastedMs": 141
+      },
+      {
+       "url": "https://example.com/asset-48.js",
+       "wastedMs": 144
+      },
+      {
+       "url": "https://example.com/asset-49.js",
+       "wastedMs": 147
+      },
+      {
+       "url": "https://example.com/asset-50.js",
+       "wastedMs": 150
+      },
+      {
+       "url": "https://example.com/asset-51.js",
+       "wastedMs": 153
+      },
+      {
+       "url": "https://example.com/asset-52.js",
+       "wastedMs": 156
+      },
+      {
+       "url": "https://example.com/asset-53.js",
+       "wastedMs": 159
+      },
+      {
+       "url": "https://example.com/asset-54.js",
+       "wastedMs": 162
+      },
+      {
+       "url": "https://example.com/asset-55.js",
+       "wastedMs": 165
+      },
+      {
+       "url": "https://example.com/asset-56.js",
+       "wastedMs": 168
+      },
+      {
+       "url": "https://example.com/asset-57.js",
+       "wastedMs": 171
+      },
+      {
+       "url": "https://example.com/asset-58.js",
+       "wastedMs": 174
+      },
+      {
+       "url": "https://example.com/asset-59.js",
+       "wastedMs": 177
+      },
+      {
+       "url": "https://example.com/asset-60.js",
+       "wastedMs": 180
+      },
+      {
+       "url": "https://example.com/asset-61.js",
+       "wastedMs": 183
+      },
+      {
+       "url": "https://example.com/asset-62.js",
+       "wastedMs": 186
+      },
+      {
+       "url": "https://example.com/asset-63.js",
+       "wastedMs": 189
+      },
+      {
+       "url": "https://example.com/asset-64.js",
+       "wastedMs": 192
+      },
+      {
+       "url": "https://example.com/asset-65.js",
+       "wastedMs": 195
+      },
+      {
+       "url": "https://example.com/asset-66.js",
+       "wastedMs": 198
+      },
+      {
+       "url": "https://example.com/asset-67.js",
+       "wastedMs": 201
+      },
+      {
+       "url": "https://example.com/asset-68.js",
+       "wastedMs": 204
+      },
+      {
+       "url": "https://example.com/asset-69.js",
+       "wastedMs": 207
+      },
+      {
+       "url": "https://example.com/asset-70.js",
+       "wastedMs": 210
+      },
+      {
+       "url": "https://example.com/asset-71.js",
+       "wastedMs": 213
+      },
+      {
+       "url": "https://example.com/asset-72.js",
+       "wastedMs": 216
+      },
+      {
+       "url": "https://example.com/asset-73.js",
+       "wastedMs": 219
+      },
+      {
+       "url": "https://example.com/asset-74.js",
+       "wastedMs": 222
+      },
+      {
+       "url": "https://example.com/asset-75.js",
+       "wastedMs": 225
+      },
+      {
+       "url": "https://example.com/asset-76.js",
+       "wastedMs": 228
+      },
+      {
+       "url": "https://example.com/asset-77.js",
+       "wastedMs": 231
+      },
+      {
+       "url": "https://example.com/asset-78.js",
+       "wastedMs": 234
+      },
+      {
+       "url": "https://example.com/asset-79.js",
+       "wastedMs": 237
+      },
+      {
+       "url": "https://example.com/asset-80.js",
+       "wastedMs": 240
+      },
+      {
+       "url": "https://example.com/asset-81.js",
+       "wastedMs": 243
+      },
+      {
+       "url": "https://example.com/asset-82.js",
+       "wastedMs": 246
+      },
+      {
+       "url": "https://example.com/asset-83.js",
+       "wastedMs": 249
+      },
+      {
+       "url": "https://example.com/asset-84.js",
+       "wastedMs": 252
+      },
+      {
+       "url": "https://example.com/asset-85.js",
+       "wastedMs": 255
+      },
+      {
+       "url": "https://example.com/asset-86.js",
+       "wastedMs": 258
+      },
+      {
+       "url": "https://example.com/asset-87.js",
+       "wastedMs": 261
+      },
+      {
+       "url": "https://example.com/asset-88.js",
+       "wastedMs": 264
+      },
+      {
+       "url": "https://example.com/asset-89.js",
+       "wastedMs": 267
+      },
+      {
+       "url": "https://example.com/asset-90.js",
+       "wastedMs": 270
+      },
+      {
+       "url": "https://example.com/asset-91.js",
+       "wastedMs": 273
+      },
+      {
+       "url": "https://example.com/asset-92.js",
+       "wastedMs": 276
+      },
+      {
+       "url": "https://example.com/asset-93.js",
+       "wastedMs": 279
+      },
+      {
+       "url": "https://example.com/asset-94.js",
+       "wastedMs": 282
+      },
+      {
+       "url": "https://example.com/asset-95.js",
+       "wastedMs": 285
+      },
+      {
+       "url": "https://example.com/asset-96.js",
+       "wastedMs": 288
+      },
+      {
+       "url": "https://example.com/asset-97.js",
+       "wastedMs": 291
+      },
+      {
+       "url": "https://example.com/asset-98.js",
+       "wastedMs": 294
+      },
+      {
+       "url": "https://example.com/asset-99.js",
+       "wastedMs": 297
+      },
+      {
+       "url": "https://example.com/asset-100.js",
+       "wastedMs": 300
+      },
+      {
+       "url": "https://example.com/asset-101.js",
+       "wastedMs": 303
+      },
+      {
+       "url": "https://example.com/asset-102.js",
+       "wastedMs": 306
+      },
+      {
+       "url": "https://example.com/asset-103.js",
+       "wastedMs": 309
+      },
+      {
+       "url": "https://example.com/asset-104.js",
+       "wastedMs": 312
+      },
+      {
+       "url": "https://example.com/asset-105.js",
+       "wastedMs": 315
+      },
+      {
+       "url": "https://example.com/asset-106.js",
+       "wastedMs": 318
+      },
+      {
+       "url": "https://example.com/asset-107.js",
+       "wastedMs": 321
+      },
+      {
+       "url": "https://example.com/asset-108.js",
+       "wastedMs": 324
+      },
+      {
+       "url": "https://example.com/asset-109.js",
+       "wastedMs": 327
+      },
+      {
+       "url": "https://example.com/asset-110.js",
+       "wastedMs": 330
+      },
+      {
+       "url": "https://example.com/asset-111.js",
+       "wastedMs": 333
+      },
+      {
+       "url": "https://example.com/asset-112.js",
+       "wastedMs": 336
+      },
+      {
+       "url": "https://example.com/asset-113.js",
+       "wastedMs": 339
+      },
+      {
+       "url": "https://example.com/asset-114.js",
+       "wastedMs": 342
+      },
+      {
+       "url": "https://example.com/asset-115.js",
+       "wastedMs": 345
+      },
+      {
+       "url": "https://example.com/asset-116.js",
+       "wastedMs": 348
+      },
+      {
+       "url": "https://example.com/asset-117.js",
+       "wastedMs": 351
+      },
+      {
+       "url": "https://example.com/asset-118.js",
+       "wastedMs": 354
+      },
+      {
+       "url": "https://example.com/asset-119.js",
+       "wastedMs": 357
+      },
+      {
+       "url": "https://example.com/asset-120.js",
+       "wastedMs": 360
+      },
+      {
+       "url": "https://example.com/asset-121.js",
+       "wastedMs": 363
+      },
+      {
+       "url": "https://example.com/asset-122.js",
+       "wastedMs": 366
+      },
+      {
+       "url": "https://example.com/asset-123.js",
+       "wastedMs": 369
+      },
+      {
+       "url": "https://example.com/asset-124.js",
+       "wastedMs": 372
+      },
+      {
+       "url": "https://example.com/asset-125.js",
+       "wastedMs": 375
+      },
+      {
+       "url": "https://example.com/asset-126.js",
+       "wastedMs": 378
+      },
+      {
+       "url": "https://example.com/asset-127.js",
+       "wastedMs": 381
+      },
+      {
+       "url": "https://example.com/asset-128.js",
+       "wastedMs": 384
+      },
+      {
+       "url": "https://example.com/asset-129.js",
+       "wastedMs": 387
+      },
+      {
+       "url": "https://example.com/asset-130.js",
+       "wastedMs": 390
+      },
+      {
+       "url": "https://example.com/asset-131.js",
+       "wastedMs": 393
+      },
+      {
+       "url": "https://example.com/asset-132.js",
+       "wastedMs": 396
+      },
+      {
+       "url": "https://example.com/asset-133.js",
+       "wastedMs": 399
+      },
+      {
+       "url": "https://example.com/asset-134.js",
+       "wastedMs": 402
+      },
+      {
+       "url": "https://example.com/asset-135.js",
+       "wastedMs": 405
+      },
+      {
+       "url": "https://example.com/asset-136.js",
+       "wastedMs": 408
+      },
+      {
+       "url": "https://example.com/asset-137.js",
+       "wastedMs": 411
+      },
+      {
+       "url": "https://example.com/asset-138.js",
+       "wastedMs": 414
+      },
+      {
+       "url": "https://example.com/asset-139.js",
+       "wastedMs": 417
+      },
+      {
+       "url": "https://example.com/asset-140.js",
+       "wastedMs": 420
+      },
+      {
+       "url": "https://example.com/asset-141.js",
+       "wastedMs": 423
+      },
+      {
+       "url": "https://example.com/asset-142.js",
+       "wastedMs": 426
+      },
+      {
+       "url": "https://example.com/asset-143.js",
+       "wastedMs": 429
+      },
+      {
+       "url": "https://example.com/asset-144.js",
+       "wastedMs": 432
+      },
+      {
+       "url": "https://example.com/asset-145.js",
+       "wastedMs": 435
+      },
+      {
+       "url": "https://example.com/asset-146.js",
+       "wastedMs": 438
+      },
+      {
+       "url": "https://example.com/asset-147.js",
+       "wastedMs": 441
+      },
+      {
+       "url": "https://example.com/asset-148.js",
+       "wastedMs": 444
+      },
+      {
+       "url": "https://example.com/asset-149.js",
+       "wastedMs": 447
+      },
+      {
+       "url": "https://example.com/asset-150.js",
+       "wastedMs": 450
+      },
+      {
+       "url": "https://example.com/asset-151.js",
+       "wastedMs": 453
+      },
+      {
+       "url": "https://example.com/asset-152.js",
+       "wastedMs": 456
+      },
+      {
+       "url": "https://example.com/asset-153.js",
+       "wastedMs": 459
+      },
+      {
+       "url": "https://example.com/asset-154.js",
+       "wastedMs": 462
+      },
+      {
+       "url": "https://example.com/asset-155.js",
+       "wastedMs": 465
+      },
+      {
+       "url": "https://example.com/asset-156.js",
+       "wastedMs": 468
+      },
+      {
+       "url": "https://example.com/asset-157.js",
+       "wastedMs": 471
+      },
+      {
+       "url": "https://example.com/asset-158.js",
+       "wastedMs": 474
+      },
+      {
+       "url": "https://example.com/asset-159.js",
+       "wastedMs": 477
+      },
+      {
+       "url": "https://example.com/asset-160.js",
+       "wastedMs": 480
+      },
+      {
+       "url": "https://example.com/asset-161.js",
+       "wastedMs": 483
+      },
+      {
+       "url": "https://example.com/asset-162.js",
+       "wastedMs": 486
+      },
+      {
+       "url": "https://example.com/asset-163.js",
+       "wastedMs": 489
+      },
+      {
+       "url": "https://example.com/asset-164.js",
+       "wastedMs": 492
+      },
+      {
+       "url": "https://example.com/asset-165.js",
+       "wastedMs": 495
+      },
+      {
+       "url": "https://example.com/asset-166.js",
+       "wastedMs": 498
+      },
+      {
+       "url": "https://example.com/asset-167.js",
+       "wastedMs": 501
+      },
+      {
+       "url": "https://example.com/asset-168.js",
+       "wastedMs": 504
+      },
+      {
+       "url": "https://example.com/asset-169.js",
+       "wastedMs": 507
+      },
+      {
+       "url": "https://example.com/asset-170.js",
+       "wastedMs": 510
+      },
+      {
+       "url": "https://example.com/asset-171.js",
+       "wastedMs": 513
+      },
+      {
+       "url": "https://example.com/asset-172.js",
+       "wastedMs": 516
+      },
+      {
+       "url": "https://example.com/asset-173.js",
+       "wastedMs": 519
+      },
+      {
+       "url": "https://example.com/asset-174.js",
+       "wastedMs": 522
+      },
+      {
+       "url": "https://example.com/asset-175.js",
+       "wastedMs": 525
+      },
+      {
+       "url": "https://example.com/asset-176.js",
+       "wastedMs": 528
+      },
+      {
+       "url": "https://example.com/asset-177.js",
+       "wastedMs": 531
+      },
+      {
+       "url": "https://example.com/asset-178.js",
+       "wastedMs": 534
+      },
+      {
+       "url": "https://example.com/asset-179.js",
+       "wastedMs": 537
+      },
+      {
+       "url": "https://example.com/asset-180.js",
+       "wastedMs": 540
+      },
+      {
+       "url": "https://example.com/asset-181.js",
+       "wastedMs": 543
+      },
+      {
+       "url": "https://example.com/asset-182.js",
+       "wastedMs": 546
+      },
+      {
+       "url": "https://example.com/asset-183.js",
+       "wastedMs": 549
+      },
+      {
+       "url": "https://example.com/asset-184.js",
+       "wastedMs": 552
+      },
+      {
+       "url": "https://example.com/asset-185.js",
+       "wastedMs": 555
+      },
+      {
+       "url": "https://example.com/asset-186.js",
+       "wastedMs": 558
+      },
+      {
+       "url": "https://example.com/asset-187.js",
+       "wastedMs": 561
+      },
+      {
+       "url": "https://example.com/asset-188.js",
+       "wastedMs": 564
+      },
+      {
+       "url": "https://example.com/asset-189.js",
+       "wastedMs": 567
+      },
+      {
+       "url": "https://example.com/asset-190.js",
+       "wastedMs": 570
+      },
+      {
+       "url": "https://example.com/asset-191.js",
+       "wastedMs": 573
+      },
+      {
+       "url": "https://example.com/asset-192.js",
+       "wastedMs": 576
+      },
+      {
+       "url": "https://example.com/asset-193.js",
+       "wastedMs": 579
+      },
+      {
+       "url": "https://example.com/asset-194.js",
+       "wastedMs": 582
+      },
+      {
+       "url": "https://example.com/asset-195.js",
+       "wastedMs": 585
+      },
+      {
+       "url": "https://example.com/asset-196.js",
+       "wastedMs": 588
+      },
+      {
+       "url": "https://example.com/asset-197.js",
+       "wastedMs": 591
+      },
+      {
+       "url": "https://example.com/asset-198.js",
+       "wastedMs": 594
+      },
+      {
+       "url": "https://example.com/asset-199.js",
+       "wastedMs": 597
+      },
+      {
+       "url": "https://example.com/asset-200.js",
+       "wastedMs": 600
+      },
+      {
+       "url": "https://example.com/asset-201.js",
+       "wastedMs": 603
+      },
+      {
+       "url": "https://example.com/asset-202.js",
+       "wastedMs": 606
+      },
+      {
+       "url": "https://example.com/asset-203.js",
+       "wastedMs": 609
+      },
+      {
+       "url": "https://example.com/asset-204.js",
+       "wastedMs": 612
+      },
+      {
+       "url": "https://example.com/asset-205.js",
+       "wastedMs": 615
+      },
+      {
+       "url": "https://example.com/asset-206.js",
+       "wastedMs": 618
+      },
+      {
+       "url": "https://example.com/asset-207.js",
+       "wastedMs": 621
+      },
+      {
+       "url": "https://example.com/asset-208.js",
+       "wastedMs": 624
+      },
+      {
+       "url": "https://example.com/asset-209.js",
+       "wastedMs": 627
+      },
+      {
+       "url": "https://example.com/asset-210.js",
+       "wastedMs": 630
+      },
+      {
+       "url": "https://example.com/asset-211.js",
+       "wastedMs": 633
+      },
+      {
+       "url": "https://example.com/asset-212.js",
+       "wastedMs": 636
+      },
+      {
+       "url": "https://example.com/asset-213.js",
+       "wastedMs": 639
+      },
+      {
+       "url": "https://example.com/asset-214.js",
+       "wastedMs": 642
+      },
+      {
+       "url": "https://example.com/asset-215.js",
+       "wastedMs": 645
+      },
+      {
+       "url": "https://example.com/asset-216.js",
+       "wastedMs": 648
+      },
+      {
+       "url": "https://example.com/asset-217.js",
+       "wastedMs": 651
+      },
+      {
+       "url": "https://example.com/asset-218.js",
+       "wastedMs": 654
+      },
+      {
+       "url": "https://example.com/asset-219.js",
+       "wastedMs": 657
+      },
+      {
+       "url": "https://example.com/asset-220.js",
+       "wastedMs": 660
+      },
+      {
+       "url": "https://example.com/asset-221.js",
+       "wastedMs": 663
+      },
+      {
+       "url": "https://example.com/asset-222.js",
+       "wastedMs": 666
+      },
+      {
+       "url": "https://example.com/asset-223.js",
+       "wastedMs": 669
+      },
+      {
+       "url": "https://example.com/asset-224.js",
+       "wastedMs": 672
+      },
+      {
+       "url": "https://example.com/asset-225.js",
+       "wastedMs": 675
+      },
+      {
+       "url": "https://example.com/asset-226.js",
+       "wastedMs": 678
+      },
+      {
+       "url": "https://example.com/asset-227.js",
+       "wastedMs": 681
+      },
+      {
+       "url": "https://example.com/asset-228.js",
+       "wastedMs": 684
+      },
+      {
+       "url": "https://example.com/asset-229.js",
+       "wastedMs": 687
+      },
+      {
+       "url": "https://example.com/asset-230.js",
+       "wastedMs": 690
+      },
+      {
+       "url": "https://example.com/asset-231.js",
+       "wastedMs": 693
+      },
+      {
+       "url": "https://example.com/asset-232.js",
+       "wastedMs": 696
+      },
+      {
+       "url": "https://example.com/asset-233.js",
+       "wastedMs": 699
+      },
+      {
+       "url": "https://example.com/asset-234.js",
+       "wastedMs": 702
+      },
+      {
+       "url": "https://example.com/asset-235.js",
+       "wastedMs": 705
+      },
+      {
+       "url": "https://example.com/asset-236.js",
+       "wastedMs": 708
+      },
+      {
+       "url": "https://example.com/asset-237.js",
+       "wastedMs": 711
+      },
+      {
+       "url": "https://example.com/asset-238.js",
+       "wastedMs": 714
+      },
+      {
+       "url": "https://example.com/asset-239.js",
+       "wastedMs": 717
+      },
+      {
+       "url": "https://example.com/asset-240.js",
+       "wastedMs": 720
+      },
+      {
+       "url": "https://example.com/asset-241.js",
+       "wastedMs": 723
+      },
+      {
+       "url": "https://example.com/asset-242.js",
+       "wastedMs": 726
+      },
+      {
+       "url": "https://example.com/asset-243.js",
+       "wastedMs": 729
+      },
+      {
+       "url": "https://example.com/asset-244.js",
+       "wastedMs": 732
+      },
+      {
+       "url": "https://example.com/asset-245.js",
+       "wastedMs": 735
+      },
+      {
+       "url": "https://example.com/asset-246.js",
+       "wastedMs": 738
+      },
+      {
+       "url": "https://example.com/asset-247.js",
+       "wastedMs": 741
+      },
+      {
+       "url": "https://example.com/asset-248.js",
+       "wastedMs": 744
+      },
+      {
+       "url": "https://example.com/asset-249.js",
+       "wastedMs": 747
+      },
+      {
+       "url": "https://example.com/asset-250.js",
+       "wastedMs": 750
+      },
+      {
+       "url": "https://example.com/asset-251.js",
+       "wastedMs": 753
+      },
+      {
+       "url": "https://example.com/asset-252.js",
+       "wastedMs": 756
+      },
+      {
+       "url": "https://example.com/asset-253.js",
+       "wastedMs": 759
+      },
+      {
+       "url": "https://example.com/asset-254.js",
+       "wastedMs": 762
+      },
+      {
+       "url": "https://example.com/asset-255.js",
+       "wastedMs": 765
+      },
+      {
+       "url": "https://example.com/asset-256.js",
+       "wastedMs": 768
+      },
+      {
+       "url": "https://example.com/asset-257.js",
+       "wastedMs": 771
+      },
+      {
+       "url": "https://example.com/asset-258.js",
+       "wastedMs": 774
+      },
+      {
+       "url": "https://example.com/asset-259.js",
+       "wastedMs": 777
+      },
+      {
+       "url": "https://example.com/asset-260.js",
+       "wastedMs": 780
+      },
+      {
+       "url": "https://example.com/asset-261.js",
+       "wastedMs": 783
+      },
+      {
+       "url": "https://example.com/asset-262.js",
+       "wastedMs": 786
+      },
+      {
+       "url": "https://example.com/asset-263.js",
+       "wastedMs": 789
+      },
+      {
+       "url": "https://example.com/asset-264.js",
+       "wastedMs": 792
+      },
+      {
+       "url": "https://example.com/asset-265.js",
+       "wastedMs": 795
+      },
+      {
+       "url": "https://example.com/asset-266.js",
+       "wastedMs": 798
+      },
+      {
+       "url": "https://example.com/asset-267.js",
+       "wastedMs": 801
+      },
+      {
+       "url": "https://example.com/asset-268.js",
+       "wastedMs": 804
+      },
+      {
+       "url": "https://example.com/asset-269.js",
+       "wastedMs": 807
+      },
+      {
+       "url": "https://example.com/asset-270.js",
+       "wastedMs": 810
+      },
+      {
+       "url": "https://example.com/asset-271.js",
+       "wastedMs": 813
+      },
+      {
+       "url": "https://example.com/asset-272.js",
+       "wastedMs": 816
+      },
+      {
+       "url": "https://example.com/asset-273.js",
+       "wastedMs": 819
+      },
+      {
+       "url": "https://example.com/asset-274.js",
+       "wastedMs": 822
+      },
+      {
+       "url": "https://example.com/asset-275.js",
+       "wastedMs": 825
+      },
+      {
+       "url": "https://example.com/asset-276.js",
+       "wastedMs": 828
+      },
+      {
+       "url": "https://example.com/asset-277.js",
+       "wastedMs": 831
+      },
+      {
+       "url": "https://example.com/asset-278.js",
+       "wastedMs": 834
+      },
+      {
+       "url": "https://example.com/asset-279.js",
+       "wastedMs": 837
+      },
+      {
+       "url": "https://example.com/asset-280.js",
+       "wastedMs": 840
+      },
+      {
+       "url": "https://example.com/asset-281.js",
+       "wastedMs": 843
+      },
+      {
+       "url": "https://example.com/asset-282.js",
+       "wastedMs": 846
+      },
+      {
+       "url": "https://example.com/asset-283.js",
+       "wastedMs": 849
+      },
+      {
+       "url": "https://example.com/asset-284.js",
+       "wastedMs": 852
+      },
+      {
+       "url": "https://example.com/asset-285.js",
+       "wastedMs": 855
+      },
+      {
+       "url": "https://example.com/asset-286.js",
+       "wastedMs": 858
+      },
+      {
+       "url": "https://example.com/asset-287.js",
+       "wastedMs": 861
+      },
+      {
+       "url": "https://example.com/asset-288.js",
+       "wastedMs": 864
+      },
+      {
+       "url": "https://example.com/asset-289.js",
+       "wastedMs": 867
+      },
+      {
+       "url": "https://example.com/asset-290.js",
+       "wastedMs": 870
+      },
+      {
+       "url": "https://example.com/asset-291.js",
+       "wastedMs": 873
+      },
+      {
+       "url": "https://example.com/asset-292.js",
+       "wastedMs": 876
+      },
+      {
+       "url": "https://example.com/asset-293.js",
+       "wastedMs": 879
+      },
+      {
+       "url": "https://example.com/asset-294.js",
+       "wastedMs": 882
+      },
+      {
+       "url": "https://example.com/asset-295.js",
+       "wastedMs": 885
+      },
+      {
+       "url": "https://example.com/asset-296.js",
+       "wastedMs": 888
+      },
+      {
+       "url": "https://example.com/asset-297.js",
+       "wastedMs": 891
+      },
+      {
+       "url": "https://example.com/asset-298.js",
+       "wastedMs": 894
+      },
+      {
+       "url": "https://example.com/asset-299.js",
+       "wastedMs": 897
+      },
+      {
+       "url": "https://example.com/asset-300.js",
+       "wastedMs": 900
+      },
+      {
+       "url": "https://example.com/asset-301.js",
+       "wastedMs": 903
+      },
+      {
+       "url": "https://example.com/asset-302.js",
+       "wastedMs": 906
+      },
+      {
+       "url": "https://example.com/asset-303.js",
+       "wastedMs": 909
+      },
+      {
+       "url": "https://example.com/asset-304.js",
+       "wastedMs": 912
+      },
+      {
+       "url": "https://example.com/asset-305.js",
+       "wastedMs": 915
+      },
+      {
+       "url": "https://example.com/asset-306.js",
+       "wastedMs": 918
+      },
+      {
+       "url": "https://example.com/asset-307.js",
+       "wastedMs": 921
+      },
+      {
+       "url": "https://example.com/asset-308.js",
+       "wastedMs": 924
+      },
+      {
+       "url": "https://example.com/asset-309.js",
+       "wastedMs": 927
+      },
+      {
+       "url": "https://example.com/asset-310.js",
+       "wastedMs": 930
+      },
+      {
+       "url": "https://example.com/asset-311.js",
+       "wastedMs": 933
+      },
+      {
+       "url": "https://example.com/asset-312.js",
+       "wastedMs": 936
+      },
+      {
+       "url": "https://example.com/asset-313.js",
+       "wastedMs": 939
+      },
+      {
+       "url": "https://example.com/asset-314.js",
+       "wastedMs": 942
+      },
+      {
+       "url": "https://example.com/asset-315.js",
+       "wastedMs": 945
+      },
+      {
+       "url": "https://example.com/asset-316.js",
+       "wastedMs": 948
+      },
+      {
+       "url": "https://example.com/asset-317.js",
+       "wastedMs": 951
+      },
+      {
+       "url": "https://example.com/asset-318.js",
+       "wastedMs": 954
+      },
+      {
+       "url": "https://example.com/asset-319.js",
+       "wastedMs": 957
+      },
+      {
+       "url": "https://example.com/asset-320.js",
+       "wastedMs": 960
+      },
+      {
+       "url": "https://example.com/asset-321.js",
+       "wastedMs": 963
+      },
+      {
+       "url": "https://example.com/asset-322.js",
+       "wastedMs": 966
+      },
+      {
+       "url": "https://example.com/asset-323.js",
+       "wastedMs": 969
+      },
+      {
+       "url": "https://example.com/asset-324.js",
+       "wastedMs": 972
+      },
+      {
+       "url": "https://example.com/asset-325.js",
+       "wastedMs": 975
+      },
+      {
+       "url": "https://example.com/asset-326.js",
+       "wastedMs": 978
+      },
+      {
+       "url": "https://example.com/asset-327.js",
+       "wastedMs": 981
+      },
+      {
+       "url": "https://example.com/asset-328.js",
+       "wastedMs": 984
+      },
+      {
+       "url": "https://example.com/asset-329.js",
+       "wastedMs": 987
+      },
+      {
+       "url": "https://example.com/asset-330.js",
+       "wastedMs": 990
+      },
+      {
+       "url": "https://example.com/asset-331.js",
+       "wastedMs": 993
+      },
+      {
+       "url": "https://example.com/asset-332.js",
+       "wastedMs": 996
+      },
+      {
+       "url": "https://example.com/asset-333.js",
+       "wastedMs": 999
+      },
+      {
+       "url": "https://example.com/asset-334.js",
+       "wastedMs": 1002
+      },
+      {
+       "url": "https://example.com/asset-335.js",
+       "wastedMs": 1005
+      },
+      {
+       "url": "https://example.com/asset-336.js",
+       "wastedMs": 1008
+      },
+      {
+       "url": "https://example.com/asset-337.js",
+       "wastedMs": 1011
+      },
+      {
+       "url": "https://example.com/asset-338.js",
+       "wastedMs": 1014
+      },
+      {
+       "url": "https://example.com/asset-339.js",
+       "wastedMs": 1017
+      },
+      {
+       "url": "https://example.com/asset-340.js",
+       "wastedMs": 1020
+      },
+      {
+       "url": "https://example.com/asset-341.js",
+       "wastedMs": 1023
+      },
+      {
+       "url": "https://example.com/asset-342.js",
+       "wastedMs": 1026
+      },
+      {
+       "url": "https://example.com/asset-343.js",
+       "wastedMs": 1029
+      },
+      {
+       "url": "https://example.com/asset-344.js",
+       "wastedMs": 1032
+      },
+      {
+       "url": "https://example.com/asset-345.js",
+       "wastedMs": 1035
+      },
+      {
+       "url": "https://example.com/asset-346.js",
+       "wastedMs": 1038
+      },
+      {
+       "url": "https://example.com/asset-347.js",
+       "wastedMs": 1041
+      },
+      {
+       "url": "https://example.com/asset-348.js",
+       "wastedMs": 1044
+      },
+      {
+       "url": "https://example.com/asset-349.js",
+       "wastedMs": 1047
+      },
+      {
+       "url": "https://example.com/asset-350.js",
+       "wastedMs": 1050
+      },
+      {
+       "url": "https://example.com/asset-351.js",
+       "wastedMs": 1053
+      },
+      {
+       "url": "https://example.com/asset-352.js",
+       "wastedMs": 1056
+      },
+      {
+       "url": "https://example.com/asset-353.js",
+       "wastedMs": 1059
+      },
+      {
+       "url": "https://example.com/asset-354.js",
+       "wastedMs": 1062
+      },
+      {
+       "url": "https://example.com/asset-355.js",
+       "wastedMs": 1065
+      },
+      {
+       "url": "https://example.com/asset-356.js",
+       "wastedMs": 1068
+      },
+      {
+       "url": "https://example.com/asset-357.js",
+       "wastedMs": 1071
+      },
+      {
+       "url": "https://example.com/asset-358.js",
+       "wastedMs": 1074
+      },
+      {
+       "url": "https://example.com/asset-359.js",
+       "wastedMs": 1077
+      },
+      {
+       "url": "https://example.com/asset-360.js",
+       "wastedMs": 1080
+      },
+      {
+       "url": "https://example.com/asset-361.js",
+       "wastedMs": 1083
+      },
+      {
+       "url": "https://example.com/asset-362.js",
+       "wastedMs": 1086
+      },
+      {
+       "url": "https://example.com/asset-363.js",
+       "wastedMs": 1089
+      },
+      {
+       "url": "https://example.com/asset-364.js",
+       "wastedMs": 1092
+      },
+      {
+       "url": "https://example.com/asset-365.js",
+       "wastedMs": 1095
+      },
+      {
+       "url": "https://example.com/asset-366.js",
+       "wastedMs": 1098
+      },
+      {
+       "url": "https://example.com/asset-367.js",
+       "wastedMs": 1101
+      },
+      {
+       "url": "https://example.com/asset-368.js",
+       "wastedMs": 1104
+      },
+      {
+       "url": "https://example.com/asset-369.js",
+       "wastedMs": 1107
+      },
+      {
+       "url": "https://example.com/asset-370.js",
+       "wastedMs": 1110
+      },
+      {
+       "url": "https://example.com/asset-371.js",
+       "wastedMs": 1113
+      },
+      {
+       "url": "https://example.com/asset-372.js",
+       "wastedMs": 1116
+      },
+      {
+       "url": "https://example.com/asset-373.js",
+       "wastedMs": 1119
+      },
+      {
+       "url": "https://example.com/asset-374.js",
+       "wastedMs": 1122
+      },
+      {
+       "url": "https://example.com/asset-375.js",
+       "wastedMs": 1125
+      },
+      {
+       "url": "https://example.com/asset-376.js",
+       "wastedMs": 1128
+      },
+      {
+       "url": "https://example.com/asset-377.js",
+       "wastedMs": 1131
+      },
+      {
+       "url": "https://example.com/asset-378.js",
+       "wastedMs": 1134
+      },
+      {
+       "url": "https://example.com/asset-379.js",
+       "wastedMs": 1137
+      },
+      {
+       "url": "https://example.com/asset-380.js",
+       "wastedMs": 1140
+      },
+      {
+       "url": "https://example.com/asset-381.js",
+       "wastedMs": 1143
+      },
+      {
+       "url": "https://example.com/asset-382.js",
+       "wastedMs": 1146
+      },
+      {
+       "url": "https://example.com/asset-383.js",
+       "wastedMs": 1149
+      },
+      {
+       "url": "https://example.com/asset-384.js",
+       "wastedMs": 1152
+      },
+      {
+       "url": "https://example.com/asset-385.js",
+       "wastedMs": 1155
+      },
+      {
+       "url": "https://example.com/asset-386.js",
+       "wastedMs": 1158
+      },
+      {
+       "url": "https://example.com/asset-387.js",
+       "wastedMs": 1161
+      },
+      {
+       "url": "https://example.com/asset-388.js",
+       "wastedMs": 1164
+      },
+      {
+       "url": "https://example.com/asset-389.js",
+       "wastedMs": 1167
+      },
+      {
+       "url": "https://example.com/asset-390.js",
+       "wastedMs": 1170
+      },
+      {
+       "url": "https://example.com/asset-391.js",
+       "wastedMs": 1173
+      },
+      {
+       "url": "https://example.com/asset-392.js",
+       "wastedMs": 1176
+      },
+      {
+       "url": "https://example.com/asset-393.js",
+       "wastedMs": 1179
+      },
+      {
+       "url": "https://example.com/asset-394.js",
+       "wastedMs": 1182
+      },
+      {
+       "url": "https://example.com/asset-395.js",
+       "wastedMs": 1185
+      },
+      {
+       "url": "https://example.com/asset-396.js",
+       "wastedMs": 1188
+      },
+      {
+       "url": "https://example.com/asset-397.js",
+       "wastedMs": 1191
+      },
+      {
+       "url": "https://example.com/asset-398.js",
+       "wastedMs": 1194
+      },
+      {
+       "url": "https://example.com/asset-399.js",
+       "wastedMs": 1197
+      }
+     ]
+    }
+   },
+   "unused-javascript": {
+    "id": "unused-javascript",
+    "score": 0.3,
+    "details": {
+     "type": "table",
+     "headings": [],
+     "items": [
+      {
+       "url": "https://example.com/asset-0.js",
+       "wastedMs": 0
+      },
+      {
+       "url": "https://example.com/asset-1.js",
+       "wastedMs": 3
+      },
+      {
+       "url": "https://example.com/asset-2.js",
+       "wastedMs": 6
+      },
+      {
+       "url": "https://example.com/asset-3.js",
+       "wastedMs": 9
+      },
+      {
+       "url": "https://example.com/asset-4.js",
+       "wastedMs": 12
+      },
+      {
+       "url": "https://example.com/asset-5.js",
+       "wastedMs": 15
+      },
+      {
+       "url": "https://example.com/asset-6.js",
+       "wastedMs": 18
+      },
+      {
+       "url": "https://example.com/asset-7.js",
+       "wastedMs": 21
+      },
+      {
+       "url": "https://example.com/asset-8.js",
+       "wastedMs": 24
+      },
+      {
+       "url": "https://example.com/asset-9.js",
+       "wastedMs": 27
+      },
+      {
+       "url": "https://example.com/asset-10.js",
+       "wastedMs": 30
+      },
+      {
+       "url": "https://example.com/asset-11.js",
+       "wastedMs": 33
+      },
+      {
+       "url": "https://example.com/asset-12.js",
+       "wastedMs": 36
+      },
+      {
+       "url": "https://example.com/asset-13.js",
+       "wastedMs": 39
+      },
+      {
+       "url": "https://example.com/asset-14.js",
+       "wastedMs": 42
+      },
+      {
+       "url": "https://example.com/asset-15.js",
+       "wastedMs": 45
+      },
+      {
+       "url": "https://example.com/asset-16.js",
+       "wastedMs": 48
+      },
+      {
+       "url": "https://example.com/asset-17.js",
+       "wastedMs": 51
+      },
+      {
+       "url": "https://example.com/asset-18.js",
+       "wastedMs": 54
+      },
+      {
+       "url": "https://example.com/asset-19.js",
+       "wastedMs": 57
+      },
+      {
+       "url": "https://example.com/asset-20.js",
+       "wastedMs": 60
+      },
+      {
+       "url": "https://example.com/asset-21.js",
+       "wastedMs": 63
+      },
+      {
+       "url": "https://example.com/asset-22.js",
+       "wastedMs": 66
+      },
+      {
+       "url": "https://example.com/asset-23.js",
+       "wastedMs": 69
+      },
+      {
+       "url": "https://example.com/asset-24.js",
+       "wastedMs": 72
+      },
+      {
+       "url": "https://example.com/asset-25.js",
+       "wastedMs": 75
+      },
+      {
+       "url": "https://example.com/asset-26.js",
+       "wastedMs": 78
+      },
+      {
+       "url": "https://example.com/asset-27.js",
+       "wastedMs": 81
+      },
+      {
+       "url": "https://example.com/asset-28.js",
+       "wastedMs": 84
+      },
+      {
+       "url": "https://example.com/asset-29.js",
+       "wastedMs": 87
+      },
+      {
+       "url": "https://example.com/asset-30.js",
+       "wastedMs": 90
+      },
+      {
+       "url": "https://example.com/asset-31.js",
+       "wastedMs": 93
+      },
+      {
+       "url": "https://example.com/asset-32.js",
+       "wastedMs": 96
+      },
+      {
+       "url": "https://example.com/asset-33.js",
+       "wastedMs": 99
+      },
+      {
+       "url": "https://example.com/asset-34.js",
+       "wastedMs": 102
+      },
+      {
+       "url": "https://example.com/asset-35.js",
+       "wastedMs": 105
+      },
+      {
+       "url": "https://example.com/asset-36.js",
+       "wastedMs": 108
+      },
+      {
+       "url": "https://example.com/asset-37.js",
+       "wastedMs": 111
+      },
+      {
+       "url": "https://example.com/asset-38.js",
+       "wastedMs": 114
+      },
+      {
+       "url": "https://example.com/asset-39.js",
+       "wastedMs": 117
+      },
+      {
+       "url": "https://example.com/asset-40.js",
+       "wastedMs": 120
+      },
+      {
+       "url": "https://example.com/asset-41.js",
+       "wastedMs": 123
+      },
+      {
+       "url": "https://example.com/asset-42.js",
+       "wastedMs": 126
+      },
+      {
+       "url": "https://example.com/asset-43.js",
+       "wastedMs": 129
+      },
+      {
+       "url": "https://example.com/asset-44.js",
+       "wastedMs": 132
+      },
+      {
+       "url": "https://example.com/asset-45.js",
+       "wastedMs": 135
+      },
+      {
+       "url": "https://example.com/asset-46.js",
+       "wastedMs": 138
+      },
+      {
+       "url": "https://example.com/asset-47.js",
+       "wastedMs": 141
+      },
+      {
+       "url": "https://example.com/asset-48.js",
+       "wastedMs": 144
+      },
+      {
+       "url": "https://example.com/asset-49.js",
+       "wastedMs": 147
+      },
+      {
+       "url": "https://example.com/asset-50.js",
+       "wastedMs": 150
+      },
+      {
+       "url": "https://example.com/asset-51.js",
+       "wastedMs": 153
+      },
+      {
+       "url": "https://example.com/asset-52.js",
+       "wastedMs": 156
+      },
+      {
+       "url": "https://example.com/asset-53.js",
+       "wastedMs": 159
+      },
+      {
+       "url": "https://example.com/asset-54.js",
+       "wastedMs": 162
+      },
+      {
+       "url": "https://example.com/asset-55.js",
+       "wastedMs": 165
+      },
+      {
+       "url": "https://example.com/asset-56.js",
+       "wastedMs": 168
+      },
+      {
+       "url": "https://example.com/asset-57.js",
+       "wastedMs": 171
+      },
+      {
+       "url": "https://example.com/asset-58.js",
+       "wastedMs": 174
+      },
+      {
+       "url": "https://example.com/asset-59.js",
+       "wastedMs": 177
+      },
+      {
+       "url": "https://example.com/asset-60.js",
+       "wastedMs": 180
+      },
+      {
+       "url": "https://example.com/asset-61.js",
+       "wastedMs": 183
+      },
+      {
+       "url": "https://example.com/asset-62.js",
+       "wastedMs": 186
+      },
+      {
+       "url": "https://example.com/asset-63.js",
+       "wastedMs": 189
+      },
+      {
+       "url": "https://example.com/asset-64.js",
+       "wastedMs": 192
+      },
+      {
+       "url": "https://example.com/asset-65.js",
+       "wastedMs": 195
+      },
+      {
+       "url": "https://example.com/asset-66.js",
+       "wastedMs": 198
+      },
+      {
+       "url": "https://example.com/asset-67.js",
+       "wastedMs": 201
+      },
+      {
+       "url": "https://example.com/asset-68.js",
+       "wastedMs": 204
+      },
+      {
+       "url": "https://example.com/asset-69.js",
+       "wastedMs": 207
+      },
+      {
+       "url": "https://example.com/asset-70.js",
+       "wastedMs": 210
+      },
+      {
+       "url": "https://example.com/asset-71.js",
+       "wastedMs": 213
+      },
+      {
+       "url": "https://example.com/asset-72.js",
+       "wastedMs": 216
+      },
+      {
+       "url": "https://example.com/asset-73.js",
+       "wastedMs": 219
+      },
+      {
+       "url": "https://example.com/asset-74.js",
+       "wastedMs": 222
+      },
+      {
+       "url": "https://example.com/asset-75.js",
+       "wastedMs": 225
+      },
+      {
+       "url": "https://example.com/asset-76.js",
+       "wastedMs": 228
+      },
+      {
+       "url": "https://example.com/asset-77.js",
+       "wastedMs": 231
+      },
+      {
+       "url": "https://example.com/asset-78.js",
+       "wastedMs": 234
+      },
+      {
+       "url": "https://example.com/asset-79.js",
+       "wastedMs": 237
+      },
+      {
+       "url": "https://example.com/asset-80.js",
+       "wastedMs": 240
+      },
+      {
+       "url": "https://example.com/asset-81.js",
+       "wastedMs": 243
+      },
+      {
+       "url": "https://example.com/asset-82.js",
+       "wastedMs": 246
+      },
+      {
+       "url": "https://example.com/asset-83.js",
+       "wastedMs": 249
+      },
+      {
+       "url": "https://example.com/asset-84.js",
+       "wastedMs": 252
+      },
+      {
+       "url": "https://example.com/asset-85.js",
+       "wastedMs": 255
+      },
+      {
+       "url": "https://example.com/asset-86.js",
+       "wastedMs": 258
+      },
+      {
+       "url": "https://example.com/asset-87.js",
+       "wastedMs": 261
+      },
+      {
+       "url": "https://example.com/asset-88.js",
+       "wastedMs": 264
+      },
+      {
+       "url": "https://example.com/asset-89.js",
+       "wastedMs": 267
+      },
+      {
+       "url": "https://example.com/asset-90.js",
+       "wastedMs": 270
+      },
+      {
+       "url": "https://example.com/asset-91.js",
+       "wastedMs": 273
+      },
+      {
+       "url": "https://example.com/asset-92.js",
+       "wastedMs": 276
+      },
+      {
+       "url": "https://example.com/asset-93.js",
+       "wastedMs": 279
+      },
+      {
+       "url": "https://example.com/asset-94.js",
+       "wastedMs": 282
+      },
+      {
+       "url": "https://example.com/asset-95.js",
+       "wastedMs": 285
+      },
+      {
+       "url": "https://example.com/asset-96.js",
+       "wastedMs": 288
+      },
+      {
+       "url": "https://example.com/asset-97.js",
+       "wastedMs": 291
+      },
+      {
+       "url": "https://example.com/asset-98.js",
+       "wastedMs": 294
+      },
+      {
+       "url": "https://example.com/asset-99.js",
+       "wastedMs": 297
+      },
+      {
+       "url": "https://example.com/asset-100.js",
+       "wastedMs": 300
+      },
+      {
+       "url": "https://example.com/asset-101.js",
+       "wastedMs": 303
+      },
+      {
+       "url": "https://example.com/asset-102.js",
+       "wastedMs": 306
+      },
+      {
+       "url": "https://example.com/asset-103.js",
+       "wastedMs": 309
+      },
+      {
+       "url": "https://example.com/asset-104.js",
+       "wastedMs": 312
+      },
+      {
+       "url": "https://example.com/asset-105.js",
+       "wastedMs": 315
+      },
+      {
+       "url": "https://example.com/asset-106.js",
+       "wastedMs": 318
+      },
+      {
+       "url": "https://example.com/asset-107.js",
+       "wastedMs": 321
+      },
+      {
+       "url": "https://example.com/asset-108.js",
+       "wastedMs": 324
+      },
+      {
+       "url": "https://example.com/asset-109.js",
+       "wastedMs": 327
+      },
+      {
+       "url": "https://example.com/asset-110.js",
+       "wastedMs": 330
+      },
+      {
+       "url": "https://example.com/asset-111.js",
+       "wastedMs": 333
+      },
+      {
+       "url": "https://example.com/asset-112.js",
+       "wastedMs": 336
+      },
+      {
+       "url": "https://example.com/asset-113.js",
+       "wastedMs": 339
+      },
+      {
+       "url": "https://example.com/asset-114.js",
+       "wastedMs": 342
+      },
+      {
+       "url": "https://example.com/asset-115.js",
+       "wastedMs": 345
+      },
+      {
+       "url": "https://example.com/asset-116.js",
+       "wastedMs": 348
+      },
+      {
+       "url": "https://example.com/asset-117.js",
+       "wastedMs": 351
+      },
+      {
+       "url": "https://example.com/asset-118.js",
+       "wastedMs": 354
+      },
+      {
+       "url": "https://example.com/asset-119.js",
+       "wastedMs": 357
+      },
+      {
+       "url": "https://example.com/asset-120.js",
+       "wastedMs": 360
+      },
+      {
+       "url": "https://example.com/asset-121.js",
+       "wastedMs": 363
+      },
+      {
+       "url": "https://example.com/asset-122.js",
+       "wastedMs": 366
+      },
+      {
+       "url": "https://example.com/asset-123.js",
+       "wastedMs": 369
+      },
+      {
+       "url": "https://example.com/asset-124.js",
+       "wastedMs": 372
+      },
+      {
+       "url": "https://example.com/asset-125.js",
+       "wastedMs": 375
+      },
+      {
+       "url": "https://example.com/asset-126.js",
+       "wastedMs": 378
+      },
+      {
+       "url": "https://example.com/asset-127.js",
+       "wastedMs": 381
+      },
+      {
+       "url": "https://example.com/asset-128.js",
+       "wastedMs": 384
+      },
+      {
+       "url": "https://example.com/asset-129.js",
+       "wastedMs": 387
+      },
+      {
+       "url": "https://example.com/asset-130.js",
+       "wastedMs": 390
+      },
+      {
+       "url": "https://example.com/asset-131.js",
+       "wastedMs": 393
+      },
+      {
+       "url": "https://example.com/asset-132.js",
+       "wastedMs": 396
+      },
+      {
+       "url": "https://example.com/asset-133.js",
+       "wastedMs": 399
+      },
+      {
+       "url": "https://example.com/asset-134.js",
+       "wastedMs": 402
+      },
+      {
+       "url": "https://example.com/asset-135.js",
+       "wastedMs": 405
+      },
+      {
+       "url": "https://example.com/asset-136.js",
+       "wastedMs": 408
+      },
+      {
+       "url": "https://example.com/asset-137.js",
+       "wastedMs": 411
+      },
+      {
+       "url": "https://example.com/asset-138.js",
+       "wastedMs": 414
+      },
+      {
+       "url": "https://example.com/asset-139.js",
+       "wastedMs": 417
+      },
+      {
+       "url": "https://example.com/asset-140.js",
+       "wastedMs": 420
+      },
+      {
+       "url": "https://example.com/asset-141.js",
+       "wastedMs": 423
+      },
+      {
+       "url": "https://example.com/asset-142.js",
+       "wastedMs": 426
+      },
+      {
+       "url": "https://example.com/asset-143.js",
+       "wastedMs": 429
+      },
+      {
+       "url": "https://example.com/asset-144.js",
+       "wastedMs": 432
+      },
+      {
+       "url": "https://example.com/asset-145.js",
+       "wastedMs": 435
+      },
+      {
+       "url": "https://example.com/asset-146.js",
+       "wastedMs": 438
+      },
+      {
+       "url": "https://example.com/asset-147.js",
+       "wastedMs": 441
+      },
+      {
+       "url": "https://example.com/asset-148.js",
+       "wastedMs": 444
+      },
+      {
+       "url": "https://example.com/asset-149.js",
+       "wastedMs": 447
+      },
+      {
+       "url": "https://example.com/asset-150.js",
+       "wastedMs": 450
+      },
+      {
+       "url": "https://example.com/asset-151.js",
+       "wastedMs": 453
+      },
+      {
+       "url": "https://example.com/asset-152.js",
+       "wastedMs": 456
+      },
+      {
+       "url": "https://example.com/asset-153.js",
+       "wastedMs": 459
+      },
+      {
+       "url": "https://example.com/asset-154.js",
+       "wastedMs": 462
+      },
+      {
+       "url": "https://example.com/asset-155.js",
+       "wastedMs": 465
+      },
+      {
+       "url": "https://example.com/asset-156.js",
+       "wastedMs": 468
+      },
+      {
+       "url": "https://example.com/asset-157.js",
+       "wastedMs": 471
+      },
+      {
+       "url": "https://example.com/asset-158.js",
+       "wastedMs": 474
+      },
+      {
+       "url": "https://example.com/asset-159.js",
+       "wastedMs": 477
+      },
+      {
+       "url": "https://example.com/asset-160.js",
+       "wastedMs": 480
+      },
+      {
+       "url": "https://example.com/asset-161.js",
+       "wastedMs": 483
+      },
+      {
+       "url": "https://example.com/asset-162.js",
+       "wastedMs": 486
+      },
+      {
+       "url": "https://example.com/asset-163.js",
+       "wastedMs": 489
+      },
+      {
+       "url": "https://example.com/asset-164.js",
+       "wastedMs": 492
+      },
+      {
+       "url": "https://example.com/asset-165.js",
+       "wastedMs": 495
+      },
+      {
+       "url": "https://example.com/asset-166.js",
+       "wastedMs": 498
+      },
+      {
+       "url": "https://example.com/asset-167.js",
+       "wastedMs": 501
+      },
+      {
+       "url": "https://example.com/asset-168.js",
+       "wastedMs": 504
+      },
+      {
+       "url": "https://example.com/asset-169.js",
+       "wastedMs": 507
+      },
+      {
+       "url": "https://example.com/asset-170.js",
+       "wastedMs": 510
+      },
+      {
+       "url": "https://example.com/asset-171.js",
+       "wastedMs": 513
+      },
+      {
+       "url": "https://example.com/asset-172.js",
+       "wastedMs": 516
+      },
+      {
+       "url": "https://example.com/asset-173.js",
+       "wastedMs": 519
+      },
+      {
+       "url": "https://example.com/asset-174.js",
+       "wastedMs": 522
+      },
+      {
+       "url": "https://example.com/asset-175.js",
+       "wastedMs": 525
+      },
+      {
+       "url": "https://example.com/asset-176.js",
+       "wastedMs": 528
+      },
+      {
+       "url": "https://example.com/asset-177.js",
+       "wastedMs": 531
+      },
+      {
+       "url": "https://example.com/asset-178.js",
+       "wastedMs": 534
+      },
+      {
+       "url": "https://example.com/asset-179.js",
+       "wastedMs": 537
+      },
+      {
+       "url": "https://example.com/asset-180.js",
+       "wastedMs": 540
+      },
+      {
+       "url": "https://example.com/asset-181.js",
+       "wastedMs": 543
+      },
+      {
+       "url": "https://example.com/asset-182.js",
+       "wastedMs": 546
+      },
+      {
+       "url": "https://example.com/asset-183.js",
+       "wastedMs": 549
+      },
+      {
+       "url": "https://example.com/asset-184.js",
+       "wastedMs": 552
+      },
+      {
+       "url": "https://example.com/asset-185.js",
+       "wastedMs": 555
+      },
+      {
+       "url": "https://example.com/asset-186.js",
+       "wastedMs": 558
+      },
+      {
+       "url": "https://example.com/asset-187.js",
+       "wastedMs": 561
+      },
+      {
+       "url": "https://example.com/asset-188.js",
+       "wastedMs": 564
+      },
+      {
+       "url": "https://example.com/asset-189.js",
+       "wastedMs": 567
+      },
+      {
+       "url": "https://example.com/asset-190.js",
+       "wastedMs": 570
+      },
+      {
+       "url": "https://example.com/asset-191.js",
+       "wastedMs": 573
+      },
+      {
+       "url": "https://example.com/asset-192.js",
+       "wastedMs": 576
+      },
+      {
+       "url": "https://example.com/asset-193.js",
+       "wastedMs": 579
+      },
+      {
+       "url": "https://example.com/asset-194.js",
+       "wastedMs": 582
+      },
+      {
+       "url": "https://example.com/asset-195.js",
+       "wastedMs": 585
+      },
+      {
+       "url": "https://example.com/asset-196.js",
+       "wastedMs": 588
+      },
+      {
+       "url": "https://example.com/asset-197.js",
+       "wastedMs": 591
+      },
+      {
+       "url": "https://example.com/asset-198.js",
+       "wastedMs": 594
+      },
+      {
+       "url": "https://example.com/asset-199.js",
+       "wastedMs": 597
+      },
+      {
+       "url": "https://example.com/asset-200.js",
+       "wastedMs": 600
+      },
+      {
+       "url": "https://example.com/asset-201.js",
+       "wastedMs": 603
+      },
+      {
+       "url": "https://example.com/asset-202.js",
+       "wastedMs": 606
+      },
+      {
+       "url": "https://example.com/asset-203.js",
+       "wastedMs": 609
+      },
+      {
+       "url": "https://example.com/asset-204.js",
+       "wastedMs": 612
+      },
+      {
+       "url": "https://example.com/asset-205.js",
+       "wastedMs": 615
+      },
+      {
+       "url": "https://example.com/asset-206.js",
+       "wastedMs": 618
+      },
+      {
+       "url": "https://example.com/asset-207.js",
+       "wastedMs": 621
+      },
+      {
+       "url": "https://example.com/asset-208.js",
+       "wastedMs": 624
+      },
+      {
+       "url": "https://example.com/asset-209.js",
+       "wastedMs": 627
+      },
+      {
+       "url": "https://example.com/asset-210.js",
+       "wastedMs": 630
+      },
+      {
+       "url": "https://example.com/asset-211.js",
+       "wastedMs": 633
+      },
+      {
+       "url": "https://example.com/asset-212.js",
+       "wastedMs": 636
+      },
+      {
+       "url": "https://example.com/asset-213.js",
+       "wastedMs": 639
+      },
+      {
+       "url": "https://example.com/asset-214.js",
+       "wastedMs": 642
+      },
+      {
+       "url": "https://example.com/asset-215.js",
+       "wastedMs": 645
+      },
+      {
+       "url": "https://example.com/asset-216.js",
+       "wastedMs": 648
+      },
+      {
+       "url": "https://example.com/asset-217.js",
+       "wastedMs": 651
+      },
+      {
+       "url": "https://example.com/asset-218.js",
+       "wastedMs": 654
+      },
+      {
+       "url": "https://example.com/asset-219.js",
+       "wastedMs": 657
+      },
+      {
+       "url": "https://example.com/asset-220.js",
+       "wastedMs": 660
+      },
+      {
+       "url": "https://example.com/asset-221.js",
+       "wastedMs": 663
+      },
+      {
+       "url": "https://example.com/asset-222.js",
+       "wastedMs": 666
+      },
+      {
+       "url": "https://example.com/asset-223.js",
+       "wastedMs": 669
+      },
+      {
+       "url": "https://example.com/asset-224.js",
+       "wastedMs": 672
+      },
+      {
+       "url": "https://example.com/asset-225.js",
+       "wastedMs": 675
+      },
+      {
+       "url": "https://example.com/asset-226.js",
+       "wastedMs": 678
+      },
+      {
+       "url": "https://example.com/asset-227.js",
+       "wastedMs": 681
+      },
+      {
+       "url": "https://example.com/asset-228.js",
+       "wastedMs": 684
+      },
+      {
+       "url": "https://example.com/asset-229.js",
+       "wastedMs": 687
+      },
+      {
+       "url": "https://example.com/asset-230.js",
+       "wastedMs": 690
+      },
+      {
+       "url": "https://example.com/asset-231.js",
+       "wastedMs": 693
+      },
+      {
+       "url": "https://example.com/asset-232.js",
+       "wastedMs": 696
+      },
+      {
+       "url": "https://example.com/asset-233.js",
+       "wastedMs": 699
+      },
+      {
+       "url": "https://example.com/asset-234.js",
+       "wastedMs": 702
+      },
+      {
+       "url": "https://example.com/asset-235.js",
+       "wastedMs": 705
+      },
+      {
+       "url": "https://example.com/asset-236.js",
+       "wastedMs": 708
+      },
+      {
+       "url": "https://example.com/asset-237.js",
+       "wastedMs": 711
+      },
+      {
+       "url": "https://example.com/asset-238.js",
+       "wastedMs": 714
+      },
+      {
+       "url": "https://example.com/asset-239.js",
+       "wastedMs": 717
+      },
+      {
+       "url": "https://example.com/asset-240.js",
+       "wastedMs": 720
+      },
+      {
+       "url": "https://example.com/asset-241.js",
+       "wastedMs": 723
+      },
+      {
+       "url": "https://example.com/asset-242.js",
+       "wastedMs": 726
+      },
+      {
+       "url": "https://example.com/asset-243.js",
+       "wastedMs": 729
+      },
+      {
+       "url": "https://example.com/asset-244.js",
+       "wastedMs": 732
+      },
+      {
+       "url": "https://example.com/asset-245.js",
+       "wastedMs": 735
+      },
+      {
+       "url": "https://example.com/asset-246.js",
+       "wastedMs": 738
+      },
+      {
+       "url": "https://example.com/asset-247.js",
+       "wastedMs": 741
+      },
+      {
+       "url": "https://example.com/asset-248.js",
+       "wastedMs": 744
+      },
+      {
+       "url": "https://example.com/asset-249.js",
+       "wastedMs": 747
+      },
+      {
+       "url": "https://example.com/asset-250.js",
+       "wastedMs": 750
+      },
+      {
+       "url": "https://example.com/asset-251.js",
+       "wastedMs": 753
+      },
+      {
+       "url": "https://example.com/asset-252.js",
+       "wastedMs": 756
+      },
+      {
+       "url": "https://example.com/asset-253.js",
+       "wastedMs": 759
+      },
+      {
+       "url": "https://example.com/asset-254.js",
+       "wastedMs": 762
+      },
+      {
+       "url": "https://example.com/asset-255.js",
+       "wastedMs": 765
+      },
+      {
+       "url": "https://example.com/asset-256.js",
+       "wastedMs": 768
+      },
+      {
+       "url": "https://example.com/asset-257.js",
+       "wastedMs": 771
+      },
+      {
+       "url": "https://example.com/asset-258.js",
+       "wastedMs": 774
+      },
+      {
+       "url": "https://example.com/asset-259.js",
+       "wastedMs": 777
+      },
+      {
+       "url": "https://example.com/asset-260.js",
+       "wastedMs": 780
+      },
+      {
+       "url": "https://example.com/asset-261.js",
+       "wastedMs": 783
+      },
+      {
+       "url": "https://example.com/asset-262.js",
+       "wastedMs": 786
+      },
+      {
+       "url": "https://example.com/asset-263.js",
+       "wastedMs": 789
+      },
+      {
+       "url": "https://example.com/asset-264.js",
+       "wastedMs": 792
+      },
+      {
+       "url": "https://example.com/asset-265.js",
+       "wastedMs": 795
+      },
+      {
+       "url": "https://example.com/asset-266.js",
+       "wastedMs": 798
+      },
+      {
+       "url": "https://example.com/asset-267.js",
+       "wastedMs": 801
+      },
+      {
+       "url": "https://example.com/asset-268.js",
+       "wastedMs": 804
+      },
+      {
+       "url": "https://example.com/asset-269.js",
+       "wastedMs": 807
+      },
+      {
+       "url": "https://example.com/asset-270.js",
+       "wastedMs": 810
+      },
+      {
+       "url": "https://example.com/asset-271.js",
+       "wastedMs": 813
+      },
+      {
+       "url": "https://example.com/asset-272.js",
+       "wastedMs": 816
+      },
+      {
+       "url": "https://example.com/asset-273.js",
+       "wastedMs": 819
+      },
+      {
+       "url": "https://example.com/asset-274.js",
+       "wastedMs": 822
+      },
+      {
+       "url": "https://example.com/asset-275.js",
+       "wastedMs": 825
+      },
+      {
+       "url": "https://example.com/asset-276.js",
+       "wastedMs": 828
+      },
+      {
+       "url": "https://example.com/asset-277.js",
+       "wastedMs": 831
+      },
+      {
+       "url": "https://example.com/asset-278.js",
+       "wastedMs": 834
+      },
+      {
+       "url": "https://example.com/asset-279.js",
+       "wastedMs": 837
+      },
+      {
+       "url": "https://example.com/asset-280.js",
+       "wastedMs": 840
+      },
+      {
+       "url": "https://example.com/asset-281.js",
+       "wastedMs": 843
+      },
+      {
+       "url": "https://example.com/asset-282.js",
+       "wastedMs": 846
+      },
+      {
+       "url": "https://example.com/asset-283.js",
+       "wastedMs": 849
+      },
+      {
+       "url": "https://example.com/asset-284.js",
+       "wastedMs": 852
+      },
+      {
+       "url": "https://example.com/asset-285.js",
+       "wastedMs": 855
+      },
+      {
+       "url": "https://example.com/asset-286.js",
+       "wastedMs": 858
+      },
+      {
+       "url": "https://example.com/asset-287.js",
+       "wastedMs": 861
+      },
+      {
+       "url": "https://example.com/asset-288.js",
+       "wastedMs": 864
+      },
+      {
+       "url": "https://example.com/asset-289.js",
+       "wastedMs": 867
+      },
+      {
+       "url": "https://example.com/asset-290.js",
+       "wastedMs": 870
+      },
+      {
+       "url": "https://example.com/asset-291.js",
+       "wastedMs": 873
+      },
+      {
+       "url": "https://example.com/asset-292.js",
+       "wastedMs": 876
+      },
+      {
+       "url": "https://example.com/asset-293.js",
+       "wastedMs": 879
+      },
+      {
+       "url": "https://example.com/asset-294.js",
+       "wastedMs": 882
+      },
+      {
+       "url": "https://example.com/asset-295.js",
+       "wastedMs": 885
+      },
+      {
+       "url": "https://example.com/asset-296.js",
+       "wastedMs": 888
+      },
+      {
+       "url": "https://example.com/asset-297.js",
+       "wastedMs": 891
+      },
+      {
+       "url": "https://example.com/asset-298.js",
+       "wastedMs": 894
+      },
+      {
+       "url": "https://example.com/asset-299.js",
+       "wastedMs": 897
+      },
+      {
+       "url": "https://example.com/asset-300.js",
+       "wastedMs": 900
+      },
+      {
+       "url": "https://example.com/asset-301.js",
+       "wastedMs": 903
+      },
+      {
+       "url": "https://example.com/asset-302.js",
+       "wastedMs": 906
+      },
+      {
+       "url": "https://example.com/asset-303.js",
+       "wastedMs": 909
+      },
+      {
+       "url": "https://example.com/asset-304.js",
+       "wastedMs": 912
+      },
+      {
+       "url": "https://example.com/asset-305.js",
+       "wastedMs": 915
+      },
+      {
+       "url": "https://example.com/asset-306.js",
+       "wastedMs": 918
+      },
+      {
+       "url": "https://example.com/asset-307.js",
+       "wastedMs": 921
+      },
+      {
+       "url": "https://example.com/asset-308.js",
+       "wastedMs": 924
+      },
+      {
+       "url": "https://example.com/asset-309.js",
+       "wastedMs": 927
+      },
+      {
+       "url": "https://example.com/asset-310.js",
+       "wastedMs": 930
+      },
+      {
+       "url": "https://example.com/asset-311.js",
+       "wastedMs": 933
+      },
+      {
+       "url": "https://example.com/asset-312.js",
+       "wastedMs": 936
+      },
+      {
+       "url": "https://example.com/asset-313.js",
+       "wastedMs": 939
+      },
+      {
+       "url": "https://example.com/asset-314.js",
+       "wastedMs": 942
+      },
+      {
+       "url": "https://example.com/asset-315.js",
+       "wastedMs": 945
+      },
+      {
+       "url": "https://example.com/asset-316.js",
+       "wastedMs": 948
+      },
+      {
+       "url": "https://example.com/asset-317.js",
+       "wastedMs": 951
+      },
+      {
+       "url": "https://example.com/asset-318.js",
+       "wastedMs": 954
+      },
+      {
+       "url": "https://example.com/asset-319.js",
+       "wastedMs": 957
+      },
+      {
+       "url": "https://example.com/asset-320.js",
+       "wastedMs": 960
+      },
+      {
+       "url": "https://example.com/asset-321.js",
+       "wastedMs": 963
+      },
+      {
+       "url": "https://example.com/asset-322.js",
+       "wastedMs": 966
+      },
+      {
+       "url": "https://example.com/asset-323.js",
+       "wastedMs": 969
+      },
+      {
+       "url": "https://example.com/asset-324.js",
+       "wastedMs": 972
+      },
+      {
+       "url": "https://example.com/asset-325.js",
+       "wastedMs": 975
+      },
+      {
+       "url": "https://example.com/asset-326.js",
+       "wastedMs": 978
+      },
+      {
+       "url": "https://example.com/asset-327.js",
+       "wastedMs": 981
+      },
+      {
+       "url": "https://example.com/asset-328.js",
+       "wastedMs": 984
+      },
+      {
+       "url": "https://example.com/asset-329.js",
+       "wastedMs": 987
+      },
+      {
+       "url": "https://example.com/asset-330.js",
+       "wastedMs": 990
+      },
+      {
+       "url": "https://example.com/asset-331.js",
+       "wastedMs": 993
+      },
+      {
+       "url": "https://example.com/asset-332.js",
+       "wastedMs": 996
+      },
+      {
+       "url": "https://example.com/asset-333.js",
+       "wastedMs": 999
+      },
+      {
+       "url": "https://example.com/asset-334.js",
+       "wastedMs": 1002
+      },
+      {
+       "url": "https://example.com/asset-335.js",
+       "wastedMs": 1005
+      },
+      {
+       "url": "https://example.com/asset-336.js",
+       "wastedMs": 1008
+      },
+      {
+       "url": "https://example.com/asset-337.js",
+       "wastedMs": 1011
+      },
+      {
+       "url": "https://example.com/asset-338.js",
+       "wastedMs": 1014
+      },
+      {
+       "url": "https://example.com/asset-339.js",
+       "wastedMs": 1017
+      },
+      {
+       "url": "https://example.com/asset-340.js",
+       "wastedMs": 1020
+      },
+      {
+       "url": "https://example.com/asset-341.js",
+       "wastedMs": 1023
+      },
+      {
+       "url": "https://example.com/asset-342.js",
+       "wastedMs": 1026
+      },
+      {
+       "url": "https://example.com/asset-343.js",
+       "wastedMs": 1029
+      },
+      {
+       "url": "https://example.com/asset-344.js",
+       "wastedMs": 1032
+      },
+      {
+       "url": "https://example.com/asset-345.js",
+       "wastedMs": 1035
+      },
+      {
+       "url": "https://example.com/asset-346.js",
+       "wastedMs": 1038
+      },
+      {
+       "url": "https://example.com/asset-347.js",
+       "wastedMs": 1041
+      },
+      {
+       "url": "https://example.com/asset-348.js",
+       "wastedMs": 1044
+      },
+      {
+       "url": "https://example.com/asset-349.js",
+       "wastedMs": 1047
+      },
+      {
+       "url": "https://example.com/asset-350.js",
+       "wastedMs": 1050
+      },
+      {
+       "url": "https://example.com/asset-351.js",
+       "wastedMs": 1053
+      },
+      {
+       "url": "https://example.com/asset-352.js",
+       "wastedMs": 1056
+      },
+      {
+       "url": "https://example.com/asset-353.js",
+       "wastedMs": 1059
+      },
+      {
+       "url": "https://example.com/asset-354.js",
+       "wastedMs": 1062
+      },
+      {
+       "url": "https://example.com/asset-355.js",
+       "wastedMs": 1065
+      },
+      {
+       "url": "https://example.com/asset-356.js",
+       "wastedMs": 1068
+      },
+      {
+       "url": "https://example.com/asset-357.js",
+       "wastedMs": 1071
+      },
+      {
+       "url": "https://example.com/asset-358.js",
+       "wastedMs": 1074
+      },
+      {
+       "url": "https://example.com/asset-359.js",
+       "wastedMs": 1077
+      },
+      {
+       "url": "https://example.com/asset-360.js",
+       "wastedMs": 1080
+      },
+      {
+       "url": "https://example.com/asset-361.js",
+       "wastedMs": 1083
+      },
+      {
+       "url": "https://example.com/asset-362.js",
+       "wastedMs": 1086
+      },
+      {
+       "url": "https://example.com/asset-363.js",
+       "wastedMs": 1089
+      },
+      {
+       "url": "https://example.com/asset-364.js",
+       "wastedMs": 1092
+      },
+      {
+       "url": "https://example.com/asset-365.js",
+       "wastedMs": 1095
+      },
+      {
+       "url": "https://example.com/asset-366.js",
+       "wastedMs": 1098
+      },
+      {
+       "url": "https://example.com/asset-367.js",
+       "wastedMs": 1101
+      },
+      {
+       "url": "https://example.com/asset-368.js",
+       "wastedMs": 1104
+      },
+      {
+       "url": "https://example.com/asset-369.js",
+       "wastedMs": 1107
+      },
+      {
+       "url": "https://example.com/asset-370.js",
+       "wastedMs": 1110
+      },
+      {
+       "url": "https://example.com/asset-371.js",
+       "wastedMs": 1113
+      },
+      {
+       "url": "https://example.com/asset-372.js",
+       "wastedMs": 1116
+      },
+      {
+       "url": "https://example.com/asset-373.js",
+       "wastedMs": 1119
+      },
+      {
+       "url": "https://example.com/asset-374.js",
+       "wastedMs": 1122
+      },
+      {
+       "url": "https://example.com/asset-375.js",
+       "wastedMs": 1125
+      },
+      {
+       "url": "https://example.com/asset-376.js",
+       "wastedMs": 1128
+      },
+      {
+       "url": "https://example.com/asset-377.js",
+       "wastedMs": 1131
+      },
+      {
+       "url": "https://example.com/asset-378.js",
+       "wastedMs": 1134
+      },
+      {
+       "url": "https://example.com/asset-379.js",
+       "wastedMs": 1137
+      },
+      {
+       "url": "https://example.com/asset-380.js",
+       "wastedMs": 1140
+      },
+      {
+       "url": "https://example.com/asset-381.js",
+       "wastedMs": 1143
+      },
+      {
+       "url": "https://example.com/asset-382.js",
+       "wastedMs": 1146
+      },
+      {
+       "url": "https://example.com/asset-383.js",
+       "wastedMs": 1149
+      },
+      {
+       "url": "https://example.com/asset-384.js",
+       "wastedMs": 1152
+      },
+      {
+       "url": "https://example.com/asset-385.js",
+       "wastedMs": 1155
+      },
+      {
+       "url": "https://example.com/asset-386.js",
+       "wastedMs": 1158
+      },
+      {
+       "url": "https://example.com/asset-387.js",
+       "wastedMs": 1161
+      },
+      {
+       "url": "https://example.com/asset-388.js",
+       "wastedMs": 1164
+      },
+      {
+       "url": "https://example.com/asset-389.js",
+       "wastedMs": 1167
+      },
+      {
+       "url": "https://example.com/asset-390.js",
+       "wastedMs": 1170
+      },
+      {
+       "url": "https://example.com/asset-391.js",
+       "wastedMs": 1173
+      },
+      {
+       "url": "https://example.com/asset-392.js",
+       "wastedMs": 1176
+      },
+      {
+       "url": "https://example.com/asset-393.js",
+       "wastedMs": 1179
+      },
+      {
+       "url": "https://example.com/asset-394.js",
+       "wastedMs": 1182
+      },
+      {
+       "url": "https://example.com/asset-395.js",
+       "wastedMs": 1185
+      },
+      {
+       "url": "https://example.com/asset-396.js",
+       "wastedMs": 1188
+      },
+      {
+       "url": "https://example.com/asset-397.js",
+       "wastedMs": 1191
+      },
+      {
+       "url": "https://example.com/asset-398.js",
+       "wastedMs": 1194
+      },
+      {
+       "url": "https://example.com/asset-399.js",
+       "wastedMs": 1197
+      }
+     ]
+    }
+   }
+  },
+  "categories": {
+   "performance": {
+    "id": "performance",
+    "title": "Performance",
+    "score": 0.68,
+    "auditRefs": [
+     {
+      "id": "largest-contentful-paint",
+      "weight": 25
+     }
+    ]
+   },
+   "seo": {
+    "id": "seo",
+    "title": "SEO",
+    "score": 0.92,
+    "auditRefs": []
+   }
+  },
+  "timing": {
+   "total": 14211.3
+  }
+ },
+ "analysisUTCTimestamp": "2026-09-30T18:02:11.412Z"
+}

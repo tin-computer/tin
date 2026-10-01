@@ -463,6 +463,10 @@ def parse_integration_requirements(value: Any) -> tuple[IntegrationRequirement, 
 
         if isinstance(provider_key, str) and CUSTOM_KEY.fullmatch(provider_key):
             definitions[provider_key] = custom_definition(provider_key)
+        from tin_lite.managed_services import DEFINITIONS as MANAGED_DEFINITIONS
+
+        if isinstance(provider_key, str) and provider_key in MANAGED_DEFINITIONS:
+            definitions[provider_key] = MANAGED_DEFINITIONS[provider_key]
         if not isinstance(provider_key, str) or provider_key not in definitions:
             raise ValueError("workflow integration requirement names an unknown provider")
         if provider_key in seen_providers:
@@ -596,6 +600,10 @@ class IntegrationService:
 
     def is_configured(self, provider_key: str) -> bool:
         self._definition(provider_key)
+        from tin_lite import managed_services
+
+        if managed_services.is_managed(provider_key):
+            return managed_services.configured(self._settings, provider_key)
         if provider_key.startswith("custom.api.") or provider_key == STRIPE_PROVIDER:
             return self._cipher is not None
         if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
@@ -696,6 +704,15 @@ class IntegrationService:
 
             if CUSTOM_KEY.fullmatch(requirement.provider_key):
                 await self.custom.ready(project_id, requirement)
+                continue
+            from tin_lite import managed_services
+
+            if managed_services.is_managed(requirement.provider_key):
+                # Tin holds this key; there is no founder connection to check.
+                if not self.is_configured(requirement.provider_key):
+                    raise IntegrationNotConfiguredError(
+                        managed_services.not_configured(requirement.provider_key)
+                    )
                 continue
             self._require_configured(requirement.provider_key)
             connection = await self._database.get_integration_connection(
@@ -820,6 +837,8 @@ class IntegrationService:
     ) -> ConnectStart:
         if provider_key.startswith("custom.api."):
             raise IntegrationError("Use the secure Custom API form in project Integrations.")
+        if provider_key.startswith("managed."):
+            raise IntegrationError("Tin holds this service's key; there is nothing to connect.")
         self._require_configured(provider_key)
         definition = self._definition(provider_key)
         if provider_key == STRIPE_PROVIDER:
@@ -4900,6 +4919,10 @@ class IntegrationService:
 
         if CUSTOM_KEY.fullmatch(provider_key):
             return custom_definition(provider_key)
+        from tin_lite.managed_services import DEFINITIONS as MANAGED_DEFINITIONS
+
+        if provider_key in MANAGED_DEFINITIONS:
+            return MANAGED_DEFINITIONS[provider_key]
         definition = next(
             (item for item in registered_integrations() if item.key == provider_key), None
         )

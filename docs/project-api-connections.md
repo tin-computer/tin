@@ -246,6 +246,105 @@ A custom HTTP binding is useful without a registry contribution. It is not autom
 interchangeable with an adapter: authored code must explicitly map the operation and response
 shape. Attio and Clay adapters are not included.
 
+## Services Tin holds the key for
+
+Two services need no founder connection: Tin holds the key, pays the vendor and passes the
+cost through credits. Declare the provider in `integration_requirements` with its capabilities,
+bind it once in `code.services`, and call it with `ctx.services.call`, like any adapter above.
+
+```json
+{
+  "integration_requirements": [
+    {"provider_key": "managed.pagespeed", "capabilities": ["pagespeed.read", "crux.read"],
+     "required": true},
+    {"provider_key": "managed.dataforseo",
+     "capabilities": ["serp.read", "keywords.read", "backlinks.read"], "required": true}
+  ],
+  "code": {
+    "services": {
+      "speed": {"provider_key": "managed.pagespeed", "max_calls": 3, "max_response_bytes": 8000},
+      "seo": {"provider_key": "managed.dataforseo", "max_calls": 4, "max_response_bytes": 32000}
+    }
+  }
+}
+```
+
+```python
+lab = await ctx.services.call(
+    service="speed",
+    step="lab_mobile",
+    operation="pagespeed.run",
+    arguments={"url": "https://example.com/", "strategy": "mobile"},
+)
+field = await ctx.services.call(
+    service="speed",
+    step="field",
+    operation="crux.query",
+    arguments={"origin": "https://example.com"},
+)
+serp = await ctx.services.call(
+    service="seo",
+    step="serp",
+    operation="serp.organic",
+    arguments={"keyword": "kanban board", "depth": 10},
+)
+```
+
+| Provider | Operation | Arguments | Returns | Cost |
+| --- | --- | --- | --- | --- |
+| `managed.pagespeed` | `pagespeed.run` (`pagespeed.read`) | `url`; `strategy` `mobile` (default) or `desktop`; `categories` from `performance` (default), `accessibility`, `best-practices`, `seo` | `status`, `scores` (0-100), `lab` (`lcp_ms`, `cls`, `tbt_ms`, `fcp_ms`, `speed_index_ms`), `field` (`lcp_ms`, `inp_ms`, `cls`, ...) or `field_status: "no_field_data"` | $0 |
+| `managed.pagespeed` | `crux.query` (`crux.read`) | one of `origin` or `url`; optional `form_factor` `phone`, `desktop` or `tablet` | `status`, `collection_period`, `metrics` with `p75` and `good`/`needs_improvement`/`poor` shares, or `status: "no_field_data"` | $0 |
+| `managed.dataforseo` | `serp.organic` (`serp.read`) | `keyword`; `location_code` (default 2840, US); `language_code` (default `en`); `device`; `depth` 1-100 (default 10) | organic `records` (rank, domain, URL, title, description), `serp_features`, `se_results_count` | $0.002 per 10 results |
+| `managed.dataforseo` | `keywords.ideas` (`keywords.read`) | `keywords` (1-20); market as above; `limit` 1-100 (default 20); `offset` | `records` (keyword, search_volume, keyword_difficulty, cpc, competition, intent), `total_count`, `next_offset` | $0.012 + $0.00012 per row |
+| `managed.dataforseo` | `keywords.overview` (`keywords.read`) | `keywords` (1-50); market as above | the same records plus 12 `monthly` volumes | $0.012 + $0.00012 per keyword |
+| `managed.dataforseo` | `backlinks.summary` (`backlinks.read`) | `target` (a domain such as `example.com`, or an absolute page URL); `include_subdomains` (default true) | rank, backlinks, spam score, referring domains/IPs/pages, broken links | $0.024 + $0.000036 per row |
+| `managed.dataforseo` | `backlinks.referring_domains` (`backlinks.read`) | `target`; `include_subdomains`; `limit` 1-100 (default 20); `offset` | `records` (domain, rank, backlinks, spam score, first seen, lost date), highest rank first, `next_offset` | $0.024 + $0.000036 per row |
+
+Every DataForSEO response carries `cost_usd`, the cost DataForSEO reported for that call.
+Prices are DataForSEO's list prices as of September 2026 (after the July 2026 update); the
+reported cost, not this table, is what a run is charged. At the argument bounds every call costs
+at most about $0.03.
+
+**How a package pays.** PageSpeed Insights and CrUX are free, so a package that binds only
+`managed.pagespeed` keeps the included `bounded-code-v1` policy. A `managed.dataforseo`
+binding makes the run metered, the same `managed-code-model-v1` funding that model steps use:
+the run needs an enabled credit account, its ceiling is $0.05 per declared call (four calls
+cap the run at $0.20), and each call reserves $0.05 before dispatch. The cost DataForSEO
+reports then settles it through `service_pricing` and the credit ledger, exactly as native
+keyword research does; a supplier overrun above the reservation is Tin's loss. A refused
+request (bad arguments, rate limit, Tin's account out of balance) settles at its reported cost,
+usually $0, and later steps can still call. A read Tin can't confirm (a server error, or an
+oversized, malformed or mismatched answer) stays unconfirmed: billing reconciles it rather than
+counting it free, Tin doesn't repeat it, and the run's later service calls stop with a named error. Paid managed services are for `workflow.code`
+packages only; a Codex procedure's session budget funds its own model calls, so procedures
+may bind `managed.pagespeed` but not `managed.dataforseo`.
+
+**Responses and limits.** Tin cuts each response to what a report needs, never the provider's
+raw payload: a Lighthouse report of hundreds of kilobytes comes back as under 1 KB. List operations
+return the leading `records` that fit `max_response_bytes`, with `truncated`, `has_more` and,
+for the paged operations, `next_offset`; pass it as `offset` in a new step. For `serp.organic`
+and `keywords.overview`, ask for less (a smaller `depth`, fewer keywords) instead. Only live
+endpoints are exposed; DataForSEO's task_post endpoints, such as the OnPage crawl, stay in
+native executors.
+
+**Slow and missing data.** A Lighthouse run takes 10-30 seconds. Tin waits 22 seconds, under
+the gateway's 25-second limit, then returns `{"status": "timed_out"}` as a completed result:
+the step replays that answer, and a new step can try again. Give each strategy its own step;
+with the 60-second code window, plan for two PageSpeed runs per package run. CrUX has no
+record for most small sites. `crux.query` then returns `status: "no_field_data"`, a metric
+without enough traffic is `null`, and `pagespeed.run` says `field_status: "no_field_data"`.
+Report that as missing; never show it as zero. A page Lighthouse cannot load returns
+`status: "lighthouse_error"` with Lighthouse's code, such as `NO_FCP`.
+
+**Operator settings.** `TIN_LITE_PAGESPEED_API_KEY` (a Google Cloud API key with the
+PageSpeed Insights API and the Chrome UX Report API enabled) serves both Google operations;
+the organic audit already reads the same key. `DATAFORSEO_LOGIN` and `DATAFORSEO_PASSWORD`
+serve DataForSEO, as for the native keyword and audit workflows. If the Backlinks API is not
+enabled on that account, backlinks reads return a named refusal. When a setting is unset, a run that requires the service does not
+start, and a call made after the key was removed fails with "... is not configured on this Tin
+deployment" and no receipt. Keys go to the provider in a header or Basic auth, never in a URL,
+the sandbox, a receipt or the response.
+
 ## Recovery and costs
 
 Stable step IDs and fingerprints bind responses in the existing `effect_receipts` table
@@ -258,7 +357,9 @@ write that was already accepted. No execution-state files or second orchestratio
 
 Connected-provider observations use the existing Postgres usage projection, marked
 `connected_api`, `billed_by: connected_provider`, with unknown provider costs left null.
-These requests never create Tin credit operations. Model calls use the existing priced
+These requests never create Tin credit operations. Managed services are the exception
+described above: their observations are Tin's own `tool` usage, `pagespeed` at $0 and
+`dataforseo` at its reported cost. Model calls use the existing priced
 route, usage recorder and ledger separately. Model-free bounded compute still works at zero
 Tin credits; an external account may have its own provider charges.
 
