@@ -8,10 +8,10 @@ retirement whenever paid visits, protection, links or a safe redirect target are
 Nothing here edits the site or asks for an approval in this file. The decisions block at the
 end is read by the workflows that act on it:
 
-- merges (301) and retirements (noindex or 301) appear in the next organic.technical_fix as
-  judgment calls; the coding agent answers them, asking the founder when unsure, and the
-  answered ones go into one pull request;
-- refreshes are candidates for content.refresh, whose drafts the founder reviews in Decisions.
+- merges (301) and retirements (noindex or 301) are URL changes with a stable ID each
+  (tin_lite.planned_url_changes), for website.change to turn into changes the founder approves;
+- refresh and rewrite rows wait for the content workflow. content.refresh 1.0.0 and the
+  technical fix (site-fix-v5) are on main and do not read this file.
 
 Setup: analytics.gsc with search_analytics.read. A fresh organic.traffic_snapshot supplies
 PostHog visits; without it this workflow reads Search Console itself and holds every cut.
@@ -875,7 +875,7 @@ def decide(
                         rule, "retire"
                     ),
                     "confirmed": row["confirmed"],
-                    "owner": "organic.technical_fix" if kind != "gone" else "founder",
+                    "owner": "website.change" if kind != "gone" else "founder",
                 }
             )
             removed.add(url)
@@ -914,7 +914,7 @@ def decide(
                     "Utility page appeared in search; keep it crawlable and do not block it in "
                     "robots.txt.",
                     "/",
-                    "organic.technical_fix",
+                    "website.change",
                 )
             else:
                 notes.append(f"{url}: the home page must earn its searches before a noindex")
@@ -931,7 +931,7 @@ def decide(
                     "noindex",
                     "ad_page_in_search",
                     "Ad page appeared in search; remove it from the sitemap and keep it crawlable.",
-                    owner="organic.technical_fix",
+                    owner="website.change",
                 )
             continue
         if url in losers:
@@ -946,7 +946,7 @@ def decide(
                     "duplicate",
                     "The survivor covers the same intent; keep the 301 at least one year.",
                     target,
-                    "organic.technical_fix",
+                    "website.change",
                 )
             continue
         absorbed = [
@@ -991,7 +991,7 @@ def decide(
                     "no_job",
                     f"{why}; keep the 301 at least one year.",
                     target,
-                    "organic.technical_fix",
+                    "website.change",
                 )
             elif page["links"] == 0:
                 make(
@@ -1170,10 +1170,9 @@ def report(block, inventory, notes, has_snapshot, posthog, previous):
             lines.append(text)
         lines += [
             "",
-            "Redirects and noindex changes appear in the next organic.technical_fix as questions. "
-            "Your coding agent answers them from the codebase and asks you only when unsure; the "
-            "ones you agree to go into one pull request. A page to remove (404 or 410) is yours "
-            "to delete; the technical fix never deletes pages.",
+            "Redirects and noindex changes are proposals: nothing here changes the site. Each "
+            "has a stable ID in the decisions block, and website.change asks you before it "
+            "makes one. A page to remove (404 or 410) is yours to delete.",
         ]
     else:
         lines.append("No merge or retirement passed its guards this week.")

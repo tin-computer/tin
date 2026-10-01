@@ -473,37 +473,6 @@ class TechnicalFixSources:
             ],
         }
 
-    async def planned_changes(
-        self, *, project_id: UUID, host: str | None, protected_paths: list[str] | None = None
-    ) -> dict:
-        """URL changes Page decisions and Site architecture proposed, at the project's head.
-
-        They join the audit's findings as judgment calls; see planned_url_changes."""
-        from datetime import UTC, datetime
-
-        from tin_lite import planned_url_changes as planned
-
-        empty = {"revision": None, "changes": [], "selections": []}
-        read = getattr(self.storage, "read_canonical_artifact_if_exists", None)
-        project = await self.db.get_project(project_id) if hasattr(self.db, "get_project") else None
-        if project is None or read is None or not host:
-            return empty
-        try:
-            repo = await self.storage.get_repo(project.state_repo_id)
-            revision = await self.storage.head_sha(repo, project.canonical_branch)
-            files = {
-                path: await read(repo_id=project.state_repo_id, commit_sha=revision, path=path)
-                for path in (planned.EFFICACY_PATH, planned.ARCHITECTURE_PATH)
-            }
-        except (LookupError, ValueError, AttributeError):
-            return empty
-        changes = planned.read_changes(files, datetime.now(UTC).date(), protected_paths)
-        return {
-            "revision": revision,
-            "changes": changes,
-            "selections": planned.as_selections(changes, host),
-        }
-
     async def batch(
         self,
         *,
@@ -515,12 +484,9 @@ class TechnicalFixSources:
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         bind: bool = True,
-        protected_paths: list[str] | None = None,
     ):
         """site-fix-v5's preview: every finding of one audit, sorted into repairs, judgment
         calls, copy and manual steps. `decisions` are `finding_id=choice` answers.
-        `protected_paths` adds to the sign-in and sign-up paths a planned URL change may not
-        be suggested for (planned_url_changes.PROTECTED_PATHS).
 
         `bind` False previews without touching GitHub (the plan alone)."""
         from tin_lite import technical_repair_plan as repair_plan
@@ -532,10 +498,7 @@ class TechnicalFixSources:
         source = await self.inspect(project_id=project_id, audit_run_id=audit_run_id)
         if source["source"]["audit_revision"] != audit_revision:
             raise TechnicalFixError("source_changed", "The selected audit revision does not match.")
-        planned = await self.planned_changes(
-            project_id=project_id, host=source["target"]["host"], protected_paths=protected_paths
-        )
-        selections = [*source["findings"], *planned["selections"]]
+        selections = source["findings"]
         if finding_ids:
             wanted = set(finding_ids)
             unknown = wanted - {row["finding"]["id"] for row in selections}
@@ -548,25 +511,20 @@ class TechnicalFixSources:
             selections = [row for row in selections if row["finding"]["id"] in wanted]
         try:
             answers = repair_plan.parse_decisions(decisions)
-            plan = repair_plan.build_plan(selections, answers)
+            planned = repair_plan.build_plan(selections, answers)
         except ValueError as exc:
             raise TechnicalFixError("invalid_decision", str(exc), status_code=422) from exc
         result = {
             "source": source["source"],
             "target": source["target"],
             "crawl_status": source["crawl_status"],
-            "plan": plan,
-            "decisions_needed": plan["decisions_needed"],
-            "ask": repair_plan.ASK if plan["decisions_needed"] else None,
-            "planned_changes": {
-                "revision": planned["revision"],
-                "count": len(planned["selections"]),
-                "sources": sorted({c["source"] for c in planned["changes"]}),
-            },
+            "plan": planned,
+            "decisions_needed": planned["decisions_needed"],
+            "ask": repair_plan.ASK if planned["decisions_needed"] else None,
             "summary": {
-                "fixable": len(plan["repairs"]),
-                "decisions_needed": len(plan["decisions_needed"]),
-                **{key: len(rows) for key, rows in plan["left_out"].items() if rows},
+                "fixable": len(planned["repairs"]),
+                "decisions_needed": len(planned["decisions_needed"]),
+                **{key: len(rows) for key, rows in planned["left_out"].items() if rows},
             },
             "caps": {
                 "findings": repair_plan.MAX_FINDINGS,
@@ -580,7 +538,7 @@ class TechnicalFixSources:
                 "Changes Tin can't build are checked on the live site after they merge.",
             ],
         }
-        if not bind or not plan["repairs"]:
+        if not bind or not planned["repairs"]:
             # Nothing to execute: the preview needs no repository binding.
             return {**result, "execution_available": False}
         if repository_serves_site is not True:
@@ -603,5 +561,5 @@ class TechnicalFixSources:
             "repository_binding": asdict(binding),
             "repository_mapping": "member_asserted_not_verified",
             "live_verification": "not_performed",
-            "execution_available": bool(plan["repairs"]),
+            "execution_available": bool(planned["repairs"]),
         }

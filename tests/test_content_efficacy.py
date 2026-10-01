@@ -127,11 +127,11 @@ async def test_ordinary_week_decides_every_page(monkeypatch):
     assert rows["/blog/earning-post"]["decision"] == "keep"
     changes = block(content)["url_changes"]
     assert {(c["from"], c["kind"], c["owner"]) for c in changes} == {
-        ("/sign-in", "noindex", "organic.technical_fix"),
-        ("/compare/quickbooks-alternatives", "301", "organic.technical_fix"),
-        ("/offer/spring-sale", "noindex", "organic.technical_fix"),
+        ("/sign-in", "noindex", "website.change"),
+        ("/compare/quickbooks-alternatives", "301", "website.change"),
+        ("/offer/spring-sale", "noindex", "website.change"),
     }
-    assert "appear in the next organic.technical_fix as questions" in content
+    assert "website.change asks you before it makes one" in content
     assert "approved" not in content.lower()  # no approval to hand-edit in this file
     assert [c["step"] for c in ctx.services.calls] == []  # a fresh snapshot needs no GSC reads
     assert "Tallyfox" in json.dumps(ctx.models.calls[0]["data"]["sources"])

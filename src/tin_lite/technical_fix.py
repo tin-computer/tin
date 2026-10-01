@@ -202,17 +202,6 @@ BATCH_INPUT_SCHEMA = {
             "default": False,
             "title": "This repository serves the audited website",
         },
-        "protected_paths": {
-            "type": "array",
-            "title": "Protected paths",
-            "description": "Site paths a planned redirect or noindex must ask the founder "
-            "about first, on top of /sign-in, /sign-up and /auth-complete, such as pages "
-            "another app shares.",
-            "items": {"type": "string", "pattern": "^/[A-Za-z0-9._~!$&'()*+,;=:@%/-]{0,200}$"},
-            "maxItems": 20,
-            "uniqueItems": True,
-            "default": [],
-        },
         "context": {
             "type": "string",
             "maxLength": 2000,

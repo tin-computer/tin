@@ -1,4 +1,4 @@
-"""Page changes other workflows planned, handed to the workflows that make them.
+"""Page changes other workflows planned: a pure reader, with nothing wired to it yet.
 
 Two Registry packages plan changes to a site's pages but edit nothing themselves:
 
@@ -8,17 +8,17 @@ Two Registry packages plan changes to a site's pages but edit nothing themselves
 - `organic.site_architecture` writes a plan whose `redirects.json` block lists the redirects
   a URL change needs.
 
-Instead of asking the founder to mark rows approved in those files, the technical fix turns
-each URL change into a judgment call (site-fix-v5's `decisions_needed`): the coding agent
-answers it, asking the founder when unsure, and the answered ones go into the same pull
-request as the audit's repairs. Refresh rows become candidates for content.refresh, whose
-drafts the founder reviews in Decisions.
+This module reads both into one list of URL changes, each with a stable `oa_` ID (the
+audit's finding-ID shape) and Tin's suggestion. website.change phase 3 will turn them into
+`website_changes` rows the founder approves; the founder dropped the technical fix workflow,
+and site-fix-v5 (on main) must not change, so the technical fix does not read them. The
+refresh rows (`refresh_candidates`) are kept for the one content.generate work; content.refresh
+1.0.0 is on main and does not read them either.
 
 Some paths are protected: the sign-in, sign-up and auth-return pages the site shares with
 its login provider (an approved noindex on /sign-in once touched pages another app shares),
-plus any path the technical fix's `protected_paths` input names. The repository has no
-notion of protected paths, so this list is it. A change to a protected path stays a judgment
-call, but Tin's suggestion is to ask the founder, never to apply.
+plus any path the caller's `protected_paths` names, as website.change's input does. A change
+to or from a protected path is still listed, but Tin's suggestion is `ask`, never `apply`.
 
 Pure parsing here; the callers read the files at a pinned project revision.
 """
@@ -107,7 +107,7 @@ def read_changes(
     files: dict[str, str | bytes | None], today: date, protected_paths: list[str] | None = None
 ) -> list[dict]:
     """Every current URL change:
-    {source, kind: redirect|noindex, from, to, reason, confirmed, protected}.
+    {source, kind: redirect|noindex, from, to, reason, confirmed, protected, id, suggestion}.
 
     `files` maps EFFICACY_PATH and ARCHITECTURE_PATH to their text (None when absent).
     Invalid, stale or oversized files contribute nothing; they never raise. `protected` is
@@ -136,6 +136,9 @@ def read_changes(
                 "protected": protected(old, extra) or protected(new, extra),
             }
         )
+        change = changes[-1]
+        change["id"] = finding_id(change)
+        change["suggestion"] = "ask" if change["protected"] else "apply"
 
     for path, parse, source in (
         (ARCHITECTURE_PATH, _architecture_block, ARCHITECTURE_SOURCE),
@@ -175,47 +178,11 @@ def finding_id(change: dict) -> str:
     return "oa_" + hashlib.sha256(key.encode()).hexdigest()[:20]
 
 
-def as_selections(changes: list[dict], host: str) -> list[dict]:
-    """Technical-fix selections, shaped like the audit's findings, on the audited host."""
-    rows = []
-    for change in changes:
-        old = f"https://{host}{change['from']}"
-        workflow = "Page decisions" if change["source"] == EFFICACY_SOURCE else "Site architecture"
-        if change["kind"] == "redirect":
-            new = f"https://{host}{change['to']}"
-            issue = f"{workflow} proposes redirecting {change['from']} to {change['to']}."
-            planned = {"source": change["source"], "redirects": [{"from": old, "to": new}]}
-            check = "planned.redirect"
-        else:
-            issue = f"{workflow} proposes keeping {change['from']} out of search (noindex)."
-            planned = {"source": change["source"]}
-            check = "planned.noindex"
-        if change.get("protected"):
-            planned["protected"] = True
-            issue += " It is a protected page, such as a shared sign-in page."
-        finding = {
-            "id": finding_id(change),
-            "check_id": check,
-            "issue": issue,
-            "fix": change["reason"]
-            + (" Proposed two weeks running." if change["confirmed"] else ""),
-            "priority": "quick_win",
-            "urls": [old],
-            "planned": planned,
-        }
-        rows.append(
-            {
-                "finding": finding,
-                "affected_urls": [old],
-                "affected_count": 1,
-                "source_eligible": True,
-            }
-        )
-    return rows
-
-
 def refresh_candidates(raw: str | bytes | None, today: date) -> dict[str, set[str]]:
-    """Site paths content.refresh may pick, with the audit-style checks each one stands for."""
+    """Site paths a page refresh may pick, with the audit-style checks each one stands for.
+
+    No workflow reads this yet: content.refresh 1.0.0 is on main and keeps its own selection.
+    """
     if raw is None or len(raw) > MAX_FILE_BYTES:
         return {}
     text = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw

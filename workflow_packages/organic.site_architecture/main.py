@@ -4,7 +4,7 @@ Sources: the latest organic audit's summary (reports/organic-audit/LATEST.json, 
 12 months of Search Console, the traffic snapshot (28-day sessions) and Page decisions
 (content/efficacy.md). It does not read the site's repository. One model call names and groups
 the sections; code computes everything else: the inventory, the gate, the tree, the rules,
-the redirects the technical fix reads (the `redirects.json` block, unchanged) and the baseline
+the redirects website.change will read (the `redirects.json` block, unchanged) and the baseline
 a follow-up compares against.
 
 Click depth and inbound links come from the audit summary: the fewest clicks from the homepage
@@ -645,8 +645,7 @@ async def run(ctx, inputs):
         + "; ".join(f"({t[0]}) {t[2]}" for t in fired)
         + ". "
         + (
-            f"It lists {len(rows)} redirect{'s' if len(rows) != 1 else ''} for the next "
-            "technical fix."
+            f"It lists {len(rows)} redirect{'s' if len(rows) != 1 else ''} for website.change."
             if rows
             else "It needs no redirects."
         )
@@ -744,7 +743,7 @@ async def run(ctx, inputs):
             ]
             or ["Nothing current." if decided_read else "Page decisions were not read."]
         ),
-        "The technical fix already asks about these; they are not repeated below.",
+        "They are in Page decisions' own block already; they are not repeated below.",
         "",
         "## Hand-offs",
         "",
@@ -767,7 +766,7 @@ async def run(ctx, inputs):
         "",
         block("baseline", baseline, compact=True),
         "",
-        "## Redirects for the technical fix",
+        "## Redirects for website.change",
         "",
     ]
     if planned == "domain_move":
@@ -795,9 +794,9 @@ async def run(ctx, inputs):
             for r in rows
         ],
         "",
-        "The next technical fix asks about each redirect and adds the ones you agree to in one "
-        "pull request, in the site's own redirect config, in the same deploy as the page moves. "
-        "Keep redirects at least a year, and for good when other sites link to the old URL.",
+        "website.change asks you about each redirect before it adds it to the site's own "
+        "redirect config, in the same deploy as the page moves. Keep redirects at least a "
+        "year, and for good when other sites link to the old URL.",
     ]
     if waiting:
         lines.append(f"{waiting} more redirects wait for the next plan (20 per plan).")

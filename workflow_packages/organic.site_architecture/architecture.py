@@ -120,7 +120,7 @@ def parse_moves(text):
 
 
 def redirect_rows(moves, clicks, reason):
-    """301 rows for the technical fix: chains collapsed to the final target, loops refused."""
+    """301 rows for website.change: chains collapsed to the final target, loops refused."""
     target = dict(moves)
     rows, errors = [], []
     for old in target:

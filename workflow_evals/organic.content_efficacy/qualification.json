@@ -9,7 +9,7 @@
     "A fresh snapshot makes no Search Console calls; a missing or stale one makes up to three 64000-byte reads."
   ],
   "effects": [
-    "Replaces content/efficacy.md. It edits no page and opens nothing. organic.technical_fix later reads its URL changes as judgment calls, and content.refresh reads its refresh rows as candidates."
+    "Replaces content/efficacy.md. It edits no page and opens nothing. Its URL changes carry stable IDs for website.change, which asks the founder before it changes the site; nothing reads them yet."
   ],
   "cases": [
     {
@@ -24,7 +24,7 @@
           "\"url\":\"/compare/quickbooks-alternatives\",\"decision\":\"merge\",\"action\":\"301\",\"target\":\"/alternatives/quickbooks\"",
           "\"url\":\"/blog/mileage-log-template\",\"decision\":\"refresh\",\"action\":\"title_description\"",
           "\"url\":\"/blog/new-post\",\"decision\":\"keep\",\"action\":\"wait\"",
-          "appear in the next organic.technical_fix as questions"
+          "website.change asks you before it makes one"
         ],
         "excludes": ["\"confirmed\":true", "\"kind\":\"gone\""]
       }

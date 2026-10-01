@@ -3,7 +3,7 @@
   "definition": {
     "key": "organic.content_efficacy",
     "title": "Decide what each page needs",
-    "description": "Each week, judge every page the site shows in search from its clicks, visits, signups and audit findings: keep it, refresh it, rewrite it, merge it into a stronger page or retire it. Merges and retirements are held back whenever paid visits, links or a safe redirect target are unknown. The next technical fix asks about each URL change and puts the ones you agree to in one pull request; refreshes go to Refresh an existing page. Edits nothing itself.",
+    "description": "Each week, judge every page the site shows in search from its clicks, visits, signups and audit findings: keep it, refresh it, rewrite it, merge it into a stronger page or retire it. Merges and retirements are held back whenever paid visits, links or a safe redirect target are unknown. Each URL change gets a stable ID for website.change, which asks you before it changes the site, and pages to refresh or rewrite are listed. Edits nothing itself.",
     "version": "1.0.0",
     "executor": "workflow.code",
     "system": "organic-traffic",

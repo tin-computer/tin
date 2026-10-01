@@ -1,16 +1,22 @@
-"""Planned page changes reach the workflows that make them: the technical fix and the refresh."""
+"""Planned page changes, read as a pure list; site-fix-v5 and content.refresh 1.0.0 ignore it.
 
+The founder dropped the technical fix workflow, and site-fix-v5 and content.refresh 1.0.0 are
+on main, so neither reads these files. website.change phase 3 will turn the changes into
+website_changes rows.
+"""
+
+import hashlib
 import json
 from datetime import date
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from test_content_efficacy import run as run_efficacy
 from test_technical_batch import batch_source
 
-from tin_lite import content_refresh as refresh
 from tin_lite import planned_url_changes as planned
 from tin_lite import technical_repair_plan as plan
+from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.organic_audit import digest
 
 TODAY = date(2026, 9, 29)
 
@@ -93,9 +99,8 @@ def test_off_site_or_traversing_paths_are_refused():
     assert planned.read_changes(files(efficacy(changes=bad)), TODAY) == []
 
 
-def test_each_change_is_a_judgment_call_then_a_repair():
-    selections = planned.as_selections(planned.read_changes(files(efficacy()), TODAY), "t.example")
-    redirect, noindex = (row["finding"] for row in selections)
+def test_each_change_has_a_stable_id_and_tin_s_suggestion():
+    redirect, noindex = planned.read_changes(files(efficacy()), TODAY)
     assert redirect["id"] == planned.finding_id(
         {
             "source": "organic.content_efficacy",
@@ -104,19 +109,10 @@ def test_each_change_is_a_judgment_call_then_a_repair():
             "to": "/alternatives/x",
         }
     )
-    waiting = plan.build_plan(selections, {})
-    assert [d["id"] for d in waiting["decisions_needed"]] == [redirect["id"], noindex["id"]]
-    assert waiting["decisions_needed"][0]["suggestion"] == "apply"
-    answered = plan.build_plan(selections, {redirect["id"]: "apply", noindex["id"]: "keep"})
-    [repair] = answered["repairs"]
-    assert repair["kind"] == "merge_redirect" and repair["planned_by"] == "organic.content_efficacy"
-    assert repair["redirects"] == [
-        {
-            "from": "https://t.example/compare/x-alternatives",
-            "to": "https://t.example/alternatives/x",
-        }
-    ]
-    assert [r["id"] for r in answered["left_out"]["decided_keep"]] == [noindex["id"]]
+    assert redirect["id"].startswith("oa_") and len(redirect["id"]) == 23
+    assert planned.read_changes(files(efficacy()), TODAY)[0]["id"] == redirect["id"]
+    assert redirect["suggestion"] == "apply"
+    assert noindex["suggestion"] == "ask"  # /sign-in is protected
 
 
 def test_protected_pages_are_asked_about_never_suggested():
@@ -132,67 +128,49 @@ def test_protected_pages_are_asked_about_never_suggested():
         files(efficacy(changes=changes)), TODAY, protected_paths=["/partners"]
     )
     assert [c["protected"] for c in found] == [True, True, True, True, False]
-    waiting = plan.build_plan(planned.as_selections(found, "t.example"), {})
-    suggestions = {d["finding"]["urls"][0]: d["suggestion"] for d in waiting["decisions_needed"]}
-    assert suggestions == {
-        "https://t.example/sign-in": "ask",
-        "https://t.example/sign-up/team": "ask",
-        "https://t.example/partners/acme": "ask",
-        "https://t.example/login-help": "ask",
-        "https://t.example/blog/a": "apply",
-    }
-    asked = next(d for d in waiting["decisions_needed"] if d["suggestion"] == "ask")
-    assert "Ask the founder" in asked["why"]
+    assert [c["suggestion"] for c in found] == ["ask", "ask", "ask", "ask", "apply"]
     # Without the extra path, /partners is an ordinary page again; the auth defaults stay.
     plain = planned.read_changes(files(efficacy(changes=changes)), TODAY)
     assert [c["protected"] for c in plain] == [True, True, False, True, False]
     assert planned.protected("/sign-inside", ()) is False
 
 
-async def test_the_technical_fix_preview_asks_about_planned_changes():
+# What main shipped at d69d337: site-fix-v5 (organic.technical_fix 0.6.0) and content.refresh
+# 1.0.0, as the definition and resource files the catalog publishes, and v5's repair checks.
+MAIN = {
+    "organic.technical_fix": (
+        "0.6.0",
+        "0c35530bd7b45290b6cba55c8083707d422ab954e47306047d1f406de46e8ef5",
+        "b597f8ae3b90102147c1ee9ab130854bfb76b66b89834c45428355908d7f9288",
+    ),
+    "content.refresh": (
+        "1.0.0",
+        "a40c2c90db815298e9cf58d7912eb7a2696abe26ac086c2d0b98c6b405631d3f",
+        "682c3af7e9a484aa84ce54a32fd29b242da53a911179628b162f2dceaffecae8",
+    ),
+}
+V5_REPAIRS_DIGEST = "cf4ddd79137c12d38c39d971bd423aee5626a701d7f26772d2b3138a764f51b5"
+
+
+def test_site_fix_v5_and_content_refresh_are_exactly_what_main_shipped():
+    for key, (version, definition_digest, files_digest) in MAIN.items():
+        workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
+        definition, resources = workflow.definition_and_resource_files()
+        assert workflow.version_label == version
+        assert digest(definition) == definition_digest, key
+        hashed = {path: hashlib.sha256(raw).hexdigest() for path, raw in resources.items()}
+        assert digest(hashed) == files_digest, key
+    assert plan.POLICY == "site-fix-v5"
+    assert digest(sorted(plan.REPAIRS)) == V5_REPAIRS_DIGEST
+    assert not any(check.startswith("planned.") for check in plan.REPAIRS)
+
+
+async def test_the_technical_fix_preview_never_reads_planned_changes():
     source = batch_source()
-    host = source.run.input["site_url"].split("/")[2]
-    source.project.canonical_branch = "main"
-    texts = {planned.EFFICACY_PATH: efficacy().encode()}
-    source.storage.get_repo = AsyncMock(return_value=object())
-    source.storage.head_sha = AsyncMock(return_value="c" * 40)
+    texts = {planned.EFFICACY_PATH: efficacy().encode(), planned.ARCHITECTURE_PATH: b""}
     source.storage.read_canonical_artifact_if_exists = AsyncMock(
         side_effect=lambda **kw: texts.get(kw["path"])
     )
-    args = {
-        "project_id": source.project.id,
-        "audit_run_id": source.run.id,
-        "audit_revision": source.run.canonical_commit_sha,
-        "expected_repository": "owner/site",
-        "repository_serves_site": True,
-        "bind": False,
-    }
-    preview = await source.service.batch(**args)
-    asked = {d["finding"]["check_id"]: d for d in preview["decisions_needed"]}
-    assert {"planned.redirect", "planned.noindex"} <= set(asked)
-    assert asked["planned.noindex"]["suggestion"] == "ask"  # /sign-in is protected
-    guarded = await source.service.batch(**args, protected_paths=["/compare"])
-    assert {
-        d["suggestion"]
-        for d in guarded["decisions_needed"]
-        if d["finding"]["check_id"].startswith("planned.")
-    } == {"ask"}
-    assert asked["planned.redirect"]["finding"]["urls"] == [
-        f"https://{host}/compare/x-alternatives"
-    ]
-    assert preview["planned_changes"] == {
-        "revision": "c" * 40,
-        "count": 2,
-        "sources": ["organic.content_efficacy"],
-    }
-    answer = f"{asked['planned.redirect']['id']}=apply"
-    answered = await source.service.batch(**args, decisions=[answer])
-    moved = [r for r in answered["plan"]["repairs"] if r["check_id"] == "planned.redirect"]
-    assert moved[0]["redirects"][0]["to"] == f"https://{host}/alternatives/x"
-
-
-async def test_without_planning_files_the_preview_is_unchanged():
-    source = batch_source()
     preview = await source.service.batch(
         project_id=source.project.id,
         audit_run_id=source.run.id,
@@ -201,50 +179,23 @@ async def test_without_planning_files_the_preview_is_unchanged():
         repository_serves_site=True,
         bind=False,
     )
-    assert preview["planned_changes"]["count"] == 0
+    assert "planned_changes" not in preview
     assert not any(
         d["finding"]["check_id"].startswith("planned.") for d in preview["decisions_needed"]
+    )
+    assert not any(
+        call.kwargs.get("path") in texts
+        for call in source.storage.read_canonical_artifact_if_exists.await_args_list
     )
 
 
 def test_refresh_rows_become_refresh_candidates():
     found = planned.refresh_candidates(efficacy(), TODAY)
     assert found == {"/blog/mileage-log": {"search.low_ctr"}, "/blog/late-fees": {"search.decay"}}
-    evidence = {
-        "scope": {"host": "t.example"},
-        "search_console": {
-            "value": {
-                "pages": [
-                    {"url": "https://t.example/blog/mileage-log", "clicks": 3, "impressions": 900},
-                    {"url": "https://t.example/blog/late-fees", "clicks": 9, "impressions": 400},
-                ]
-            }
-        },
-    }
-    chosen = refresh.choose({"findings": []}, evidence, set(), found)
-    assert chosen["url"] == "https://t.example/blog/mileage-log"
-    assert chosen["planned_by"] == "organic.content_efficacy"
-    assert chosen["body_allowed"] is False
-    second = refresh.choose({"findings": []}, evidence, {"/blog/mileage-log"}, found)
-    assert second["path"] == "/blog/late-fees" and second["body_allowed"] is True
-    assert refresh.choose({"findings": []}, evidence, set()) is None
+    assert planned.refresh_candidates(efficacy(generated="2026-09-01"), TODAY) == {}
 
 
-async def test_content_refresh_preparation_reads_the_current_decisions():
-    from tin_lite.content_refresh_sources import ContentRefreshSources
-
-    storage = SimpleNamespace(
-        read_canonical_artifact_if_exists=AsyncMock(return_value=efficacy().encode())
-    )
-    sources = ContentRefreshSources(database=None, storage=storage)
-    project = SimpleNamespace(state_repo_id="project/test")
-    from datetime import UTC, datetime
-
-    found = await sources.planned_refreshes(project, "c" * 40, datetime(2026, 9, 29, tzinfo=UTC))
-    assert set(found) == {"/blog/mileage-log", "/blog/late-fees"}
-
-
-async def test_the_efficacy_package_output_is_what_the_hook_reads(monkeypatch):
+async def test_the_efficacy_package_output_is_what_the_reader_reads(monkeypatch):
     content, _ = await run_efficacy(monkeypatch)
     changes = planned.read_changes(files(content), TODAY)
     assert {(c["kind"], c["from"]) for c in changes} == {

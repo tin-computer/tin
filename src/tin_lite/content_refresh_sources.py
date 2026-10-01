@@ -92,8 +92,7 @@ class ContentRefreshSources:
                 "refresh works from its search findings.",
             }
         blocked = {item["path"] for item in history if item["blocks"]}
-        planned = await self.planned_refreshes(project, revision, now)
-        selection = refresh.choose(audit["findings"], audit["evidence"], blocked, planned)
+        selection = refresh.choose(audit["findings"], audit["evidence"], blocked)
         if selection is None:
             waiting = sorted(item["path"] for item in history if item["blocks"])
             return {
@@ -112,15 +111,6 @@ class ContentRefreshSources:
             }
         current = await self.read_page(selection["url"], audit["evidence"])
         return {**base, "audit": audit["pin"], "page": selection, "current": current}
-
-    async def planned_refreshes(self, project, revision, now: datetime) -> dict[str, set[str]]:
-        """Pages a current organic.content_efficacy decision marked for a refresh."""
-        from tin_lite import planned_url_changes as planned
-
-        raw = await self.storage.read_canonical_artifact_if_exists(
-            repo_id=project.state_repo_id, commit_sha=revision, path=planned.EFFICACY_PATH
-        )
-        return planned.refresh_candidates(raw, now.date())
 
     async def latest_audit(self, project) -> dict | None:
         row = await self.db.pool.fetchrow(LATEST_AUDIT_SQL, project.id)

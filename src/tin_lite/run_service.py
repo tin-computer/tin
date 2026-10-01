@@ -309,7 +309,6 @@ async def start_workflow_run(
                 repository_serves_site=normalized_inputs["repository_serves_site"],
                 finding_ids=normalized_inputs.get("finding_ids") or [],
                 decisions=normalized_inputs.get("decisions") or [],
-                protected_paths=normalized_inputs.get("protected_paths") or [],
             )
         except TechnicalFixError as exc:
             raise WorkflowInputError(str(exc)) from exc
