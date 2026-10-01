@@ -22,8 +22,9 @@ per stable change ID, so a row the founder approved or declined never comes back
 file is ever read as approval, so editing a file cannot publish anything.
 
 Protected paths always open a pull request, even when approved: the auth pages a site shares
-with another app (/sign-in, /sign-up, /auth-complete) plus the run's `protected_paths`. On a
-site repository a merge is a deploy.
+with another app (/sign-in, /sign-up, /auth-complete), the project's protected pages (a setting
+in `project_protected_paths`, with who changed it and when) and the run's `protected_paths`. On
+a site repository a merge is a deploy.
 """
 
 from __future__ import annotations
@@ -33,6 +34,7 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from tin_lite import content_draft
@@ -92,8 +94,6 @@ def site_path(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     if value.startswith(("http://", "https://")):
-        from urllib.parse import urlsplit
-
         value = urlsplit(value).path or "/"
     if not SITE_PATH.fullmatch(value) or ".." in value:
         return None
@@ -187,19 +187,22 @@ def _root(path: str) -> str:
     return path.split("?")[0].rstrip("/") or "/"
 
 
-def protected_paths(extra: Any = ()) -> list[str]:
-    """The paths that always open a pull request: the shared auth pages plus `extra`."""
+def protected_paths(*extras: Any) -> list[str]:
+    """The paths that always open a pull request: the shared auth pages, then each of
+    `extras` (the project's protected pages, the run's input). The defaults never drop out.
+    """
     roots = list(PROTECTED_PATHS)
-    for value in extra or ():
-        if (
-            isinstance(value, str)
-            and re.fullmatch(PROTECTED_PATH_PATTERN, value)
-            and ".." not in value
-            and _root(value) != "/"
-            and _root(value) not in roots
-        ):
-            roots.append(_root(value))
-    return roots[: len(PROTECTED_PATHS) + MAX_PROTECTED_PATHS]
+    for extra in extras:
+        for value in extra or ():
+            if (
+                isinstance(value, str)
+                and re.fullmatch(PROTECTED_PATH_PATTERN, value)
+                and ".." not in value
+                and _root(value) != "/"
+                and _root(value) not in roots
+            ):
+                roots.append(_root(value))
+    return roots[: len(PROTECTED_PATHS) + MAX_PROTECTED_PATHS * max(1, len(extras))]
 
 
 def protected(path: Any, roots: list[str] | tuple[str, ...]) -> str | None:
@@ -235,6 +238,156 @@ def file_protected(path: str, roots: list[str] | tuple[str, ...]) -> str | None:
         ):
             return _root(root)
     return None
+
+
+# The project's protected pages: a setting in Postgres, with its history.
+
+
+def normalize_protected_paths(values: Any) -> list[str]:
+    """The founder's protected pages as Tin stores them: site paths, without the defaults.
+
+    Each entry is a site path or a full URL. Tin keeps only the path, drops a query, a
+    fragment and a trailing slash, and collapses repeated slashes. A path the defaults
+    already cover (/sign-in/sso) or a repeat is dropped. The whole site (/), route patterns
+    and anything else that is not a site path are refused, as are more than
+    MAX_PROTECTED_PATHS pages.
+    """
+    if not isinstance(values, list | tuple):
+        raise ValueError("List the protected pages as site paths, such as /partners.")
+    paths: list[str] = []
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("Each protected page is a site path, such as /partners.")
+        text = value.strip()
+        if text.startswith(("http://", "https://")):
+            text = urlsplit(text).path or "/"
+        text = re.sub(r"/{2,}", "/", text.split("#", 1)[0].split("?", 1)[0])
+        path = _root(text)
+        if path == "/":
+            raise ValueError(
+                "Tin cannot protect the whole site (/). Name the pages that must wait for "
+                "the founder, such as /partners."
+            )
+        if not re.fullmatch(PROTECTED_PATH_PATTERN, path) or ".." in path:
+            raise ValueError(f"{value!r} is not a site path such as /partners.")
+        if protected(path, PROTECTED_PATHS) or path in paths:
+            continue
+        paths.append(path)
+    if len(paths) > MAX_PROTECTED_PATHS:
+        raise ValueError(
+            f"Protect at most {MAX_PROTECTED_PATHS} pages besides /sign-in, /sign-up and "
+            "/auth-complete. A protected path also covers every page under it."
+        )
+    return paths
+
+
+def _setting_view(row: Any) -> dict[str, Any]:
+    paths = json.loads(row["paths"]) if isinstance(row["paths"], str) else list(row["paths"])
+    return {
+        "revision": row["revision"],
+        "paths": paths,
+        "changed_by": row["changed_by_clerk_user_id"],
+        "changed_at": row["changed_at"].isoformat(),
+    }
+
+
+async def project_protected_paths(executor: Any, *, project_id: UUID) -> dict[str, Any]:
+    """The project's protected pages as they stand now: the newest saved revision.
+
+    `paths` holds the founder's pages only; `effective` adds the defaults, which no one can
+    remove. Revision 0 means nobody saved any.
+    """
+    row = await executor.fetchrow(
+        "SELECT * FROM project_protected_paths WHERE project_id=$1 ORDER BY revision DESC LIMIT 1",
+        project_id,
+    )
+    current = (
+        _setting_view(row)
+        if row
+        else {"revision": 0, "paths": [], "changed_by": None, "changed_at": None}
+    )
+    return {
+        "defaults": list(PROTECTED_PATHS),
+        **current,
+        "effective": protected_paths(current["paths"]),
+    }
+
+
+async def read_protected_paths(
+    database, *, project_id: UUID, actor: str, history: int = 20
+) -> dict[str, Any]:
+    """The setting for a project member, with its newest `history` revisions: who changed it,
+    when and to what."""
+    if not await database.has_project_access(project_id=project_id, clerk_user_id=actor):
+        raise LookupError("Project not found.")
+    rows = await database.pool.fetch(
+        "SELECT * FROM project_protected_paths WHERE project_id=$1 ORDER BY revision DESC LIMIT $2",
+        project_id,
+        max(1, min(int(history), 100)),
+    )
+    return {
+        **await project_protected_paths(database.pool, project_id=project_id),
+        "history": [_setting_view(row) for row in rows],
+    }
+
+
+async def save_protected_paths(
+    database,
+    *,
+    project_id: UUID,
+    actor: str,
+    paths: Any,
+    expected_revision: int,
+    request_id: UUID,
+) -> dict[str, Any]:
+    """Save the project's protected pages as a new revision, recording who and when.
+
+    The caller names the revision it read (0 before the first save), so two people never
+    overwrite each other unseen. Replaying the same request returns what it saved. The
+    defaults stay protected whatever the list holds; an empty list keeps only them.
+    """
+    normalized = normalize_protected_paths(paths)
+    if type(expected_revision) is not int or expected_revision < 0:
+        raise ValueError("expected_revision is the revision you read, 0 before the first save.")
+    async with database.pool.acquire() as conn, conn.transaction():
+        # Same order as change decisions: the project row, then the setting.
+        await conn.execute("SELECT id FROM projects WHERE id=$1 FOR UPDATE", project_id)
+        if not await database.has_project_access(
+            project_id=project_id, clerk_user_id=actor, conn=conn
+        ):
+            raise LookupError("Project not found.")
+        replay = await conn.fetchrow(
+            "SELECT * FROM project_protected_paths WHERE project_id=$1 AND request_id=$2",
+            project_id,
+            request_id,
+        )
+        if replay is not None:
+            saved = _setting_view(replay)
+            if saved["changed_by"] != actor or saved["paths"] != normalized:
+                raise WebsiteChangeConflict(
+                    "This request ID already saved other protected pages. Use a new request ID."
+                )
+        else:
+            current = await conn.fetchval(
+                "SELECT coalesce(max(revision), 0) FROM project_protected_paths "
+                "WHERE project_id=$1",
+                project_id,
+            )
+            if current != expected_revision:
+                raise WebsiteChangeConflict(
+                    "The protected pages changed since you read them. Read them again first."
+                )
+            await conn.execute(
+                "INSERT INTO project_protected_paths "
+                "(project_id, revision, paths, changed_by_clerk_user_id, request_id) "
+                "VALUES ($1, $2, $3::jsonb, $4, $5)",
+                project_id,
+                current + 1,
+                json.dumps(normalized),
+                actor,
+                request_id,
+            )
+    return await read_protected_paths(database, project_id=project_id, actor=actor)
 
 
 # Approvals: recorded in Postgres, never read from a file.
@@ -388,7 +541,9 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
             raise RouteNotChosen(ask_the_founder(kind, None))
     change = page_change(source, route).as_dict()
     approval = await approval_for(database.pool, project_id=project_id, change=change)
-    roots = protected_paths(inputs.get("protected_paths"))
+    # The defaults, the project's protected pages and this run's input, in that order.
+    setting = await project_protected_paths(database.pool, project_id=project_id)
+    roots = protected_paths(setting["paths"], inputs.get("protected_paths"))
     asked = chosen_mode(intent) if intent else None
     return {
         **source,
@@ -396,6 +551,7 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
         "change": {**change, "approval": approval},
         "route": route,
         "protected_paths": roots,
+        "protected_paths_revision": setting["revision"],
         "publish": publish_mode(change, approval, roots=roots, asked=asked),
     }
 
@@ -438,7 +594,9 @@ async def hold_reason(database, run, source, manifest, proof) -> str | None:
 
     Checked again after the pull request opens, from Postgres and the saved patch: the
     publish mode pinned at admission, the approval as it stands now, the protected paths
-    against the files and the page's address, and the founder's chosen route.
+    against the files and the page's address, and the founder's chosen route. The protected
+    paths are the pinned ones plus the project's protected pages as they stand now, so a page
+    the founder protects after the run started still holds the merge.
     """
     from tin_lite.page_routes import matches
 
@@ -452,7 +610,8 @@ async def hold_reason(database, run, source, manifest, proof) -> str | None:
         current = None
     if current != change.get("approval"):
         return "Its approval changed after Tin made the change, so it waits for your review."
-    roots = source.get("protected_paths") or list(PROTECTED_PATHS)
+    setting = await project_protected_paths(database.pool, project_id=run.project_id)
+    roots = protected_paths(source.get("protected_paths"), setting["paths"])
     address = proof.get("public_route")
     hit = protected(address, roots) or next(
         (root for item in manifest["files"] if (root := file_protected(item["path"], roots))),

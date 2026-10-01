@@ -639,8 +639,8 @@ BUILTIN_WORKFLOWS = (
         "approved article, answer page or public article, adapted to the site's own format at "
         "the route you chose, with its copy unchanged. A change you approved with commit to main "
         "publishes: Tin merges its pull request once your repository's required checks pass. "
-        "Anything else, and any change to a protected page such as /sign-in, opens a pull "
-        "request for you to merge.",
+        "Anything else, and any change to a protected page such as /sign-in or one you added "
+        "to the project's protected pages, opens a pull request for you to merge.",
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.1.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
@@ -675,9 +675,9 @@ BUILTIN_WORKFLOWS = (
                 "protected_paths": {
                     "type": "array",
                     "title": "Protected paths",
-                    "description": "Site paths whose changes always wait for the founder's "
-                    "merge, on top of /sign-in, /sign-up and /auth-complete, such as pages "
-                    "another app shares.",
+                    "description": "More site paths whose changes always wait for the "
+                    "founder's merge, for this run only, on top of /sign-in, /sign-up, "
+                    "/auth-complete and the project's protected pages (set_protected_paths).",
                     "items": {"type": "string", "pattern": website_change.PROTECTED_PATH_PATTERN},
                     "maxItems": website_change.MAX_PROTECTED_PATHS,
                     "uniqueItems": True,

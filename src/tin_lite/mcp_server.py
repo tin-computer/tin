@@ -1352,6 +1352,70 @@ def create_mcp_app(
             "decline_website_change", "decline", project_id, change_id, content_sha256, request_id
         )
 
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_protected_paths(project_id: str) -> dict[str, Any]:
+        """Read the project's protected pages: site paths whose changes always wait for the
+        founder's merge, even when approved.
+
+        `defaults` (/sign-in, /sign-up, /auth-complete) are always protected and cannot be
+        removed. `paths` are the pages the founder added; `effective` is both. `revision` is
+        what set_protected_paths needs, and `history` shows who changed the list and when.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="get_protected_paths")
+        try:
+            return await website_change.read_protected_paths(
+                runtime().database, project_id=project, actor=token.subject
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+
+    @server.tool()
+    async def set_protected_paths(
+        project_id: str, paths: list[str], expected_revision: int, request_id: str
+    ) -> dict[str, Any]:
+        """Replace the project's protected pages, after the founder names them.
+
+        A protected page, and every page under it, always opens a pull request for the
+        founder to merge, even when the change was approved: use it for pages another app
+        shares, such as /partners or /app. Pass site paths such as /partners (a full URL is
+        reduced to its path); [] keeps only the defaults, which cannot be removed. Pass the
+        revision from get_protected_paths. Reuse request_id when retrying.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="set_protected_paths")
+        try:
+            saved = await website_change.save_protected_paths(
+                runtime().database,
+                project_id=project,
+                actor=token.subject,
+                paths=paths,
+                expected_revision=expected_revision,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        pages = ", ".join(saved["effective"])
+        return {
+            **saved,
+            **_founder_words(
+                relay=[
+                    f"Saved. Changes to these pages always wait for your merge: {pages}, and "
+                    "every page under them."
+                ]
+            ),
+        }
+
     @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
@@ -4056,6 +4120,7 @@ def create_mcp_app(
             and workflow.key == "website.change"
             and workflow.project_id is None
         ):
+            from tin_lite import website_change
             from tin_lite.content_repository_delivery import discover
             from tin_lite.page_routes import PageRouteService, ask_the_founder
 
@@ -4069,10 +4134,14 @@ def create_mcp_app(
                 routes = {}
             # One question at a time: answer pages first, then articles.
             unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            protected = await website_change.project_protected_paths(
+                runtime().database.pool, project_id=parsed_project_id
+            )
             draft_preparation = {
                 "preparation": {
                     **await discover(runtime().database, parsed_project_id),
                     "page_routes": routes,
+                    "protected_paths": protected["effective"],
                     **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
                     "instruction": "Choose an approved article, answer page or public article "
                     "by title from preparation.articles, and confirm the website repository "
@@ -4081,10 +4150,11 @@ def create_mcp_app(
                     "flow. An answer page or public article needs a chosen route first: when "
                     "preparation.page_routes has none for its type, ask the founder as "
                     "ask_the_founder describes and call save_page_route. A page approved in "
-                    "Tin by a named reviewer publishes (Tin merges the PR once the "
-                    "repository's required checks pass); otherwise, and for protected pages "
-                    "such as /sign-in, the PR waits for the founder. Add protected_paths for "
-                    "pages another app shares. Never approve a draft just to publish it.",
+                    "Tin by a named reviewer, with commit to main, publishes (Tin merges the "
+                    "PR once the repository's required checks pass); otherwise, and for the "
+                    "pages in preparation.protected_paths, the PR waits for the founder. To "
+                    "protect more pages, such as ones another app shares, ask the founder and "
+                    "call set_protected_paths. Never approve a draft just to publish it.",
                 }
             }
         if (
