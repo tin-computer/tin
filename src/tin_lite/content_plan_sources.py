@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import date
 from urllib.parse import urlsplit
 from uuid import UUID
 
@@ -15,14 +16,16 @@ from tin_lite.project_files import safe_project_file_path
 
 
 async def research_sources(
-    *, database, storage, project, inputs, typed=False, planned=None, published=()
+    *, database, storage, project, inputs, typed=False, planned=None, published=(), signals=None
 ):
     """The pinned audit and keyword research as source rows.
 
     `typed` (content-editorial-v7) adds one row per page a refresh could fix, from the audit's
     search findings and `planned`, Page decisions' refresh rows (see page_decision_refreshes),
     and the whole site's page list (`site_pages`), with `published`, the pages Tin put on the
-    site itself (see published_pages).
+    site itself (see published_pages). With `signals` (site_signals), Page decisions and the
+    traffic snapshot shape the refresh rows, add one row per page Page decisions refreshes, and
+    travel as `site_signals` for the planner.
     """
     sources, loaded = {}, {}
     for kind, executor, prefix, source_paths, limits in (
@@ -126,8 +129,10 @@ async def research_sources(
         )
     extra = {}
     if typed:
-        rows.extend(refresh_rows(findings, audit, planned))
-        extra["site_pages"] = site_pages(audit, keywords=keywords, published=published)
+        typed_rows, extra = typed_research_rows(
+            findings, audit, keywords, planned=planned, published=published, signals=signals
+        )
+        rows.extend(typed_rows)
     return {
         **extra,
         "sources": sources,
@@ -150,8 +155,46 @@ async def research_sources(
     }
 
 
-def refresh_rows(findings, evidence, planned=None):
-    """Source rows for the pages a refresh could fix, most impressions at stake first."""
+def typed_research_rows(findings, audit, keywords, *, planned=None, published=(), signals=None):
+    """The v7 additions to research: refresh rows (shaped by Page decisions and the traffic
+    snapshot), one row per page Page decisions refreshes, the site's page list and the signals
+    the planner reads. Returns (rows, extra research fields)."""
+    decisions = (signals or {}).get("page_decisions") or {"status": "not read"}
+    traffic = (signals or {}).get("traffic") or {"status": "not read"}
+    used = traffic.get("status") == "used"
+    conversion = traffic_signals(traffic, keywords["scope"]["host"]) if used else None
+    rows = refresh_rows(
+        findings,
+        audit,
+        planned,
+        weak={page["path"]: page for page in (conversion or {}).get("weak", [])},
+        skip=[*(decisions.get("cut") or {}), *(decisions.get("keep") or [])],
+    ) + efficacy_rows(decisions)
+    note = " ".join(
+        part
+        for part in (
+            signal_notes({"page_decisions": decisions, "traffic": traffic}),
+            f"Traffic snapshot ({SNAPSHOT_PATH}): {conversion['note']}."
+            if (conversion or {}).get("note")
+            else None,
+        )
+        if part
+    )
+    return rows, {
+        "site_pages": site_pages(audit, keywords=keywords, published=published),
+        "site_signals": {
+            "page_decisions": decisions,
+            "traffic": {
+                **{k: v for k, v in traffic.items() if k != "pages"},
+                **(conversion or {}),
+            },
+            "note": note or None,
+        },
+    }
+
+
+def refresh_rows(findings, evidence, planned=None, *, weak=None, skip=()):
+    """Source rows for the pages a refresh could fix, in order of realistic upside."""
     from tin_lite.content_plan_editorial import MAX_REFRESH_SOURCES, REFRESH_SOURCE_PREFIX
     from tin_lite.content_refresh import plan_candidates
 
@@ -160,7 +203,32 @@ def refresh_rows(findings, evidence, planned=None):
             "source_id": REFRESH_SOURCE_PREFIX + digest(page["path"])[:20],
             "data": {"kind": "refresh_candidate", "title": f"refresh {page['path']}", **page},
         }
-        for page in plan_candidates(findings, evidence, planned, limit=MAX_REFRESH_SOURCES)
+        for page in plan_candidates(
+            findings, evidence, planned, limit=MAX_REFRESH_SOURCES, weak=weak, skip=skip
+        )
+    ]
+
+
+EFFICACY_SOURCE_PREFIX = "efficacy:"
+
+
+def efficacy_rows(decisions):
+    """One source row per page the newest Page decisions refreshes, so its item can cite it."""
+    return [
+        {
+            "source_id": EFFICACY_SOURCE_PREFIX + digest(path)[:20],
+            "data": {
+                "kind": "page_decision",
+                "title": f"page decision refresh {path}",
+                "path": path,
+                "decision": "refresh",
+                "rule": row["rule"],
+                "reason": row["reason"],
+                "generated": decisions["generated"],
+                "file": EFFICACY_PATH,
+            },
+        }
+        for path, row in (decisions.get("refresh") or {}).items()
     ]
 
 
@@ -402,15 +470,295 @@ def competitor_rows(watch):
     return list(rows.values())
 
 
+# What shapes a typed (v7) plan beyond the audit and keyword research: the newest Page decisions
+# (organic.content_efficacy, content/efficacy.md) and traffic snapshot (organic.traffic_snapshot,
+# analytics/traffic-snapshot.json). Both arrive with #239; a missing, stale, oversized or
+# other-schema file changes nothing and the plan says it was not used. Small local parsers: the
+# shapes are #239's, read without importing its modules.
+EFFICACY_PATH = "content/efficacy.md"
+EFFICACY_SCHEMA = "content.efficacy/1"
+SNAPSHOT_PATH = "analytics/traffic-snapshot.json"
+SNAPSHOT_SCHEMA = "tin.traffic_snapshot/1"
+# Both files are weekly; one older than this has been replaced or forgotten.
+SIGNAL_MAX_AGE_DAYS = 14
+# Both are written to stay under the 64 KB a code workflow reads; Tin uses none larger.
+SIGNAL_FILE_BYTES = 64_000
+EFFICACY_BLOCK = re.compile(r"## Decisions block\s*```json\s*(\{.*?\})\s*```", re.S)
+# The audit check each Page decisions refresh rule stands for (as #239's reader maps them).
+EFFICACY_CHECKS = {
+    "low_ctr": "search.low_ctr",
+    "near_page_one": "search.near_page_one",
+    "decline": "search.decay",
+    "merge_survivor": "search.decay",
+}
+EFFICACY_ROWS = 200
+# Traffic: a page counts only with this many sessions in the snapshot's 28 days, conversion says
+# something only once the counted pages hold this many first-touch signups, a converting page
+# needs this many signups of its own, and a weak page this many sessions.
+MIN_PAGE_SESSIONS = 30
+MIN_SITE_SIGNUPS = 5
+MIN_PAGE_SIGNUPS = 3
+WEAK_MIN_SESSIONS = 100
+# A weak page converts at under half the site's rate; a converting page at the site's rate or more.
+WEAK_SHARE = 0.5
+MAX_CONVERTING = 10
+MAX_WEAK = 5
+LABELS = {EFFICACY_PATH: "Page decisions", SNAPSHOT_PATH: "Traffic snapshot"}
+
+
+def _signal_text(raw, path):
+    """The file's text, or why it is not used."""
+    if raw is None:
+        return None, "none saved yet"
+    if len(raw) > SIGNAL_FILE_BYTES:
+        return None, "over 64 KB"
+    return (raw.decode("utf-8", "replace") if isinstance(raw, bytes) else raw), None
+
+
+def _signal_day(value):
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _stale(made, today):
+    if made is None:
+        return "no date"
+    if not 0 <= (today - made).days <= SIGNAL_MAX_AGE_DAYS:
+        return f"older than {SIGNAL_MAX_AGE_DAYS} days ({made.isoformat()})"
+    return None
+
+
+def _decision_path(value):
+    """A Page decisions row's site path, without query or trailing slash."""
+    if not isinstance(value, str) or not value:
+        return None
+    if value.startswith(("http://", "https://")):
+        value = urlsplit(value).path or "/"
+    if not value.startswith("/") or ".." in value or len(value) > 500:
+        return None
+    return value.split("?")[0].rstrip("/") or "/"
+
+
+def page_decisions(raw, today):
+    """The newest Page decisions, as the plan uses them, or why they are not used.
+
+    `refresh`: pages to refresh, with the audit check each stands for and the reason. `cut`:
+    pages to merge or retire (a noindex is a retirement), with the decision; no new article,
+    answer or refresh may cover them. `keep`: pages Page decisions keeps as they are, so no
+    item targets them. `rewrite`: pages that need a new brief.
+    """
+    text, problem = _signal_text(raw, EFFICACY_PATH)
+    if problem:
+        return {"status": problem}
+    found = EFFICACY_BLOCK.search(text)
+    try:
+        block = json.loads(found.group(1)) if found else None
+    except ValueError:
+        block = None
+    if not isinstance(block, dict):
+        return {"status": "no readable decisions block"}
+    if block.get("schema") != EFFICACY_SCHEMA:
+        return {"status": f"not {EFFICACY_SCHEMA}"}
+    made = _signal_day(block.get("generated"))
+    stale = _stale(made, today)
+    if stale:
+        return {"status": stale}
+    result = {"status": "used", "generated": made.isoformat()}
+    result.update(refresh={}, cut={}, keep=[], rewrite={})
+    for row in (block.get("decisions") or [])[:EFFICACY_ROWS]:
+        if not isinstance(row, dict):
+            continue
+        path, decision = _decision_path(row.get("url")), row.get("decision")
+        reason = " ".join(str(row.get("reason") or "").split())[:300]
+        if path is None:
+            continue
+        if decision == "refresh":
+            check = EFFICACY_CHECKS.get(row.get("rule"))
+            result["refresh"][path] = {
+                "checks": [check] if check else [],
+                "rule": str(row.get("rule") or "")[:60],
+                "reason": reason,
+            }
+        elif decision in ("merge", "retire"):
+            action = row.get("action")
+            result["cut"][path] = {
+                "decision": "noindex" if action == "noindex" else decision,
+                "target": _decision_path(row.get("target")),
+                "reason": reason,
+            }
+        elif decision == "keep":
+            result["keep"].append(path)
+        elif decision == "rewrite":
+            result["rewrite"][path] = reason
+    return result
+
+
+def _short_rows(snapshot):
+    columns = (snapshot.get("definitions") or {}).get("short_columns") or []
+    for name in ("more_pages", "entry_only_pages", "dropped_pages"):
+        for raw in snapshot.get(name) or []:
+            if isinstance(raw, list) and raw:
+                row = dict(zip(columns, raw, strict=False))
+                yield {
+                    "page": row.get("page"),
+                    "sessions": row.get("sessions"),
+                    "signups": row.get("signups"),
+                    "activated": row.get("activated"),
+                    "clicks": row.get("clicks"),
+                    "impressions": row.get("impressions"),
+                }
+
+
+def _count(value):
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return int(number) if number >= 0 else None
+
+
+def traffic_snapshot(raw, today):
+    """The newest traffic snapshot's per-page rows, or why it is not used.
+
+    Each row: host, path, sessions, signups (first touch), activated, clicks, impressions, from
+    the snapshot's detailed pages and its compact rows. A missing measure stays None.
+    """
+    text, problem = _signal_text(raw, SNAPSHOT_PATH)
+    if problem:
+        return {"status": problem}
+    try:
+        snapshot = json.loads(text)
+    except ValueError:
+        return {"status": "unreadable"}
+    if not isinstance(snapshot, dict) or snapshot.get("schema") != SNAPSHOT_SCHEMA:
+        return {"status": f"not {SNAPSHOT_SCHEMA}"}
+    made = _signal_day(snapshot.get("generated_at"))
+    stale = _stale(made, today)
+    if stale:
+        return {"status": stale}
+    rows = []
+    for page in snapshot.get("pages") or []:
+        if not isinstance(page, dict):
+            continue
+        search = (page.get("search") or {}).get("current") or [None, None]
+        signups = page.get("signups") or {}
+        rows.append(
+            {
+                "page": page.get("page"),
+                "sessions": ((page.get("visits") or {}).get("current") or {}).get("sessions"),
+                "signups": (signups.get("first_touch") or [None])[0],
+                "activated": (signups.get("activated") or [None])[0],
+                "clicks": search[0] if len(search) > 0 else None,
+                "impressions": search[1] if len(search) > 1 else None,
+            }
+        )
+    rows.extend(_short_rows(snapshot))
+    pages = {}
+    for row in rows:
+        key = row.get("page")
+        if not isinstance(key, str) or "/" not in key:
+            continue
+        host, _, path = key.partition("/")
+        path = ("/" + path).split("?")[0].rstrip("/") or "/"
+        entry = {"host": host.lower().removeprefix("www."), "path": path}
+        entry.update(
+            {
+                name: _count(row.get(name))
+                for name in ("sessions", "signups", "activated", "clicks", "impressions")
+            }
+        )
+        pages.setdefault((entry["host"], path), entry)
+    return {"status": "used", "generated": made.isoformat(), "pages": list(pages.values())}
+
+
+def traffic_signals(snapshot, host):
+    """Which pages convert visitors into signups and which get traffic but convert weakly.
+
+    Only pages with at least MIN_PAGE_SESSIONS sessions count. The site rate is their signups
+    over their sessions, and needs MIN_SITE_SIGNUPS signups; below that conversion says nothing.
+    A converting page has MIN_PAGE_SIGNUPS signups and at least the site rate; a weak page has
+    WEAK_MIN_SESSIONS sessions and under WEAK_SHARE of the site rate.
+    """
+    own = (host or "").lower().removeprefix("www.")
+    counted = [
+        page
+        for page in snapshot.get("pages") or []
+        if page["host"] == own and (page["sessions"] or 0) >= MIN_PAGE_SESSIONS
+    ]
+    measured = [page for page in counted if page["signups"] is not None]
+    sessions = sum(page["sessions"] for page in measured)
+    signups = sum(page["signups"] for page in measured)
+    result = {"pages_counted": len(counted), "signups_counted": signups}
+    if not measured or signups < MIN_SITE_SIGNUPS:
+        return {
+            **result,
+            "site_rate": None,
+            "converting": [],
+            "weak": [],
+            "note": f"fewer than {MIN_SITE_SIGNUPS} signups on pages with "
+            f"{MIN_PAGE_SESSIONS}+ sessions, so conversion was not used",
+        }
+    rate = signups / sessions
+
+    def row(page):
+        return {
+            "path": page["path"],
+            "sessions": page["sessions"],
+            "signups": page["signups"],
+            "activated": page["activated"],
+            "rate": round(page["signups"] / page["sessions"], 4),
+        }
+
+    converting = sorted(
+        (
+            row(page)
+            for page in measured
+            if page["signups"] >= MIN_PAGE_SIGNUPS and page["signups"] / page["sessions"] >= rate
+        ),
+        key=lambda page: (-page["rate"], -(page["activated"] or 0), page["path"]),
+    )[:MAX_CONVERTING]
+    weak = sorted(
+        (
+            row(page)
+            for page in measured
+            if page["sessions"] >= WEAK_MIN_SESSIONS
+            and page["signups"] / page["sessions"] < WEAK_SHARE * rate
+        ),
+        key=lambda page: (-page["sessions"], page["path"]),
+    )[:MAX_WEAK]
+    return {**result, "site_rate": round(rate, 4), "converting": converting, "weak": weak}
+
+
+async def site_signals(*, storage, project, revision, today):
+    """The newest Page decisions and traffic snapshot at `revision`, read once, at most 64 KB
+    each. Neither file exists before #239 deploys; then both say why they are not used."""
+    raw = {}
+    for path in (EFFICACY_PATH, SNAPSHOT_PATH):
+        raw[path] = await _read_if_exists(storage, project, revision, path)
+    return {
+        "page_decisions": page_decisions(raw[EFFICACY_PATH], today),
+        "traffic": traffic_snapshot(raw[SNAPSHOT_PATH], today),
+    }
+
+
+def signal_notes(signals):
+    """One line naming the files that did not shape the plan, and why; None when both did."""
+    unused = [
+        f"{LABELS[path].lower()} ({path}): {signals[key]['status']}"
+        for key, path in (("page_decisions", EFFICACY_PATH), ("traffic", SNAPSHOT_PATH))
+        if (signals.get(key) or {}).get("status") != "used"
+    ]
+    return "Not used: " + "; ".join(unused) + "." if unused else None
+
+
 async def page_decision_refreshes(*, storage, project, revision, today):
     """Pages a current Page decisions file (organic.content_efficacy) marks for a refresh, as
-    site paths with the audit checks each stands for.
-
-    organic.content_efficacy and its reader (planned_url_changes) arrive with PR #239; until
-    then no project has such a file, so there are none. #239 returns
-    planned_url_changes.refresh_candidates here, the same rows content.refresh reads.
-    """
-    return {}
+    site paths with the audit checks each stands for (the `planned` refresh rows)."""
+    raw = await _read_if_exists(storage, project, revision, EFFICACY_PATH)
+    decisions = page_decisions(raw, today)
+    return {path: set(row["checks"]) for path, row in (decisions.get("refresh") or {}).items()}
 
 
 async def context_files(*, storage, project, revision, paths):

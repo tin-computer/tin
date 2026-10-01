@@ -642,6 +642,8 @@ def test_versions_on_main_are_unchanged():
     current = editorial.contract(spec("content.plan").definition)
     assert current.POLICY["site_inventory"] == "full-v1"
     assert current.POLICY["refresh_order"] == "realistic-upside-v1"
+    assert current.POLICY["site_signals"] == "decisions-snapshot-v1"
+    assert "site_signals" not in pinned.POLICY
     # content.generate 1.8.0 drafts articles only; content.refresh 1.0.0's contract is pinned in
     # RETIRED above. This follow-up changes only the versions #267 introduced.
     assert content_draft.supported_kinds({"version": "1.8.0"}) == ("article",)

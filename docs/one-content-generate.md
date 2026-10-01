@@ -24,8 +24,8 @@ article. A founder can also add an `answer` or `refresh` item by editing the pla
 
 - Research adds one `refresh:` row per page a refresh could fix (at most ten, most search
   impressions at stake first): the same pool `content.refresh` ranks
-  (`content_refresh.plan_candidates`), plus Page decisions' refresh rows through the
-  `page_decision_refreshes` seam. Those pages lead the bounded page inventory, so the model can
+  (`content_refresh.plan_candidates`), plus Page decisions' refresh rows (see "What shapes the
+  plan" below). Those pages lead the bounded page inventory, so the model can
   name them by `page_id`. AI-visibility gaps are already research rows: the audit's content
   findings.
 - Every opportunity names its kind, and the schema's kind enum lists only the kinds the run's
@@ -133,8 +133,10 @@ candidates now rank by realistic upside (`content_refresh.upside`):
 
 1. `near_top`: the audit lists the page under `near_page_one` or `low_ctr`, or it ranks at
    roughly positions 4 to 20.
-2. `possible`: any other page up to position 30, or one without a Search Console position.
-3. `far`: beyond position 30. These come last, so a far page is offered only when no better
+2. `weak_conversion`: the traffic snapshot shows real visits but few signups (see "What shapes
+   the plan").
+3. `possible`: any other page up to position 30, or one without a Search Console position.
+4. `far`: beyond position 30. These come last, so a far page is offered only when no better
    candidate is left.
 
 Within a tier, more impressions come first. Each candidate carries its `upside` tier and
@@ -144,6 +146,60 @@ far page only when nothing nearer is left. content.generate's refresh items carr
 `upside` for their page, and the page-refresh skill reads it. content.refresh's own weekly pick
 is unchanged, so its 1.0.0 behavior on main stays as it was; while `organic.traffic_system` 0.5.0
 still starts content.refresh, that pick still sorts by impressions.
+
+## What shapes the plan
+
+Added on 1 October 2026 at Emre's request. Besides the audit and keyword research, a v7 plan
+(content.plan 0.8.0, policy `site_signals: decisions-snapshot-v1`) reads two files from #239's
+weekly workflows at the plan's revision:
+
+- **Page decisions:** `content/efficacy.md` from `organic.content_efficacy`, its `## Decisions
+  block`, schema `content.efficacy/1`.
+- **Traffic snapshot:** `analytics/traffic-snapshot.json` from `organic.traffic_snapshot`, schema
+  `tin.traffic_snapshot/1`.
+
+`content_plan_sources.site_signals` reads each file once. A file that is missing, older than 14
+days, over 64 KB, unreadable or of another schema changes nothing. PLAN.md then says in one line
+which file was not used and why (for example "Not used: page decisions (content/efficacy.md):
+none saved yet."). When a file is used, PLAN.md says what it changed.
+
+**Page decisions** (a `content.efficacy/1` block no more than 14 days old):
+
+| Row | What the plan does |
+| --- | --- |
+| `refresh` | Tin adds a `refresh` item for the page (at most five a run, in the file's order, in the earliest week with room) unless an item already changes it. The item carries `source: organic.content_efficacy`, the page as `evidence`, the decision's reason in its brief and checks, and cites an `efficacy:` research row. |
+| `merge`, `retire` (a `noindex` is a retirement) | The page is no refresh candidate. No item may update or refresh it, and no new article or answer page may cover its topic, matched by address or topic words as the dedupe matches. |
+| `keep` | The page is no refresh candidate, and no item may update or refresh it. |
+| `rewrite` | Shown to the model as a page that needs a new brief; Tin adds nothing itself. |
+
+Tin leaves out a model proposal that breaks these rules and lists it under "Left out by Page
+decisions". An item already in the plan keeps its place, and competitor.watch adds nothing for a
+comparison page Page decisions cuts or keeps.
+
+**Traffic snapshot** (a `tin.traffic_snapshot/1` file no more than 14 days old). Tin reads each
+page's sessions, first-touch signups, activations, clicks and impressions, from the detailed
+pages and the compact rows. Minimum counts keep small numbers from driving anything:
+
+- **Which pages count:** only pages with 30 or more sessions in the snapshot's 28 days.
+- **The site rate:** the counted pages' signups divided by their sessions. With fewer than 5 such
+  signups, conversion is not used, and PLAN.md says so.
+- **Converting pages:** at least 3 signups and at least the site rate, highest rate first (at
+  most 10).
+- **Weakly converting pages:** at least 100 sessions and under half the site rate, most sessions
+  first (at most 5).
+
+The snapshot changes two things:
+
+1. **Order.** Proposals next to a converting page move ahead of the rest, each group in the
+   model's order. "Next to" means an update in the same section (`/integrations/...`), or a new
+   page whose title holds that page's last-segment topic words (two of them, or its only one:
+   "Slack alerts for deploy failures" sits next to `/integrations/slack`).
+2. **Refresh candidates.** Weakly converting pages join the refresh candidates in the
+   `weak_conversion` tier: after pages near the top results, before the rest
+   (`content_refresh.upside`). The model decides whether to plan them.
+
+The model also reads a bounded view of both files (`site_signals`): refresh, rewrite and
+do-not-plan rows, and converting and weak pages with their counts.
 
 ## Retired entry points
 
@@ -183,10 +239,10 @@ four conflicts, and needs these changes (checked by a trial merge and the full s
   `public_discovery: false` and a "Retired:" description, and nothing else changed
   (`test_one_content_generate.py` pins that). Compare the definition without `version`,
   `description` and `public_discovery`, or drop content.refresh from that freeze.
-- **Page decisions' refresh rows.** #239 keeps `planned_url_changes.refresh_candidates` as a
-  reader for this work. `content_plan_sources.page_decision_refreshes` should return it:
-  read `planned_url_changes.EFFICACY_PATH` at the plan's revision and pass the text and `today`.
-  `content_refresh.plan_candidates` already merges those rows into the refresh sources.
+- **Page decisions' refresh rows.** content.plan reads `content/efficacy.md` itself
+  (`content_plan_sources.page_decisions`, a small local parser of the `content.efficacy/1`
+  block), so it does not import `planned_url_changes`, which moves between PRs. Nothing needs
+  wiring at merge time.
 - **#239's onboarding test.** `test_onboarding.py` reads `rows["content.refresh"]` as a visible
   sample; content.refresh is hidden here, so it needs another sample (`content.generate`).
 - **Plugin count.** Both branches remove ChatGPT tools, so `docs/public-plugin.md` and

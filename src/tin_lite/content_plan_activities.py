@@ -31,10 +31,10 @@ from tin_lite.content_plan_sources import (
     competitor_rows,
     competitor_watch,
     context_files,
-    page_decision_refreshes,
     positioning_files,
     published_pages,
     research_sources,
+    site_signals,
 )
 from tin_lite.content_programs import ContentPrograms, decoded
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
@@ -92,19 +92,25 @@ class ContentPlanActivities:
         return value
 
     async def typed_research(self, contract, project, revision):
-        """For a typed (v7) contract: research also lists the pages a refresh could fix, and
-        every page Tin knows on the site, including the ones Tin published itself."""
+        """For a typed (v7) contract: research also lists the pages a refresh could fix, every
+        page Tin knows on the site (including the ones Tin published itself), and the newest Page
+        decisions and traffic snapshot, read once at `revision`."""
         if not getattr(contract, "TYPED", False):
             return {}
+        signals = await site_signals(
+            storage=self.storage,
+            project=project,
+            revision=revision,
+            today=datetime.now(UTC).date(),
+        )
         return {
             "typed": True,
-            "planned": await page_decision_refreshes(
-                storage=self.storage,
-                project=project,
-                revision=revision,
-                today=datetime.now(UTC).date(),
-            ),
+            "planned": {
+                path: set(row["checks"])
+                for path, row in (signals["page_decisions"].get("refresh") or {}).items()
+            },
             "published": await published_pages(self.db, project),
+            "signals": signals,
         }
 
     async def page_inventory(self, run, context, *, bind_sources=False):
@@ -567,6 +573,18 @@ class ContentPlanActivities:
                         quality["competitor_items"] = added
                         quality["planned_items"] += len(added)
                         quality["unused_capacity"] -= len(added)
+                        if "site_signals" in quality:
+                            # Page decisions' refresh rows become refresh items.
+                            plan, added = editorial.page_decision_items(
+                                context,
+                                plan,
+                                cap=contract.POLICY.get(
+                                    "max_page_decision_items", editorial.MAX_PAGE_DECISION_ITEMS
+                                ),
+                            )
+                            quality["site_signals"]["added"] = added
+                            quality["planned_items"] += len(added)
+                            quality["unused_capacity"] -= len(added)
                         quality["empty_batches"] = sum(
                             not b["items"]
                             for b in plan["batches"]

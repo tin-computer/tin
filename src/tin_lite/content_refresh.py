@@ -186,20 +186,23 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
 # Realistic upside: what a refresh can do for a page. A refresh rewrites the title, snippet,
 # H1 and opening answer, which earns clicks for a page searchers already see near the top and
 # does little for one five pages down. Refresh candidates rank by tier, then by impressions:
-#   near_top  the audit flagged it near page one or for low click-through, or it ranks at
-#             roughly positions 4 to 20;
-#   possible  any other page up to position 30, or one without a Search Console position;
-#   far       beyond position 30. Far pages come last, so one is planned only when no better
-#             candidate is left.
+#   near_top         the audit flagged it near page one or for low click-through, or it
+#                    ranks at roughly positions 4 to 20;
+#   weak_conversion  the traffic snapshot shows real visits but few signups (WEAK_CONVERSION,
+#                    see content_plan_sources.traffic_signals);
+#   possible         any other page up to position 30, or one without a Search Console position;
+#   far              beyond position 30. Far pages come last, so one is planned only when no
+#                    better candidate is left.
 # content.plan's refresh candidates and content.generate's refresh items use this rule.
 # content.refresh's own weekly pick (`choose`) keeps sorting by impressions, as it did in 1.0.0.
+WEAK_CONVERSION = "traffic.weak_conversion"
 UPSIDE_CHECKS = {
     "search.near_page_one": "it ranks just below the top results",
     "search.low_ctr": "searchers see it but rarely click",
 }
 UPSIDE_POSITIONS = (4.0, 20.0)
 FAR_POSITION = 30.0
-UPSIDE_TIERS = ("near_top", "possible", "far")
+UPSIDE_TIERS = ("near_top", "weak_conversion", "possible", "far")
 
 
 def upside(checks, metrics: dict) -> dict[str, str]:
@@ -220,6 +223,9 @@ def upside(checks, metrics: dict) -> dict[str, str]:
             if flagged
             else "close enough to the top results for a better title and opening to earn clicks"
         )
+    elif WEAK_CONVERSION in checks:
+        tier = "weak_conversion"
+        why = "visitors arrive but few sign up, so the opening should lead to the next step"
     elif position > FAR_POSITION:
         tier = "far"
         why = "a new title or opening rarely moves a page this far down, so it comes last"
@@ -254,15 +260,23 @@ def _entry(key: str, entry: dict, rows: dict, evidence: dict) -> dict[str, Any]:
 
 
 def plan_candidates(
-    findings_document: dict, evidence: dict, planned: dict | None = None, *, limit: int = 10
+    findings_document: dict,
+    evidence: dict,
+    planned: dict | None = None,
+    *,
+    limit: int = 10,
+    weak: dict | None = None,
+    skip=(),
 ) -> list[dict]:
     """Pages a refresh could fix, for content.plan, in order of realistic upside.
 
     The same pool content.refresh chooses from: the audit's search findings, plus `planned`,
     the refresh rows of a current Page decisions file as site paths with the audit checks
-    each stands for. Pages near the top results come first, most impressions first within a
-    tier, and pages beyond position 30 last (see `upside`). Waiting pages are not removed here;
-    content.generate skips them when it selects the item.
+    each stands for, plus `weak`, pages the traffic snapshot shows converting weakly. Pages near
+    the top results come first, then weakly converting pages, most impressions first within a
+    tier, and pages beyond position 30 last (see `upside`). `skip` leaves out pages Page
+    decisions merges, retires or keeps. Waiting pages are not removed here; content.generate
+    skips them when it selects the item.
     """
     rows = page_rows(evidence)
     pages = candidates(findings_document)
@@ -271,8 +285,13 @@ def plan_candidates(
         entry = pages.setdefault(url_key(path), {"url": f"https://{host}{path}", "checks": set()})
         entry["checks"] |= set(checks) & REFRESH_CHECKS
         entry["planned"] = True
+    for path in (weak or {}) if host else ():
+        entry = pages.setdefault(url_key(path), {"url": f"https://{host}{path}", "checks": set()})
+        entry["checks"].add(WEAK_CONVERSION)
+    left_out = {url_key(path) for path in skip}
     ranked = sorted(
-        (_entry(key, entry, rows, evidence) for key, entry in pages.items()), key=upside_order
+        (_entry(key, entry, rows, evidence) for key, entry in pages.items() if key not in left_out),
+        key=upside_order,
     )
     return ranked[:limit]
 
