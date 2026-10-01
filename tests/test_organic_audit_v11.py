@@ -19,6 +19,7 @@ from test_organic_audit_panel import draft, interpretations, research, review
 from tin_lite.organic_audit import (
     AUDIT_POLICY,
     V10_AUDIT_POLICY,
+    V11_AUDIT_POLICY,
     ai_report_details,
     audit_policy,
     digest,
@@ -53,11 +54,11 @@ def test_v10_is_exactly_the_deployed_policy_and_contract():
     assert digest(V10_AUDIT_POLICY) == V10_POLICY_DIGEST
     assert digest(ai_contract(V10)) == V10_CONTRACT_DIGEST
     assert digest(ai_schemas(V10)) == V10_SCHEMAS_DIGEST
-    assert AUDIT_POLICY["version"] == "organic-audit-v11"
+    assert V11_AUDIT_POLICY["version"] == "organic-audit-v11"
     # v11 is v10 plus its own keys; it changes none of v10's values.
-    assert {k: v for k, v in AUDIT_POLICY.items() if k in V10_AUDIT_POLICY and k != "version"} == {
-        k: v for k, v in V10_AUDIT_POLICY.items() if k != "version"
-    }
+    assert {
+        k: v for k, v in V11_AUDIT_POLICY.items() if k in V10_AUDIT_POLICY and k != "version"
+    } == {k: v for k, v in V10_AUDIT_POLICY.items() if k != "version"}
     assert {
         "site_angles",
         "min_panel_questions",
@@ -69,8 +70,8 @@ def test_v10_is_exactly_the_deployed_policy_and_contract():
         "decay_min_previous_clicks",
         "max_redirect_hops",
         "cannibalization_min_impressions",
-    } <= set(AUDIT_POLICY) - set(V10_AUDIT_POLICY)
-    assert "PanelReview" in ai_schemas(AUDIT_POLICY["version"])
+    } <= set(V11_AUDIT_POLICY) - set(V10_AUDIT_POLICY)
+    assert "PanelReview" in ai_schemas(V11_AUDIT_POLICY["version"])
     assert "PanelReview" not in ai_schemas(V10)
 
 

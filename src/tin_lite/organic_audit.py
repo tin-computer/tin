@@ -106,7 +106,7 @@ V10_AUDIT_POLICY = {
 }
 # v11 keeps v10 and adds the audit angles. v10 is deployed, so none of this may change a run
 # pinned to it: every addition below is read from the pinned policy, never assumed.
-AUDIT_POLICY = {
+V11_AUDIT_POLICY = {
     **V10_AUDIT_POLICY,
     "version": "organic-audit-v11",
     # New site reads and checks: llms.txt, the plain-HTTP homepage, a made-up URL, redirect
@@ -132,6 +132,20 @@ AUDIT_POLICY = {
     # shortlisted, picked first. Each question also gets one answer without web search.
     "answer_ladder": True,
     "unsearched_answers": True,
+}
+# v12 keeps v11 and adds SUMMARY.json. Code workflows read project files of at most 64,000
+# bytes, and a real crawl's findings.json and evidence.json are larger (tin.computer's
+# evidence.json was 188 KB). v11 can deploy any time, so a run pinned to it writes exactly
+# v11's files: nothing below is read unless the pinned policy carries it.
+AUDIT_POLICY = {
+    **V11_AUDIT_POLICY,
+    "version": "organic-audit-v12",
+    # One compact row per crawled page, finding counts by check and the AI headline, cut to
+    # fit this many bytes and copied to reports/organic-audit/LATEST.json.
+    "summary_max_bytes": 60_000,
+    # Tin's page reader keeps up to this many distinct links to the audited site per page, so
+    # the summary can count inbound internal links and click depth from the homepage.
+    "max_internal_links": 250,
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -164,6 +178,8 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "url_inspection_max_urls",
         "access_check_pages",
         "content_review_pages",
+        "summary_max_bytes",
+        "max_internal_links",
     }
 )
 
@@ -223,6 +239,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
         V10_AUDIT_POLICY,
+        V11_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -240,6 +257,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
         V10_AUDIT_POLICY,
+        V11_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
