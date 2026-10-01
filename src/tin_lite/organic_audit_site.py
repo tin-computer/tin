@@ -803,6 +803,44 @@ def is_noindex(facts: dict) -> bool:
     return bool(directives & {"noindex", "none"})
 
 
+# Page problems the audit reports and the technical fix re-checks on the live page. Both read
+# these functions, so they can't disagree about whether a problem is there.
+
+
+def canonical_elsewhere(canonical: str | None, page: str, hosts) -> str | None:
+    """The canonical when it names another page: another path, or a host outside `hosts`."""
+    if not canonical:
+        return None
+    try:
+        parts = urlsplit(canonical)
+    except ValueError:
+        return canonical
+    in_scope = parts.scheme in {"https", "http"} and parts.hostname in hosts
+    if not in_scope or url_key(canonical) != url_key(page):
+        return canonical
+    return None
+
+
+def lacks_link_preview(facts: dict) -> bool:
+    """A link preview needs both og:title and og:image."""
+    return facts.get("open_graph") is not None and not {"title", "image"} <= set(
+        facts["open_graph"]
+    )
+
+
+def schema_broken(facts: dict) -> bool:
+    """JSON-LD that doesn't parse, or a type without a required field. Missing recommended
+    fields are advice, not an error."""
+    return bool(facts.get("schema_invalid_blocks")) or any(
+        problem["missing"] for problem in facts.get("schema_problems") or []
+    )
+
+
+def lacks_description(facts: dict) -> bool:
+    """No meta description, or an empty one."""
+    return not facts.get("description_length")
+
+
 # --- URLs, sections and page selection ------------------------------------------------------
 
 

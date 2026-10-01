@@ -559,7 +559,7 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
     "organic.technical_fix": {
         "first": "a pull request within the hour, after an audit",
         "lands": "your GitHub repository, unmerged",
-        "watch": "one finding per run",
+        "watch": "every fixable finding of the audit in one PR; review and merge it",
     },
     "outreach.email_shortlist": {
         "first": "about ten minutes",

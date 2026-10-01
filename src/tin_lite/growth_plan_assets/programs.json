@@ -68,8 +68,7 @@
         "coverage": "full",
         "workflows": [
           "organic.audit",
-          "organic.technical_fix",
-          "site.health_improve"
+          "organic.technical_fix"
         ],
         "integrations": [
           "infra.github",
@@ -275,7 +274,7 @@
         "coverage": "partial",
         "workflows": [
           "qa.signup_walkthrough",
-          "site.health_improve",
+          "organic.technical_fix",
           "content.diagram",
           "organic.audit",
           "qa.buyer_trust",
@@ -571,7 +570,7 @@
     "content.deliver": "Prepare article PR",
     "organic.traffic_system": "Run the organic traffic system",
     "style.capture": "Capture writing style",
-    "organic.technical_fix": "Fix an audited technical issue",
+    "organic.technical_fix": "Fix what the audit found",
     "content.plan": "Plan upcoming content",
     "content.generate": "Draft planned content",
     "organic.keyword_plan": "Plan keyword opportunities",
@@ -630,7 +629,7 @@
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
     "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
-    "organic.technical_fix": "Recheck one missing-title or missing-description finding and propose a verified PR. Supports exact static HTML and bounded Python-wheel HTML templates. Lists unsupported pages separately. If no safe repair is available, explain why without a PR. Never merges or deploys; GitHub may run its configured PR checks.",
+    "organic.technical_fix": "Recheck an audit's findings on the live site and fix every one Tin can in one pull request, in the site's own framework: indexing, sitemap, robots.txt, redirects, page structure, accessibility, structured data and internal links. The coding agent answers judgment calls first; copy goes to the content workflows and steps outside the repository are listed. Never merges or deploys.",
     "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap. Save to My system to prepare weekly batches. Does not write articles or publish.",
     "content.generate": "Draft one selected brief from an initialized content program, using the project writing guide when available. Saves a separate reviewable Markdown draft with factual checks. Requires program_id; omit item_id to select the next eligible article, or select an explicit item through get_content_draft_sources. On demand, or weekly against one program: each weekly run drafts the next planned article and waits while an earlier draft of that program awaits review. Optional pinned repository delivery opens an unmerged PR only after article approval; otherwise use content.deliver for an approved source. Does not merge, publish, or change the roadmap.",
     "organic.keyword_plan": "Research buyer searches, competitor keywords, and a bounded sample of Google results. Get an evidence-backed keyword inventory for content planning. No audit or GitHub required; does not create a calendar, write articles, or publish.",
