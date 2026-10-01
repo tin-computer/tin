@@ -37,7 +37,13 @@ def output(definition: dict) -> str:
     path = declared.get("path") or declared.get("path_template")
     section = declared.get("section")
     if declared["kind"] == "github.pull_request":
-        return f"Unmerged GitHub PR, receipt `{declared['receipt_path_template']}`"
+        # website.change merges a change the founder approved; everything else stays a PR.
+        state = (
+            "GitHub PR, merged when approved"
+            if definition["key"] == "website.change"
+            else ("Unmerged GitHub PR")
+        )
+        return f"{state}, receipt `{declared['receipt_path_template']}`"
     if section:
         return f"`{path}` ({section['heading'].lstrip('# ')} section)"
     return f"`{path}`"

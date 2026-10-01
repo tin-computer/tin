@@ -21,6 +21,7 @@ from tin_lite import (
     paid_ads_monitor,
     style_capture,
     technical_fix,
+    website_change,
     x_draft,
     x_feedback,
     x_posts,
@@ -607,6 +608,100 @@ BUILTIN_WORKFLOWS = (
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
                 max_files=5,
                 # A 300 KB public article, its frontmatter and a small route still fit.
+                max_bytes=400_000,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=content_repository_delivery.WEBSITE_CHANGE_ID,
+        key=website_change.KEY,
+        title="Change the website",
+        description="Make one approved change to your website repository. Today that is an "
+        "approved article, answer page or public article, adapted to the site's own format at "
+        "the route you chose, with its copy unchanged. A change you approved in Tin publishes: "
+        "Tin merges its pull request once GitHub reports it clean. Anything else, and any "
+        "change to a protected page such as /sign-in, opens a pull request for you to merge.",
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand",),
+        # Agents start it for an approved change; the catalog has no picker for change rows.
+        agent_only=True,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "source": {
+                    "type": "string",
+                    "enum": list(website_change.IMPLEMENTED_SOURCES),
+                    "default": "content_draft",
+                    "title": "Change source",
+                    "description": "Where the change comes from: an approved page for now.",
+                },
+                "source_run_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "title": "Approved page run",
+                    "description": "An approved planned article, answer page or public article.",
+                },
+                "expected_repository": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 140,
+                    "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+                    "title": "Website repository",
+                },
+                "protected_paths": {
+                    "type": "array",
+                    "title": "Protected paths",
+                    "description": "Site paths whose changes always wait for the founder's "
+                    "merge, on top of /sign-in, /sign-up and /auth-complete, such as pages "
+                    "another app shares.",
+                    "items": {"type": "string", "pattern": website_change.PROTECTED_PATH_PATTERN},
+                    "maxItems": website_change.MAX_PROTECTED_PATHS,
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "retry_run_id": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
+                    "title": "Failed change to retry",
+                    "description": "Internal retry context. A fresh attempt is a new "
+                    "metered run; retrying a saved PR delivery does not use this input.",
+                },
+                "direction": {
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Site instructions",
+                    "description": "Optional site root or conventions. Does not authorize "
+                    "changing the approved copy, the route or a protected path.",
+                },
+            },
+            "required": ["project_id", "source_run_id", "expected_repository"],
+        },
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=GITHUB_PROVIDER,
+                capabilities=(
+                    "contents.read",
+                    "contents.write",
+                    "pull_requests.read",
+                    "pull_requests.write",
+                ),
+                required=True,
+            ),
+        ),
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / website_change.KEY,
+            entry_skill="site-change",
+            github_pull_request=GitHubPullRequestProcedure(
+                receipt_path_template="website/changes/{run_id}.md",
+                verification_commands=(content_repository_delivery.CHECK_COMMAND,),
+                # content.deliver's caps: a 300 KB public article, its listing and a route.
+                max_files=5,
                 max_bytes=400_000,
             ),
         ),

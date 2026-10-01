@@ -451,6 +451,19 @@ async def start_workflow_run(
             )
         except (ValueError, LookupError, IntegrationError) as exc:
             raise WorkflowInputError(str(exc)) from exc
+    if workflow.id == content_repository_delivery.WEBSITE_CHANGE_ID and existing is None:
+        from tin_lite import website_change
+
+        try:
+            create_arguments["content_delivery_source"] = await website_change.select_source(
+                database=runtime.database,
+                storage=runtime.storage,
+                integrations=runtime.integrations,
+                project_id=project_id,
+                inputs=normalized_inputs,
+            )
+        except (ValueError, LookupError, IntegrationError) as exc:
+            raise WorkflowInputError(str(exc)) from exc
     if project_workflow_id is not None:
         create_arguments["project_workflow_id"] = project_workflow_id
     if trigger_source != "manual":
@@ -514,7 +527,11 @@ async def start_workflow_run(
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
-        if workflow.key in {content_draft.KEY, content_repository_delivery.KEY} or (
+        if workflow.key in {
+            content_draft.KEY,
+            content_repository_delivery.KEY,
+            "website.change",
+        } or (
             workflow.executor == "workflow.code"
             and (
                 workflow.definition.get("code", {}).get("approved_article") is not None

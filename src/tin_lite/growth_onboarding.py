@@ -541,6 +541,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "your GitHub repository, as an unmerged pull request",
         "watch": "review and merge the PR; publication depends on your site",
     },
+    "website.change": {
+        "first": "after an approved change and the website repository are selected",
+        "lands": "your GitHub repository: merged when you approved the change, else a PR",
+        "watch": "changes to protected pages such as /sign-in always wait for your merge",
+    },
     "content.answer_page": {
         "first": "about ten minutes after a visibility audit",
         "lands": "Decisions, as a draft to review",
