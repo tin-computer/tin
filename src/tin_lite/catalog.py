@@ -497,9 +497,10 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME}:
-            # Site health is folded into the technical fix: saved configurations and schedules
-            # keep running at their pinned revision, but new setups use the technical fix.
+        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME, technical_fix.KEY}:
+            # Site health is folded into the technical fix, and the technical fix into
+            # website.change (its audit source): saved configurations and schedules keep
+            # running at their pinned revision, but new setups use the newer workflow.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -1079,7 +1080,7 @@ BUILTIN_WORKFLOWS = (
             "the content workflows, and steps outside the repository are listed. Tin checks "
             "each finding on the live site after you deploy. Never merges or deploys."
         ),
-        version_label="0.6.0",
+        version_label="0.6.1",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",

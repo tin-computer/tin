@@ -550,9 +550,9 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "watch": "review and merge the PR; publication depends on your site",
     },
     "website.change": {
-        "first": "after an approved change and the website repository are selected",
+        "first": "after an approved page, or the latest audit's fixes, and the repository",
         "lands": "your GitHub repository: merged when you approved the change, else a PR",
-        "watch": "changes to protected pages such as /sign-in always wait for your merge",
+        "watch": "approve or decline each audit fix once; protected pages wait for your merge",
     },
     "content.answer_page": {
         "first": "about ten minutes after a visibility audit",
@@ -568,11 +568,6 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "first": "about an hour",
         "lands": "Files, plus an unmerged GitHub PR when a safe change is found",
         "watch": "review the PR or the no-change report; nothing deploys on its own",
-    },
-    "organic.technical_fix": {
-        "first": "a pull request within the hour, after an audit",
-        "lands": "your GitHub repository, unmerged",
-        "watch": "every fixable finding of the audit in one PR; review and merge it",
     },
     "outreach.email_shortlist": {
         "first": "about ten minutes",

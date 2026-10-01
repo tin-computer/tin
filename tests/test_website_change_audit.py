@@ -9,6 +9,7 @@ pinned site-fix-v5 runs.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import asdict
 from types import SimpleNamespace
@@ -37,8 +38,8 @@ from test_website_change import save_protected
 
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import technical_batch as batch_rules
+from tin_lite import technical_fix, website_change, website_change_audit
 from tin_lite import technical_repair_plan as repair_plan
-from tin_lite import website_change, website_change_audit
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.integrations import GitHubPullRequestResult
 from tin_lite.organic_audit import canonical_json
@@ -604,6 +605,30 @@ async def test_caps_are_enforced(publication_db, monkeypatch):
     six = {"files": [{"path": f"content/blog/{i}.md", "content": "x"} for i in range(6)]}
     with pytest.raises(ValueError, match="at most 5 files"):
         website_change.check_patch(six, {}, proof)
+
+
+# --- The technical fix is hidden; its pinned runs are unchanged ----------------------------
+
+
+def test_the_technical_fix_is_hidden_but_pinned_v5_runs_are_unchanged():
+    spec = next(w for w in BUILTIN_WORKFLOWS if w.key == technical_fix.KEY)
+    definition, files = spec.definition_and_resource_files()
+    assert spec.version_label == "0.6.1" and definition["public_discovery"] is False
+    assert technical_fix.definition_policy(definition) == "site-fix-v5"
+    # Everything a pinned run reads besides the version label and the catalog flag is main's
+    # 0.6.0: inputs, procedure, prompt and skills, byte for byte.
+    pinned = {k: v for k, v in definition.items() if k not in {"version", "public_discovery"}}
+    digest = hashlib.sha256(canonical_json(pinned))
+    for path in sorted(files):
+        digest.update(path.encode())
+        digest.update(files[path])
+    assert digest.hexdigest() == (
+        "48a35d53736228bf5f5cf6529521395d20a97187c3b414109060a992d498ae47"
+    )
+    from tin_lite.growth_plan import PROGRAMS
+
+    listed = {w for program in PROGRAMS["programs"] for w in program["tin"]["workflows"]}
+    assert technical_fix.KEY not in listed and website_change.KEY in listed
 
 
 def test_planned_url_changes_fit_the_same_row_contract():
