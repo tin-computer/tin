@@ -49,16 +49,16 @@ from tin_lite.publication import OutputConflictError, PublicationPendingError
 
 V11 = "organic-audit-v11"
 V12 = "organic-audit-v12"
-# What main pinned for v11 at b445c7c, before v12 existed: the policy, the AI instructions and
+# What main pinned for v11 at 4a48249, before v12 existed: the policy, the AI instructions and
 # schemas, and the page facts and files the synthetic run below produced.
-V11_POLICY_DIGEST = "5b69d4f245a725cca830ff41cf621234bde5e88ca09ef01657303485e892a074"
+V11_POLICY_DIGEST = "110197be94310c48ab841bf325018c742d256f9acde5183dd4c73eee93b317a9"
 V11_CONTRACT_DIGEST = "8e4247192536b81a59d29fd43a50678ed50a809d53633b4699cc41f6ee4a7a3f"
 V11_SCHEMAS_DIGEST = "7c0ac931e8e612cd09b2a9a55b1425f145fb71c5af613eb1b15ac02c70a1ada8"
 V11_PAGE_FACTS_DIGEST = "8f145cba1a4480f4b9c37ab3573b5fed7cac10699f3c5de167b8836fc1e3eba2"
 V11_FILES = {
-    "AUDIT.md": "b5c1dd11027e9f1e1e4c5beee6b2f0613543087b2d3a7db62b3d7ca50e68156e",
-    "findings.json": "35220c4df3c97775e3569018e97cb1e0d7270d98fd4f14077578cdbe3a52dfaf",
-    "evidence.json": "9c7d786929239bb837cf6a8d36f46a8acdefb6d8e3a276921391b8c166353433",
+    "AUDIT.md": "44c5279dc153dc62d97ea3bf8c4e659f207bee95304a9ce3dbebf2bbdfcb79ca",
+    "findings.json": "33099007ff38fcf3302e4e5d64af430d23c7979f41ed0049f58abf1204e88756",
+    "evidence.json": "02c20df40ce076ee283519d3c10597e5ad8d9afb572e1291bd3d804fbbec356f",
 }
 
 HOST = "example.com"
