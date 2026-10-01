@@ -972,14 +972,23 @@ def create_mcp_app(
     settings: Settings,
     auth: ClerkAuth,
     runtime: Callable[[], RuntimeServices],
+    public_plugin: bool = False,
 ) -> tuple[MCPServer, Starlette]:
-    resource = f"{settings.switchboard_public_url.rstrip('/')}/mcp"
-    server = GuardedMCPServer(
+    from tin_lite.mcp_public import (
+        PUBLIC_INSTRUCTIONS,
+        PUBLIC_MCP_PATH,
+        PublicMCPServer,
+        require_public_workflow,
+    )
+
+    path = PUBLIC_MCP_PATH if public_plugin else "/mcp"
+    resource = f"{settings.switchboard_public_url.rstrip('/')}{path}"
+    server = (PublicMCPServer if public_plugin else GuardedMCPServer)(
         "Tin",
         title="Tin workflow registry",
         description="Discover and run the workflows available to your Tin projects.",
-        instructions=SERVER_INSTRUCTIONS,
-        middleware=[analytics_middleware],
+        instructions=PUBLIC_INSTRUCTIONS if public_plugin else SERVER_INSTRUCTIONS,
+        middleware=[] if public_plugin else [analytics_middleware],
         token_verifier=ClerkOAuthTokenVerifier(auth, resource=resource),
         auth=AuthSettings(
             # Clerk is the authorization server clients discover. Codex requires the
@@ -992,7 +1001,9 @@ def create_mcp_app(
         ),
     )
     # Before streamable_http_app(): PostHog wraps that factory to mint session ids.
-    server.posthog_client = install_posthog_mcp_analytics(server, settings)
+    server.posthog_client = (
+        None if public_plugin else install_posthog_mcp_analytics(server, settings)
+    )
 
     async def caller() -> AccessToken:
         token = get_access_token()
@@ -1000,7 +1011,7 @@ def create_mcp_app(
             raise ToolError("forbidden: authenticated Tin user required")
         if MCP_SCOPE not in token.scopes:
             raise ToolError(f"forbidden: OAuth scope {MCP_SCOPE} is required")
-        if await runtime().database.record_tin_user(token.subject):
+        if not public_plugin and await runtime().database.record_tin_user(token.subject):
             analytics.capture(
                 "tin_user_created",
                 distinct_id=token.subject,
@@ -2381,6 +2392,8 @@ def create_mcp_app(
         workflow = await services.database.get_workflow(configured.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
+        if public_plugin:
+            require_public_workflow(workflow, input_schema=configured.input_schema)
         try:
             run = await start_workflow_run(
                 runtime=services,
@@ -2945,6 +2958,8 @@ def create_mcp_app(
         )
         workflows = await runtime().database.list_workflows(project_id=parsed_project_id)
         workflow = _mcp_workflow(workflows, workflow_id.strip())
+        if public_plugin:
+            require_public_workflow(workflow)
         supplied_inputs = _mcp_bound_inputs(inputs, parsed_project_id)
         task_fields = {"instruction": instruction, "title": title}
         if workflow.executor != PROJECT_TASK_WORKFLOW_NAME and any(
@@ -4355,9 +4370,13 @@ def create_mcp_app(
             }
         return {"disconnected": True}
 
+    if isinstance(server, PublicMCPServer):
+        server.configure(
+            start=start_workflow, start_saved=start_project_workflow, caller=caller, runtime=runtime
+        )
     host = urlsplit(settings.switchboard_public_url).hostname or "127.0.0.1"
     app = server.streamable_http_app(
-        streamable_http_path="/mcp",
+        streamable_http_path=path,
         json_response=True,
         stateless_http=True,
         host=host,

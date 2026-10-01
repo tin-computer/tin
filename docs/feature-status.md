@@ -1,6 +1,6 @@
 # Feature status and release readiness
 
-Current as of September 28, 2026. This is the current capability overview;
+Current as of October 1, 2026. This is the current capability overview;
 internal implementation plans and production acceptance records are not part of this source release.
 “Implemented” does not mean enabled for every deployment, independently security-audited,
 or verified in a fresh self-hosted installation. The live Registry supplies each workflow's
@@ -11,6 +11,7 @@ inputs, prerequisites and supported schedule modes.
 | Area | Available behavior | Boundary |
 | --- | --- | --- |
 | Dashboard and MCP | Project files, workflow discovery, saved configurations, runs, Activity and review share the same services. | Exact project membership is required; workspace administration does not grant sibling-project access. |
+| Public ChatGPT plugin source | A separate `/mcp/plugins` resource exposes selected native and published package starts, existing saved configurations, results, review and stop tools through shared Tin services. | Existing accounts/projects only; no onboarding, private execution, connection setup or checkout. Source and fixture support; deployment, live ChatGPT/OAuth acceptance and public review remain pending. See [public plugin](public-plugin.md). |
 | Built-in workflows | Context, research, visibility/site audits, keyword and content planning, a paid ads assessment (Google Search, advisory), an approval-gated Google Ads launch and a daily Google Ads monitor, style capture, drafting, diagrams, product QA, video and email outreach. | Provider configuration, connected resources and workflow-specific execution limits still apply. |
 | Public workflow packages | Source validation and explicit maintainer registration for deterministic Python, multi-step managed-model Python, and Codex procedures. Catalog sync publishes pinned packages through the existing Registry. | Source support is not a production rollout. Unselected packages and shipped examples do not become customer workflows. Package runtime limits and normal billing still apply. |
 | Social planning and drafts | `social.content_plan` saves an editable plan; `social.post_batch` drafts a weekly batch from that plan and current notes, or repurposes one article. Dated batches preserve earlier files and help avoid reusing material. | Manual, reviewable X/LinkedIn drafts; no automatic posting or recurring schedule. Earlier saved definitions keep their contracts. See [scope and limits](social-post-batch.md). |

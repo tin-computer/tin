@@ -22,6 +22,8 @@ remain authoritative; older contract versions are retained for compatibility.
   and [model accounting](model-service-accounting.md).
 - [Authentication and integrations](auth-and-integrations.md),
   [MCP authentication](clerk-agent-connection.md) and [domain configuration](app-domain-rollout.md).
+- [Public ChatGPT plugin](public-plugin.md): existing-project tools, isolated OAuth resource,
+  package source and public-review preparation.
 - [MCP onboarding handoff](onboarding-mcp.md): access, first results, delivery and partial setup.
 - [Codex API execution](codex-api-pilot.md), [isolated runtime](isolated-codex-runtime.md),
   [Studio execution](studio-api-and-hosted-credits.md) and [worker lanes](activity-worker-lanes.md).
