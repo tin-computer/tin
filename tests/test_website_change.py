@@ -724,3 +724,53 @@ async def test_http_and_mcp_approve_or_decline_one_change_row(publication_db, mo
                 "request_id": str(uuid4()),
             },
         )
+
+
+# Merge once the repository's required checks pass (Emre, 10/1).
+
+
+async def test_an_unstable_pull_request_merges_when_pre_approved(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    page = await approved_for_main(f)
+    run = await made(f, await start(f, page))
+    integrations = mergeable(f)
+    # A check the repository does not require failed: GitHub says unstable, not clean.
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_awaited_once()
+    assert merge["status"] == "merged" and merge["merged_by"] == "tin"
+    # The receipt names the state that allowed the merge.
+    assert merge["mergeable_state"] == "unstable"
+    other = await approved_for_main(f)
+    run = await made(f, await start(f, other))
+    integrations = mergeable(f)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["mergeable_state"] == "clean"
+
+
+NEVER_MERGE = {
+    "dirty": "It conflicts with the default branch.",
+    "blocked": "GitHub needs a review or a required check before it can merge, "
+    "so Tin left it open.",
+    "behind": "Your repository requires it to be up to date with the default branch first.",
+    "draft": "It is a draft pull request.",
+    "unknown": "Its required checks had not passed after a few minutes, so Tin left it open.",
+}
+
+
+@pytest.mark.parametrize("verdict", list(NEVER_MERGE))
+async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkeypatch, verdict):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    page = await approved_for_main(f)
+    run = await made(f, await start(f, page))
+    integrations = mergeable(f)
+    integrations.github_pull_request_merge_state.return_value = clean(
+        mergeable=verdict not in {"dirty", "unknown"}, mergeable_state=verdict
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open" and "mergeable_state" not in merge
+    assert merge["reason"] == NEVER_MERGE[verdict]

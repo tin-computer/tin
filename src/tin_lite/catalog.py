@@ -638,11 +638,11 @@ BUILTIN_WORKFLOWS = (
         description="Make one approved change to your website repository. Today that is an "
         "approved article, answer page or public article, adapted to the site's own format at "
         "the route you chose, with its copy unchanged. A change you approved with commit to main "
-        "publishes: Tin merges its pull request once GitHub reports it clean. Anything else, "
-        "and any change to a protected page such as /sign-in, opens a pull request for you to "
-        "merge.",
+        "publishes: Tin merges its pull request once your repository's required checks pass. "
+        "Anything else, and any change to a protected page such as /sign-in, opens a pull "
+        "request for you to merge.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.

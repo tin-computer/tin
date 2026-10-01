@@ -199,7 +199,9 @@ outside marketing, or were written without ever being run. Full rules:
   PR only under the same commit-to-main rule, for a change with a recorded approval in Postgres
   (a page's review that names its approver, or a decided `website_changes` row), never one read
   from a project file, and never for a protected path (/sign-in, /sign-up, /auth-complete, plus
-  `protected_paths`). See [website.change](docs/website-change.md).
+  `protected_paths`). It merges once the repository's required checks pass (`clean`,
+  `has_hooks` or `unstable`), never on `dirty`, `blocked`, `behind`, `draft` or `unknown`. See
+  [website.change](docs/website-change.md).
 
 ## Verification and contributions
 

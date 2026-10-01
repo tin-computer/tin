@@ -42,5 +42,5 @@ change ID, the source page's Tin run ID and a request to inspect the site previe
 the page's address on its own line, `Public URL: https://<site host>/<route>`: the full
 URL the page will have once this PR merges and the site deploys. Write
 `Public URL: unknown` if the repository does not show it. You do not merge, deploy or
-send outreach: Tin merges the PR only when `publish.mode` is `direct` and GitHub reports
-it clean, and otherwise the founder merges it.
+send outreach: Tin merges the PR only when `publish.mode` is `direct` and the repository's
+required checks pass, and otherwise the founder merges it.

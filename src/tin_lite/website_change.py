@@ -11,8 +11,8 @@ changes, the technical fix and the blog index plug into the same row later.
 Two modes, decided by whether the change is pre-approved to commit to main:
 
 - Pre-approved with the founder's commit-to-main delivery, and touching no protected path: Tin
-  opens the pull request and merges it once GitHub reports it clean, under content.deliver's
-  merge rules (`page_only`, `chosen_route`).
+  opens the pull request and merges it once the repository's required checks pass, under
+  content.deliver's merge rules (`page_only`, `chosen_route`).
 - Anything else: Tin opens an unmerged pull request, and the founder merges it.
 
 Pre-approved means a recorded approve action in Postgres: who approved it, when, and the exact
@@ -337,8 +337,8 @@ def publish_mode(
         }
     return {
         "mode": "direct",
-        "reason": "You approved it to commit to main, so Tin merges it once GitHub reports "
-        "it clean.",
+        "reason": "You approved it to commit to main, so Tin merges it once your repository's "
+        "required checks pass.",
     }
 
 

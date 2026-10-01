@@ -4081,10 +4081,10 @@ def create_mcp_app(
                     "flow. An answer page or public article needs a chosen route first: when "
                     "preparation.page_routes has none for its type, ask the founder as "
                     "ask_the_founder describes and call save_page_route. A page approved in "
-                    "Tin by a named reviewer publishes (Tin merges the PR once GitHub reports "
-                    "it clean); otherwise, and for protected pages such as /sign-in, the PR "
-                    "waits for the founder. Add protected_paths for pages another app shares. "
-                    "Never approve a draft just to publish it.",
+                    "Tin by a named reviewer publishes (Tin merges the PR once the "
+                    "repository's required checks pass); otherwise, and for protected pages "
+                    "such as /sign-in, the PR waits for the founder. Add protected_paths for "
+                    "pages another app shares. Never approve a draft just to publish it.",
                 }
             }
         if (
