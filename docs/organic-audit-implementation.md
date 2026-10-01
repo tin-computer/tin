@@ -71,8 +71,8 @@ finding IDs; recheck the issue and repository ownership before proposing changes
 Content planning can also consume the frozen questions. Nothing starts automatically.
 
 From `organic-audit-v12` the same commit also writes `SUMMARY.json` beside these files
-and copies it to `reports/organic-audit/LATEST.json`, both under 64,000 bytes, for code
-workflows; see 0.8 below.
+and, for the latest-started audit, copies it to `reports/organic-audit/LATEST.json`, both
+under 64,000 bytes, for code workflows; see 0.8 below.
 
 Existing run paths are never overwritten without a saved intent proving this run's
 publication. Lost responses reconcile against first-parent history, all three file
@@ -544,13 +544,20 @@ exactly what it did before; tests freeze its policy, AI contract and output dige
 
 ```text
 reports/organic-audit/{run_id}/SUMMARY.json   this run, never rewritten
-reports/organic-audit/LATEST.json             the newest published audit's SUMMARY.json
+reports/organic-audit/LATEST.json             the latest-started published audit's SUMMARY.json
 ```
 
 Both stay under the pinned `summary_max_bytes` (60,000). A code workflow reads
 `LATEST.json` in one call, without listing runs, and checks `host` before using it: the
-file is per project, and the newest publication replaces it whatever site it audited. It is
-the only path an audit publication may replace; every run path stays create-only. The
+file is per project, whatever site the audit covered. It is the only path an audit
+publication may replace, and only with a summary whose `audited_at` (the run's start) is
+not earlier than the one there: an audit that started earlier but publishes later, such as
+a slow crawl, leaves the newer pointer alone. Checked at the destination head under the
+project's write lock; a retry repeats its first attempt's choice until reconciliation shows
+that attempt never landed. An answer completion re-reports an earlier audit without
+reading its pages, so it writes its own `SUMMARY.json` and never `LATEST.json`.
+`LATEST.json` is Tin's pointer, not a founder's file: an edit to it is replaced by the next
+audit, the one exception to keeping later edits. Every run path stays create-only. The
 publish receipt's `documents_sha256` still covers only AUDIT.md, findings.json and
 evidence.json, so technical fix, keyword and content plans verify v12 audits unchanged; the
 receipt adds `summary_path` and `summary_sha256`.

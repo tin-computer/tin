@@ -1373,6 +1373,7 @@ class OrganicAuditActivities:
             async def validate_active():
                 await self._active(run_id, conn=conn)
 
+            completion = bool((await self._result(run_id, "scope") or {}).get("completion"))
             async with self.db.project_state_lock(conn, project.id):
                 revision = await publish_audit(
                     storage=self.storage,
@@ -1384,6 +1385,7 @@ class OrganicAuditActivities:
                     save_intent=save_intent,
                     validate_active=validate_active,
                     policy_version=await self._policy_version(run_id),
+                    completion=completion,
                 )
             summary_file = summary_paths(run_id)["SUMMARY.json"]
             await self.db.complete_effect(

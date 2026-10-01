@@ -19,6 +19,7 @@ from test_procedure_publication import HistoryStorage
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_project_files import MAX_FILE_BYTES
 from tin_lite.organic_audit import (
+    ARTIFACT_LIMITS,
     AUDIT_POLICY,
     LATEST_SUMMARY_PATH,
     SUMMARY_READ_LIMIT,
@@ -28,6 +29,7 @@ from tin_lite.organic_audit import (
     canonical_json,
     digest,
     normalize_pages,
+    publication_contract,
     site_check_documents,
     summary_paths,
 )
@@ -64,6 +66,7 @@ V11_FILES = {
 HOST = "example.com"
 BASE = f"https://{HOST}"
 RUN_ID = "00000000-0000-4000-8000-000000000012"
+STARTED_AT = "2026-09-30T00:00:00+00:00"
 PROJECT_ID = "00000000-0000-4000-8000-000000000001"
 # The homepage links to pricing and the blog; the blog to two posts (once through www and a
 # trailing slash); post A to post C through a query string. Nothing links to /orphan.
@@ -97,7 +100,9 @@ async def site_evidence(policy):
     return files, [pages[url] for url in sorted(pages)]
 
 
-def documents(policy, files, pages, *, run_id=RUN_ID, ai=None):
+def documents(
+    policy, files, pages, *, run_id=RUN_ID, ai=None, started_at=STARTED_AT, completion=None
+):
     crawl = normalize_pages(
         [
             {
@@ -121,9 +126,10 @@ def documents(policy, files, pages, *, run_id=RUN_ID, ai=None):
             "host": HOST,
             "market": "US",
             "language": "en",
-            "started_at": "2026-09-30T00:00:00+00:00",
+            "started_at": started_at,
             "page_cap": 100,
             "policy_version": policy["version"],
+            **({"completion": completion} if completion else {}),
         },
         crawl={"status": "completed", "pages": crawl},
         ai=ai or {"status": "partial", "summary": "Not measured.", "planned": 0, "completed": 0},
@@ -621,7 +627,9 @@ def test_long_findings_over_many_checks_still_fit():
 # --- publication ------------------------------------------------------------------------------
 
 
-async def publish(storage, run_id, docs, *, policy_version=V12, intent=None, saved=None):
+async def publish(
+    storage, run_id, docs, *, policy_version=V12, intent=None, saved=None, completion=False
+):
     saved = {} if saved is None else saved
 
     async def save(value):
@@ -637,6 +645,7 @@ async def publish(storage, run_id, docs, *, policy_version=V12, intent=None, sav
         save_intent=save,
         validate_active=AsyncMock(),
         policy_version=policy_version,
+        completion=completion,
     )
 
 
@@ -691,6 +700,149 @@ async def test_a_lost_response_recovers_even_after_a_later_audit_replaced_latest
     assert await publish(storage, first, one, intent=saved) == original
     assert storage.repo.head == later and storage.repo.writes == 2
     assert json.loads(storage.repo.trees[later][LATEST_SUMMARY_PATH][1])["run_id"] == second
+
+
+EARLIER = "2026-09-29T00:00:00+00:00"
+
+
+def provenance(source):
+    """An answer completion's scope note, as `completion_seed` writes it."""
+    return {
+        "source_run_id": source,
+        "source_revision": "a" * 40,
+        "source_definition_commit_sha": "d" * 40,
+        "source_policy_version": V12,
+        "source_evidence_sha256": "e" * 64,
+        "requested_at": "2026-09-30T01:00:00+00:00",
+        "retried_index": 0,
+        "retained_observations": 7,
+        "original_missing_observation": {"index": 0, "status": "unavailable"},
+        "note": "One explicitly authorized replacement request.",
+    }
+
+
+def latest_run(storage):
+    return json.loads(storage.repo.trees[storage.repo.head][LATEST_SUMMARY_PATH][1])["run_id"]
+
+
+@pytest.mark.asyncio
+async def test_an_audit_that_started_earlier_but_publishes_later_leaves_latest_alone():
+    storage = HistoryStorage()
+    files, pages = await site_evidence(AUDIT_POLICY)
+    newer, older = str(uuid4()), str(uuid4())
+    await publish(storage, newer, documents(AUDIT_POLICY, files, pages, run_id=newer))
+    slow = documents(AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
+    await publish(storage, older, slow)
+    tree = storage.repo.trees[storage.repo.head]
+    assert latest_run(storage) == newer
+    # The rest of the slow audit still publishes, its own summary included.
+    for path in [*audit_paths(older).values(), summary_paths(older)["SUMMARY.json"]]:
+        assert tree[path][1] == slow[path]
+    # A later start replaces it, and so does a pointer Tin can't read as a summary.
+    latest = str(uuid4())
+    later = "2026-10-01T00:00:00+00:00"
+    await publish(
+        storage, latest, documents(AUDIT_POLICY, files, pages, run_id=latest, started_at=later)
+    )
+    assert latest_run(storage) == latest
+    storage.repo.edit({LATEST_SUMMARY_PATH: b"edited by hand"})
+    again = str(uuid4())
+    await publish(
+        storage, again, documents(AUDIT_POLICY, files, pages, run_id=again, started_at=EARLIER)
+    )
+    assert latest_run(storage) == again
+
+
+@pytest.mark.asyncio
+async def test_a_latest_path_that_is_not_a_file_is_left_alone_and_the_audit_still_publishes():
+    storage = HistoryStorage()
+    storage.repo.edit({f"{LATEST_SUMMARY_PATH}/notes.md": b"a folder"})
+    files, pages = await site_evidence(AUDIT_POLICY)
+    docs = documents(AUDIT_POLICY, files, pages)
+    await publish(storage, RUN_ID, docs)
+    tree = storage.repo.trees[storage.repo.head]
+    assert LATEST_SUMMARY_PATH not in tree
+    assert (
+        tree[summary_paths(RUN_ID)["SUMMARY.json"]][1]
+        == docs[summary_paths(RUN_ID)["SUMMARY.json"]]
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_answer_completion_writes_its_own_summary_and_never_latest():
+    storage = HistoryStorage()
+    files, pages = await site_evidence(AUDIT_POLICY)
+    source, completion = str(uuid4()), str(uuid4())
+    await publish(storage, source, documents(AUDIT_POLICY, files, pages, run_id=source))
+    # A completion copies its source's scope, start included, and reads no pages.
+    docs = documents(AUDIT_POLICY, files, [], run_id=completion, completion=provenance(source))
+    paths = audit_paths(completion) | {"SUMMARY.json": summary_paths(completion)["SUMMARY.json"]}
+    assert set(docs) == set(paths.values())
+    assert publication_contract(completion, AUDIT_POLICY, completion=True) == (
+        paths,
+        {**ARTIFACT_LIMITS, "SUMMARY.json": SUMMARY_READ_LIMIT},
+        frozenset(),
+    )
+    with pytest.raises(ValueError, match="declared run-scoped artifacts"):
+        await publish(storage, completion, docs)
+    await publish(storage, completion, docs, completion=True)
+    tree = storage.repo.trees[storage.repo.head]
+    assert latest_run(storage) == source
+    assert tree[paths["SUMMARY.json"]][1] == docs[paths["SUMMARY.json"]]
+
+
+@pytest.mark.asyncio
+async def test_a_retry_keeps_its_first_choice_until_that_attempt_is_proven_absent():
+    storage = HistoryStorage()
+    files, pages = await site_evidence(AUDIT_POLICY)
+    older, newer = str(uuid4()), str(uuid4())
+    slow = documents(AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
+    fast = documents(AUDIT_POLICY, files, pages, run_id=newer)
+    # The slow audit decides to replace LATEST.json, then loses the race to a newer audit
+    # before its commit lands: the retry finds no landed attempt and decides again.
+    saved = {}
+    storage.repo.before_send = lambda: storage.repo.edit(
+        {path: content for path, content in fast.items()}, f"organic.audit {newer}"
+    )
+    with pytest.raises(PublicationPendingError):
+        await publish(storage, older, slow, saved=saved)
+    assert LATEST_SUMMARY_PATH in saved["manifest"]
+    await publish(storage, older, slow, intent=saved)
+    tree = storage.repo.trees[storage.repo.head]
+    assert latest_run(storage) == newer
+    assert (
+        tree[summary_paths(older)["SUMMARY.json"]][1] == slow[summary_paths(older)["SUMMARY.json"]]
+    )
+    # A landed attempt that left LATEST.json alone reconciles to that same commit.
+    oldest = str(uuid4())
+    late = documents(AUDIT_POLICY, files, pages, run_id=oldest, started_at=EARLIER)
+    saved = {}
+    storage.repo.lose_response = True
+    with pytest.raises(PublicationPendingError):
+        await publish(storage, oldest, late, saved=saved)
+    landed, writes = storage.repo.head, storage.repo.writes
+    assert LATEST_SUMMARY_PATH not in saved["manifest"]
+    assert await publish(storage, oldest, late, intent=saved) == landed
+    assert storage.repo.writes == writes and latest_run(storage) == newer
+
+
+@pytest.mark.asyncio
+async def test_a_completion_run_publishes_without_moving_latest():
+    activities, db, storage, _ = await activities_fixture()
+    run_id = str(db.run.id)
+    await activities.organic_start_crawl(run_id)
+    assert await activities.organic_poll_crawl(run_id)
+    await activities.organic_end_crawl(run_id)
+    assert await activities.organic_prepare_panel(run_id) == 0  # No model configured.
+    # An older audit's pointer, which an ordinary run would replace.
+    old = json.dumps({"run_id": "earlier", "audited_at": "2000-01-01T00:00:00+00:00"}).encode()
+    storage.repo.edit({LATEST_SUMMARY_PATH: old})
+    db.effects[f"organic:{run_id}:scope"].result["completion"] = provenance(str(uuid4()))
+    await activities.organic_publish(run_id)
+    receipt = db.effects[f"organic:{run_id}:publish"].result
+    tree = storage.repo.trees[receipt["canonical_commit_sha"]]
+    assert tree[LATEST_SUMMARY_PATH][1] == old
+    assert receipt["summary_path"] in tree
 
 
 @pytest.mark.asyncio

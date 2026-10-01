@@ -337,8 +337,9 @@ def audit_paths(run_id: str) -> dict[str, str]:
 
 # Audit policy v12's summary, for code workflows. They read project files of at most 64,000
 # bytes (code_project_files.MAX_FILE_BYTES); the pinned budget keeps each copy below that.
-# LATEST.json is the newest published audit's SUMMARY.json, byte for byte, at a path a reader
-# can find without listing runs. Each v12 publication replaces it; every other path is new.
+# LATEST.json is the latest-started published audit's SUMMARY.json, byte for byte, at a path a
+# reader can find without listing runs. It is the one path a v12 publication may replace; every
+# other path is new.
 SUMMARY_READ_LIMIT = 64_000
 LATEST_SUMMARY_PATH = "reports/organic-audit/LATEST.json"
 
@@ -360,13 +361,23 @@ def bundle_sha256(run_id: str, documents: dict[str, str]) -> str:
     return digest({path: documents[path] for path in audit_paths(run_id).values()})
 
 
-def publication_contract(run_id: str, policy: dict) -> tuple[dict, dict, frozenset[str]]:
-    """The run's paths, their byte limits and the paths it may replace, per its pinned policy."""
+def publication_contract(
+    run_id: str, policy: dict, *, completion: bool = False
+) -> tuple[dict, dict, frozenset[str]]:
+    """The run's paths, their byte limits and the paths it may replace, per its pinned policy.
+
+    An answer completion re-reports an earlier audit without reading its pages, so it writes its
+    own SUMMARY.json but never LATEST.json.
+    """
     paths, limits = audit_paths(run_id), dict(ARTIFACT_LIMITS)
     if not policy.get("summary_max_bytes"):
         return paths, limits, frozenset()
-    paths |= summary_paths(run_id)
-    limits |= {"SUMMARY.json": SUMMARY_READ_LIMIT, "LATEST.json": SUMMARY_READ_LIMIT}
+    paths["SUMMARY.json"] = summary_paths(run_id)["SUMMARY.json"]
+    limits["SUMMARY.json"] = SUMMARY_READ_LIMIT
+    if completion:
+        return paths, limits, frozenset()
+    paths["LATEST.json"] = LATEST_SUMMARY_PATH
+    limits["LATEST.json"] = SUMMARY_READ_LIMIT
     return paths, limits, frozenset({LATEST_SUMMARY_PATH})
 
 
@@ -1506,7 +1517,9 @@ def site_check_documents(
         and technical_status == "complete"
         and cover["status"] == "complete"
     )
-    paths, limits, _ = publication_contract(run_id, policy)
+    paths, limits, _ = publication_contract(
+        run_id, policy, completion=bool(scope.get("completion"))
+    )
     summary = None
     if policy.get("summary_max_bytes"):
         from tin_lite.organic_audit_summary import summary_document
@@ -1558,10 +1571,10 @@ def site_check_documents(
                     [
                         "",
                         "Code workflows read files of at most 64,000 bytes. The adjacent "
-                        "`SUMMARY.json`, copied to `reports/organic-audit/LATEST.json`, fits: "
-                        "one row per crawled page with its status, indexability, inbound "
-                        "links and click depth, finding counts by check and the AI "
-                        "visibility headline.",
+                        "`SUMMARY.json` fits: one row per crawled page with its status, "
+                        "indexability, inbound links and click depth, finding counts by "
+                        "check and the AI visibility headline. The latest audit's summary "
+                        "is also at `reports/organic-audit/LATEST.json`.",
                     ]
                     if summary is not None
                     else []
@@ -1577,7 +1590,9 @@ def site_check_documents(
         paths["evidence.json"]: canonical_json(evidence),
     }
     if summary is not None:
-        documents[paths["SUMMARY.json"]] = documents[paths["LATEST.json"]] = summary
+        documents[paths["SUMMARY.json"]] = summary
+        if "LATEST.json" in paths:
+            documents[paths["LATEST.json"]] = summary
     for name, limit in limits.items():
         if name == "evidence.json":
             limit = policy["max_evidence_bytes"]
