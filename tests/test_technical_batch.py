@@ -85,7 +85,7 @@ def test_v11_audit_findings_name_the_plans_next_step_and_v10_keeps_its_own():
     from test_organic_audit_findings import facts as page_facts
     from test_organic_audit_findings import v10_documents
 
-    from tin_lite.organic_audit import AUDIT_POLICY, V10_AUDIT_POLICY
+    from tin_lite.organic_audit import V10_AUDIT_POLICY, V11_AUDIT_POLICY
 
     crawl = [
         {
@@ -105,7 +105,7 @@ def test_v11_audit_findings_name_the_plans_next_step_and_v10_keeps_its_own():
         "pages_status": "complete",
         "pagespeed": {"status": "not_configured", "results": []},
     }
-    _, _, v11, _ = v10_documents(pages=crawl, site=site, policy=AUDIT_POLICY)
+    _, _, v11, _ = v10_documents(pages=crawl, site=site, policy=V11_AUDIT_POLICY)
     actions = {item["check_id"]: item["next_action"] for item in v11["findings"]}
     assert actions == {check: plan.next_action(check) for check in actions}
     # Copy goes to the content workflows, never the technical fix.

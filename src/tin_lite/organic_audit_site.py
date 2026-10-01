@@ -328,13 +328,20 @@ QUESTION_START = re.compile(
 MAX_HEADINGS = 8
 MAX_HEADING_CHARS = 100
 MAX_LEAD_CHARS = 300
+MAX_LINK_KEY_CHARS = 200
 
 
 class _FactsParser(HTMLParser):
-    def __init__(self, url: str = "") -> None:
+    def __init__(self, url: str = "", *, max_links: int = 0) -> None:
         super().__init__(convert_charrefs=True)
         self.url = url
         self.host = (urlsplit(url).hostname or "").lower()
+        # Audit policy v12: links to the audited site, as URL keys in page order, so the summary
+        # can count inbound links and click depth. Zero under earlier policies.
+        self.max_links = max_links
+        self.internal_links: list[str] = []
+        self.internal_links_capped = False
+        self._link_keys: set[str] = {url_key(url)} if url and max_links else set()
         self.lang: str | None = None
         self.seen_html = False
         self.robots: list[str] = []
@@ -388,6 +395,20 @@ class _FactsParser(HTMLParser):
         self._label_depth = 0
         self._label_for: set[str] = set()
         self._fields: list[str | None] = []
+
+    def _internal_link(self, target) -> None:
+        """One distinct link to the audited site; the page itself is skipped.
+
+        A list missing a link, past the cap or too long to keep, is marked capped.
+        """
+        key = url_key(target.geturl())
+        if key in self._link_keys:
+            return
+        if len(self.internal_links) >= self.max_links or len(key) > MAX_LINK_KEY_CHARS:
+            self.internal_links_capped = True
+            return
+        self._link_keys.add(key)
+        self.internal_links.append(key)
 
     def _scan_analytics(self, text: str) -> None:
         for name, pattern in ANALYTICS_SIGNATURES:
@@ -505,6 +526,8 @@ class _FactsParser(HTMLParser):
                     "www."
                 ):
                     self.external_links += 1
+                elif self.max_links:
+                    self._internal_link(target)
         elif tag == "div" and values.get("id", "").strip().lower() in _MOUNT_IDS:
             self.mount_point = True
         if tag in {"h1", "h2", "h3"} and self._heading is None:
@@ -731,10 +754,19 @@ V11_PAGE_FACTS = frozenset(
 )
 
 
-def html_facts(body: bytes, *, url: str, charset: str | None, truncated: bool) -> dict:
-    """What a crawler that does not run JavaScript sees in the page's HTML."""
+# Page facts audit policy v12 added; a run pinned to v11 or earlier does not save them.
+V12_PAGE_FACTS = frozenset({"internal_links", "internal_links_capped"})
+
+
+def html_facts(
+    body: bytes, *, url: str, charset: str | None, truncated: bool, max_links: int = 0
+) -> dict:
+    """What a crawler that does not run JavaScript sees in the page's HTML.
+
+    With `max_links` (audit policy v12) it also keeps the page's links to the audited site.
+    """
     text = body.decode(charset or "utf-8", "replace").replace("\x00", "")
-    parser = _FactsParser(url)
+    parser = _FactsParser(url, max_links=max_links)
     try:
         parser.feed(text)
         parser.close()
@@ -784,6 +816,15 @@ def html_facts(body: bytes, *, url: str, charset: str | None, truncated: bool) -
         "not_found_text": bool(NOT_FOUND_TEXT.search(heading_text)),
         "unnamed_controls": parser.unnamed_controls,
         "unlabeled_fields": parser.unlabeled_fields,
+        **(
+            {
+                "internal_links": parser.internal_links,
+                # A body cut at the read limit may hold more links than were seen.
+                "internal_links_capped": parser.internal_links_capped or truncated,
+            }
+            if max_links
+            else {}
+        ),
     }
 
 

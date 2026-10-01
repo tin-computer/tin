@@ -345,7 +345,7 @@ async def _read_missing_page(reader: SiteReader, origin: str, policy: dict) -> d
     }
 
 
-def _page_record(url: str, response: dict, reader: SiteReader) -> dict:
+def _page_record(url: str, response: dict, reader: SiteReader, *, max_links: int = 0) -> dict:
     if response["status"] != "observed":
         return {"url": url, "fetch": "unavailable", "reason": response["status"]}
     record = {
@@ -374,6 +374,7 @@ def _page_record(url: str, response: dict, reader: SiteReader) -> dict:
                 url=url,
                 charset=response.get("charset"),
                 truncated=response["truncated"],
+                max_links=max_links,
             ),
         )
     return record
@@ -406,7 +407,10 @@ async def read_pages(
                 results[url] = {"url": url, "fetch": "blocked_by_robots"}
                 return
             response = await reader.get(url, max_bytes=policy["max_page_bytes"])
-            record = _page_record(url, response, reader)
+            # v12 keeps each page's links to the audited site; earlier pins never read them.
+            record = _page_record(
+                url, response, reader, max_links=policy.get("max_internal_links", 0)
+            )
             if not policy.get("site_angles"):
                 # v10 saves the page facts it saved before v11 widened the reader.
                 record = {k: v for k, v in record.items() if k not in V11_PAGE_FACTS}
