@@ -205,8 +205,12 @@ class ContentDraftSources:
                 ),
             },
             "instruction": "Start content.generate with only program_id to assess and, if useful, "
-            "draft the next article "
-            "in plan order. Use item_id only when the user explicitly chooses another article; "
+            "draft the next item "
+            "in plan order: an article, an answer page or a page refresh (each item's kind). An "
+            "answer page needs the route the founder chose for such pages: when the start asks, "
+            "ask the founder once and call save_page_route. A refresh waits while its page's last "
+            "refresh is in review or live for less than six weeks (passed_over). "
+            "Use item_id only when the user explicitly chooses another item; "
             "rewrite=true additionally requires that explicit item_id. Reuse the request ID for "
             "retries. Plan dates are editorial dates, "
             "not automatic publication. Already-covered items are recorded separately from drafts. "

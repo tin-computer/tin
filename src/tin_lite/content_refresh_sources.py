@@ -178,8 +178,13 @@ class ContentRefreshSources:
 
     async def waiting_pages(self, project_id, now: datetime | None = None) -> set[str]:
         """Paths whose refresh still waits: in review, approved but not live, in an open (or
-        unchecked) pull request, or live for less than six weeks. Reads Postgres only."""
-        items = await self.history(
+        unchecked) pull request, or live for less than six weeks.
+
+        Reads Postgres only and saves nothing, so selection can ask without calling GitHub: an
+        unchecked pull request counts as open, as content.refresh counts one past its checks.
+        """
+        reader = ContentRefreshSources(database=self.db, storage=self.storage, clock=self._clock)
+        items = await reader.history(
             SimpleNamespace(id=NO_RUN, project_id=project_id),
             now or self._clock(),
             save_live=False,

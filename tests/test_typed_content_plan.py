@@ -4,13 +4,17 @@ content.plan 0.8.0 (content-editorial-v7) schedules all three; plans written bef
 existed keep their exact bytes and brief digests, and their items are articles.
 """
 
+import json
 from copy import deepcopy
+from types import SimpleNamespace
 
 import jsonschema
 import pytest
 from test_content_plan import fixture_plan, item
 from test_content_plan_editorial import context, pages, portfolio
+from test_content_programs import setup
 from test_content_refresh import EVIDENCE, audit, finding
+from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_plan as legacy
 from tin_lite import content_plan_editorial as editorial
@@ -18,6 +22,7 @@ from tin_lite import content_refresh as refresh
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_plan_activities import plan_kinds
 from tin_lite.content_plan_sources import refresh_rows
+from tin_lite.model_providers import ModelUsage
 from tin_lite.organic_audit import canonical_json, digest
 
 GAP = {
@@ -178,3 +183,81 @@ def test_typed_articles_match_untyped_ones_and_a_page_gets_one_brief():
     [merged] = [i for b in plan["batches"] for i in b["items"]]
     # An article update rewrites the whole page, so it covers the refresh.
     assert "kind" not in merged and len(quality["consolidations"]) == 1
+
+
+async def test_the_planner_schedules_all_three_kinds_from_its_research(publication_db, monkeypatch):
+    db, storage, project, configured, activities, _model, create = await setup(
+        publication_db, monkeypatch, editorial=True
+    )
+    seen = {}
+
+    async def research(**kwargs):
+        seen.update(kwargs)
+        return {
+            "scope": {"host": "example.com", "market": "US"},
+            "sources": {"audit": {"revision": "c" * 40}},
+            "rows": [
+                {"source_id": "keyword:k1", "data": {"keyword": "useful query"}},
+                GAP,
+                *refresh_rows(FINDINGS, EVIDENCE),
+            ],
+        }
+
+    class Model:
+        schemas = []
+
+        async def generate(self, key, request, *, timeout_seconds=None):
+            data = json.loads(request.messages[0].content)
+            self.schemas.append(request.output_schema)
+            sources = {
+                row.get("data", {}).get("check_id") or row.get("data", {}).get("keyword"): row[
+                    "source_id"
+                ]
+                for row in data["sources"]
+            }
+            pricing = next(
+                page["page_id"]
+                for page in data["pages"]["pages"]
+                if page["url"] == "https://example.com/pricing"
+            )
+            result = typed(3)
+            article, answer, page = result["opportunities"]
+            article["source_ids"] = [sources["useful query"]]
+            answer.update(kind="answer", source_ids=[sources[editorial.ANSWER_CHECK]])
+            page.update(
+                kind="refresh",
+                action="update_page",
+                page_id=pricing,
+                source_ids=[sources["useful query"]],
+            )
+            jsonschema.validate(result, request.output_schema)
+            return SimpleNamespace(parsed=result, usage=ModelUsage(), request_id="model-test")
+
+    monkeypatch.setattr("tin_lite.content_plan_activities.research_sources", research)
+    activities.router = Model()
+    run = await create()
+    await activities.content_plan_execute(str(run.id))
+    saved = await db.get_run(run.id)
+    assert saved.status.value == "succeeded"
+    assert seen["typed"] is True and seen["planned"] == {}
+    enum = Model.schemas[0]["$defs"]["TypedOpportunity"]["properties"]["kind"]["enum"]
+    assert enum == ["article", "answer", "refresh"]
+    plan = legacy.parse_plan(
+        await storage.read_canonical_artifact(
+            repo_id=project.state_repo_id,
+            commit_sha=saved.canonical_commit_sha,
+            path=legacy.plan_path(configured.id),
+        )
+    )
+    items = [i for b in plan["batches"] for i in b["items"]]
+    assert [legacy.item_kind(i) for i in items] == ["article", "answer", "refresh"]
+    assert items[2]["destination"] == "https://example.com/pricing"
+    assert any(source.startswith("refresh:") for source in items[2]["source_ids"])
+    report = (
+        await storage.read_canonical_artifact(
+            repo_id=project.state_repo_id,
+            commit_sha=saved.canonical_commit_sha,
+            path=f"reports/content-plan/{run.id}/PLAN.md",
+        )
+    ).decode()
+    assert "Kind: answer page" in report and "Kind: page refresh" in report

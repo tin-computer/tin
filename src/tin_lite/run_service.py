@@ -527,9 +527,7 @@ async def start_workflow_run(
 
         try:
             create_arguments["draft_selection"] = await ContentDraftSources(
-                database=runtime.database,
-                storage=runtime.storage,
-                integrations=getattr(runtime, "integrations", None),
+                database=runtime.database, storage=runtime.storage
             ).choose(
                 project_id=project_id,
                 inputs=normalized_inputs,
