@@ -46,6 +46,7 @@ from tin_lite.domain import (
     WorkflowRun,
     WorkflowStatus,
     Workspace,
+    result_line,
 )
 from tin_lite.projects import ProjectCreationConflictError
 from tin_lite.rollouts import RolloutFile
@@ -5136,7 +5137,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("launch cannot complete in its current state")
@@ -6870,7 +6871,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("submission run cannot complete in its current state")
@@ -6934,9 +6935,9 @@ class Database:
                 SET status = $7, canonical_commit_sha = $2, artifact_path = $3,
                     artifact_ref = $4,
                     error_message = CASE WHEN $7 = 'failed' THEN $5::text ELSE NULL END,
-                    result_summary = COALESCE($5::text, result_summary),
+                    result_summary = COALESCE($8::text, result_summary),
                     progress_summary = CASE WHEN $6 = 'organic.audit'
-                        THEN COALESCE($5::text, progress_summary) ELSE progress_summary END,
+                        THEN COALESCE($8::text, progress_summary) ELSE progress_summary END,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
@@ -6967,6 +6968,7 @@ class Database:
                 if workflow_key in {"organic.technical_fix", "content.refresh"}
                 else workflow_key,
                 final_status,
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("report cannot complete in its current state")

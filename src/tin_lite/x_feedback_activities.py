@@ -8,6 +8,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_feedback, x_style
+from tin_lite.domain import result_line
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import ProjectFileMutation
@@ -226,7 +227,7 @@ class XFeedbackActivities:
                     ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
                     # The file is committed; a summary longer than the run's one-line result
                     # must not fail the projection and leave the revision unrecorded.
-                    line = x_feedback.summary_line(model["summary"])
+                    line = result_line(model["summary"])
                     if snapshot["kind"] == "guide":
                         await conn.execute(
                             "UPDATE workflow_runs SET canonical_commit_sha=$2, "

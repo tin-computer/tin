@@ -286,6 +286,16 @@ async def test_a_long_change_summary_still_records_the_revision(publication_db, 
         assert source.canonical_commit_sha == done.canonical_commit_sha
 
 
+def test_every_result_summary_is_one_line_that_fits_its_column():
+    from tin_lite.domain import RESULT_LINE_CHARS, result_line
+
+    assert result_line(None) is None
+    assert result_line("  Saved   the\nguide. ") == "Saved the guide."
+    long = result_line("word " * 100)
+    assert len(long) <= RESULT_LINE_CHARS and long.endswith("word…")
+    assert result_line("x" * 400) == "x" * (RESULT_LINE_CHARS - 1) + "…"
+
+
 async def test_guide_review_document_reads_latest_file_and_binds_its_content(publication_db):
     from tin_lite.x_posts import digest
 
