@@ -1434,7 +1434,8 @@ def create_mcp_app(
         the product; ask the founder only the ones you're unsure of. Pass the answers as
         decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
         finding_id narrows the preview to one finding. repository_serves_site records a
-        member's assertion; the run pins its own binding.
+        member's assertion; the run pins its own binding. repository_warnings names files
+        Tin can't read (a source file over 2 MB, a link, a submodule): a run stops on them.
         """
         parsed, preparation = await technical_fix_service(project_id, "preflight_technical_fix")
         if preparation.batch_mode:
@@ -1447,6 +1448,7 @@ def create_mcp_app(
                     repository_serves_site=repository_serves_site,
                     finding_ids=[finding_id] if finding_id else [],
                     decisions=decisions or [],
+                    check_repository=True,
                 )
             except TechnicalFixError as exc:
                 raise ToolError(f"{exc.code}: {exc}") from exc
@@ -1466,6 +1468,7 @@ def create_mcp_app(
                 )
             if summary.get("manual"):
                 relay.append(f"{summary['manual']} are manual steps outside the repository.")
+            relay.extend(preview.get("repository_warnings", []))
             return {**preview, **_founder_words(relay=relay)}
         try:
             selection = TechnicalFixSelection(
@@ -1475,7 +1478,9 @@ def create_mcp_app(
                 expected_repository=expected_repository,
                 repository_serves_site=repository_serves_site,
             )
-            return await preparation.preflight(project_id=parsed, **selection.model_dump())
+            return await preparation.preflight(
+                project_id=parsed, check_repository=True, **selection.model_dump()
+            )
         except ValidationError as exc:
             raise ToolError(
                 "invalid_selection: Choose an exact audit finding and repository."

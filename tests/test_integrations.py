@@ -3047,6 +3047,134 @@ async def test_repository_bundle_ignores_members_outside_the_pinned_tree(monkeyp
         assert archive.getnames() == ["README.md"]
 
 
+def large(path: str, size: int) -> dict:
+    """A tree entry for a file too big for the snapshot; its bytes are never downloaded."""
+    return {**tree_entry(path, path.encode()), "size": size}
+
+
+# tin-web's three files over 2 MB stopped technical fix runs 43b99efd and 721f6a8d and
+# refresh aaffdb5a; none of them can hold what a fix edits.
+SITE_MEDIA = [
+    large("public/euphony/assets/main-LKI_ICf3.js", 2_678_607),
+    large("public/scan-mocks/seaweedindex.com.png", 3_787_015),
+    large("public/opensource/hero.mp4", 3_378_075),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        ("public/opensource/hero.mp4", "video"),
+        ("public/scan-mocks/seaweedindex.com.png", "image"),
+        ("public/euphony/assets/main-LKI_ICf3.js", "built_asset"),
+        ("apps/web/public/_next/static/chunks/app.css", "built_asset"),
+        ("dist/bundle.mjs", "built_asset"),
+        ("vendor/chart.min.js", "minified"),
+        ("app/main.js.map", "source_map"),
+        ("fonts/Inter.woff2", "font"),
+        ("docs/brochure.PDF", "pdf"),
+        ("downloads/press-kit.zip", "archive"),
+        ("public/podcast.mp3", "audio"),
+        ("public/ffmpeg-core.wasm", "compiled"),
+        # Anything that could hold page copy, metadata or code stays a missing file.
+        ("src/data/posts.json", None),
+        ("src/content/catalog.js", None),
+        ("public/data.json", None),
+        ("public/index.html", None),
+        ("public/logo.svg", None),
+        ("deploy/redirects.map", None),
+    ],
+)
+def test_which_large_files_a_snapshot_may_leave_out(path, kind):
+    from tin_lite.repository_limits import skippable_large_file
+
+    assert skippable_large_file(path) == kind
+
+
+async def test_repository_bundle_leaves_out_large_media_and_stays_complete(monkeypatch):
+    files = {"app/page.tsx": b"export default 1;\n", "public/robots.txt": b"User-agent: *\n"}
+    tree = [tree_entry(path, content) for path, content in files.items()] + SITE_MEDIA
+    github = RepositoryGitHub(tree, github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        bundle = await service.github_repository_bundle(**bundle_args())
+        receipt = service._database.call_receipts["run-9:procedure-repository"]
+    assert bundle.complete is True and bundle.missing == ()
+    assert bundle.file_count == 2
+    assert {item["path"]: item["reason"] for item in bundle.skipped} == {
+        "public/euphony/assets/main-LKI_ICf3.js": "built_asset",
+        "public/scan-mocks/seaweedindex.com.png": "image",
+        "public/opensource/hero.mp4": "video",
+    }
+    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+        assert archive.getnames() == ["app/page.tsx", "public/robots.txt"]
+    # The read's own receipt says exactly what was left out, and why.
+    summary = receipt.response_summary
+    assert receipt.status == "completed" and summary["head_sha"] == "a" * 40
+    assert summary["skipped"] == [dict(item) for item in bundle.skipped]
+    assert summary["skipped_count"] == 3
+    assert summary["missing"] == [] and summary["missing_count"] == 0
+    # A second read of the same pinned tree doesn't rewrite the receipt.
+    async with repository_service(monkeypatch, github) as again:
+        again._database.call_receipts = service._database.call_receipts
+        writes = len(again._database.calls)
+        await again.github_repository_bundle(**bundle_args())
+        assert len(again._database.calls) == writes
+
+
+async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypatch):
+    files = {"app/page.tsx": b"export default 1;\n"}
+    tree = [
+        tree_entry("app/page.tsx", files["app/page.tsx"]),
+        *SITE_MEDIA,
+        large("src/data/posts.json", 2_400_000),
+        {"type": "commit", "mode": "160000", "path": "content", "sha": "c" * 40},
+    ]
+    github = RepositoryGitHub(tree, github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        bundle = await service.github_repository_bundle(**bundle_args())
+        summary = service._database.call_receipts["run-9:procedure-repository"].response_summary
+    assert bundle.complete is False
+    assert bundle.missing == (
+        {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},
+        {"path": "content", "size": None, "reason": "submodule"},
+    )
+    assert len(bundle.skipped) == 3
+    assert summary["missing"] == [dict(item) for item in bundle.missing]
+    assert summary["missing_count"] == 2
+
+    from tin_lite.repository_limits import describe_omissions
+
+    assert describe_omissions(bundle.missing) == (
+        "src/data/posts.json (2.4 MB, over the 2 MB limit for files Tin reads); "
+        "content (a Git submodule)"
+    )
+
+
+async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
+    from tin_lite.integrations import GitHubRepositoryBinding
+
+    tree = [
+        tree_entry("app/page.tsx", b"export default 1;\n"),
+        *SITE_MEDIA,
+        large("src/data/posts.json", 2_400_000),
+    ]
+    github = RepositoryGitHub(tree, b"")
+    async with repository_service(monkeypatch, github) as service:
+        connection = await service._connection(PROJECT_ID, GITHUB_PROVIDER)
+        binding = GitHubRepositoryBinding(
+            connection.id, 42, 7, "example-org/site", "main", "a" * 40
+        )
+        missing = await service.github_repository_missing_files(
+            project_id=PROJECT_ID, binding=binding
+        )
+        stale = GitHubRepositoryBinding(uuid4(), 42, 7, "example-org/site", "main", "a" * 40)
+        with pytest.raises(IntegrationAuthorizationError, match="connection changed"):
+            await service.github_repository_missing_files(project_id=PROJECT_ID, binding=stale)
+    assert missing == ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
+    # One tree read: nothing is downloaded and nothing is receipted.
+    assert not github.paths("/tarball/") and not service._database.call_receipts
+
+
 async def test_github_repositories_follow_every_installation_page(monkeypatch):
     names = [f"example-org/repo-{index:03d}" for index in range(1, 151)]
     requests: list[httpx.Request] = []

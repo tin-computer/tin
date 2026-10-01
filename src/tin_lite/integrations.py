@@ -40,8 +40,10 @@ from tin_lite.email_outreach import build_email_message, campaign_message_id
 from tin_lite.repository_limits import (
     REPOSITORY_BLOB_FALLBACKS,
     REPOSITORY_DOWNLOAD_MAX_BYTES,
+    REPOSITORY_FILE_MAX_BYTES,
     REPOSITORY_MAX_BYTES,
     REPOSITORY_MAX_FILES,
+    skippable_large_file,
 )
 from tin_lite.settings import Settings
 
@@ -146,6 +148,8 @@ GITHUB_REPOSITORY_PAGE_LIMIT = 10
 GITHUB_OPEN_PULL_REQUEST_LIMIT = 20
 GITHUB_OPEN_PULL_REQUEST_FILE_LIMIT = 100
 GITHUB_OPEN_PULL_REQUEST_EVIDENCE_MAX_BYTES = 250_000
+# A repository read's receipt names at most this many skipped and missing files each.
+REPOSITORY_OMISSIONS_RECORDED = 200
 GSC_FILTER_DIMENSIONS = frozenset({"query", "page", "country", "device", "searchAppearance"})
 GSC_FILTER_OPERATORS = frozenset(
     {"equals", "notEquals", "contains", "notContains", "includingRegex", "excludingRegex"}
@@ -320,12 +324,18 @@ class GitHubRepositoryBinding:
 
 @dataclass(frozen=True)
 class GitHubRepositoryBundle:
+    """A pinned snapshot. `skipped` lists large media and built files left out that can't
+    matter to a fix; `missing` lists what else stayed out. `complete` means nothing is
+    missing. Each entry is {path, size, reason}; see repository_limits.OMISSION_TEXT."""
+
     repository: str
     default_branch: str
     head_sha: str
     archive: bytes
     file_count: int
     complete: bool = True
+    skipped: tuple[dict[str, Any], ...] = ()
+    missing: tuple[dict[str, Any], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -2297,18 +2307,8 @@ class IntegrationService:
         raw_tree = tree_payload.get("tree")
         if not isinstance(raw_tree, list) or tree_payload.get("truncated") is True:
             raise IntegrationUpstreamError("GitHub repository tree is unavailable or too large")
-        blobs = [
-            item
-            for item in raw_tree
-            if isinstance(item, dict)
-            and item.get("type") == "blob"
-            and item.get("mode") in {"100644", "100755"}
-            and isinstance(item.get("path"), str)
-            and _safe_github_source_path(item["path"])
-            and isinstance(item.get("sha"), str)
-            and isinstance(item.get("size"), int)
-            and 0 <= item["size"] <= 2_000_000
-        ]
+        blobs, skipped, unread = _repository_tree_entries(raw_tree)
+        await self._record_repository_omissions(execution_key, head_sha, skipped, unread)
         total_bytes = sum(item["size"] for item in blobs)
         if not blobs:
             raise IntegrationAuthorizationError(
@@ -2340,15 +2340,71 @@ class IntegrationService:
             head_sha=head_sha,
             archive=archive,
             file_count=len(blobs),
-            complete=len(blobs)
-            == len(
-                [
-                    item
-                    for item in raw_tree
-                    if not isinstance(item, dict) or item.get("type") != "tree"
-                ]
-            ),
+            # Large media and built files can't hold what a fix edits; anything else left
+            # out (a large source file, a link, a submodule) makes the snapshot incomplete.
+            complete=not unread,
+            skipped=skipped,
+            missing=unread,
         )
+
+    async def _record_repository_omissions(self, execution_key, head_sha, skipped, missing):
+        """Add what the snapshot left out, and why, to the read's own receipt."""
+        recorded = {
+            "skipped": [dict(item) for item in skipped[:REPOSITORY_OMISSIONS_RECORDED]],
+            "skipped_count": len(skipped),
+            "missing": [dict(item) for item in missing[:REPOSITORY_OMISSIONS_RECORDED]],
+            "missing_count": len(missing),
+        }
+        async with self._database.integration_call_lock(execution_key):
+            receipt = await self._database.get_integration_call_receipt(execution_key)
+            summary = receipt.response_summary if receipt is not None else None
+            if (
+                receipt is None
+                or receipt.status != "completed"
+                or not isinstance(summary, dict)
+                or summary.get("head_sha") != head_sha
+                or all(summary.get(key) == value for key, value in recorded.items())
+            ):
+                return
+            await self._database.record_integration_call(
+                execution_key=execution_key,
+                project_id=receipt.project_id,
+                run_id=receipt.run_id,
+                connection_id=receipt.connection_id,
+                provider_key=receipt.provider_key,
+                capability=receipt.capability,
+                request_fingerprint=receipt.request_fingerprint,
+                status="completed",
+                response_summary={**summary, **recorded},
+                provider_request_id=receipt.provider_request_id,
+            )
+
+    async def github_repository_missing_files(
+        self, *, project_id: UUID, binding: GitHubRepositoryBinding
+    ) -> tuple[dict[str, Any], ...]:
+        """What a run's snapshot of the bound commit would miss, from one tree read.
+
+        Preflight uses it to warn before a run stops on a large source file; it downloads
+        nothing and records no receipt.
+        """
+        connection = await self._connection(project_id, GITHUB_PROVIDER)
+        if (
+            connection.id != binding.connection_id
+            or _installation_id(connection) != binding.installation_id
+        ):
+            raise IntegrationAuthorizationError("The GitHub connection changed. Check it again.")
+        token = await self._github_installation_token(binding.installation_id)
+        response = await self._client.get(
+            f"https://api.github.com/repos/{quote(binding.repository, safe='/')}/git/trees/"
+            f"{binding.head_sha}",
+            headers=self._github_headers(token),
+            params={"recursive": "1"},
+        )
+        payload = _provider_json(response, provider="GitHub")
+        raw_tree = payload.get("tree")
+        if not isinstance(raw_tree, list) or payload.get("truncated") is True:
+            raise IntegrationUpstreamError("GitHub repository tree is unavailable or too large")
+        return _repository_tree_entries(raw_tree)[2]
 
     async def github_open_pull_requests(
         self,
@@ -5560,6 +5616,51 @@ def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> 
     except (tarfile.TarError, EOFError, OSError, zlib.error) as exc:
         raise IntegrationUpstreamError("GitHub repository tarball is unreadable") from exc
     return contents
+
+
+def _repository_tree_entries(
+    raw_tree: list[Any],
+) -> tuple[list[dict[str, Any]], tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+    """Split a recursive tree into the blobs a snapshot holds and the entries it leaves out.
+
+    Returns (blobs, skipped, missing). Large media and built files are `skipped`: they can't
+    hold what a fix edits. Every other entry left out is `missing`, with its reason.
+    """
+    blobs: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for item in raw_tree:
+        if isinstance(item, dict) and item.get("type") == "tree":
+            continue
+        path = item.get("path") if isinstance(item, dict) else None
+        path = path[:300] if isinstance(path, str) else ""
+        size = item.get("size") if isinstance(item, dict) else None
+        size = size if type(size) is int else None
+        if not isinstance(item, dict):
+            reason = "unsupported_entry"
+        elif item.get("type") == "commit":
+            reason = "submodule"
+        elif item.get("type") != "blob":
+            reason = "unsupported_entry"
+        elif item.get("mode") == "120000":
+            reason = "symlink"
+        elif item.get("mode") not in {"100644", "100755"}:
+            reason = "unsupported_entry"
+        elif not isinstance(item.get("path"), str) or not _safe_github_source_path(item["path"]):
+            reason = "unsupported_path"
+        elif not isinstance(item.get("sha"), str) or size is None or size < 0:
+            reason = "unsupported_entry"
+        elif size > REPOSITORY_FILE_MAX_BYTES:
+            kind = skippable_large_file(path)
+            if kind is not None:
+                skipped.append({"path": path, "size": size, "reason": kind})
+                continue
+            reason = "too_large"
+        else:
+            blobs.append(item)
+            continue
+        missing.append({"path": path, "size": size, "reason": reason})
+    return blobs, tuple(skipped), tuple(missing)
 
 
 def _repository_archive(blobs: list[dict[str, Any]], contents: dict[str, bytes]) -> bytes:

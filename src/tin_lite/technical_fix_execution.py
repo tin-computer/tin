@@ -12,6 +12,7 @@ from tin_lite import technical_site_rules as site_rules
 from tin_lite.integrations import GitHubRepositoryBinding
 from tin_lite.organic_audit import digest
 from tin_lite.organic_audit_site import parse_robots, parse_sitemap, url_key
+from tin_lite.repository_limits import describe_omissions
 from tin_lite.run_reports import publish_run_report
 from tin_lite.technical_build_profile import archive_files, match_profile
 from tin_lite.technical_fix_sources import TechnicalFixSources
@@ -59,6 +60,11 @@ async def sitemap_files(target, robots, read):
 
 
 STATIC_SOURCE_EXTENSIONS = (".txt", ".xml", ".html", ".htm")
+
+
+def strict_candidate(path, size):
+    """A file _strict_files can match against a served copy: static text, within bounds."""
+    return path.endswith(STATIC_SOURCE_EXTENSIONS) and size <= site_rules.MAX_TEXT_BYTES
 
 
 def binding_from(prepared):
@@ -164,7 +170,7 @@ class TechnicalFixExecution:
                 pages.append(await self.once(run.id, f"page:{index}", observe))
             check = selection["selection"]["finding"]["check_id"]
             reason, originals, profile, overlapping = None, {}, {}, []
-            unsupported = []
+            unsupported, missing = [], {}
             if all(contract.has_metadata(page["html"], check) for page in pages):
                 reason = "already_resolved"
             else:
@@ -175,20 +181,23 @@ class TechnicalFixExecution:
                     execution_key=f"{run.id}:procedure_repository_workspace",
                     expected_binding=binding,
                 )
+                # A build profile is proven over the whole repository, so an incomplete
+                # snapshot stops the run and names what Tin couldn't read.
+                incomplete = policy != contract.LEGACY_POLICY and not getattr(
+                    bundle, "complete", True
+                )
                 if policy == contract.LEGACY_POLICY:
                     originals = contract.matched_sources(bundle.archive, pages)
-                else:
-                    matched = (
-                        match_profile(
-                            bundle.archive, pages, check, allow_partial=policy == contract.POLICY
-                        )
-                        if getattr(bundle, "complete", True)
-                        else None
+                elif not incomplete:
+                    matched = match_profile(
+                        bundle.archive, pages, check, allow_partial=policy == contract.POLICY
                     )
                     originals = matched["originals"] if matched else None
                     profile = matched["verification_profile"] if matched else {}
                     unsupported = matched["unsupported_pages"] if matched else []
-                if originals is None:
+                if incomplete:
+                    reason, missing = "repository_incomplete", contract.missing_record(bundle)
+                elif originals is None:
                     reason, originals = "unsupported_source", {}
                 else:
                     evidence = await self.integrations.github_open_pull_requests(
@@ -223,6 +232,7 @@ class TechnicalFixExecution:
                 "originals": originals,
                 "reason": reason,
             }
+            prepared.update(missing)
             # Context travels through the existing bounded sandbox environment. Do
             # not discover an oversized escaped payload after allocating compute.
             if len(json.dumps(prepared, separators=(",", ":")).encode()) > 70_000:
@@ -242,7 +252,9 @@ class TechnicalFixExecution:
                 prefix="technical",
                 path=f"reports/technical-fix/{run.id}/RESULT.md",
                 content=contract.report(prepared, reason=prepared["reason"]),
-                summary="Technical finding checked. No change proposed.",
+                summary=contract.preparation_summary(prepared),
+                # A run that couldn't read the repository failed; it didn't find the site fine.
+                failed=contract.preparation_failed(prepared),
             )
             return True
         return False
@@ -408,7 +420,7 @@ class TechnicalFixExecution:
             reason = "nothing_to_fix"
         elif not still:
             reason = "already_resolved"
-        strict, overlap = {}, []
+        strict, overlap, missing = {}, [], {}
         if reason is None:
             binding = binding_from(selection)
             bundle = await self.integrations.github_repository_bundle(
@@ -417,11 +429,16 @@ class TechnicalFixExecution:
                 execution_key=f"{run.id}:procedure_repository_workspace",
                 expected_binding=binding,
             )
-            try:
-                files = archive_files(bundle.archive) if getattr(bundle, "complete", True) else None
-            except ValueError:
-                files = None
-            if files is None:
+            files = None
+            if getattr(bundle, "complete", True):
+                try:
+                    # Only served text files can be proven from the diff; read just those.
+                    files = archive_files(bundle.archive, select=strict_candidate)
+                except ValueError:
+                    pass
+            if not getattr(bundle, "complete", True):
+                reason, missing = "repository_incomplete", contract.missing_record(bundle)
+            elif files is None:
                 reason = "unsupported_source"
             else:
                 strict = self._strict_files(files, still, robots, sitemaps or [], page_reads)
@@ -475,13 +492,14 @@ class TechnicalFixExecution:
             "overlapping_pull_requests": [],
             "reason": reason,
         }
+        prepared.update(missing)
         # Context travels through the bounded sandbox environment; trim what the procedure
         # doesn't need before refusing an oversized plan.
         if len(json.dumps(prepared, separators=(",", ":"), default=str).encode()) > 70_000:
             prepared["batch"]["observations"] = []
             prepared["batch"]["forbidden"] = []
         if len(json.dumps(prepared, separators=(",", ":"), default=str).encode()) > 70_000:
-            prepared.update(reason="unsupported_source")
+            prepared.update(reason="plan_too_large")
         return prepared
 
     def _strict_files(self, files, repairs, robots, sitemaps, page_reads):
@@ -556,8 +574,20 @@ class TechnicalFixExecution:
             expected_binding=binding,
         )
         if not getattr(bundle, "complete", True):
-            raise ValueError("The repository snapshot is incomplete; Tin can't check this patch.")
-        files = archive_files(bundle.archive)
+            named = describe_omissions(getattr(bundle, "missing", ()), limit=3)
+            raise ValueError(
+                "Tin couldn't read every file in the repository"
+                + (f" ({named})" if named else "")
+                + ", so it can't check this patch."
+            )
+        changed = {item["path"] for item in manifest["files"]}
+        skipped = sorted(changed & {item["path"] for item in getattr(bundle, "skipped", ())})
+        if skipped:
+            raise ValueError(
+                f"{skipped[0]} is a large media or built file Tin didn't read, so a fix "
+                "can't change it."
+            )
+        files = archive_files(bundle.archive, select=lambda path, _size: path in changed)
         originals = {}
         for item in manifest["files"]:
             raw = files.get(item["path"])

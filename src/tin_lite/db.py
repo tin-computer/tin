@@ -6926,7 +6926,12 @@ class Database:
             "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
         }[workflow_key]
         if final_status == "failed":
-            event = "organic_system_incomplete"
+            # technical_fix_ready becomes technical_fix_failed; the traffic system keeps its own.
+            event = (
+                "organic_system_incomplete"
+                if workflow_key == "organic.traffic_system"
+                else event.removesuffix("_ready") + "_failed"
+            )
         async with conn.transaction():
             projected = await conn.fetchval(
                 """

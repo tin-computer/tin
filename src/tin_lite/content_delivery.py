@@ -24,6 +24,7 @@ from tin_lite.integrations import (
 )
 from tin_lite.organic_audit import canonical_json
 from tin_lite.project_files import ProjectFileService, safe_project_file_path
+from tin_lite.repository_limits import describe_omissions
 
 WORKFLOW = "tin.content_draft_delivery"
 OPERATION = "content_draft_delivery_v1"
@@ -863,11 +864,17 @@ class ContentDelivery:
                     expected_binding=binding,
                 )
                 if not getattr(bundle, "complete", True):
+                    named = describe_omissions(getattr(bundle, "missing", ()), limit=3)
                     raise ValueError(
-                        "The repository is too large for Tin to search completely, so it will "
-                        "not guess where the page's text lives. Change it by hand."
+                        "Tin couldn't read every file in the repository"
+                        + (f" ({named})" if named else "")
+                        + ", so it will not guess where the page's text lives. Change it by hand."
                     )
-                changed = content_refresh.plan_patch(archive_files(bundle.archive), items)
+                # Read only the source files plan_patch searches; large media and built
+                # files were never part of the snapshot.
+                changed = content_refresh.plan_patch(
+                    archive_files(bundle.archive, select=content_refresh.searched), items
+                )
                 files = tuple(
                     GitHubFileChange(path=path, content=text) for path, text in changed.items()
                 )

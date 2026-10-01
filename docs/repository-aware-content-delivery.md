@@ -54,6 +54,13 @@ and Open a pull request, which use the exact Markdown publisher below.
   hash in the pinned tree; paths the tarball omits or rewrites (`export-ignore`,
   `export-subst`) are read individually. Oversized repositories fail before the download,
   with their eligible file count and byte total alongside the bound.
+- A file over 2 MB stays out of the snapshot. Images, video, audio, fonts, archives, PDFs,
+  WebAssembly, source maps, minified files and scripts or stylesheets under a public or static
+  folder (`public/`, `static/`, `dist/`, `build/`, `out/` and the like) can't hold what a fix
+  edits, so the snapshot still counts as complete without them. Any other file left out (a
+  source or data file over 2 MB, a symbolic link, a submodule) makes it incomplete. The
+  read's receipt lists both, with each file's size and reason, and workflows that refuse an
+  incomplete snapshot name the files.
 - A canonical receipt at `content/deliveries/{run_id}.md` links the PR. The original
   Markdown and the roadmap are unchanged. Status, article choices, titles and PR links
   are Postgres projections, shared by HTTP/MCP and the existing content card.

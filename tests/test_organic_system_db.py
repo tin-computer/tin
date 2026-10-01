@@ -153,12 +153,33 @@ async def test_technical_preparation_and_execution_read_the_same_repository_snap
     assert execution_call == prepared_call
 
 
-async def test_incomplete_repository_cannot_claim_build_verification(publication_db, monkeypatch):
+async def test_an_unreadable_repository_ends_the_run_failed_with_the_reason(
+    publication_db, monkeypatch
+):
+    """Runs 43b99efd and 721f6a8d said "Tin couldn't read the repository" and succeeded."""
     f = await technical_fixture(publication_db, monkeypatch)
-    f.integrations.github_repository_bundle.return_value.complete = False
+    bundle = f.integrations.github_repository_bundle.return_value
+    bundle.complete = False
+    bundle.missing = ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
     assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
-    assert (await prepared_result(f.db, f.run.id))["reason"] == "unsupported_source"
+    assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
+    saved = await prepared_result(f.db, f.run.id)
+    assert saved["reason"] == "repository_incomplete"
+    assert saved["repository_missing"] == [dict(item) for item in bundle.missing]
     f.integrations.github_open_pull_requests.assert_not_awaited()
+    run = await f.db.get_run(f.run.id)
+    assert run.status.value == "failed"
+    assert run.error_message == (
+        "Tin couldn't read every file in the repository: src/data/posts.json (2.4 MB, over "
+        "the 2 MB limit for files Tin reads). No change proposed."
+    )
+    assert run.artifact_path == f"reports/technical-fix/{run.id}/RESULT.md"
+    assert f.storage.repo.writes == 1
+    events = await f.db.pool.fetch(
+        "SELECT event_type FROM activity_events WHERE run_id=$1 AND event_type LIKE 'technical%'",
+        run.id,
+    )
+    assert [row["event_type"] for row in events] == ["technical_fix_failed"]
 
 
 async def test_partial_coverage_is_explicit_and_only_matched_pages_rechecked(

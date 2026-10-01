@@ -106,7 +106,10 @@ def source_fixture(
         read_canonical_artifact=AsyncMock(side_effect=lambda **kw: docs[kw["path"]])
     )
     binding = GitHubRepositoryBinding(uuid4(), 123, 456, "owner/site", "main", "b" * 40)
-    integrations = SimpleNamespace(github_repository_binding=AsyncMock(return_value=binding))
+    integrations = SimpleNamespace(
+        github_repository_binding=AsyncMock(return_value=binding),
+        github_repository_missing_files=AsyncMock(return_value=()),
+    )
     service = TechnicalFixSources(database=database, storage=storage, integrations=integrations)
     selection = {
         "project_id": project.id,
