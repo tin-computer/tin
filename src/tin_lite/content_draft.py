@@ -15,6 +15,9 @@ EDITORIAL_VALIDATOR = "content-draft.v3"
 CLEAN_VALIDATORS = frozenset({CLEAN_VALIDATOR, EDITORIAL_VALIDATOR})
 VALIDATORS = frozenset({VALIDATOR, *CLEAN_VALIDATORS})
 PATH_TEMPLATE = "content/drafts/{run_id}.md"
+# A pinned prompt that names this context field gets the project's positioning files listed in
+# its draft context. Older pins keep their original context.
+POSITIONING_MARKER = "content_draft.positioning"
 NOTES_MAX_BYTES = 24_000
 
 

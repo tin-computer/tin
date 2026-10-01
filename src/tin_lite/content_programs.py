@@ -12,7 +12,7 @@ from tin_lite.organic_audit import canonical_json, digest
 from tin_lite.project_files import ProjectFileService, StaleProjectRevisionError
 
 # Delivery settings also hang off the standing drafting roles onboarding schedules.
-PROGRAM_KEYS = frozenset({KEY, "content.answer_page", "content.public_article"})
+PROGRAM_KEYS = frozenset({KEY, "content.answer_page", "content.public_article", "content.refresh"})
 
 
 def decoded(value):

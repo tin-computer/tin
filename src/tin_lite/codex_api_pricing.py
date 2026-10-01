@@ -72,7 +72,15 @@ REQUEST_MAXIMUM = (
 )
 
 
+# Session ceilings below the default $5, by the procedure's output contract. A page refresh
+# reads the page's current text, a few positioning files and the style guide, then writes one
+# short document: about 150,000 input and 6,000 output tokens at list price, roughly $0.45.
+# Its ceiling is about five times that. No refresh has run yet; recalibrate from measurements.
+PROCEDURE_MAXIMUMS = {"content-refresh.v1": 2_500_000_000}
+
+
 def api_terms(definition, *, session_budget=False):
+    validator = definition.get("procedure", {}).get("output", {}).get("validator")
     terms = {
         "rate_card": RATE_CARD["id"],
         "pricing": RATE_CARD,
@@ -81,7 +89,7 @@ def api_terms(definition, *, session_budget=False):
         "definition_sha256": digest(definition),
         "kind": "codex_api",
         "codex_auth": MODE,
-        "maximum_nanos": 5 * NANOS_PER_DOLLAR,
+        "maximum_nanos": PROCEDURE_MAXIMUMS.get(validator, 5 * NANOS_PER_DOLLAR),
         "request_maximum_nanos": REQUEST_MAXIMUM,
         "request_maximum_input_bytes": REQUEST_INPUT_ENVELOPE,
         "execution_fee_nanos": 0,
