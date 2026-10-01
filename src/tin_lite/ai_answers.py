@@ -42,6 +42,7 @@ from uuid import UUID
 import httpx
 
 from tin_lite.dataforseo import DataForSEOError
+from tin_lite.keyword_data import HTTP_REFUSALS
 from tin_lite.organic_audit import MARKETS
 from tin_lite.usage_capture import begin_observation, observe_tool
 
@@ -491,7 +492,11 @@ class AIAnswersClient:
             finally:
                 _SESSION.reset(token)
 
-    async def _call(self, method: str, path: str, payload: list | None = None) -> dict:
+    async def _call(
+        self, method: str, path: str, payload: list | None = None, *, observation=None
+    ) -> dict:
+        """One request. A refusal of the whole request is a known outcome, raised as
+        ProviderRejected after `observation` is receipted at the cost DataForSEO reported."""
         shared = _SESSION.get()
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(asyncio.timeout(LIVE_TIMEOUT_SECONDS + 10))
@@ -503,6 +508,11 @@ class AIAnswersClient:
             response = await stack.enter_async_context(
                 client.stream(method, f"{API_ORIGIN}/{path}", json=payload)
             )
+            if response.status_code in HTTP_REFUSALS:
+                # Refused at the door (credentials, balance, rate): nothing was bought.
+                code = HTTP_REFUSALS[response.status_code]
+                await observe_tool(observation, {"cost": 0})
+                raise ProviderRejected(f"DataForSEO refused the request (status {code}).")
             response.raise_for_status()
             body = bytearray()
             async for chunk in response.aiter_bytes():
@@ -510,6 +520,14 @@ class AIAnswersClient:
                 if len(body) > LIMITS["response_bytes"]:
                     raise DataForSEOError("Answer response exceeded its size bound.")
         data = json.loads(body)
+        status = data.get("status_code") if isinstance(data, dict) else None
+        if type(status) is int and status != 20000 and not data.get("tasks"):
+            # DataForSEO refused the whole request and ran no task, at the cost it reports.
+            cost = _money(data.get("cost", 0))
+            if cost is None:
+                raise DataForSEOError("Answer refusal has invalid cost metadata.")
+            await observe_tool(observation, {"cost": str(cost)})
+            raise ProviderRejected(f"DataForSEO refused the request (status {status}).")
         if not isinstance(data, dict) or not isinstance(data.get("tasks"), list):
             raise DataForSEOError("Answer response has an invalid envelope.")
         return data
@@ -522,7 +540,7 @@ class AIAnswersClient:
         tags = [r["tag"] for r in requests]
         observation = await begin_observation("dataforseo", "tool", spec.post)
         try:
-            data = await self._call("POST", spec.post, requests)
+            data = await self._call("POST", spec.post, requests, observation=observation)
             tasks = data["tasks"]
             costs = [_money(t.get("cost")) if isinstance(t, dict) else None for t in tasks]
             if any(c is None for c in costs):
@@ -570,7 +588,7 @@ class AIAnswersClient:
             raise ValueError("This engine posts tasks; it has no live call here.")
         observation = await begin_observation("dataforseo", "tool", spec.post)
         try:
-            data = await self._call("POST", spec.post, [request])
+            data = await self._call("POST", spec.post, [request], observation=observation)
             if len(data["tasks"]) != 1 or not isinstance(data["tasks"][0], dict):
                 raise DataForSEOError("Live answer has an invalid task envelope.")
             task = data["tasks"][0]

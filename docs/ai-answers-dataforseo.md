@@ -105,6 +105,9 @@ for 30 days) and `unknown` (a paid request whose outcome was lost; it is not sen
   request, so it has one receipt; each live answer has its own.
 - A completed receipt is reused on retry. An attempt with no saved outcome becomes `unknown`
   and stays unconfirmed for billing's reconciliation; it is never counted as free.
+- A refusal of the whole request (HTTP 401, 402, 403 or 429, or an error status with no
+  tasks) is a known outcome: it settles at the reported cost, usually $0, and its rows fail
+  with `provider_rejected`. A server error or an unreadable answer stays `unknown`.
 - A run's own spending limit refuses the reservation, and the rows fail with
   `spending_limit`.
 

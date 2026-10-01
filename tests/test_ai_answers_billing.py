@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import httpx
 from test_ai_answers import FakeDataForSEO, client_for, inputs
 from test_billing import billed as billed
 from test_billing import finish, fund
@@ -56,3 +57,23 @@ async def test_a_spending_limit_fails_the_rows_without_a_request(billed, monkeyp
     )
     assert {(r["status"], r["reason"]) for r in result["rows"]} == {("failed", "spending_limit")}
     assert fake.requests == []
+
+
+async def test_a_refused_account_settles_at_zero_instead_of_waiting_as_unknown(billed):
+    f = billed
+    await fund(f)
+    run = await admit(f, "organic.audit", SITE)
+    fake = FakeDataForSEO(pending_rounds=0)
+    fake.post_answer = {"claude": httpx.Response(402)}
+    request = AIAnswersRequest.from_inputs(inputs(engines=["claude"], prompts=["best form"]))
+    result = await measure(
+        client_for(fake),
+        request,
+        ledger=ReceiptLedger(f.db, run_id=run.id, stage="ai_answers"),
+        tag="billing-test",
+    )
+    assert {(r["status"], r["reason"]) for r in result["rows"]} == {("failed", "provider_rejected")}
+    rows = await f.db.pool.fetch(
+        "SELECT status, observed_nanos FROM billing_operations WHERE run_id=$1", run.id
+    )
+    assert [(r["status"], r["observed_nanos"]) for r in rows] == [("observed", 0)]

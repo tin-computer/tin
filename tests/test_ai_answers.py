@@ -120,6 +120,7 @@ class FakeDataForSEO:
         self.reject_post: set[str] = set()
         self.task_status: dict[tuple[str, int], int] = {}
         self.live_error: set[str] = set()
+        self.post_answer: dict[str, httpx.Response] = {}
         self.never_ready = False
 
     def answer(self, engine, index):
@@ -141,6 +142,8 @@ class FakeDataForSEO:
         self.requests.append((request.method, path, body))
         engine = self.engine_for(path)
         spec = ENGINES[engine]
+        if request.method == "POST" and engine in self.post_answer:
+            return self.post_answer[engine]
         if request.method == "POST" and spec.mode == "task":
             if engine in self.reject_post:
                 return httpx.Response(
@@ -352,6 +355,39 @@ async def test_an_engine_failure_leaves_the_other_engines_measured():
     assert broken["by_engine"]["perplexity"]["unknown"] == 2
     assert broken["cost_unconfirmed_rows"] == 2
     assert sum(1 for r in fake.requests if r[1] == ENGINES["perplexity"].post) == 4
+
+
+REFUSED = {"status_code": 40200, "status_message": "Payment Required.", "cost": 0}
+REJECTED = ("failed", "provider_rejected")
+UNKNOWN = ("unknown", "provider_result_unavailable")
+
+
+@pytest.mark.parametrize(
+    ("answer", "posted", "live"),
+    [
+        (httpx.Response(401), REJECTED, REJECTED),
+        (httpx.Response(402), REJECTED, REJECTED),
+        (httpx.Response(403), REJECTED, REJECTED),
+        (httpx.Response(429), REJECTED, REJECTED),
+        (httpx.Response(200, json={**REFUSED, "tasks": None}), REJECTED, REJECTED),
+        (httpx.Response(200, json={**REFUSED, "tasks": []}), REJECTED, REJECTED),
+        # Not definite refusals: the request may have run and been charged.
+        (httpx.Response(503), UNKNOWN, UNKNOWN),
+        (httpx.Response(200, json={**REFUSED, "cost": "x"}), UNKNOWN, UNKNOWN),
+        (
+            httpx.Response(200, json={"status_code": 20000, "tasks": []}),
+            ("failed", "task_missing_from_response"),
+            UNKNOWN,
+        ),
+    ],
+)
+async def test_account_refusals_are_rejected_and_only_they(answer, posted, live):
+    fake = FakeDataForSEO()
+    fake.post_answer = {"chatgpt": answer, "claude": answer}
+    request = AIAnswersRequest.from_inputs(inputs(engines=["chatgpt", "claude"]))
+    rows = (await run(fake, request))["rows"]
+    outcomes = {(r["engine"], r["status"], r["reason"]) for r in rows}
+    assert outcomes == {("chatgpt", *posted), ("claude", *live)}
 
 
 async def test_tasks_still_queued_at_the_deadline_time_out_with_their_task_ids():
