@@ -20,7 +20,7 @@ sandbox results return to the trusted server for validation and storage.
 - **Postgres** holds what the product shows. No screen queries the workflow engine.
 - **Integrations** are typed adapters with capability lists. Tokens stay on the switchboard and never enter a sandbox. A procedure that needs your data gets a short-lived grant bound to one run through a separate internal MCP server, for the reads its workflow declared. Every provider call writes a receipt.
 
-Codex execution uses brokered ChatGPT sessions or an API relay according to the execution configuration. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is selected before execution and retained through retries. `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
+New Codex execution runs only through the protected API relay. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is pinned before execution and retained through retries. The pooled ChatGPT login broker is removed: historical runs pinned to it keep their artifacts and billing records but cannot start new compute ([API-only Codex execution](oauth-credential-security.md)). `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
 
 ## One run
 
@@ -80,7 +80,7 @@ You connect GitHub, select the repository, and opt in to write access. You start
 
 You connect Google Workspace and start `outreach.email_shortlist` with an objective, say "people I met at events in the last ninety days who asked about pricing". The sandbox gets a run-bound grant to read Gmail and Calendar and writes `outreach/email/SHORTLIST.csv` with a reason and evidence per row. You edit the CSV in Files or from your coding agent and mark rows as selected.
 
-Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP.
+Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. A recipient Gmail refuses is marked failed and counted in the campaign's result; everyone else keeps sending. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP; after a stop nothing more is started and each recipient keeps the state it had reached.
 
 ## Example workflows
 

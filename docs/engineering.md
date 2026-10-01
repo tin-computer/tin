@@ -434,7 +434,7 @@ are disabled so workflow-level receipts and Temporal retries remain the only amb
 `TIN_LITE_LUNA_API_KEY` remains the switchboard-only OpenAI credential and continues to serve Luna;
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OPENROUTER_API_KEY` configure the other adapters. Identity-linked Anthropic
 keys also require `ANTHROPIC_WORKSPACE_ID`; workspace-scoped keys may omit it. None of these
-credentials is sent to Temporal, code.storage, the broker, or E2B. No model routes are silently created merely
+credentials is sent to Temporal, code.storage, or E2B. No model routes are silently created merely
 because a key exists; each workflow definition must deliberately select a registered route.
 
 Shared-service calls now retain trusted per-run usage receipts, including rejected output and
@@ -526,10 +526,12 @@ Codex runs receive only short-lived run-scoped access in the protected controlle
 reusable provider key. Tin no longer requires a pooled login or `auth.json`. Product Clerk
 login and model-provider authentication are separate systems.
 
-MCP and OAuth-based connection setup also require `TIN_LITE_MCP_OAUTH_CLIENT_IDS`, an explicit
-comma-separated list of approved Clerk OAuth client IDs or exact CIMD URLs. Empty disables
-OAuth access. Configure approved IDs before deployment; browser sessions do not require this
-setting. See [client admission](clerk-agent-connection.md#oauth-client-admission).
+MCP and OAuth-based connection setup accept Clerk access tokens bound to Tin's resource
+(`TIN_LITE_PUBLIC_URL` plus `/mcp`); new clients need no per-client setting.
+`TIN_LITE_MCP_OAUTH_CLIENT_IDS` is optional: a comma-separated list of exact Clerk OAuth client
+IDs or CIMD URLs whose tokens may lack that resource binding (legacy clients). Empty, the
+default, refuses only those unbound tokens; it does not disable MCP OAuth. Browser sessions do
+not use this setting. See [OAuth resource binding](clerk-agent-connection.md#oauth-resource-binding).
 
 The trusted switchboard may also read `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
 `OPENROUTER_API_KEY` for native workflow
