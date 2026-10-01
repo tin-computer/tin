@@ -1,9 +1,9 @@
-"""website.change, phase 1: the one workflow that edits a founder's website.
+"""website.change, phase 1: approved pages on a founder's website.
 
-A change the founder approved in Tin publishes: Tin opens the pull request and merges it once
-GitHub reports it clean. Anything else opens a pull request for the founder to merge, and so
-does anything that touches a protected page, approved or not. Approval is recorded in Postgres
-with who, when and the exact revision; a project file never counts as one.
+A change the founder approved with commit to main publishes: Tin opens the pull request and
+merges it once GitHub reports it clean. Anything else opens a pull request for the founder to
+merge, and so does anything that touches a protected page, approved or not. Approval is
+recorded in Postgres with who, when and the exact revision; a project file never counts as one.
 """
 
 import hashlib
@@ -72,6 +72,13 @@ async def fixture(db, monkeypatch):
 def choose_route(f, route=ROUTE, kind="answer_page"):
     """The founder's saved choice, as save_page_route writes it."""
     f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {kind: route}})})
+
+
+async def approved_for_main(f, page=None):
+    """An answer page approved with the founder's delivery: commit to main."""
+    page = page or await answer_page(f)
+    await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR, adapt=True)
+    return await approve_answer_page(f, page)
 
 
 async def approve_without_approver(f, run):
@@ -180,7 +187,7 @@ async def test_an_approved_page_is_one_change_row_approved_by_its_reviewer(
 ):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    page = await approve_answer_page(f, await answer_page(f))
+    page = await approved_for_main(f)
     run = await start(f, page)
     source = await delivery.saved_source(f.db, run.id)
     change = source["change"]
@@ -237,7 +244,7 @@ def test_a_change_row_is_defined_once_for_every_source():
 async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    page = await approve_answer_page(f, await answer_page(f))
+    page = await approved_for_main(f)
     run = await made(f, await start(f, page))
     integrations = mergeable(f)
     for _ in range(2):  # The recorded outcome is reused; GitHub is asked to merge once.
@@ -255,7 +262,9 @@ async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatc
     assert status["publish"] == "direct" and status["public_route"] == PAGE_URL
 
 
-@pytest.mark.parametrize("why", ["no_recorded_approver", "approval_asked_for_a_pr"])
+@pytest.mark.parametrize(
+    "why", ["no_recorded_approver", "approval_asked_for_a_pr", "no_delivery_chosen"]
+)
 async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
     publication_db, monkeypatch, why
 ):
@@ -264,8 +273,11 @@ async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
     page = await answer_page(f)
     if why == "no_recorded_approver":
         page = await approve_without_approver(f, page)
-    else:
+    elif why == "approval_asked_for_a_pr":
         await f.delivery.choose(run=page, mode="github_pr", actor=ACTOR, adapt=True)
+        page = await approve_answer_page(f, page)
+    else:
+        # Approved, but nobody chose commit to main: approval is not website publication.
         page = await approve_answer_page(f, page)
     run = await start(f, page)
     source = await delivery.saved_source(f.db, run.id)
@@ -273,9 +285,12 @@ async def test_a_change_that_was_not_pre_approved_opens_a_pull_request(
     if why == "no_recorded_approver":
         assert source["change"]["approval"] is None
         assert "No one approved this change" in source["publish"]["reason"]
-    else:
+    elif why == "approval_asked_for_a_pr":
         assert source["change"]["approval"]["by"] == ACTOR
         assert "asked for a pull request" in source["publish"]["reason"]
+    else:
+        assert source["change"]["approval"]["by"] == ACTOR
+        assert "did not ask Tin to commit" in source["publish"]["reason"]
     run = await made(f, run)
     integrations = mergeable(f)
     merge = await merge_outcome(f, run)
@@ -293,7 +308,7 @@ async def test_protected_paths_open_a_pull_request_even_when_approved(publicatio
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
     # The founder lists /blog as shared with another app: the approved page still waits.
-    shared = await approve_answer_page(f, await answer_page(f))
+    shared = await approved_for_main(f)
     run = await start(f, shared, protected_paths=["/blog"])
     source = await delivery.saved_source(f.db, run.id)
     assert source["change"]["approval"]["by"] == ACTOR
@@ -303,7 +318,7 @@ async def test_protected_paths_open_a_pull_request_even_when_approved(publicatio
     merge = await merge_outcome(f, await made(f, run))
     assert merge["status"] == "left_open" and "/blog" in merge["reason"]
     # An approved page whose patch also edits the shared sign-in page stays a pull request.
-    page = await approve_answer_page(f, await answer_page(f))
+    page = await approved_for_main(f)
     sign_in = {"path": "src/app/(auth)/sign-in/[[...sign-in]]/page.tsx", "content": "x\n"}
     run = await made(f, await start(f, page), extra_files=(sign_in,))
     integrations = mergeable(f)
@@ -507,7 +522,7 @@ async def test_decided_rows_stay_decided(publication_db, monkeypatch):
 
 async def test_an_answer_page_without_a_chosen_route_asks_the_founder(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
-    page = await approve_answer_page(f, await answer_page(f))
+    page = await approved_for_main(f)
     with pytest.raises(WorkflowInputError) as refused:
         await start(f, page)
     message = str(refused.value)
@@ -534,7 +549,7 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
 ):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    page = await approve_answer_page(f, await answer_page(f))
+    page = await approved_for_main(f)
     run = await start(f, page)
     source = await delivery.saved_source(f.db, run.id)
     # Tin's own draft folder is never a page on the site.
@@ -551,7 +566,7 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
         public_url=PAGE_URL,
         extra_files=({"path": "bun.lock", "content": "x\n"},),
     )
-    with pytest.raises(ValueError, match="dependency or lockfiles"):
+    with pytest.raises(ValueError, match="cannot change dependencies"):
         delivery.validate_patch(lockfile, source)
     # A typed page registry keeps the copy as one JSON string, served at the chosen route.
     registry = (
@@ -579,7 +594,7 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
         "src/app/blog/[slug]/page.tsx",
     ]
     # A page placed anywhere else than the chosen route waits for the founder.
-    other = await approve_answer_page(f, await answer_page(f))
+    other = await approved_for_main(f)
     run = await made(
         f, await start(f, other), public_url="https://example.com/answers/reliable-ai-work"
     )
@@ -637,7 +652,7 @@ async def test_one_page_is_never_adapted_by_both_workflows(publication_db, monke
     with pytest.raises(WorkflowInputError, match="still working"):
         await start(f, page)
     # website.change started first: content.deliver refuses the same page.
-    other = await approve_answer_page(f, await answer_page(f))
+    other = await approved_for_main(f)
     await start(f, other)
     with pytest.raises(WorkflowInputError, match="still working"):
         await start(f, other, workflow=f.content_deliver)

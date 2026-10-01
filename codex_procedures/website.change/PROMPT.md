@@ -1,7 +1,7 @@
 # Make one approved change to the website
 
-Run the site-change skill. This is the one workflow that edits the founder's website, and
-it makes exactly one change: the change row in the trusted `workspace.website_change`
+Run the site-change skill. This workflow edits the founder's website, and it makes exactly
+one change: the change row in the trusted `workspace.website_change`
 context. This is adaptation, not writing or rewriting.
 
 The context holds the change row (`change`: its source, stable ID, kind and site paths),

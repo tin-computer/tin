@@ -633,9 +633,10 @@ BUILTIN_WORKFLOWS = (
         title="Change the website",
         description="Make one approved change to your website repository. Today that is an "
         "approved article, answer page or public article, adapted to the site's own format at "
-        "the route you chose, with its copy unchanged. A change you approved in Tin publishes: "
-        "Tin merges its pull request once GitHub reports it clean. Anything else, and any "
-        "change to a protected page such as /sign-in, opens a pull request for you to merge.",
+        "the route you chose, with its copy unchanged. A change you approved with commit to main "
+        "publishes: Tin merges its pull request once GitHub reports it clean. Anything else, "
+        "and any change to a protected page such as /sign-in, opens a pull request for you to "
+        "merge.",
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.0.0",
         system=ORGANIC_TRAFFIC_SYSTEM,

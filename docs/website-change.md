@@ -1,14 +1,16 @@
-# website.change: the one workflow that edits a site
+# website.change: approved changes to a founder's site
 
 ## In plain English
 
-In the organic traffic system, only one workflow writes to the founder's website:
-`website.change`. Content drafts, page decisions (URL changes), the page tree, the blog index
-and technical fixes all reach the site through it, after the founder approves them. Other
-workflows find, plan and draft; they no longer open their own pull requests.
+`website.change` is meant to become the one workflow in the organic traffic system that writes
+to the founder's website: content drafts, page decisions (URL changes), the page tree, the
+blog index and technical fixes would all reach the site through it, after the founder approves
+them. Today it handles approved pages only; content.deliver and the technical fix still open
+their own pull requests.
 
-A change the founder approved in Tin publishes: Tin opens the pull request and merges it once
-GitHub reports it clean. Anything else opens a pull request that the founder merges. A change
+A change the founder approved with commit to main as its delivery publishes: Tin opens the
+pull request and merges it once GitHub reports it clean. Anything else opens a pull request
+that the founder merges. A change
 to a protected page, such as the sign-in page another app shares, always waits for the
 founder, approved or not.
 
@@ -18,8 +20,8 @@ Phase 1 (this version, 1.0.0) makes one kind of change: it puts an approved page
 
 | The change is | Tin |
 | --- | --- |
-| pre-approved, touches no protected path | opens the PR and merges it once GitHub reports it `clean` |
-| not pre-approved | opens an unmerged PR; the founder merges |
+| pre-approved with commit to main, touches no protected path | opens the PR and merges it once GitHub reports it `clean` |
+| not pre-approved, or approved without commit to main | opens an unmerged PR; the founder merges |
 | pre-approved, but touches a protected path | opens an unmerged PR; the founder merges |
 
 Tin decides the mode at admission and pins it in the run's source receipt (`publish.mode` is
@@ -55,11 +57,12 @@ Editing a file cannot publish anything.
   the decision, and answer pages set it through `set_review_actor` before the Temporal
   signal. An approval without an approver (older rows) is not a pre-approval, so that page
   opens a PR.
-- **An explicit pull-request pick narrows a page approval.** When the approval recorded a
-  delivery pick of `github_pr` or "keep in Tin", the founder asked for a PR, so website.change
-  opens one. A commit-to-main pick, or no pick, leaves the approval as a pre-approval. The
-  program's saved delivery setting is a project file, so website.change never reads it to
-  decide a merge.
+- **Only commit to main lets Tin merge a page.** website.change reads the page's delivery the
+  way content.deliver does (`chosen_mode`): the pick recorded with the approval, else the
+  delivery the draft pinned when it was selected. Both are receipts in Postgres, never the
+  program's settings file. A `github_commit` delivery keeps the approval a pre-approval. A
+  pull request, "keep in Tin" or no delivery at all opens a PR for the founder, as AGENTS.md
+  requires: approval is not website publication.
 - **Every other source** is approved by a row in `website_changes` (migration 053). A source
   proposes rows; the founder approves or declines each row once. The row records the
   decision, `decided_by_clerk_user_id`, `decided_at`, the `decision_request_id` and the
@@ -121,8 +124,9 @@ articles: in the site's page registry or content folder, with the copy kept byte
 - A page whose `Public URL:` does not follow the chosen route is never merged.
 
 The existing guards stay: the exact-copy proof, five files and 400 KB, and no dependency
-files. website.change also refuses lockfiles and package-manager settings that content.deliver
-does not list (`bun.lock`, `npm-shrinkwrap.json`, `.npmrc`, `pnpm-workspace.yaml`, …).
+files. Both workflows refuse the same list (`content_repository_delivery.DEPENDENCY_FILES`:
+package manifests, lockfiles and package-manager settings such as `bun.lock` and `.npmrc`),
+and the route-folder check treats them as site-wide wherever they sit.
 
 ## The change-row contract
 
@@ -147,6 +151,7 @@ and `protected_paths`.
 content.deliver stays registered and unchanged. Its definition (1.3.0), inputs, prompt, receipt
 keys, approval start (`approval-delivery:{run}`) and merge rule (the approval's
 `github_commit` pick) are byte for byte what they were; a test pins the definition's digest.
+Its exact-copy proof now refuses the shared dependency list rather than four of its names.
 The organic traffic system still starts it, until the recipe switches later.
 
 website.change is built on content.deliver's machinery instead of beside it: the same page

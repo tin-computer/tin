@@ -1,17 +1,18 @@
-"""website.change: the one workflow that edits a founder's website.
+"""website.change: approved changes to a founder's website.
 
-In the organic traffic system every change to the site flows through here after the founder
-approves it: content drafts, page decisions (URL changes), the page tree, the blog index and
-technical fixes. Each is a change row: a source, a stable ID, a kind, the site paths it
-touches and its approval (ChangeRow). Phase 1 implements the page source, an approved
+In the organic traffic system every change to the site is meant to flow through here after
+the founder approves it: content drafts, page decisions (URL changes), the page tree, the blog
+index and technical fixes. Each is a change row: a source, a stable ID, a kind, the site
+paths it touches and its approval (ChangeRow). Phase 1 implements the page source, an approved
 content.generate article, answer page or public article, adapted into the site's own format
 and route with content.deliver's machinery (content_repository_delivery). Planned URL
 changes, the technical fix and the blog index plug into the same row later.
 
-Two modes, decided by whether the change is pre-approved:
+Two modes, decided by whether the change is pre-approved to commit to main:
 
-- Pre-approved, and touching no protected path: Tin opens the pull request and merges it once
-  GitHub reports it clean, under content.deliver's merge rules (`page_only`, `chosen_route`).
+- Pre-approved with the founder's commit-to-main delivery, and touching no protected path: Tin
+  opens the pull request and merges it once GitHub reports it clean, under content.deliver's
+  merge rules (`page_only`, `chosen_route`).
 - Anything else: Tin opens an unmerged pull request, and the founder merges it.
 
 Pre-approved means a recorded approve action in Postgres: who approved it, when, and the exact
@@ -63,27 +64,6 @@ REVISION = re.compile(r"[0-9a-f]{40}")
 SITE_PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/{}-]{0,300}")
 # Tin's own folder for answer-page drafts. A site does not serve it; a page never lands there.
 TIN_DRAFT_FOLDERS = ("content/answers/",)
-# Dependency and package-manager files, on top of the four content.deliver refuses.
-DEPENDENCY_FILES = frozenset(
-    {
-        "package.json",
-        "package-lock.json",
-        "npm-shrinkwrap.json",
-        "yarn.lock",
-        "pnpm-lock.yaml",
-        "pnpm-workspace.yaml",
-        "bun.lock",
-        "bun.lockb",
-        ".npmrc",
-        ".yarnrc.yml",
-        "Gemfile.lock",
-        "composer.lock",
-        "poetry.lock",
-        "uv.lock",
-        "Cargo.lock",
-        "go.sum",
-    }
-)
 
 
 class WebsiteChangeConflict(ValueError):
@@ -329,8 +309,10 @@ def publish_mode(
 ) -> dict[str, str]:
     """Whether Tin may publish this change (merge its PR) or leaves the PR for the founder.
 
-    `asked` is the delivery a page's approval recorded, when it recorded one: a pull request
-    or keeping the page in Tin narrows the approval to a pull request.
+    `asked` is the page's delivery as content.deliver reads it (`chosen_mode`): the choice
+    recorded with the approval, else the delivery its draft pinned. Only commit to main lets
+    Tin merge, the same rule content.deliver follows; a pull request, keeping the page in Tin
+    or no choice at all leaves the PR for the founder.
     """
     hit = next((root for path in change["paths"] if (root := protected(path, roots))), None)
     if approval is None:
@@ -339,10 +321,13 @@ def publish_mode(
             "reason": "No one approved this change in Tin before it was made, so the pull "
             "request waits for your review and merge.",
         }
-    if asked in {"github_pr", "draft_only", "none"}:
+    if asked != "github_commit":
         return {
             "mode": "pull_request",
-            "reason": "The approval asked for a pull request, so it waits for your merge.",
+            "reason": "The approval asked for a pull request, so it waits for your merge."
+            if asked
+            else "The approval did not ask Tin to commit the page to main, so the pull "
+            "request waits for your merge.",
         }
     if hit:
         return {
@@ -352,7 +337,8 @@ def publish_mode(
         }
     return {
         "mode": "direct",
-        "reason": "You approved it in Tin, so Tin merges it once GitHub reports it clean.",
+        "reason": "You approved it to commit to main, so Tin merges it once GitHub reports "
+        "it clean.",
     }
 
 
@@ -361,7 +347,7 @@ def publish_mode(
 
 async def select_source(*, database, storage, integrations, project_id, inputs) -> dict:
     """Pin the change, the approved page, the repository and the publish mode for one run."""
-    from tin_lite.content_delivery import ContentDelivery, adapted, choice_key
+    from tin_lite.content_delivery import ContentDelivery, adapted, choice_key, chosen_mode
     from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
 
     if inputs.get("source", "content_draft") not in IMPLEMENTED_SOURCES:
@@ -403,7 +389,7 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
     change = page_change(source, route).as_dict()
     approval = await approval_for(database.pool, project_id=project_id, change=change)
     roots = protected_paths(inputs.get("protected_paths"))
-    asked = (chosen.get("settings") or {}).get("mode") or chosen.get("mode")
+    asked = chosen_mode(intent) if intent else None
     return {
         **source,
         "binding": {**asdict(binding), "connection_id": str(binding.connection_id)},
@@ -434,15 +420,10 @@ async def guard_source(conn, *, project_id, inputs, source) -> None:
 
 
 def check_patch(manifest: dict[str, Any], source: dict[str, Any], proof: dict[str, Any]) -> None:
-    """website.change's own patch rules, on top of the exact-copy proof and the file caps.
-
-    No dependency or package-manager file, and never a page in Tin's own draft folder: an
-    answer page lands in the site's page registry at its chosen route.
+    """website.change's own patch rule, on top of the exact-copy proof (which refuses
+    dependency files) and the file caps: never a page in Tin's own draft folder. An answer page
+    lands in the site's page registry at its chosen route.
     """
-    for item in manifest.get("files") or []:
-        path = item["path"]
-        if path.rsplit("/", 1)[-1] in DEPENDENCY_FILES:
-            raise ValueError("A website change cannot touch dependency or lockfiles.")
     page = proof["article_path"]
     if any(page.startswith(folder) or f"/{folder}" in page for folder in TIN_DRAFT_FOLDERS):
         where = f" at {source['route']}" if source.get("route") else ""

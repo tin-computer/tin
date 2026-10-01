@@ -63,8 +63,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   with its automatic changes and approval-gated proposals.
 - [Content programs](content-program-implementation.md), [draft generation](content-generation-implementation.md),
   [review and revisions](content-review.md) and [repository-aware delivery](repository-aware-content-delivery.md).
-- [website.change](website-change.md): the one workflow that edits a founder's site; its two
-  modes, recorded approvals, protected paths and the change-row contract.
+- [website.change](website-change.md): approved changes to a founder's site; its two modes,
+  recorded approvals, protected paths and the change-row contract.
 - [Writing style capture](writing-style-capture.md) and [editorial judgment](content-editorial-judgment.md).
 - [Brand and design capture](brand-capture.md) and [reviewed document pairs](reviewed-project-documents.md).
 - [Organic system execution](organic-system-execution.md) and [content continuation](organic-content-continuation.md).

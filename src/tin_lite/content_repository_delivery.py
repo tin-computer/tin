@@ -37,7 +37,7 @@ from tin_lite.integrations import GitHubFileChange, GitHubRepositoryBinding
 KEY = "content.deliver"
 WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000036")
 OPERATION = "content_repository_delivery_source_v1"
-# website.change, the one workflow that edits a founder's website, reuses this machinery.
+# website.change, which puts approved changes on a founder's website, reuses this machinery.
 WEBSITE_CHANGE_ID = UUID("00000000-0000-4000-8000-000000000045")
 WEBSITE_CHANGE_OPERATION = "website_change_source_v1"
 ADAPTER_WORKFLOW_IDS = frozenset({WORKFLOW_ID, WEBSITE_CHANGE_ID})
@@ -555,17 +555,36 @@ async def saved_manifest(database, storage, run):
 
 
 # Settings that reach every page, whatever folder they sit in.
-SITE_WIDE_NAMES = frozenset(
+# Dependency and package-manager files. A page delivery never changes them (validate_copy),
+# and they reach every page, wherever they sit.
+DEPENDENCY_FILES = frozenset(
     {
-        "vercel.json",
-        "netlify.toml",
-        "wrangler.toml",
-        "wrangler.json",
-        "tsconfig.json",
-        "jsconfig.json",
         "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "bun.lock",
+        "bun.lockb",
+        ".npmrc",
+        ".yarnrc.yml",
+        "Gemfile.lock",
+        "composer.lock",
+        "poetry.lock",
+        "uv.lock",
+        "Cargo.lock",
+        "go.sum",
     }
 )
+SITE_WIDE_NAMES = DEPENDENCY_FILES | {
+    "vercel.json",
+    "netlify.toml",
+    "wrangler.toml",
+    "wrangler.json",
+    "tsconfig.json",
+    "jsconfig.json",
+}
 SITE_WIDE_STEMS = (
     "middleware.",
     "next.config.",
@@ -857,12 +876,7 @@ def validate_copy(manifest, source):
     matches = []
     for item in manifest["files"]:
         path, text = item["path"], item["content"]
-        if path.rsplit("/", 1)[-1] in {
-            "package.json",
-            "package-lock.json",
-            "yarn.lock",
-            "pnpm-lock.yaml",
-        }:
+        if path.rsplit("/", 1)[-1] in DEPENDENCY_FILES:
             raise ValueError("Article delivery cannot change dependencies.")
         if path.endswith((".md", ".mdx")):
             body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
