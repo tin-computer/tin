@@ -326,6 +326,28 @@ def test_the_chosen_route_merges_only_files_in_its_own_folder(extra, rule):
     assert delivery.merge_rule(manifest, PROOF, "/guides/{slug}") == rule
 
 
+@pytest.mark.parametrize(
+    ("route", "extra", "rule"),
+    [
+        # A route named after a framework's source folder can't be told apart from it.
+        ("/app/{slug}", "src/app/layout.tsx", None),
+        ("/app/{slug}", "src/app/app/[slug]/page.tsx", None),
+        ("/pages/{slug}", "pages/_document.tsx", None),
+        # Framework entry files wrap every page below them, even inside the route's folder.
+        ("/guides/{slug}", "src/app/guides/layout.tsx", None),
+        ("/guides/{slug}", "src/app/guides/[slug]/error.tsx", None),
+        ("/guides/{slug}", "src/routes/guides/+layout.svelte", None),
+        ("/guides/{slug}", "src/app/guides/[slug]/page.tsx", "chosen_route"),
+    ],
+)
+def test_framework_folders_and_entry_files_never_merge_as_the_route(route, extra, rule):
+    slug = "reliable-ai-work"
+    page = {"path": f"content/{route.strip('/').split('/')[0]}/{slug}.md", "content": "..."}
+    proof = {"article_path": page["path"], "public_route": route.replace("{slug}", slug)}
+    manifest = {"files": [page, {"path": extra, "content": "x"}]}
+    assert delivery.merge_rule(manifest, proof, route) == rule
+
+
 def test_a_route_at_the_site_root_merges_nothing_but_the_page():
     manifest = {"files": [PAGE, {"path": "src/app/[slug]/page.tsx", "content": "x"}]}
     proof = {**PROOF, "public_route": "/reliable-ai-work"}
