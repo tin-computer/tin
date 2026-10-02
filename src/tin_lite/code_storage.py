@@ -539,9 +539,12 @@ class CodeStorage:
         from uuid import UUID
 
         from tin_lite.domain import (
+            CODEX_PROCEDURE_EXECUTOR,
             GROWTH_ONBOARDING_PLAN_PATH,
             GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
+            MEMORY_INDEX_PATH,
         )
+        from tin_lite.memory import MAX_MEMORY_BYTES
         from tin_lite.project_files import safe_project_file_path
         from tin_lite.workflow_code import MAX_OUTPUT_BYTES
         from tin_lite.writing_style import STYLE_PATH
@@ -559,6 +562,11 @@ class CodeStorage:
         elif executor == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
             valid_path = path == GROWTH_ONBOARDING_PLAN_PATH
             limit, target = 40_000, f"native-plan/{run_id}/{generation}"
+        elif executor == CODEX_PROCEDURE_EXECUTOR:
+            # A section-owning procedure's index, re-assembled by Tin from the pinned base and
+            # the procedure's own section. The sandbox's checkpoint keeps the raw output.
+            valid_path = path == MEMORY_INDEX_PATH
+            limit, target = MAX_MEMORY_BYTES, f"memory-sections/{run_id}/{generation}"
         elif executor == "social.x_style":
             valid_path = path == ".agents/skills/x-writing-style/SKILL.md"
             limit, target = 24_000, f"native-x-style/{run_id}/{generation}"
@@ -571,6 +579,7 @@ class CodeStorage:
                 "style.capture",
                 "social.x_style",
                 "workflow.code",
+                CODEX_PROCEDURE_EXECUTOR,
                 GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
             }
             or str(UUID(run_id)) != run_id

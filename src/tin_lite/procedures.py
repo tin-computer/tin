@@ -1617,6 +1617,51 @@ def _content_lines(lines: list[str]) -> list[str]:
     return [line.rstrip() for line in lines if line.strip()]
 
 
+def splice_memory_section(content: bytes, *, section: OutputSection, base: bytes | None) -> bytes:
+    """The base index with only the owned section taken from `content`.
+
+    A section-owning procedure owns one section, so whatever else its output changed (a
+    reformatted neighbour, a rewritten introduction) is dropped and the rest of the index stays
+    exactly as the base had it. Without a base, without a usable section in the output, or when
+    the base has no parent heading for it, the output is returned unchanged for validation to
+    judge.
+    """
+    if base is None:
+        return content
+    try:
+        lines = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        base_lines = base.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        span = _owned_section_span(lines, section=section)
+        base_span = _owned_section_span(base_lines, section=section)
+    except (UnicodeDecodeError, ValueError):
+        return content
+    if span is None:
+        return content
+    owned = lines[span[0] : span[1]]
+    while owned and not owned[-1].strip():
+        owned.pop()
+    if base_span is not None:
+        start, end = base_span
+    else:
+        parents = [i for i, line in enumerate(base_lines) if line.rstrip() == section.parent]
+        if not parents:
+            return content
+        start = end = _section_bounds(base_lines, start=parents[0], stops=("## ",))
+    head, tail = base_lines[:start], base_lines[end:]
+    if head and head[-1].strip():
+        owned = ["", *owned]
+    if tail and tail[0].strip():
+        owned = [*owned, ""]
+    return "\n".join(head + owned + tail).encode("utf-8")
+
+
+def settle_procedure_artifact(content: bytes, *, spec, base: bytes | None) -> bytes:
+    """The output Tin keeps: a section-owning procedure contributes only its own section."""
+    if spec.output_validator == MEMORY_SECTION_VALIDATOR and spec.output_section is not None:
+        return splice_memory_section(content, section=spec.output_section, base=base)
+    return content
+
+
 def validate_memory_section(
     content: bytes,
     *,

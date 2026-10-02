@@ -105,6 +105,7 @@ from tin_lite.procedures import (
     load_pinned_codex_procedure,
     procedure_checkpoint_path,
     procedure_receipt_path,
+    settle_procedure_artifact,
     validate_procedure_artifact,
     validate_procedure_pull_request,
 )
@@ -3248,10 +3249,12 @@ class TinActivities:
             if recovered is not None:
                 diagram_validation = {}
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        recovered,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    recovered, recovered_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=recovered,
+                        revision=recovered_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3669,11 +3672,14 @@ class TinActivities:
                     )
                 )
                 diagram_validation = {}
+                checkpoint_revision = result.ephemeral_commit_sha
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        checkpoint,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    checkpoint, checkpoint_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=checkpoint,
+                        revision=checkpoint_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3715,18 +3721,18 @@ class TinActivities:
                     result={
                         "checkpoint_path": checkpoint_path,
                         "result_kind": procedure.result_kind,
-                        "ephemeral_commit_sha": result.ephemeral_commit_sha,
+                        "ephemeral_commit_sha": checkpoint_revision,
                         **diagram_validation,
                         **(
                             {
                                 "checkpoint": OutputCheckpoint.create(
                                     run=run,
-                                    revision=result.ephemeral_commit_sha,
+                                    revision=checkpoint_revision,
                                     path=checkpoint_path,
                                     media_type=procedure.output_media_type or "text/markdown",
                                     content=checkpoint,
                                     companions=await self._procedure_companions(
-                                        run, project, procedure, result.ephemeral_commit_sha
+                                        run, project, procedure, checkpoint_revision
                                     ),
                                 ).to_dict()
                             }
@@ -5562,6 +5568,31 @@ class TinActivities:
             credential_key_version=key_version,
             phone_number=getattr(self._settings, "test_phone_number", None),
         )
+
+    async def _settled_procedure_checkpoint(self, *, run, project, procedure, content, revision):
+        """The validated output Tin keeps, and the revision that holds it.
+
+        A section-owning procedure contributes only its own section; the rest of the index comes
+        from the pinned base. The sandbox's checkpoint holds Codex's whole file, so a changed
+        index is staged as its own ephemeral commit and the checkpoint, its hash, recovery and
+        publication all refer to the same bytes. Re-assembly is deterministic, so a recovery
+        stages nothing new.
+        """
+        base = await self._procedure_artifact_base(run=run, procedure=procedure)
+        settled = settle_procedure_artifact(content, spec=procedure, base=base)
+        validate_procedure_artifact(settled, spec=procedure, base=base)
+        if settled == content:
+            return content, revision
+        staged = await self._storage.stage_native_output(
+            repo_id=project.state_repo_id,
+            branch=project.canonical_branch,
+            run_id=str(run.id),
+            generation=run.generation,
+            path=procedure.output_path,
+            content=settled,
+            executor=CODEX_PROCEDURE_EXECUTOR,
+        )
+        return settled, staged
 
     async def _procedure_artifact_base(
         self, *, run: WorkflowRun, procedure: PinnedCodexProcedure
