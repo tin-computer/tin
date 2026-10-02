@@ -2416,6 +2416,7 @@ function systemCardIndicator(kind) {
   if (kind === "running") return '<span class="system-card-dot is-running" aria-hidden="true"></span>';
   if (kind === "pending") return '<span class="system-card-dot is-pending" aria-hidden="true"></span>';
   if (kind === "failed") return '<span class="system-card-failed" aria-hidden="true">×</span>';
+  if (kind === "open") return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 6.5 5 3.5 8 6.5" /></svg>';
   return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" /></svg>';
 }
 
@@ -2687,7 +2688,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     : "";
   return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
@@ -2723,7 +2724,7 @@ function systemContentProgramEditor(workflow, configured, run) {
   const mode = configured.schedule?.cadence || "manual";
   return `<article class="system-workflow-card content-program-card ${isRunning ? "is-running" : ""}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
