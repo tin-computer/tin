@@ -1383,6 +1383,12 @@ class OrganicTrafficSystemWorkflow:
             raise
 
 
+# Style capture, X style and X revise make one model call that may wait up to the provider's
+# 600-second default for a 32,000-token answer; X style also reads up to three timeline pages
+# first. Activity options are not workflow commands, so this changes no history.
+MODEL_STEP_TIMEOUT = timedelta(minutes=15)
+
+
 @workflow.defn(name="style.capture")
 class StyleCaptureWorkflow:
     def __init__(self) -> None:
@@ -1399,7 +1405,9 @@ class StyleCaptureWorkflow:
                 await workflow.execute_activity(
                     step,
                     run_id,
-                    start_to_close_timeout=timedelta(minutes=5),
+                    start_to_close_timeout=MODEL_STEP_TIMEOUT
+                    if step == "style_extract"
+                    else timedelta(minutes=5),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
             if workflow.patched("style-capture-review-v1"):
@@ -1475,7 +1483,9 @@ class XFeedbackWorkflow:
             return await workflow.execute_activity(
                 name,
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=MODEL_STEP_TIMEOUT
+                if name == "x_feedback_generate"
+                else timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
@@ -1502,7 +1512,9 @@ class XStyleWorkflow:
             return await workflow.execute_activity(
                 name,
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=MODEL_STEP_TIMEOUT
+                if name == "x_style_extract"
+                else timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 

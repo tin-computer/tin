@@ -725,3 +725,15 @@ class CaptureBeforeReview:
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
+
+
+def test_model_steps_wait_long_enough_for_their_output_cap():
+    # A 32,000-token answer can take minutes. Each step waits the provider's default, its own
+    # budget adds a margin, and the Temporal step outlasts both (X style also reads its timeline).
+    from tin_lite import style_capture_activities, x_feedback_activities, x_style_activities
+    from tin_lite.model_providers import DEFAULT_TIMEOUT_SECONDS
+    from tin_lite.workflows import MODEL_STEP_TIMEOUT
+
+    for module in (style_capture_activities, x_style_activities, x_feedback_activities):
+        assert module.MODEL_TIMEOUT_SECONDS == DEFAULT_TIMEOUT_SECONDS
+        assert MODEL_STEP_TIMEOUT.total_seconds() >= module.MODEL_TIMEOUT_SECONDS + 15 + 120

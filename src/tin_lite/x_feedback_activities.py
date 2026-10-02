@@ -10,11 +10,20 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_feedback, x_style
 from tin_lite.domain import result_line
-from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
+from tin_lite.model_providers import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+)
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import ProjectFileMutation
 from tin_lite.x_feedback_service import XFeedback
 from tin_lite.x_posts import validate_draft
+
+# The provider's own wait, long enough for the 32,000-token cap; the step's budget is a little
+# longer so the provider times out first.
+MODEL_TIMEOUT_SECONDS = int(DEFAULT_TIMEOUT_SECONDS)
 
 
 class XFeedbackActivities:
@@ -128,7 +137,7 @@ class XFeedbackActivities:
             await self.db.start_effect(conn, execution_key=key, operation=x_feedback.KEY)
             try:
                 with model_usage_scope(run_id=run.id, step="x_feedback:revise", conn=conn):
-                    async with asyncio.timeout(180):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 15):
                         result = await self.router.generate(
                             x_feedback.ROUTE.key,
                             ModelRequest(
@@ -138,7 +147,7 @@ class XFeedbackActivities:
                                 output_schema_name="x_revision",
                                 max_output_tokens=policy["max_output_tokens"],
                             ),
-                            timeout_seconds=165,
+                            timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
                 revised = x_feedback.validate_result(
                     result.parsed,

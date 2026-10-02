@@ -14,15 +14,20 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import style_capture as style
 from tin_lite.capture_revisions import approved_style_artifact, contract
-from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
+from tin_lite.model_providers import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+)
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
-# The provider's own wait for the style model, just inside the step's 180-second budget. The
-# client's old 90-second default stopped guides before they finished.
-MODEL_TIMEOUT_SECONDS = 165
+# The provider's own wait for the style model: the client default, long enough for its
+# 32,000-token cap. The step's budget is a little longer so the provider times out first.
+MODEL_TIMEOUT_SECONDS = int(DEFAULT_TIMEOUT_SECONDS)
 
 
 class StyleCaptureActivities:
@@ -134,7 +139,7 @@ class StyleCaptureActivities:
             await self.db.start_effect(conn, execution_key=key, operation=style.KEY)
             try:
                 with model_usage_scope(run_id=run.id, step="style:capture", conn=conn):
-                    async with asyncio.timeout(180):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 15):
                         result = await self.router.generate(
                             style.ROUTE.key,
                             ModelRequest(

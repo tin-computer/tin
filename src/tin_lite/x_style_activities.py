@@ -19,12 +19,19 @@ from tin_lite.integrations import (
     IntegrationError,
     IntegrationNotConfiguredError,
 )
-from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
+from tin_lite.model_providers import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+)
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import credential_findings
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 
-MODEL_TIMEOUT_SECONDS = 165
+# The provider's own wait, long enough for the 32,000-token cap; the step's budget is a little
+# longer so the provider times out first.
+MODEL_TIMEOUT_SECONDS = int(DEFAULT_TIMEOUT_SECONDS)
 WAITING_FOR_APPROVAL = (
     "The X writing guide waits for your approval. The current guide is unchanged."
 )
@@ -302,7 +309,7 @@ class XStyleActivities:
                     existing_guide=existing_guide,
                 )
                 with model_usage_scope(run_id=run.id, step="x_style:capture", conn=conn):
-                    async with asyncio.timeout(180):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 15):
                         result = await self.router.generate(
                             x_style.ROUTE.key,
                             ModelRequest(
