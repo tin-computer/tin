@@ -1,0 +1,96 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "growth.feedback_to_fix",
+    "title": "Turn what people say about your product into a copy fix",
+    "description": "Read public threads where people react to your product, keep what at least two different people say in their own words, and fix the page copy that caused it in one unmerged PR, or report why not. Never replies, posts or merges.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "expected_repository": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 140,
+          "title": "Product repository",
+          "description": "The connected repository that holds your landing page copy, as owner/name."
+        },
+        "platforms": {
+          "type": "array",
+          "title": "Where to look",
+          "items": {
+            "type": "string",
+            "enum": ["reddit", "hacker_news", "github_discussions", "technical_forums"]
+          },
+          "maxItems": 4,
+          "default": ["reddit", "hacker_news", "github_discussions", "technical_forums"],
+          "x-tin-ui": {"order": 20}
+        },
+        "lookback_days": {
+          "type": "integer",
+          "title": "Read threads from the last (days)",
+          "minimum": 7,
+          "maximum": 365,
+          "default": 90,
+          "x-tin-ui": {"control": "counter", "order": 30}
+        }
+      },
+      "required": ["project_id", "expected_repository"]
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "A fix may only say what the Feature map shows the product does."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "The changed copy stays in the founder's captured voice."
+      }
+    ],
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "contents.write", "pull_requests.read", "pull_requests.write"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/feedback-to-fix/RESULT.md",
+        "skills/feedback-to-fix/SKILL.md",
+        "skills/feedback-to-fix/THEMES.md"
+      ],
+      "entry_skill": "feedback-to-fix",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read", "pull_requests.read"]
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1500},
+      "output": {
+        "kind": "github.pull_request",
+        "provider_key": "infra.github",
+        "max_files": 3,
+        "max_bytes": 180000,
+        "receipt_path_template": "reports/feedback-to-fix/{run_id}/RESULT.md",
+        "allow_no_change": true
+      },
+      "verification": {
+        "commands": ["git diff --check", "git status --short"]
+      }
+    }
+  }
+}
