@@ -958,11 +958,12 @@ BUILTIN_WORKFLOWS = (
         key=x_style.KEY,
         title="Learn my X writing style",
         description=(
-            "Learn from up to 50 of your own public X posts, favoring recent writing, "
-            "or use samples you supply. Review the proposed guide before future X drafts use it."
+            "Learn your voice from your own public X posts and replies, up to 50 spread across "
+            "your history, together with any writing you supply. Review the proposed guide "
+            "before future X drafts use it."
         ),
         executor=x_style.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
@@ -978,8 +979,8 @@ BUILTIN_WORKFLOWS = (
                     "default": "auto",
                     "title": "Learn from",
                     "description": (
-                        "Use the connected account, supplied samples/preferences, "
-                        "or infer from the supplied inputs."
+                        "Auto learns from your connected public account and any samples or "
+                        "file you supply, together. Choose one to use only that source."
                     ),
                 },
                 "supplied_samples": {
@@ -987,7 +988,7 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 32000,
                     "default": "",
                     "title": "Your writing samples",
-                    "description": "Optional; otherwise samples your connected public X account.",
+                    "description": "Optional; Auto uses it with your connected public X account.",
                     "x-tin-ui": {"control": "textarea", "order": 10},
                 },
                 "source_path": {
