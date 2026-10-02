@@ -108,7 +108,7 @@ def _validate_metadata(definition: dict[str, Any]) -> None:
         not isinstance(modes, list)
         or not modes
         or any(
-            not isinstance(mode, str) or mode not in {"on_demand", "daily", "weekly"}
+            not isinstance(mode, str) or mode not in {"on_demand", "daily", "weekly", "monthly"}
             for mode in modes
         )
         or len(modes) != len(set(modes))

@@ -111,7 +111,8 @@ optional `system` slug pinned in each definition; the global `workflow_systems` 
 only the display name and order. Unknown and absent slugs remain callable and appear last as
 unassigned. This taxonomy applies only to Registry discovery. “Your workflows” contains
 project-owned configurations that pin one Registry revision, store schema-validated inputs, and
-optionally own a daily or weekly Temporal Schedule in an IANA timezone. Product reads remain
+optionally own a daily, weekly or monthly Temporal Schedule in an IANA timezone. A workflow
+allows a cadence only by naming it in `schedule_modes`; the default leaves monthly out. Product reads remain
 Postgres-only. A scheduled occurrence creates an ordinary pinned workflow run through one explicit
 dispatcher; overlap is skipped and at most 24 hours of missed work is caught up.
 The dispatcher remains alive while its child awaits human review; the catch-up window

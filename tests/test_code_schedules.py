@@ -45,7 +45,7 @@ async def prepared(f, monkeypatch, *, model=False, connected=False):
         common._settings.luna_api_key = SecretStr("fixture-managed-model")
     files = example_files(KEY, model_steps=model)
     body = json.loads(files[PATH])
-    body["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly"]
+    body["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly", "monthly"]
     if connected:
         from test_project_connections import definition, integrations
 

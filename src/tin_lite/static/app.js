@@ -1919,10 +1919,7 @@ function bindWorkflowResultControls(root) {
     window.TinStyleCapture.bind(form, styleCaptureServices());
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
   root.querySelectorAll(".system-config-form").forEach((form) => {
     // Polling may refresh the saved configuration while this editor stays open.
@@ -1933,19 +1930,13 @@ function bindWorkflowResultControls(root) {
     form.addEventListener("submit", saveSystemWorkflowSettings);
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
   bindXWorkflowFields(root);
   root.querySelectorAll(".workflow-ledger-form").forEach((form) => {
     form.addEventListener("submit", saveProjectWorkflowField);
     bindTinControls(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
     bindWorkflowFieldValidation(form);
   });
   root.querySelectorAll(".workflow-config-form, .system-config-form").forEach((form) => {
@@ -2181,10 +2172,33 @@ function systemShortDate(value) {
   }
 }
 
+function syncScheduleMode(form) {
+  const mode = form.elements.schedule_mode.value;
+  form.classList.toggle("is-weekly", mode === "weekly");
+  form.classList.toggle("is-monthly", mode === "monthly");
+  form.classList.toggle("is-manual", mode === "manual");
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function ordinalDay(day) {
+  const value = Number(day) || 1;
+  const suffix = value % 100 >= 10 && value % 100 <= 20 ? "th" : ({1: "st", 2: "nd", 3: "rd"}[value % 10] || "th");
+  return `${value}${suffix}`;
+}
+
+// "the 1st of every month" or "the 15th of Jan, Apr, Jul, Oct"; `short` abbreviates months.
+function monthlyWords(schedule, short = false) {
+  const months = (schedule.months || []).map((month) => MONTH_NAMES[month - 1]).filter(Boolean);
+  if (!months.length) return `the ${ordinalDay(schedule.day_of_month)} of every month`;
+  return `the ${ordinalDay(schedule.day_of_month)} of ${months.map((name) => (short ? name.slice(0, 3) : name)).join(", ")}`;
+}
+
 function systemScheduleLabel(configured) {
   const schedule = configured?.schedule;
   if (!schedule) return "manual";
   if (schedule.cadence === "daily") return `day · ${schedule.local_time}`;
+  if (schedule.cadence === "monthly") return `${monthlyWords(schedule, true)} · ${schedule.local_time}`;
   const days = (schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ");
   return `${days} · ${schedule.local_time}`;
 }
@@ -2571,6 +2585,11 @@ function systemWeekAheadHtml() {
     const schedule = configured.schedule;
     if (schedule.end_at && new Date(schedule.end_at) <= date) return false;
     if (schedule.cadence === "daily") return true;
+    if (schedule.cadence === "monthly") {
+      const day = Number(format(date, { day: "numeric" }));
+      const month = Number(format(date, { month: "numeric" }));
+      return day === schedule.day_of_month && (!(schedule.months || []).length || schedule.months.includes(month));
+    }
     const weekday = format(date, { weekday: "long" }).toLowerCase();
     return (schedule.weekdays || []).some((day) => String(day).toLowerCase() === weekday);
   };
@@ -2612,15 +2631,21 @@ function systemWeekAheadHtml() {
   const weekdayName = (day) => `${String(day).charAt(0).toUpperCase()}${String(day).slice(1)}s`;
   const WEEK = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
   const firstDay = (configured) => Math.min(...(configured.schedule.weekdays || []).map((day) => WEEK.indexOf(String(day).toLowerCase())), 7);
-  const rhythm = [...scheduled].sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
+  const isMonthly = (configured) => configured.schedule.cadence === "monthly";
+  const rhythm = [...scheduled].filter((item) => !isMonthly(item)).sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
     const schedule = configured.schedule;
     if (schedule.cadence === "daily") return `${configured.name} every day`;
     return `${configured.name} ${(schedule.weekdays || []).map(weekdayName).join(" and ") || "weekly"}`;
   });
+  const monthly = scheduled.filter(isMonthly).map((configured) => `${configured.name} on ${monthlyWords(configured.schedule)}`);
   const nextRunAt = scheduled.map((item) => item.next_run_at).filter(Boolean).sort()[0];
   const nextConfigured = scheduled.find((item) => item.next_run_at === nextRunAt);
-  const footer = rhythm.length
-    ? `Then every week: ${rhythm.join(", ")}.${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
+  const cadences = [
+    rhythm.length ? `Then every week: ${rhythm.join(", ")}.` : "",
+    monthly.length ? `${rhythm.length ? "And" : "Then"} ${monthly.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+  const footer = cadences
+    ? `${cadences}${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
     : "Nothing is on the calendar yet; the runs above were one-offs.";
   const city = timeZone ? String(timeZone).split("/").pop().replace(/_/g, " ") : "";
   const range = `${format(days[0], { month: "short" }).toLowerCase()} ${format(days[0], { day: "numeric" })} – ${format(days[6], { day: "numeric" })}`;
@@ -2660,7 +2685,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   const runDetail = isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null
     ? systemRunDetailHtml(run, false)
     : "";
-  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
+  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
       <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
@@ -2679,7 +2704,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
       </section>
       <section class="system-config-when">
         ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -2712,7 +2737,7 @@ function systemContentProgramEditor(workflow, configured, run) {
         <div class="content-program-panel" data-content-program="${escapeHtml(configured.id)}" data-content-projection="${escapeHtml(JSON.stringify([configured.content_revision || null, configured.last_run_id, configured.last_run_status, configured.run_count, state.runs.filter(run => ["00000000-0000-4000-8000-000000000031", "00000000-0000-4000-8000-000000000036"].includes(run.workflow_id)).map(runFingerprint)]))}"></div>
       </section>
       <section class="system-config-when">
-        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
+        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
           <code class="system-config-kicker">when</code>
           ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.schedule_modes)}
           <p class="system-config-note">${escapeHtml(systemConfigurationFact(configured))}</p>
@@ -3438,7 +3463,7 @@ function scheduleLabel(schedule, nextRunAt) {
   const time = schedule.local_time || "";
   const base = schedule.cadence === "weekly"
     ? `${(schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ")} · ${time}`
-    : `daily · ${time}`;
+    : schedule.cadence === "monthly" ? `${monthlyWords(schedule, true)} · ${time}` : `daily · ${time}`;
   if (!nextRunAt) return base;
   return `${base} · next ${timeLabel(nextRunAt)}`;
 }
@@ -3621,13 +3646,16 @@ function workflowLedgerSchedule(configured, editing) {
     if (mode === "weekly") {
       rows.push(workflowLedgerRestingRow("Day", (schedule.weekdays || []).map(humanize).join(", "), "schedule", true));
     }
+    if (mode === "monthly") {
+      rows.push(workflowLedgerRestingRow("Day", monthlyWords(schedule).replace(/^the /, ""), "schedule", true));
+    }
     if (mode !== "manual") {
       rows.push(workflowLedgerRestingRow("Time", `${schedule.local_time} · ${schedule.timezone}`, "schedule", true));
     }
     return rows.join("");
   }
   const workflow = state.workflows.find((item) => item.id === configured.workflow_id);
-  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
+  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
     ${workflowScheduleControls(configured.workflow_id, schedule, true, workflow?.definition?.schedule_modes)}
   </form>`;
 }
@@ -3636,6 +3664,18 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
   const mode = schedule?.cadence || "manual";
   const timezone = schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const weekday = schedule?.weekdays?.[0] || "tuesday";
+  const dayOfMonth = String(schedule?.day_of_month || 1);
+  const months = (schedule?.months || []).join(",");
+  const monthOptions = [
+    ["", "Every month"],
+    ["1,4,7,10", "Jan, Apr, Jul, Oct"],
+    ["2,5,8,11", "Feb, May, Aug, Nov"],
+    ["3,6,9,12", "Mar, Jun, Sep, Dec"],
+  ];
+  // A saved set of months the presets don't cover stays selectable as it is.
+  if (months && !monthOptions.some(([value]) => value === months)) {
+    monthOptions.push([months, (schedule.months || []).map((month) => MONTH_NAMES[month - 1].slice(0, 3)).join(", ")]);
+  }
   const localTime = schedule?.local_time || "09:00";
   const actions = ledger ? workflowLedgerActions() : "";
   const allowed = new Set(scheduleModes || ["on_demand", "daily", "weekly"]);
@@ -3643,8 +3683,9 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     ["manual", "On demand", "on_demand"],
     ["daily", "Daily", "daily"],
     ["weekly", "Weekly", "weekly"],
+    ["monthly", "Monthly", "monthly"],
   ].filter((item) => allowed.has(item[2])).map((item) => item.slice(0, 2));
-  return `<div class="workflow-config-row ${ledger ? "workflow-ledger-row is-editing" : ""}">
+  return `<div class="workflow-config-row schedule-mode ${ledger ? "workflow-ledger-row is-editing" : ""}">
       <span class="workflow-row-label">Runs</span>
       <div class="workflow-row-control">${tinSegmentedControl("schedule_mode", mode, modeOptions, "Runs")}</div>
       ${actions}
@@ -3652,6 +3693,14 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     <div class="workflow-config-row schedule-weekday ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <span class="workflow-row-label">Day</span>
       <div class="workflow-row-control">${tinSelectControl("schedule_weekday", weekday, ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => [day, humanize(day)]), "Day")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Day</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_day_of_month", dayOfMonth, Array.from({ length: 28 }, (_, index) => [String(index + 1), ordinalDay(index + 1)]), "Day of the month")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Months</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_months", months, monthOptions, "Months")}</div>
     </div>
     <div class="workflow-config-row schedule-timed ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <label for="schedule-time-${escapeHtml(id)}">Time</label>
@@ -4064,8 +4113,9 @@ function readWorkflowInputValue(field, definition) {
 function workflowScheduleFromForm(form) {
   const mode = form.elements.schedule_mode.value;
   if (mode === "manual") return null;
-  return {
-    ...(form.tinCodeSchedule || {}),
+  const { day_of_month: _day, months: _months, ...saved } = form.tinCodeSchedule || {};
+  const schedule = {
+    ...saved,
     cadence: mode,
     weekdays: mode === "weekly" ? (form.querySelector("[data-code-weekdays]")
       ? [...form.querySelectorAll("[name=schedule_days]:checked")].map((field) => field.value)
@@ -4073,6 +4123,11 @@ function workflowScheduleFromForm(form) {
     local_time: form.elements.schedule_time.value,
     timezone: form.elements.schedule_timezone.value.trim(),
   };
+  if (mode === "monthly") {
+    schedule.day_of_month = Number.parseInt(form.elements.schedule_day_of_month.value, 10);
+    schedule.months = String(form.elements.schedule_months.value || "").split(",").filter(Boolean).map(Number);
+  }
+  return schedule;
 }
 
 async function saveProjectWorkflowField(event) {

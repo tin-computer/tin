@@ -939,9 +939,11 @@ RAISE_LIMITS = "set_project_spending_limits or on the Billing page"
 
 
 def runs_per_month(schedule: dict[str, Any]) -> int:
-    """The most runs one calendar month can hold: five of any weekday, or 31 days."""
+    """The most runs one calendar month can hold: five of any weekday, 31 days, or one."""
     if schedule.get("cadence") == "daily":
         return 31
+    if schedule.get("cadence") == "monthly":
+        return 1
     return 5 * len(schedule.get("weekdays") or [])
 
 

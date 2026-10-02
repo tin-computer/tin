@@ -151,7 +151,7 @@ async def code_readiness(
         "can_run": not issues,
         "can_schedule": not issues
         and not schedule_issues
-        and bool(set(workflow.definition["schedule_modes"]) & {"daily", "weekly"}),
+        and bool(set(workflow.definition["schedule_modes"]) & {"daily", "weekly", "monthly"}),
         "estimate": estimate,
     }
 

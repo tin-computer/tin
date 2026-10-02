@@ -118,7 +118,7 @@ from tin_lite.run_service import (
     start_workflow_run,
 )
 from tin_lite.runtime import RuntimeServices
-from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
+from tin_lite.schedules import WorkflowSchedule, monthly_words, require_saveable_schedule
 from tin_lite.settings import Settings
 from tin_lite.technical_fix_api import TechnicalFixSelection
 from tin_lite.technical_fix_live import live_service
@@ -936,6 +936,8 @@ def _schedule_words(schedule: Any) -> str:
     data = schedule.model_dump() if hasattr(schedule, "model_dump") else dict(schedule)
     if data.get("cadence") == "daily":
         return f"every day at {data.get('local_time', '09:00')}"
+    if data.get("cadence") == "monthly":
+        return f"{monthly_words(data)} at {data.get('local_time', '09:00')}"
     days = ", ".join(str(d).capitalize() for d in data.get("weekdays") or [])
     return f"{days or 'weekly'} at {data.get('local_time', '09:00')}"
 
@@ -2527,11 +2529,14 @@ def create_mcp_app(
         request_id: str,
         schedule: WorkflowSchedule | None = None,
     ) -> dict[str, Any]:
-        """Save reusable workflow inputs and an optional daily or weekly schedule.
+        """Save reusable workflow inputs and an optional daily, weekly or monthly schedule.
 
         schedule is {"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00",
-        "timezone": "America/New_York"} or {"cadence": "daily", "local_time": "09:00",
-        "timezone": "..."}; the workflow's schedule_modes must allow the cadence.
+        "timezone": "America/New_York"}, {"cadence": "daily", "local_time": "09:00",
+        "timezone": "..."} or {"cadence": "monthly", "day_of_month": 1, "local_time": "09:00",
+        "timezone": "..."}. A monthly schedule runs on day_of_month (1-28) of every month, or
+        only in `months` (1-12; [1, 4, 7, 10] is quarterly). The workflow's schedule_modes must
+        allow the cadence.
 
         A saved schedule also runs once right away, so the founder sees a result now rather
         than at the first slot; `first_run` has that run's id and status, or why it could not

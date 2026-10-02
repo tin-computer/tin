@@ -45,7 +45,7 @@ run spends credits. Hosted billing enablement alone does not open private execut
 
 | Executor | Implemented | Not included |
 | --- | --- | --- |
-| `workflow.code` | Bounded Python, typed inputs, one durable text report/artifact, project file reads, optional managed model calls, project API connections, services Tin holds the key for (PageSpeed Insights/CrUX, DataForSEO live reads), and eligible daily/weekly schedules. | Arbitrary runtimes, raw secrets or direct SDK credentials in author code, recursive workflow starts, or delegation to a procedure. |
+| `workflow.code` | Bounded Python, typed inputs, one durable text report/artifact, project file reads, optional managed model calls, project API connections, services Tin holds the key for (PageSpeed Insights/CrUX, DataForSEO live reads), and eligible daily, weekly or monthly schedules. | Arbitrary runtimes, raw secrets or direct SDK credentials in author code, recursive workflow starts, or delegation to a procedure. |
 | Private `codex.procedure` | On-demand isolated procedures with declared project API connections, producing a bounded project artifact or an unmerged PR through the connected GitHub gateway. | Private procedure schedules, browser/Studio profiles, or a general one-command skill import. |
 
 Code-only bounded execution uses no Tin credits. Managed model steps use hosted credits;
