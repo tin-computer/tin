@@ -128,6 +128,23 @@ outside marketing, or were written without ever being run. Full rules:
 - Schedules use Temporal's existing dispatcher, skip overlap, and bounded catch-up.
   Calendar support is declared by the selected workflow, not inferred from its name.
 
+## Failing well
+
+- Refuse only to protect security, money or outside effects: credentials, grants, egress,
+  billing and anything published, sent or merged. Everything else degrades to a recorded
+  outcome with a named reason.
+- A check on model output never fails a run that already paid for it. Map an unsupported
+  verdict to the nearest honest outcome (for example insufficient evidence), keep what is
+  usable, or ask the model to fix it within the run. Notes and summaries for the founder are
+  shaped to fit, never grounds to fail.
+- Accept partial provider data: a page with one missing reference, a response with a
+  warning. Stay strict for writes and for responses with no usable data.
+- Limits are runaway guards set well above normal use, not estimates that stop ordinary runs.
+- A failure names its cause. Never wrap Tin's own refusal in a generic message; keep the
+  reason on the run and its receipt, bounded and without provider text or secrets.
+- Fixture tests prove the contract; a real run proves the workflow. Before calling a workflow
+  change done, run it once for real where a provider, sandbox or outside site is involved.
+
 ## Models, sandboxes and connections
 
 - New Codex compute is API-only. The provider credential stays on the switchboard;

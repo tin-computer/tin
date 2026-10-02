@@ -72,11 +72,16 @@ def parse(notes, context):
     if len(set(identities)) != len(identities):
         raise ValueError("List each compared page once, not duplicate anchors.")
     inspected = [page for page in judgment.compared_pages if page.status == "inspected"]
+    host = context.get("host", "").removeprefix("www.").lower()
+    if judgment.outcome == "already_covered" and not _supports_covered(inspected, host, context):
+        # A page that couldn't be read is no evidence either way. "Already covered" needs the
+        # site's own coverage read (the destination, for an update); without it the honest
+        # result is that coverage couldn't be established, not a failed run.
+        judgment = judgment.model_copy(update={"outcome": "insufficient_evidence"})
     if judgment.outcome in {"draft", "already_covered"} and not inspected:
         raise ValueError(
             "Inspect current coverage before declaring a gap or an already-covered topic."
         )
-    host = context.get("host", "").removeprefix("www.").lower()
     if (
         host
         and judgment.outcome in {"draft", "already_covered"}
@@ -85,8 +90,6 @@ def parse(notes, context):
         raise ValueError(
             "Inspect the planned site's own coverage before deciding to draft or skip."
         )
-    if judgment.outcome == "already_covered" and len(inspected) != len(judgment.compared_pages):
-        raise ValueError("Unavailable coverage is not evidence that the brief is already covered.")
     if judgment.outcome == "draft":
         if min(len(judgment.reader_gain.strip()), len(judgment.change_scope.strip())) < 30:
             raise ValueError("Explain the concrete reader benefit and bounded change scope.")
@@ -99,6 +102,17 @@ def parse(notes, context):
     elif judgment.reader_gain or judgment.change_scope:
         raise ValueError("A no-draft assessment must not also declare proposed article copy.")
     return {"schema": SCHEMA, **judgment.model_dump()}
+
+
+def _supports_covered(inspected, host, context):
+    """Whether the read pages can show the brief is already covered on the planned site."""
+    read = [page_identity(page.url) for page in inspected]
+    if host and not any(identity[0] == host for identity in read):
+        return False
+    item = context.get("item") or {}
+    if item.get("action") == "update_page" and item.get("destination"):
+        return page_identity(item["destination"]) in read
+    return bool(read)
 
 
 def assessment_document(judgment):

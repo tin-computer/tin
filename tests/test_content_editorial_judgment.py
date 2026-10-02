@@ -115,6 +115,41 @@ def test_invalid_judgments_cannot_publish(bad):
         validate_pair(ARTICLE, raw, context)
 
 
+def update_context():
+    context = {**sample_context(), "output_validator": content_draft.EDITORIAL_VALIDATOR}
+    context["item"] = {
+        **context["item"],
+        "action": "update_page",
+        "destination": "https://example.com/docs",
+    }
+    return context
+
+
+def test_an_unreadable_extra_page_does_not_sink_an_already_covered_judgment():
+    # Sheepdogs: the refresh's own page was read in full; the canvas homepage could not be.
+    context = update_context()
+    value = judgment(context)
+    value["compared_pages"].append(
+        {
+            "url": "https://example.com/",
+            "status": "unavailable",
+            "coverage": "The homepage returned no readable text to compare.",
+        }
+    )
+    proof = validate_pair(assessment_document(value), judgment_notes(context, value), context)
+    assert proof["outcome"] == "already_covered"
+
+
+def test_covered_without_reading_the_destination_finishes_as_insufficient_evidence():
+    # Claiming coverage from a page that couldn't be read is not evidence; the paid run
+    # still finishes, with the honest outcome instead of a crash.
+    context = update_context()
+    value = judgment(context)
+    value["compared_pages"][0]["status"] = "unavailable"
+    proof = validate_pair(assessment_document(value), judgment_notes(context, value), context)
+    assert proof["outcome"] == "insufficient_evidence"
+
+
 async def prepared(f, outcome, *, publish=True):
     run = await start(f, key=str(uuid4()))
     activities = TinActivities(

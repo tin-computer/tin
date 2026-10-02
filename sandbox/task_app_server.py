@@ -417,11 +417,7 @@ def execute() -> int:
                 "question": None,
             }
         else:
-            result = json.loads(last_agent_message)
-            if result.get("outcome") not in {"completed", "needs_input"}:
-                raise RuntimeError("Codex returned an invalid task outcome")
-            if result["outcome"] == "needs_input" and not result.get("question"):
-                raise RuntimeError("Codex requested input without a question")
+            result = _task_result(json.loads(last_agent_message))
         with open(os.environ["TIN_TASK_RESULT_PATH"], "w", encoding="utf-8") as handle:
             json.dump(result, handle, separators=(",", ":"))
         return 0
@@ -432,6 +428,16 @@ def execute() -> int:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+def _task_result(result):
+    """Codex's final task message as Tin's result; a question-less pause asks a plain one."""
+    if not isinstance(result, dict) or result.get("outcome") not in {"completed", "needs_input"}:
+        raise RuntimeError("Codex returned an invalid task outcome")
+    if result["outcome"] == "needs_input" and not (result.get("question") or "").strip():
+        # Ask rather than lose the turn: the founder can still answer or stop.
+        result["question"] = "How should I continue?"
+    return result
 
 
 def main() -> int:

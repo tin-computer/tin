@@ -4137,8 +4137,6 @@ class TinActivities:
             )
         else:
             content_draft.validate_notes(raw, procedure.content_draft_context)
-        if procedure.review_revision_context is not None:
-            article_review.validate_changes(raw)
         return (
             OutputCheckpoint.create(
                 run=run,
