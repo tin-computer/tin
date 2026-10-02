@@ -473,5 +473,18 @@ async def test_an_account_with_nothing_usable_buys_no_model_call(monkeypatch):
     x = PagedX(
         [{"posts": [post(1, 1, "Their words", [{"type": "retweeted"}])], "next_cursor": None}]
     )
-    with pytest.raises(ApplicationError, match="could not be confirmed"):
+    with pytest.raises(ApplicationError, match="could not be confirmed. No usable own posts"):
         await run_extract(monkeypatch, {"sample_source": "connected"}, x)
+
+
+async def test_an_extraction_failure_says_what_stopped_it(monkeypatch):
+    # A run whose timeline read failed used to say only "could not be confirmed".
+    from tin_lite.integrations import IntegrationUpstreamError
+
+    class FailingX(PagedX):
+        async def timeline(self, connection, **kwargs):
+            raise IntegrationUpstreamError("X returned an incomplete result")
+
+    with pytest.raises(ApplicationError) as failure:
+        await run_extract(monkeypatch, {"sample_source": "connected"}, FailingX([]))
+    assert "X returned an incomplete result. No replacement was purchased" in str(failure.value)
