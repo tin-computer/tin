@@ -60,8 +60,8 @@ nothing ready to fix is refused with the count of decisions still waiting.
 - The run re-reads the live site: robots.txt, the sitemaps it names, and up to 40 pages.
   It drops findings that are already fixed, then binds the repository and reads open-PR
   evidence.
-- The repository snapshot leaves out files over 2 MB. Images, video, fonts and built
-  bundles don't count; any other file Tin couldn't read (a source or data file over 2 MB, a
+- The repository snapshot leaves out files over 10 MB. Images, video, fonts and built
+  bundles don't count; any other file Tin couldn't read (a source or data file over 10 MB, a
   link, a submodule) ends the run **failed**, and its reason and report name each file. The
   same holds when Tin can't read the snapshot at all or the plan is too large to hand to
   Codex. Only "already resolved", "nothing to fix" and open-PR outcomes end succeeded with

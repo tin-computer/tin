@@ -66,8 +66,8 @@ def safe_path(name):
 
 
 # The most a caller reads out of one snapshot into memory.
-ARCHIVE_MAX_BYTES = 30_000_000
-ARCHIVE_MAX_FILES = 5000
+ARCHIVE_MAX_BYTES = 100_000_000
+ARCHIVE_MAX_FILES = 20_000
 
 
 def archive_files(archive, *, select=None):

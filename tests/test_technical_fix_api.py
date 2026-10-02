@@ -127,13 +127,13 @@ async def test_preflight_warns_about_files_a_run_would_stop_on(surface_fixture):
     assert response.json()["repository_warnings"] == []
 
     f.integrations.github_repository_missing_files.return_value = (
-        {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},
+        {"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},
     )
     response = await f.client.post(f.root + "/preflight", json=body)
     [warning] = response.json()["repository_warnings"]
     assert warning.startswith(
         "A run will stop because Tin can't read every file in the repository: "
-        "src/data/posts.json (2.4 MB, over the 2 MB limit for files Tin reads)."
+        "src/data/posts.json (12.4 MB, over the 10 MB limit for files Tin reads)."
     )
     result = await f.server.call_tool("preflight_technical_fix", args)
     assert result.structured_content["repository_warnings"] == [warning]

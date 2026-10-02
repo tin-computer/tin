@@ -2,15 +2,25 @@
 
 from pathlib import PurePosixPath
 
-# Every repository workspace uses these bounds; definitions no longer pin their own.
-REPOSITORY_MAX_FILES = 20_000
-REPOSITORY_MAX_BYTES = 100_000_000
-# The compressed tarball also carries files the snapshot filters out (over 2 MB, links).
-REPOSITORY_DOWNLOAD_MAX_BYTES = 500_000_000
-# Paths the tarball omits or rewrites (export-ignore, export-subst) are read one by one.
-REPOSITORY_BLOB_FALLBACKS = 100
+# Every repository workspace uses these bounds; definitions no longer pin their own. They
+# are runaway guards, set well above real sites. GitHub's recursive tree API truncates at
+# 100,000 entries (directories included), so no snapshot can hold more files than that.
+REPOSITORY_MAX_FILES = 100_000
+# Kept in a temporary file while the snapshot is built; only the compressed result is held
+# in memory, then written to the sandbox (/home/user), where it is unpacked and committed.
+# The byte bounds are set by the switchboard VM (an e2-small: about 1 GB of free RAM and
+# under 5 GB of free disk), not by the sandbox: each run in flight holds up to the download,
+# the snapshot and its compressed copy on disk, and the compressed copy in memory.
+REPOSITORY_MAX_BYTES = 250_000_000
+# The compressed tarball also carries files the snapshot filters out (over 10 MB, links).
+# It is streamed to a temporary file, never held in memory.
+REPOSITORY_DOWNLOAD_MAX_BYTES = 1_000_000_000
+# Paths the tarball omits or rewrites (export-ignore, export-subst) are read one by one,
+# one GitHub API call each.
+REPOSITORY_BLOB_FALLBACKS = 500
 # A snapshot leaves out every file larger than this.
-REPOSITORY_FILE_MAX_BYTES = 2_000_000
+REPOSITORY_FILE_MAX_BYTES = 10_000_000
+FILE_LIMIT_TEXT = f"{REPOSITORY_FILE_MAX_BYTES // 1_000_000} MB"
 
 # Large files a snapshot may leave out and still count as complete: they can't hold page
 # copy, metadata or code that a fix would edit. Keyed by suffix, valued by why.
@@ -60,7 +70,7 @@ OMISSION_TEXT = {
     "source_map": "a source map",
     "minified": "a minified asset",
     "built_asset": "a built asset under a public or static folder",
-    "too_large": "over the 2 MB limit for files Tin reads",
+    "too_large": f"over the {FILE_LIMIT_TEXT} limit for files Tin reads",
     "symlink": "a symbolic link",
     "submodule": "a Git submodule",
     "unsupported_path": "a path Tin can't read safely",
@@ -85,7 +95,7 @@ def skippable_large_file(path: str) -> str | None:
 
 
 def describe_omission(item: dict) -> str:
-    """`public/data.json (2.4 MB, over the 2 MB limit for files Tin reads)`."""
+    """`public/data.json (12.4 MB, over the 10 MB limit for files Tin reads)`."""
     path = item.get("path") or "an unnamed entry"
     reason = OMISSION_TEXT.get(item.get("reason", ""), "left out")
     size = item.get("size")

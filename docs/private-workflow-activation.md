@@ -71,8 +71,8 @@ See [code workflows](code-workflows.md) and the linked extension contracts.
 - One bounded UTF-8 project artifact, or a bounded unmerged GitHub PR with repository verification.
   GitHub capabilities must match the declared workspace/result and use the connected-project
   gateway. Existing PR overlap checks and result validation remain in force.
-- Repository workspaces are snapshots of up to 20,000 eligible files / 100 MB, each file at
-  most 2 MB (larger media and built files are left out; see
+- Repository workspaces are snapshots of up to 100,000 eligible files / 250 MB, each file at
+  most 10 MB (larger media and built files are left out; see
   [repository-aware delivery](repository-aware-content-delivery.md)). The bound belongs to
   the gateway; a `limits` key in older definitions is ignored.
 - Optional connected Workspace read capabilities: Gmail messages and calendar events. No email

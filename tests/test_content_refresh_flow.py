@@ -403,7 +403,7 @@ async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
     missing = (
         ()
         if readable
-        else ({"path": "src/data/pages.json", "size": 2_400_000, "reason": "too_large"},)
+        else ({"path": "src/data/pages.json", "size": 12_400_000, "reason": "too_large"},)
     )
     # A built file the search never reads doesn't count toward what Tin reads into memory.
     repo = {"app/guides/setup/page.tsx": PAGE_TSX, "out/report.txt": "x" * 30_000}
@@ -432,7 +432,7 @@ async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
         receipt = (await f.db.get_effect(delivery_key(run.id))).result
         assert receipt["changed_paths"] == ["app/guides/setup/page.tsx"]
         return
-    with pytest.raises(ValueError, match=r"src/data/pages\.json \(2\.4 MB, over the 2 MB limit"):
+    with pytest.raises(ValueError, match=r"src/data/pages\.json \(12\.4 MB, over the 10 MB limit"):
         await delivery.deliver(run.id)
     receipt = await f.db.get_effect(delivery_key(run.id))
     assert receipt.status == "failed" and "src/data/pages.json" in receipt.error_message

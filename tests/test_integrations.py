@@ -2936,7 +2936,7 @@ async def test_github_commit_adapter_writes_several_files_as_one_commit(tmp_path
         (50, 1, True),  # At the (lowered) file cap.
         (51, 0, False),
         (40, 2_000_000, True),  # 80 MB of eligible files.
-        (51, 2_000_000, False),  # Over the 100 MB byte cap.
+        (45, 2_400_000, False),  # Over the (lowered) 100 MB byte cap.
     ],
 )
 async def test_repository_bundle_bounds_apply_to_every_workspace(
@@ -2945,10 +2945,11 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
     from tin_lite import integrations
 
     assert (integrations.REPOSITORY_MAX_FILES, integrations.REPOSITORY_MAX_BYTES) == (
-        20_000,
-        100_000_000,
+        100_000,
+        250_000_000,
     )
     monkeypatch.setattr(integrations, "REPOSITORY_MAX_FILES", 50)
+    monkeypatch.setattr(integrations, "REPOSITORY_MAX_BYTES", 100_000_000)
     content = b"x" * file_bytes
     files = {f"src/file-{index}.txt": content for index in range(file_count)}
     tree = [tree_entry(path, content) for path in files]
@@ -3052,12 +3053,13 @@ def large(path: str, size: int) -> dict:
     return {**tree_entry(path, path.encode()), "size": size}
 
 
-# tin-web's three files over 2 MB stopped technical fix runs 43b99efd and 721f6a8d and
-# refresh aaffdb5a; none of them can hold what a fix edits.
+# tin-web's three files over the old 2 MB limit stopped technical fix runs 43b99efd and
+# 721f6a8d and refresh aaffdb5a; none of them can hold what a fix edits. Sizes are raised
+# past today's 10 MB limit so the snapshot still leaves them out.
 SITE_MEDIA = [
-    large("public/euphony/assets/main-LKI_ICf3.js", 2_678_607),
-    large("public/scan-mocks/seaweedindex.com.png", 3_787_015),
-    large("public/opensource/hero.mp4", 3_378_075),
+    large("public/euphony/assets/main-LKI_ICf3.js", 12_678_607),
+    large("public/scan-mocks/seaweedindex.com.png", 13_787_015),
+    large("public/opensource/hero.mp4", 13_378_075),
 ]
 
 
@@ -3126,7 +3128,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
     tree = [
         tree_entry("app/page.tsx", files["app/page.tsx"]),
         *SITE_MEDIA,
-        large("src/data/posts.json", 2_400_000),
+        large("src/data/posts.json", 12_400_000),
         {"type": "commit", "mode": "160000", "path": "content", "sha": "c" * 40},
     ]
     github = RepositoryGitHub(tree, github_tarball(files))
@@ -3135,7 +3137,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
         summary = service._database.call_receipts["run-9:procedure-repository"].response_summary
     assert bundle.complete is False
     assert bundle.missing == (
-        {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},
+        {"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},
         {"path": "content", "size": None, "reason": "submodule"},
     )
     assert len(bundle.skipped) == 3
@@ -3145,7 +3147,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
     from tin_lite.repository_limits import describe_omissions
 
     assert describe_omissions(bundle.missing) == (
-        "src/data/posts.json (2.4 MB, over the 2 MB limit for files Tin reads); "
+        "src/data/posts.json (12.4 MB, over the 10 MB limit for files Tin reads); "
         "content (a Git submodule)"
     )
 
@@ -3156,7 +3158,7 @@ async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
     tree = [
         tree_entry("app/page.tsx", b"export default 1;\n"),
         *SITE_MEDIA,
-        large("src/data/posts.json", 2_400_000),
+        large("src/data/posts.json", 12_400_000),
     ]
     github = RepositoryGitHub(tree, b"")
     async with repository_service(monkeypatch, github) as service:
@@ -3170,7 +3172,7 @@ async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
         stale = GitHubRepositoryBinding(uuid4(), 42, 7, "example-org/site", "main", "a" * 40)
         with pytest.raises(IntegrationAuthorizationError, match="connection changed"):
             await service.github_repository_missing_files(project_id=PROJECT_ID, binding=stale)
-    assert missing == ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
+    assert missing == ({"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},)
     # One tree read: nothing is downloaded and nothing is receipted.
     assert not github.paths("/tarball/") and not service._database.call_receipts
 

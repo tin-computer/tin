@@ -2445,16 +2445,20 @@ class IntegrationService:
         wanted = {item["path"]: item for item in blobs}
         # One tarball request instead of one API call per file. Every file is checked
         # against its blob hash in the pinned tree, so the archive is exactly head_sha.
-        with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
-            await self._github_tarball(repository_path, head_sha, headers, download)
-            contents = await to_thread.run_sync(_verified_tarball_blobs, download, wanted)
-        missing = [item for path, item in wanted.items() if path not in contents]
-        if len(missing) > REPOSITORY_BLOB_FALLBACKS:
-            raise IntegrationUpstreamError("GitHub repository tarball is missing pinned files")
-        for item in missing:
-            # export-ignore drops a path from the tarball and export-subst rewrites it.
-            contents[item["path"]] = await self._github_blob_content(repository_path, headers, item)
-        archive = await to_thread.run_sync(_repository_archive, blobs, contents)
+        # Verified bytes wait in a temporary file, not in memory: only the final
+        # compressed archive and one file at a time are ever held in RAM.
+        with tempfile.TemporaryFile() as spool:
+            with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
+                await self._github_tarball(repository_path, head_sha, headers, download)
+                located = await to_thread.run_sync(_verified_tarball_blobs, download, wanted, spool)
+            missing = [item for path, item in wanted.items() if path not in located]
+            if len(missing) > REPOSITORY_BLOB_FALLBACKS:
+                raise IntegrationUpstreamError("GitHub repository tarball is missing pinned files")
+            for item in missing:
+                # export-ignore drops a path from the tarball and export-subst rewrites it.
+                content = await self._github_blob_content(repository_path, headers, item)
+                located[item["path"]] = _spool(spool, content)
+            archive = await to_thread.run_sync(_repository_archive, blobs, spool, located)
         return GitHubRepositoryBundle(
             repository=repository,
             default_branch=default_branch,
@@ -5712,9 +5716,20 @@ def _git_blob_sha(content: bytes, expected: str) -> str:
     return digest.hexdigest()
 
 
-def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> dict[str, bytes]:
-    """Read the tree's eligible files from a GitHub tarball; skip anything unverified."""
-    contents: dict[str, bytes] = {}
+def _spool(spool: Any, content: bytes) -> tuple[int, int]:
+    """Append verified bytes to the spool file; returns where they are (offset, size)."""
+    spool.seek(0, io.SEEK_END)
+    offset = spool.tell()
+    spool.write(content)
+    return offset, len(content)
+
+
+def _verified_tarball_blobs(
+    fileobj: Any, wanted: dict[str, dict[str, Any]], spool: Any
+) -> dict[str, tuple[int, int]]:
+    """Copy the tree's eligible files from a GitHub tarball into `spool`; skip anything
+    unverified. Returns each copied path's (offset, size) in the spool."""
+    located: dict[str, tuple[int, int]] = {}
     root: str | None = None
     try:
         with tarfile.open(fileobj=fileobj, mode="r|gz") as archive:
@@ -5726,7 +5741,7 @@ def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> 
                 item = wanted.get(path)
                 if (
                     item is None
-                    or path in contents
+                    or path in located
                     or not member.isreg()
                     or member.size != item["size"]
                 ):
@@ -5737,10 +5752,10 @@ def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> 
                     len(content) == item["size"]
                     and _git_blob_sha(content, item["sha"]) == item["sha"]
                 ):
-                    contents[path] = content
+                    located[path] = _spool(spool, content)
     except (tarfile.TarError, EOFError, OSError, zlib.error) as exc:
         raise IntegrationUpstreamError("GitHub repository tarball is unreadable") from exc
-    return contents
+    return located
 
 
 def _repository_tree_entries(
@@ -5788,19 +5803,30 @@ def _repository_tree_entries(
     return blobs, tuple(skipped), tuple(missing)
 
 
-def _repository_archive(blobs: list[dict[str, Any]], contents: dict[str, bytes]) -> bytes:
-    archive_buffer = io.BytesIO()
-    with tarfile.open(fileobj=archive_buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
-        for item in sorted(blobs, key=lambda value: value["path"]):
-            content = contents[item["path"]]
-            info = tarfile.TarInfo(name=item["path"])
-            info.size = len(content)
-            info.mode = 0o755 if item["mode"] == "100755" else 0o644
-            info.mtime = 0
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            archive.addfile(info, io.BytesIO(content))
-    return archive_buffer.getvalue()
+def _repository_archive(
+    blobs: list[dict[str, Any]], spool: Any, located: dict[str, tuple[int, int]]
+) -> bytes:
+    """The snapshot as a deterministic tar.gz, read from the spool one file at a time."""
+    with tempfile.TemporaryFile() as output:
+        # Level 6 (gzip's own default) packs a large snapshot faster than tarfile's 9.
+        with tarfile.open(
+            fileobj=output, mode="w:gz", format=tarfile.PAX_FORMAT, compresslevel=6
+        ) as archive:
+            for item in sorted(blobs, key=lambda value: value["path"]):
+                offset, size = located[item["path"]]
+                spool.seek(offset)
+                content = spool.read(size)
+                if len(content) != size:
+                    raise IntegrationUpstreamError("GitHub repository snapshot is incomplete")
+                info = tarfile.TarInfo(name=item["path"])
+                info.size = size
+                info.mode = 0o755 if item["mode"] == "100755" else 0o644
+                info.mtime = 0
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                archive.addfile(info, io.BytesIO(content))
+        output.seek(0)
+        return output.read()
 
 
 def _safe_github_ref(value: str) -> bool:
