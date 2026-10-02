@@ -55,6 +55,7 @@ def configure(path, env):
         "tin-codex-api-v2": (128_000, 96_000),
         "tin-codex-api-v3": (128_000, 96_000),
         "tin-codex-api-v4": (1_050_000, 922_000),
+        "tin-codex-api-v5": (256_000, 200_000),
     }
     if protocol in contexts:
         window, compact = contexts[protocol]
@@ -105,5 +106,7 @@ if __name__ == "__main__":
         print("TIN_CODEX_API_READY_V3")
     elif sys.argv[1:] == ["--check-v4"]:
         print("TIN_CODEX_API_READY_V4")
+    elif sys.argv[1:] == ["--check-v5"]:
+        print("TIN_CODEX_API_READY_V5")
     else:
         configure(Path("/home/user/.codex/config.toml"), os.environ)

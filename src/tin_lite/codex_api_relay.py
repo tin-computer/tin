@@ -21,7 +21,7 @@ from tin_lite.codex_api import (
     ATTEMPT,
     CONTRACT,
     DIAGRAM_CONTRACT,
-    PROCEDURE_CONTRACT,
+    MULTI_TOOL_CONTRACTS,
     SESSION_CONTRACT,
     STOP_MESSAGES,
     USAGE,
@@ -29,6 +29,8 @@ from tin_lite.codex_api import (
     decode_record,
     is_api_contract,
     is_procedure_contract,
+    is_session_contract,
+    record_relay_rejection,
     token_hash,
 )
 from tin_lite.codex_api_pricing import price_response
@@ -50,14 +52,17 @@ class AdmissionStopped(HTTPException):
 
 
 class RelayRejected(HTTPException):
-    """A fixed rejection that also names an allowlisted reason for operator logs."""
+    """A fixed rejection that also names an allowlisted reason for logs and the attempt."""
 
-    def __init__(self, status, detail, *, reason):
+    def __init__(self, status, detail, *, reason, upstream_status=None):
         super().__init__(status, detail)
         self.reason = reason
+        self.upstream_status = upstream_status
 
 
 CONTRACT_REJECTION = "This API request exceeds its reserved execution contract"
+# Historical v1/v2 observations count every web_search_call as one search.
+MULTI_TOOL_PROTOCOLS = frozenset(contract["protocol"] for contract in MULTI_TOOL_CONTRACTS)
 
 
 def web_usage(output, protocol):
@@ -66,7 +71,7 @@ def web_usage(output, protocol):
     calls = [
         item for item in output if isinstance(item, dict) and item.get("type") == "web_search_call"
     ]
-    if protocol not in {PROCEDURE_CONTRACT["protocol"], SESSION_CONTRACT["protocol"]}:
+    if protocol not in MULTI_TOOL_PROTOCOLS:
         return {"web_search_calls": len(calls)}  # Preserve historical observations.
     counts = {"search": 0, "open_page": 0, "find_in_page": 0}
     for item in calls:
@@ -85,7 +90,9 @@ def web_usage(output, protocol):
 
 def request_body(raw: bytes, operation: str, contract=CONTRACT):
     if len(raw) > contract["max_request_bytes"]:
-        raise HTTPException(413, "Codex API request exceeds its pinned context bound")
+        raise RelayRejected(
+            413, "Codex API request exceeds its pinned context bound", reason="context_bound"
+        )
     try:
         body = json.loads(raw)
     except (ValueError, UnicodeDecodeError, RecursionError):
@@ -140,7 +147,9 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT):
             len(json.dumps(without_images(body), separators=(",", ":")).encode())
             > contract["max_non_image_bytes"]
         ):
-            raise HTTPException(413, "Codex API text exceeds its pinned context bound")
+            raise RelayRejected(
+                413, "Codex API text exceeds its pinned context bound", reason="text_bound"
+            )
     if body.get("background") not in (None, False):
         raise HTTPException(400, "Background API execution is not supported")
     if operation == "responses":
@@ -189,7 +198,7 @@ def request_body(raw: bytes, operation: str, contract=CONTRACT):
             service_tier="default",
             max_output_tokens=min(requested, contract["max_output_tokens"]),
         )
-        if contract in (PROCEDURE_CONTRACT, DIAGRAM_CONTRACT, SESSION_CONTRACT):
+        if contract in MULTI_TOOL_CONTRACTS:
             # Do not cut off search -> open -> find within one model step. Run
             # reservations, usage settlement, token limits and timeouts remain.
             body.pop("max_tool_calls", None)
@@ -235,6 +244,15 @@ class CodexAPIRelay:
 
     async def close(self):
         await self.client.aclose()
+
+    async def note_rejection(self, run_id, grant, **facts):
+        """Persist the rejection's cause on the attempt; never mask the rejection itself."""
+        try:
+            await asyncio.wait_for(
+                record_relay_rejection(self.db.pool, run_id, grant, **facts), timeout=5
+            )
+        except Exception:  # noqa: BLE001 — logging already names the cause
+            logger.warning("Codex API rejection cause was not recorded run=%s", run_id)
 
     async def admit(self, run_id, grant, fingerprint, operation, *, request_bytes=0, raw=None):
         try:
@@ -318,7 +336,7 @@ class CodexAPIRelay:
                         key=attempt_key(run_id, turn_number),
                         reason=exc.code,
                     )
-                return HTTPException(exc.status, exc.diagnostic())
+                return RelayRejected(exc.status, exc.diagnostic(), reason=exc.code)
 
             if raw is not None:
                 # Validate against this run's contract before any paid intent. The
@@ -364,7 +382,7 @@ class CodexAPIRelay:
                     409, "This model request was already attempted; do not repurchase"
                 )
             request_number = None
-            if contract == SESSION_CONTRACT:
+            if is_session_contract(contract):
                 if not enrolled or billing is None or not session_funded(budget):
                     raise HTTPException(403, "This session requires its funded spending budget")
                 try:
@@ -517,7 +535,9 @@ class CodexAPIRelay:
             )
         except httpx.HTTPError:
             # Intent stays unconfirmed. HTTPX and Codex are configured not to retry.
-            raise HTTPException(502, "Codex API request outcome is unconfirmed") from None
+            raise RelayRejected(
+                502, "Codex API request outcome is unconfirmed", reason="upstream_unreachable"
+            ) from None
         if upstream.status_code != 200:
             status = upstream.status_code
             await upstream.aclose()
@@ -528,9 +548,11 @@ class CodexAPIRelay:
                 operation,
                 status,
             )
-            raise HTTPException(
+            raise RelayRejected(
                 429 if status == 429 else 502,
                 "OpenAI rejected the Codex API request; the attempt will not be replayed",
+                reason="upstream_rejected",
+                upstream_status=status,
             )
 
         if operation == "responses/compact":
@@ -555,11 +577,7 @@ class CodexAPIRelay:
         async def stream():
             buffer = b""
             observed = False
-            evidence = (
-                WebEvidence()
-                if contract in (PROCEDURE_CONTRACT, DIAGRAM_CONTRACT, SESSION_CONTRACT)
-                else None
-            )
+            evidence = WebEvidence() if contract in MULTI_TOOL_CONTRACTS else None
             inserted = 0
             sequence = 0
             try:
@@ -614,6 +632,9 @@ class CodexAPIRelay:
                     raise RuntimeError("Codex API stream ended without a terminal response")
             except (httpx.HTTPError, ValueError, RuntimeError, RecursionError):
                 # Never expose provider exception text, partial private body, or credentials.
+                await self.note_rejection(
+                    run_id, grant, status=502, reason="stream_unconfirmed", operation=operation
+                )
                 yield (
                     b'data: {"type":"error",'
                     b'"message":"Codex API stream outcome is unconfirmed"}\n\n'
@@ -642,6 +663,9 @@ async def relay_codex_api(run_id: UUID, operation: str, request: Request):
         raw.extend(chunk)
         if len(raw) > DIAGRAM_CONTRACT["max_request_bytes"]:
             _log_rejection(run_id, operation, 413, "Codex API request exceeds its context bound")
+            await relay.note_rejection(
+                run_id, grant, status=413, reason="context_bound", operation=operation
+            )
             raise HTTPException(413, "Codex API request exceeds its context bound")
     try:
         return await asyncio.wait_for(
@@ -649,10 +673,21 @@ async def relay_codex_api(run_id: UUID, operation: str, request: Request):
         )
     except TimeoutError:
         _log_rejection(run_id, operation, 504, "Codex API request outcome is unconfirmed")
+        await relay.note_rejection(
+            run_id, grant, status=504, reason="relay_timeout", operation=operation
+        )
         raise HTTPException(504, "Codex API request outcome is unconfirmed") from None
     except HTTPException as exc:
         reason = getattr(exc, "reason", None)
         _log_rejection(run_id, operation, exc.status_code, exc.detail, reason)
+        await relay.note_rejection(
+            run_id,
+            grant,
+            status=exc.status_code,
+            reason=reason,
+            operation=operation,
+            upstream_status=getattr(exc, "upstream_status", None),
+        )
         raise
 
 

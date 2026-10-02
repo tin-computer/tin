@@ -11,7 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tin_lite.domain import WorkflowStatus
 from tin_lite.integrations import parse_integration_requirements
-from tin_lite.procedures import load_pinned_codex_procedure, validate_codex_procedure_definition
+from tin_lite.procedures import (
+    MAX_SANDBOX_TIMEOUT_SECONDS,
+    load_pinned_codex_procedure,
+    validate_codex_procedure_definition,
+)
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_inputs import WorkflowInputError
 from tin_lite.workflow_packages import PACKAGE_FORMAT, decode_workflow_source, package_digest
@@ -702,7 +706,7 @@ def authoring_guide(*, settings, project_id):
             "prompt_bytes": 32000,
             "skill_file_bytes": 64000,
             "prompt_and_skill_bytes": 128000,
-            "max_timeout_seconds": 3600,
+            "max_timeout_seconds": MAX_SANDBOX_TIMEOUT_SECONDS,
             "schedule_modes": {
                 "codex.procedure": ["on_demand"],
                 "workflow.code": ["on_demand", "daily", "weekly", "monthly"],

@@ -412,8 +412,8 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
         await f.db.pool.fetchval("SELECT terms FROM billing_run_budgets WHERE run_id=$1", run.id)
     )
     assert terms["kind"] == "codex_api" and terms["funding"] == "procedure_session_v1"
-    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v4"
-    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 5_000_000_000
+    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v5"
+    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 10_000_000_000
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
 
 

@@ -228,8 +228,11 @@ SANDBOX_PROFILES = frozenset(
 FENCED_SANDBOX_EGRESS = "fenced"
 OPEN_SANDBOX_EGRESS = "open"
 SANDBOX_EGRESS_MODES = frozenset({FENCED_SANDBOX_EGRESS, OPEN_SANDBOX_EGRESS})
+# Serialized into every built-in definition that does not declare its own timeout, so raising
+# it would silently change pinned (including retired) catalog contracts without a version
+# bump. Raise a workflow's time by declaring it in its definition with a new version.
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 900
-MAX_SANDBOX_TIMEOUT_SECONDS = 3600
+MAX_SANDBOX_TIMEOUT_SECONDS = 7200
 EMAIL_SHORTLIST_HEADERS = (
     "candidate_id",
     "email",

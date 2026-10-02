@@ -668,6 +668,7 @@ class E2BRuntime:
                         "tin-codex-api-v2": 2,
                         "tin-codex-api-v3": 3,
                         "tin-codex-api-v4": 4,
+                        "tin-codex-api-v5": 5,
                     }.get(protocol, 1)
                     ready = await sandbox.commands.run(
                         "python3 /opt/tin-lite/codex_api_config.py "

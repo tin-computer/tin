@@ -18,7 +18,7 @@ not receive a provider key, pooled login, model relay grant or storage credentia
 Image inspection uses the existing bounded vision API contract.
 
 New budgets pin both OpenAI token pricing and `fal-studio-reported-cost-2026-09-16-v1`.
-The existing $5 conservative run ceiling includes both; there is no orchestration
+The conservative run ceiling ($10 for runs admitted from October 2, 2026; $5 before) includes both; there is no orchestration
 or sandbox markup. Voice synthesis and transcription each reserve at most $0.50
 internally before dispatch. That is a customer liability ceiling, **not** a fal price.
 Actual cost comes from an exact request/endpoint match in

@@ -750,8 +750,12 @@ def execute() -> int:
             usage = CodexUsage(thread_id=thread_id, turn_id=turn_id)
             if os.environ.get("TIN_CODEX_API_URL"):
                 contract = json.loads(os.environ.get("TIN_CODEX_API_CONTRACT", "{}"))
+                # v5 names its own lifetime-token stop; its session form has none.
+                v5_limit = contract.get("max_observed_tokens")
                 usage.limit = (
-                    None
+                    (v5_limit if type(v5_limit) is int and v5_limit > 0 else None)
+                    if contract.get("protocol") == "tin-codex-api-v5"
+                    else None
                     if contract.get("protocol") == "tin-codex-api-v4"
                     else 2_000_000
                     if contract.get("protocol") in {"tin-codex-api-v2", "tin-codex-api-v3"}

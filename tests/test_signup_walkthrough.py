@@ -106,7 +106,7 @@ def test_sandbox_profile_is_validated_and_defaults_stay_fenced() -> None:
         )
     with pytest.raises(ValueError, match="sandbox timeout"):
         validate_codex_procedure_definition(
-            _definition(sandbox={"profile": "browser", "timeout_seconds": 3601, "egress": "open"})
+            _definition(sandbox={"profile": "browser", "timeout_seconds": 7201, "egress": "open"})
         )
     with pytest.raises(ValueError, match="egress mode is unsupported"):
         validate_codex_procedure_definition(

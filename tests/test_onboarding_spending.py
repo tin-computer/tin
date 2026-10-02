@@ -135,8 +135,8 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
     }
     warning = (
         "Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at "
-        "up to $5.00 a run and Weekly article — https://blog.example/ can run up to 10 times a "
-        "month at up to $5.00 a run, up to $75.00 a month, above this project's $10.00 monthly "
+        "up to $10.00 a run and Weekly article — https://blog.example/ can run up to 10 times a "
+        "month at up to $10.00 a run, up to $150.00 a month, above this project's $10.00 monthly "
         "limit, " + ADMISSION
     )
     assert await activities._spending_warnings(run, setup) == [warning]
@@ -146,7 +146,7 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
         ACTOR,
         ProjectSpendingPolicy(
             per_run_nanos=10 * DOLLAR,
-            monthly_nanos=100 * DOLLAR,
+            monthly_nanos=150 * DOLLAR,
             schedule_max_nanos=10 * DOLLAR,
             expected_revision=2,
         ),

@@ -93,6 +93,34 @@ def test_grant_is_hashed_scoped_expires_and_is_removed(tmp_path, monkeypatch):
     assert not authorized(tmp_path, parsed.username, parsed.password)
 
 
+def test_grant_covers_the_longest_procedure_sandbox(tmp_path):
+    from tin_lite.procedures import MAX_SANDBOX_TIMEOUT_SECONDS
+    from tin_lite.proxy_grants import MAX_TTL_SECONDS
+
+    # The runtime asks for the sandbox timeout plus 60 seconds.
+    assert MAX_TTL_SECONDS == MAX_SANDBOX_TIMEOUT_SECONDS + 60
+    with proxy_grant(
+        directory=tmp_path,
+        proxy_url="https://proxy.test:8888",
+        execution_key="run-1:long",
+        sandbox_id="sandbox-1",
+        ttl_seconds=MAX_TTL_SECONDS,
+    ) as url:
+        parsed = urlsplit(url)
+        assert authorized(tmp_path, parsed.username, parsed.password)
+    with (
+        pytest.raises(ValueError, match="lifetime"),
+        proxy_grant(
+            directory=tmp_path,
+            proxy_url="https://proxy.test:8888",
+            execution_key="run-1:too-long",
+            sandbox_id="sandbox-1",
+            ttl_seconds=MAX_TTL_SECONDS + 1,
+        ),
+    ):
+        pass
+
+
 def test_helper_protocol_never_echoes_credentials(tmp_path):
     with proxy_grant(
         directory=tmp_path,
