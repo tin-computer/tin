@@ -1226,7 +1226,7 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        # 0.7.1 added monthly/quarterly schedules; 0.8.0 pins keyword-plan-v8 (larger screening caps).
+        # 0.7.1 added monthly/quarterly schedules; 0.8.0 pins keyword-plan-v8.
         version_label="0.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand", "monthly"),
