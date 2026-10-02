@@ -75,13 +75,13 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
@@ -979,7 +979,7 @@ BUILTIN_WORKFLOWS = (
             "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1023,7 +1023,7 @@ BUILTIN_WORKFLOWS = (
         title="Revise X writing",
         description="Revise an X draft and remember clear writing preferences from feedback.",
         executor=x_feedback.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
         agent_only=True,
@@ -1053,7 +1053,7 @@ BUILTIN_WORKFLOWS = (
             "before future X drafts use it."
         ),
         executor=x_style.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1188,7 +1188,7 @@ BUILTIN_WORKFLOWS = (
             "write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.8.0",
+        version_label="0.9.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1226,8 +1226,8 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        # 0.7.1: the same keyword-plan-v7 run, now also on a monthly or quarterly schedule.
-        version_label="0.7.1",
+        # 0.7.1 added monthly/quarterly schedules; 0.8.0 pins keyword-plan-v8 (larger screening caps).
+        version_label="0.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand", "monthly"),
         model_route=ModelRoute(

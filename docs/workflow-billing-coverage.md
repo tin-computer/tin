@@ -194,6 +194,36 @@ attempts and retries each reserve $0.02. Six batches and six retries ($0.24) rep
 single $0.10 screening reservation, so a full run reserves at most $1.79, still under the $2
 floor. Seeds, review, lookups and samples keep v6's reservations.
 
+Keyword policy v8 (`keyword_plan_v8.py`, October 2, 2026) keeps v7's batches and raises only
+the screening caps, to 32,000 output tokens and 64,000 for the retry. The recorder counts a
+request's bytes plus 4,096 as input tokens, so an 80,000-byte request is 84,096 tokens
+(standard band). The largest first attempt costs 84,096 x $0.125/M + 32,000 x $0.50/M =
+$0.0265 and reserves $0.03; the largest retry costs 84,096 x $0.125/M + 64,000 x $0.50/M =
+$0.0425 and reserves $0.045. Six batches and six retries reserve $0.45, so a full run reserves
+at most seeds $0.10 + review $0.15 + screening $0.45 + 22 lookups $1.10 + 40 samples $0.20 =
+$2.00, which the $2 floor covers exactly (a reservation is refused only when it would pass
+the ceiling). Real screening calls use a few thousand tokens and are charged for those.
+
+Output caps are runaway guards, not expected lengths (October 2, 2026). A model step's cap
+only decides when a long answer fails; billing charges the tokens it used. New definitions
+raise these caps to 32,000 tokens, and runs pinned earlier keep theirs:
+
+- `content.plan` 0.9.0 (`content-editorial-v8`, 16,000 before): at most $0.088 a plan.
+- `style.capture` 1.3.0 (policy 2, 6,000 before), `social.x_style` 1.2.0 (policy 3, 6,000
+  before) and `social.x_revise` 1.2.0 (`x-feedback-v2`, 8,000 before): one GPT-6 Sol call each,
+  at most $0.32 of output against a $2 ceiling.
+- `growth.onboarding_plan` (every step; 6,000-16,000 before), pinned by its contract digest.
+- `creative.character` (24,000 before; four Sol calls at every bound cost about $1.73, inside
+  its $2 ceiling) and the site-health fix (16,000 before), which are not pinned.
+
+`ModelRequest.max_output_tokens` defaults to 32,000 (4,096 before), and a model client waits
+600 seconds for a response unless the caller sets its own wait (`TIN_LITE_LUNA_TIMEOUT`, 90
+before). Native model receipts (`native_model_usage_v1`, and `external_usage_v1` for Responses
+calls) record the call's `max_output_tokens`, the provider's `stop_reason` and whether it
+said the output cap was reached (`output_truncated`). Organic audit, paid ads and code
+workflow caps are unchanged: the audit's $2 ceiling and the paid-ads reservations are sized
+from their current caps.
+
 Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
 unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With
 every input at its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per

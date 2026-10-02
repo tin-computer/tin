@@ -120,6 +120,8 @@ class ModelUsageRecorder:
                     json.dumps(asdict(request), sort_keys=True, separators=(",", ":")).encode()
                 ).hexdigest(),
                 "attempted_at": datetime.now(UTC).isoformat(),
+                # The call's output cap, so a response that stopped at it is visible.
+                "max_output_tokens": request.max_output_tokens,
                 "outcome": "unconfirmed",
                 "usage": asdict(ModelUsage()),
             }
@@ -178,6 +180,8 @@ class ModelUsageRecorder:
                     result.request_id,
                     result.usage,
                     result.service_tier,
+                    result.stop_reason,
+                    result.output_truncated,
                 ),
                 "response_received",
             )
@@ -191,6 +195,9 @@ class ModelUsageRecorder:
             "model": observation.model,
             "request_id": observation.request_id,
             "service_tier": observation.service_tier,
+            # The provider's own stop signal, and whether it said the output cap was reached.
+            "stop_reason": observation.stop_reason,
+            "output_truncated": observation.output_truncated,
             "usage": {**asdict(observation.usage), "web_search_calls": 0},
         }
         await self.db.complete_effect(

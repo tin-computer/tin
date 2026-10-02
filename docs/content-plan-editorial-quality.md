@@ -79,3 +79,12 @@ The drafts read the same files: `content.generate` 1.8.0 lists them in its pinne
 checkout, `content.answer_page` 1.6.0 receives them as sources (`ANSWER_POSITIONING_V1`) and
 `content.refresh` pins them before compute. Each presents the product the way those files do.
 
+
+## A larger output cap (content-editorial-v8)
+
+`content.plan` 0.9.0 pins `content-editorial-v8`: v7 with a 32,000-token output cap instead of
+16,000. GPT-6 Luna counts reasoning against the cap, and a cap only stops a plan; billing
+charges the tokens the call actually used. Instructions, schema, page and input bounds are v7's.
+At its bounds the call reads about 254,000 tokens and costs at most $0.088 at long-context
+rates, still under the $0.10 the plan's $1 share in the organic system is sized from. Plans
+pinned to v7 and older keep their caps.

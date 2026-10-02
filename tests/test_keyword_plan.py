@@ -20,6 +20,7 @@ from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v5 as v5
 from tin_lite import keyword_plan_v6 as v6
 from tin_lite import keyword_plan_v7 as v7
+from tin_lite import keyword_plan_v8 as v8
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.dataforseo import DataForSEOError
 from tin_lite.domain import EffectReceipt, RunStatus
@@ -229,6 +230,13 @@ async def fixture(*, prepare=True, inputs=None, budget=10, modern=False):
             "keyword_instructions": v6.INSTRUCTIONS,
             "keyword_schemas": v6.SCHEMAS,
         }
+    elif modern == "v7":
+        definition = {
+            **definition,
+            "keyword_policy": v7.POLICY,
+            "keyword_instructions": v7.INSTRUCTIONS,
+            "keyword_schemas": v7.SCHEMAS,
+        }
     storage.read_canonical_artifact = AsyncMock(return_value=canonical_json(definition))
     provider, model = providers()
     activities = KeywordPlanActivities(
@@ -255,7 +263,7 @@ async def finish(activities, run_id):
 def test_catalog_pins_native_contract_and_supported_form():
     assert len({item.id for item in BUILTIN_WORKFLOWS}) == len(BUILTIN_WORKFLOWS)
     assert SPEC.executor == KEY and SPEC.review_policy is None
-    assert SPEC.definition["keyword_policy"] == v7.POLICY
+    assert SPEC.definition["keyword_policy"] == v8.POLICY
     assert SPEC.definition["system"] == "organic-traffic"
     assert registered_workflow_implementations()[KEY] is KeywordPlanWorkflow
     normalized = normalize_workflow_inputs(
@@ -702,14 +710,14 @@ async def test_model_failure_does_not_purchase_a_replacement_or_publish():
 
 
 @pytest.mark.asyncio
-async def test_model_stages_wait_longer_than_the_client_default_for_large_verdicts():
+async def test_screening_and_review_set_their_own_waits_for_large_verdicts():
     activities, db, _, _, model = await fixture(modern="v4", inputs={"seed_phrases": []})
     await finish(activities, str(db.run.id))
     waits = {
         call.args[1].output_schema_name: call.kwargs["timeout_seconds"]
         for call in model.generate.await_args_list
     }
-    assert waits == {"keyword_seeds": None, "keyword_triage": 240, "keyword_review": 420}
+    assert waits == {"keyword_seeds": None, "keyword_triage": 600, "keyword_review": 420}
 
 
 @pytest.mark.asyncio
@@ -751,7 +759,7 @@ async def test_model_failure_names_its_cause_without_provider_text(error, reason
     ("failure", "cause"),
     [
         ({"stage": "seeds", "reason": "provider_timeout"}, "did not finish in time"),
-        ({"stage": "triage", "reason": "provider_timeout"}, "within 4 minutes"),
+        ({"stage": "triage", "reason": "provider_timeout"}, "within 10 minutes"),
         ({"stage": "review", "reason": "provider_status_429"}, "rate-limited"),
         ({"stage": "review", "reason": "provider_status_400"}, "rejected the keyword review"),
         ({"stage": "review", "reason": "provider_connection"}, "connection"),

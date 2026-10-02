@@ -209,7 +209,7 @@ def test_document_conversion_is_bounded_and_text_only():
             extract_sample(filename, content)
 
 
-async def capture_fixture(db, *, reviewed=True, revisable=True):
+async def capture_fixture(db, *, reviewed=True, revisable=True, policy=None):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
@@ -221,6 +221,8 @@ async def capture_fixture(db, *, reviewed=True, revisable=True):
     if not revisable:  # A run pinned to 1.1.0, before agent revisions and bound approval.
         definition = {k: v for k, v in definition.items() if k != "proposal_revision"}
         definition["version"] = "1.1.0"
+    if policy is not None:  # A run pinned to an earlier style policy.
+        definition = {**definition, "style_policy": policy}
     revision = "d" * 40
     await db.upsert_registry_workflow(
         workflow_id=builtin.id,
@@ -341,6 +343,38 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
         )
         == 1
     )
+
+
+@pytest.mark.parametrize(
+    "pinned, cap",
+    [(None, 32_000), ("v1", 6000), ("edited", None)],
+)
+async def test_a_run_sends_the_output_cap_of_the_policy_it_was_pinned_to(
+    publication_db, pinned, cap
+):
+    from tin_lite import style_capture
+
+    policy = {
+        None: None,
+        "v1": style_capture.POLICY_V1,
+        "edited": {**style_capture.POLICY, "max_output_tokens": 128_000},
+    }[pinned]
+    assert style_capture.POLICY["version"] == 2 and style_capture.POLICY_V1["version"] == 1
+    assert style_capture.POLICY == {
+        **style_capture.POLICY_V1,
+        "max_output_tokens": 32_000,
+        "version": 2,
+    }
+    f = await capture_fixture(publication_db, policy=policy)
+    run = await start(f)
+    if cap is None:  # A policy no version defines is refused before any model call.
+        with pytest.raises(ApplicationError):
+            await f.activities.prepare(str(run.id))
+        assert f.router.generate.await_count == 0
+        return
+    await f.activities.prepare(str(run.id))
+    await f.activities.extract(str(run.id))
+    assert f.router.generate.await_args.args[1].max_output_tokens == cap
 
 
 async def test_guide_pinned_to_1_1_waits_for_approval_and_saves_the_approved_edit(

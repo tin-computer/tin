@@ -89,6 +89,10 @@ DRAFTING_ROUTE = ModelRoute(
 )
 ROUTES = (JUDGMENT_ROUTE, DRAFTING_ROUTE)
 JUDGMENT_STEPS = frozenset({"facts", "scope", "view"})
+# Every step's output cap. A runaway guard, not an expected length: reasoning counts against
+# it, and billing charges the tokens a step actually used. GPT-6 Sol and Luna both allow
+# 128,000 output tokens per response. Changing it changes `contract_digest()`.
+MAX_OUTPUT_TOKENS = 32_000
 POLICY = {
     "version": 1,
     "reasoning_effort": "medium",
@@ -1323,8 +1327,8 @@ async def build_plan(inputs, site, site_text, today, generate):
 
     (fs, fu), (ps, pu) = understand_prompts(inputs, site_text, today)
     facts, scoring = await asyncio.gather(
-        call("facts", fs, fu, understand_schema("facts"), 16000),
-        call("profile", ps, pu, understand_schema("profile"), 16000),
+        call("facts", fs, fu, understand_schema("facts"), MAX_OUTPUT_TOKENS),
+        call("profile", ps, pu, understand_schema("profile"), MAX_OUTPUT_TOKENS),
     )
     understanding = {**facts, **scoring}
     flags = {
@@ -1391,7 +1395,7 @@ async def build_plan(inputs, site, site_text, today, generate):
         "scope",
         *scope_prompt(context, candidates, weight, budget, hours, lead),
         scope_schema(candidates),
-        12000,
+        MAX_OUTPUT_TOKENS,
     )
     notes = []
     if lead:  # the default leads whatever the scope step returned
@@ -1445,7 +1449,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                 systems_schema(
                     candidates, [w["key"] for w in avail[sid]["workflows"] if w["includable"]]
                 ),
-                16000,
+                MAX_OUTPUT_TOKENS,
             )
             for sid in candidates
         )
@@ -1565,7 +1569,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                     "outlook": obj({"week": STR, "month": STR, "quarter": STR}),
                 }
             ),
-            6000,
+            MAX_OUTPUT_TOKENS,
         )
         item.update(fixed)
 
@@ -1575,8 +1579,8 @@ async def build_plan(inputs, site, site_text, today, generate):
         for w in x["workflows"]:
             w.pop("_shared_with", None)
     table, view = await asyncio.gather(
-        call("table", *table_prompt(context, roles), TABLE_SCHEMA, 16000),
-        call("view", *view_prompt(context, roles, flags, scope), VIEW_SCHEMA, 16000),
+        call("table", *table_prompt(context, roles), TABLE_SCHEMA, MAX_OUTPUT_TOKENS),
+        call("view", *view_prompt(context, roles, flags, scope), VIEW_SCHEMA, MAX_OUTPUT_TOKENS),
     )
     asked_n = len(understanding["founder_requests"])
     if {r["index"] for r in view["requests"]} != set(range(asked_n)):
@@ -1590,7 +1594,12 @@ async def build_plan(inputs, site, site_text, today, generate):
         # bought once: an unusable re-ask keeps the valid first view instead of failing the run.
         try:
             view = await generate(
-                "view:requests", system, user, VIEW_SCHEMA, 16000, POLICY["reasoning_effort"]
+                "view:requests",
+                system,
+                user,
+                VIEW_SCHEMA,
+                MAX_OUTPUT_TOKENS,
+                POLICY["reasoning_effort"],
             )
         except UnusableModelResult:
             pass
@@ -1611,7 +1620,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                 rules,
                 json.dumps(problems, indent=1, ensure_ascii=False),
                 REPAIR_SCHEMA,
-                12000,
+                MAX_OUTPUT_TOKENS,
                 POLICY["repair_reasoning_effort"],
             )
             put_back(fixes["fixes"], table, systems, view, scope, understanding)

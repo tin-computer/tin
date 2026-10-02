@@ -245,6 +245,12 @@ not plan another page about those competitors.
 )
 MODEL_SCHEMA = TypedPortfolio.model_json_schema()
 
+# v8 (content.plan 0.9.0): v7 with a 32,000-token output cap instead of 16,000. GPT-6 Luna
+# counts reasoning against the cap, and a cap only stops a run: billing charges the tokens
+# a call used. Instructions, schema and every other bound are v7's.
+V7_POLICY, V7_INSTRUCTIONS = POLICY, INSTRUCTIONS
+POLICY = {**V7_POLICY, "version": "content-editorial-v8", "max_output_tokens": 32_000}
+
 
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
@@ -269,7 +275,8 @@ def without_positioning(text):
 def contract(definition):
     """Never reinterpret a saved v1 program or accept an edited execution policy.
 
-    `TYPED` says whether the contract's opportunities carry a kind (v7 and later).
+    `TYPED` says whether the contract's opportunities carry a kind (v7 and later). v7 and v8
+    differ only in their output cap.
     """
 
     def pinned(policy, instructions, schema, typed=False):
@@ -282,12 +289,13 @@ def contract(definition):
         )
 
     current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True)
+    v7 = pinned(V7_POLICY, V7_INSTRUCTIONS, MODEL_SCHEMA, typed=True)
     v2 = pinned(V2_POLICY, V2_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v3 = pinned(V3_POLICY, V3_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
-    for module in (legacy, v2, v3, v4, v5, v6, current):
+    for module in (legacy, v2, v3, v4, v5, v6, v7, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY

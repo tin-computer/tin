@@ -430,3 +430,161 @@ _HTTP = httpx.Request("POST", "https://models.invalid/v1/responses")
 )
 def test_failure_reason_is_a_fixed_label_never_provider_text(error, reason) -> None:
     assert model_failure_reason(error) == reason
+
+
+def test_defaults_are_runaway_guards_not_expected_lengths() -> None:
+    from tin_lite.model_providers import DEFAULT_TIMEOUT_SECONDS, OpenRouterModelProvider
+    from tin_lite.settings import Settings
+
+    request = ModelRequest(messages=(ModelMessage(MessageRole.USER, "hi"),))
+    assert request.max_output_tokens == 32_000
+    assert DEFAULT_TIMEOUT_SECONDS == 600
+    assert Settings.model_fields["luna_timeout_seconds"].default == 600
+    for provider_class in (OpenAIModelProvider, AnthropicModelProvider, OpenRouterModelProvider):
+        provider = provider_class(api_key="test")  # noqa: S106
+        assert provider._client.timeout == 600
+
+
+def _openai_reply(*, text, output_tokens, status=None, reason=None):
+    async def create(**parameters):
+        return SimpleNamespace(
+            output_text=text,
+            status=status,
+            incomplete_details=SimpleNamespace(reason=reason) if reason else None,
+            model="gpt-test",
+            id="resp_test",
+            usage=SimpleNamespace(
+                input_tokens=10,
+                output_tokens=output_tokens,
+                total_tokens=10 + output_tokens,
+                input_tokens_details=SimpleNamespace(cached_tokens=0),
+                output_tokens_details=SimpleNamespace(reasoning_tokens=output_tokens),
+            ),
+        )
+
+    client = _Closable()
+    client.responses = SimpleNamespace(create=create)
+    return OpenAIModelProvider(api_key="test", client=client)  # noqa: S106
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply, reason, stop, truncated",
+    [
+        # Reasoning used the whole allowance before any text; OpenAI says so.
+        (
+            dict(text="", output_tokens=200, status="incomplete", reason="max_output_tokens"),
+            "output_truncated",
+            "max_output_tokens",
+            True,
+        ),
+        # No status, but an empty answer at the cap was cut off too.
+        (dict(text="", output_tokens=200), "output_truncated", None, None),
+        # An empty answer well below the cap is a bad answer, not a cut-off one.
+        (dict(text="", output_tokens=20, status="completed"), "invalid_result", "completed", False),
+    ],
+)
+async def test_an_empty_answer_at_its_cap_is_cut_off(reply, reason, stop, truncated) -> None:
+    provider = _openai_reply(**reply)
+    with pytest.raises(ModelProviderError) as failed:
+        await provider.generate(model="gpt-test", request=_request(structured=True))
+    assert model_failure_reason(failed.value) == reason
+    observation = failed.value.observation
+    assert observation.usage.output_tokens == reply["output_tokens"]
+    assert observation.stop_reason == stop and observation.output_truncated is truncated
+
+
+@pytest.mark.asyncio
+async def test_openai_result_keeps_its_stop_signal() -> None:
+    provider = _openai_reply(text='{"answer":"ok"}', output_tokens=4, status="completed")
+    result = await provider.generate(model="gpt-test", request=_request(structured=True))
+    assert result.stop_reason == "completed" and result.output_truncated is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop, text, expected",
+    [
+        ("end_turn", '{"answer":"ok"}', None),
+        ("max_tokens", "", "output_truncated"),
+        ("max_tokens", '{"answer":"o', "output_truncated"),
+    ],
+)
+async def test_anthropic_stop_reason_is_kept_and_its_cap_names_a_cut_off(
+    stop, text, expected
+) -> None:
+    async def create(**parameters):
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text=text)] if text else [],
+            stop_reason=stop,
+            model="claude-test",
+            _request_id="req_test",
+            usage=SimpleNamespace(
+                input_tokens=8,
+                output_tokens=150,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+        )
+
+    client = _Closable()
+    client.messages = SimpleNamespace(create=create)
+    provider = AnthropicModelProvider(api_key="test", client=client)  # noqa: S106
+    if expected is None:
+        result = await provider.generate(model="claude-test", request=_request(structured=True))
+        assert result.stop_reason == "end_turn" and result.output_truncated is False
+        return
+    with pytest.raises(ModelProviderError) as failed:
+        await provider.generate(model="claude-test", request=_request(structured=True))
+    assert model_failure_reason(failed.value) == expected
+    assert failed.value.observation.stop_reason == "max_tokens"
+    assert failed.value.observation.output_truncated is True
+
+
+@pytest.mark.asyncio
+async def test_anthropic_plain_text_at_its_cap_is_still_returned() -> None:
+    """Text without a schema keeps its partial answer, as before; the result says it was cut."""
+
+    async def create(**parameters):
+        return SimpleNamespace(
+            content=[SimpleNamespace(type="text", text="A partial answer")],
+            stop_reason="max_tokens",
+            model="claude-test",
+            _request_id="req_test",
+            usage=SimpleNamespace(
+                input_tokens=8,
+                output_tokens=200,
+                cache_creation_input_tokens=0,
+                cache_read_input_tokens=0,
+            ),
+        )
+
+    client = _Closable()
+    client.messages = SimpleNamespace(create=create)
+    provider = AnthropicModelProvider(api_key="test", client=client)  # noqa: S106
+    result = await provider.generate(model="claude-test", request=_request())
+    assert result.text == "A partial answer" and result.output_truncated is True
+
+
+@pytest.mark.asyncio
+async def test_gemini_finish_reason_is_kept() -> None:
+    async def generate_content(**parameters):
+        return SimpleNamespace(
+            text="",
+            candidates=[SimpleNamespace(finish_reason=SimpleNamespace(name="MAX_TOKENS"))],
+            model_version="gemini-test",
+            response_id="gemini-response",
+            usage_metadata=SimpleNamespace(
+                prompt_token_count=5, candidates_token_count=0, total_token_count=205
+            ),
+        )
+
+    client = SimpleNamespace(
+        aio=SimpleNamespace(models=SimpleNamespace(generate_content=generate_content))
+    )
+    provider = GeminiModelProvider(api_key="test", client=client)  # noqa: S106
+    with pytest.raises(ModelProviderError) as failed:
+        await provider.generate(model="gemini-test", request=_request(structured=True))
+    assert model_failure_reason(failed.value) == "output_truncated"
+    assert failed.value.observation.stop_reason == "MAX_TOKENS"
+    assert failed.value.observation.output_truncated is True

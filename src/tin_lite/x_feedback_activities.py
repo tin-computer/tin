@@ -103,8 +103,10 @@ class XFeedbackActivities:
                 raise ApplicationError(
                     "Worker does not serve the selected revision model.", non_retryable=True
                 )
-            if definition.get("x_feedback_contract") != {
-                "policy": x_feedback.POLICY,
+            pinned = definition.get("x_feedback_contract") or {}
+            policy = x_feedback.POLICIES.get((pinned.get("policy") or {}).get("version"))
+            if policy is None or pinned != {
+                "policy": policy,
                 "instructions": x_feedback.INSTRUCTIONS,
                 "schema": x_feedback.SCHEMA,
             }:
@@ -134,7 +136,7 @@ class XFeedbackActivities:
                                 messages=(ModelMessage(role=MessageRole.USER, content=content),),
                                 output_schema=x_feedback.SCHEMA,
                                 output_schema_name="x_revision",
-                                max_output_tokens=x_feedback.POLICY["max_output_tokens"],
+                                max_output_tokens=policy["max_output_tokens"],
                             ),
                             timeout_seconds=165,
                         )
