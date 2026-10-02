@@ -49,16 +49,20 @@ and Open a pull request, which use the exact Markdown publisher below.
   PR, and changed page paths are not silently rebased. Other procedures keep every file as a
   blocking path.
 - Every repository procedure (article delivery, site health, technical fixes, code maps)
-  reads a snapshot of up to 20,000 eligible files / 100 MB, each file at most 2 MB. The
+  reads a snapshot of up to 100,000 eligible files / 250 MB, each file at most 10 MB. The
   gateway downloads the pinned commit as one tarball and checks every file against its blob
   hash in the pinned tree; paths the tarball omits or rewrites (`export-ignore`,
-  `export-subst`) are read individually. Oversized repositories fail before the download,
-  with their eligible file count and byte total alongside the bound.
-- A file over 2 MB stays out of the snapshot. Images, video, audio, fonts, archives, PDFs,
+  `export-subst`) are read individually (at most 500). Oversized repositories fail before
+  the download, with their eligible file count and byte total alongside the bound. The
+  tarball (at most 1 GB) and the verified files wait in temporary files on the switchboard;
+  only the finished compressed snapshot is held in memory before it goes to the sandbox. The
+  byte bounds are set by the switchboard VM's free memory and disk, which every run in flight
+  shares, not by the sandbox.
+- A file over 10 MB stays out of the snapshot. Images, video, audio, fonts, archives, PDFs,
   WebAssembly, source maps, minified files and scripts or stylesheets under a public or static
   folder (`public/`, `static/`, `dist/`, `build/`, `out/` and the like) can't hold what a fix
   edits, so the snapshot still counts as complete without them. Any other file left out (a
-  source or data file over 2 MB, a symbolic link, a submodule) makes it incomplete. The
+  source or data file over 10 MB, a symbolic link, a submodule) makes it incomplete. The
   read's receipt lists both, with each file's size and reason, and workflows that refuse an
   incomplete snapshot name the files.
 - A canonical receipt at `content/deliveries/{run_id}.md` links the PR. The original

@@ -497,7 +497,7 @@ SKIPPED_MEDIA = (
     {"path": "public/opensource/hero.mp4", "size": 3_378_075, "reason": "video"},
     {"path": "public/euphony/assets/main-LKI_ICf3.js", "size": 2_678_607, "reason": "built_asset"},
 )
-LARGE_SOURCE = {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"}
+LARGE_SOURCE = {"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"}
 
 
 async def test_a_snapshot_without_its_large_media_prepares_and_delivers(monkeypatch):
@@ -548,11 +548,11 @@ async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
     execution.integrations.github_open_pull_requests.assert_not_awaited()
     assert technical_fix.preparation_failed(prepared) is True
     assert technical_fix.preparation_summary(prepared) == (
-        "Tin couldn't read every file in the repository: src/data/posts.json (2.4 MB, over "
-        "the 2 MB limit for files Tin reads). No change proposed."
+        "Tin couldn't read every file in the repository: src/data/posts.json (12.4 MB, over "
+        "the 10 MB limit for files Tin reads). No change proposed."
     )
     text = rules.report(prepared, reason="repository_incomplete").decode()
-    assert "Files Tin couldn't read:" in text and "- src/data/posts.json (2.4 MB" in text
+    assert "Files Tin couldn't read:" in text and "- src/data/posts.json (12.4 MB" in text
     # Many unread files: the first few are named, with the true count of the rest.
     many = [{**LARGE_SOURCE, "path": f"src/data/part-{index}.json"} for index in range(25)]
     crowded = {
@@ -564,7 +564,7 @@ async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
     assert technical_fix.preparation_summary(crowded).endswith("; and 22 more. No change proposed.")
     assert "- and 5 more" in rules.report(crowded, reason="repository_incomplete").decode()
     # Delivery refuses the same snapshot and says which file.
-    with pytest.raises(ValueError, match=r"src/data/posts\.json \(2\.4 MB"):
+    with pytest.raises(ValueError, match=r"src/data/posts\.json \(12\.4 MB"):
         await execution._validate_batch_delivery(
             run, patch(prepared, [{"path": "login.html", "content": PAGE}], body=NOTE), prepared
         )
@@ -783,7 +783,7 @@ async def test_a_v5_batch_that_cannot_read_the_repository_fails_with_the_file(
     assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is True
     run = await f.db.get_run(f.run.id)
     assert run.status.value == "failed"
-    assert "src/data/posts.json (2.4 MB, over the 2 MB limit" in run.error_message
+    assert "src/data/posts.json (12.4 MB, over the 10 MB limit" in run.error_message
     f.integrations.github_open_pull_requests.assert_not_awaited()
     report = await f.storage.read_canonical_artifact(
         repo_id=(await f.db.get_project(run.project_id)).state_repo_id,
@@ -791,7 +791,7 @@ async def test_a_v5_batch_that_cannot_read_the_repository_fails_with_the_file(
         path=run.artifact_path,
     )
     assert "Tin couldn't read every file in the repository" in report.decode()
-    assert "- src/data/posts.json (2.4 MB" in report.decode()
+    assert "- src/data/posts.json (12.4 MB" in report.decode()
 
 
 async def test_a_v5_batch_prepares_once_and_delivers_one_checked_pr(publication_db, monkeypatch):

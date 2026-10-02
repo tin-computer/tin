@@ -384,8 +384,9 @@ class CodeStorage:
             not _is_commit_sha(commit_sha)
             or not safe_project_file_path(path)
             or type(max_bytes) is not int
-            # 64,000 for an ordinary read; the memory index may hold up to 100,000.
-            or not 1 <= max_bytes <= 100_000
+            # 64,000 for an ordinary read; the memory index may hold up to
+            # memory.MAX_MEMORY_BYTES (700,000).
+            or not 1 <= max_bytes <= 700_000
         ):
             raise ValueError("project file read requires a safe path and bounded revision")
         key = ("code_project_file", repo_id, commit_sha, path)

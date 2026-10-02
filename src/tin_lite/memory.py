@@ -5,8 +5,11 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
-MAX_MEMORY_BYTES = 100_000
-MAX_SOURCE_BYTES = 200_000
+# Both go whole into one model's context (the sources as the gardener's input, the index
+# into every later session that reads wiki/INDEX.md), so each stays within ~200k tokens
+# at ~3.5 bytes a token.
+MAX_MEMORY_BYTES = 700_000
+MAX_SOURCE_BYTES = 700_000
 OWNED_SECTION_HEADING = "## Product"
 SOURCES_HEADING = "## Sources"
 
@@ -42,9 +45,7 @@ class MemoryGardener:
         """Regenerate the index; `owned_section` is re-inserted verbatim, never regenerated."""
         if not sources:
             return splice_owned_section(_empty_index(project_name), owned_section).encode()
-        source_bytes = sum(len(source.content.encode()) for source in sources)
-        if source_bytes > MAX_SOURCE_BYTES:
-            raise ValueError(f"memory sources exceed {MAX_SOURCE_BYTES} bytes")
+        sources = newest_sources(sources)
         payload = {
             "project_name": project_name,
             "sources": [
@@ -78,6 +79,28 @@ class MemoryGardener:
         content = splice_owned_section(_output_text(response), owned_section).encode()
         validate_memory_index(content, sources=sources)
         return content
+
+
+def newest_sources(
+    sources: list[MemorySource], budget: int = MAX_SOURCE_BYTES
+) -> list[MemorySource]:
+    """The newest sources that fit one gardener call together, oldest first like `sources`.
+
+    Sources arrive oldest first. An older one that no longer fits is left for a later
+    index to forget, instead of failing the whole run; only when not even one fits does
+    gardening stop.
+    """
+    kept: list[MemorySource] = []
+    total = 0
+    for source in reversed(sources):
+        size = len(source.content.encode())
+        if total + size > budget:
+            continue
+        kept.append(source)
+        total += size
+    if not kept:
+        raise ValueError(f"memory sources exceed {budget} bytes")
+    return kept[::-1]
 
 
 def validate_memory_index(content: bytes, *, sources: list[MemorySource]) -> None:

@@ -293,3 +293,30 @@ async def test_project_memory_endpoint_reads_only_postgres_projection() -> None:
     assert response.status_code == 200
     assert response.headers["X-Tin-Read-Source"] == "postgres"
     assert response.json()["content"] == "# Test memory\n"
+
+
+def test_memory_sources_keep_the_newest_that_fit_one_gardener_call() -> None:
+    from tin_lite.memory import MAX_MEMORY_BYTES, MAX_SOURCE_BYTES, newest_sources
+
+    # Both reach one model's context whole, so each stays within ~200k tokens.
+    assert MAX_SOURCE_BYTES == MAX_MEMORY_BYTES == 700_000
+
+    def source(name: str, size: int) -> MemorySource:
+        return MemorySource(
+            run_id=uuid4(),
+            workflow_key="content.generate",
+            artifact_ref=f"code.storage://projects/test@abc/{name}.md",
+            content="x" * size,
+        )
+
+    oldest, too_large, middle, newest = (
+        source("oldest", 300_000),
+        source("too-large", 900_000),
+        source("middle", 300_000),
+        source("newest", 300_000),
+    )
+    # d711b841 failed outright at 200,000 bytes; older sources now drop out instead.
+    assert newest_sources([oldest, too_large, middle, newest]) == [middle, newest]
+    assert newest_sources([middle, newest]) == [middle, newest]
+    with pytest.raises(ValueError, match="memory sources exceed 700000 bytes"):
+        newest_sources([too_large])

@@ -31,7 +31,9 @@ not enroll workspaces or enable billing.
 
 Hosted Tin also enables `TIN_LITE_BILLING_HOSTED_DEFAULTS_ENABLED=true` together with welcome
 credits. On authenticated project discovery this enables run billing for workspaces with
-established ownership and creates missing $10 per-run/$10 monthly policies. Existing ownership, balances and limits are preserved. New paid schedules still
+established ownership and creates missing policies of $25 per run, $100 a month and $50 per
+scheduled run (`HOSTED_DEFAULT_*` in `billing.py`). Existing ownership, balances and limits are
+preserved. New paid schedules still
 need explicit standing spending authority. Supported new Codex executions use API runners
 without a per-project API allowlist; private workflow execution keeps its separate pilot gate.
 Without hosted defaults, enrollment remains an explicit operator action.

@@ -64,7 +64,7 @@ own: `product.code_map` writes the `### Code map` section and `product.deep_dive
 `ctx.files.read_section(heading)`. It returns the section from its heading line (which may
 carry the writer's parenthetical, such as `### Code map (verified 2026-09-04, ...)`) up to the
 next heading, exactly as the writer bounds it. It works when the whole index is larger than
-the 64,000-byte read limit (the index may hold up to 100,000 bytes); the section itself must
+the 64,000-byte read limit (the index may hold up to 700,000 bytes); the section itself must
 fit that limit.
 
 Some packages were written to read the Code map from `product/code-map.md`. When the project

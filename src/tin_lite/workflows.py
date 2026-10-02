@@ -804,7 +804,9 @@ async def execute_content_delivery(run_id: str) -> None:
     await workflow.execute_activity(
         "deliver_content_draft",
         run_id,
-        start_to_close_timeout=timedelta(minutes=5),
+        # A refresh downloads and rebuilds the repository snapshot (up to a 1 GB tarball and
+        # a 250 MB snapshot) on a shared-core switchboard before it commits.
+        start_to_close_timeout=timedelta(minutes=15),
         heartbeat_timeout=timedelta(seconds=20),
         retry_policy=RetryPolicy(maximum_attempts=3),
     )

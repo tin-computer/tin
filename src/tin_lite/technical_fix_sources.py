@@ -28,7 +28,7 @@ from tin_lite.organic_audit import (
     technical_findings,
 )
 from tin_lite.organic_audit_scope import audit_hosts
-from tin_lite.repository_limits import describe_omissions
+from tin_lite.repository_limits import FILE_LIMIT_TEXT, describe_omissions
 from tin_lite.technical_metadata_rules import SUPPORTED_CHECKS
 
 MAX_AFFECTED_PAGES = 5
@@ -500,8 +500,8 @@ class TechnicalFixSources:
             return []
         return [
             "A run will stop because Tin can't read every file in the repository: "
-            f"{describe_omissions(missing)}. Files over 2 MB are left out unless they are "
-            "images, video, audio, fonts, archives, PDFs or built assets."
+            f"{describe_omissions(missing)}. Files over {FILE_LIMIT_TEXT} are left out unless "
+            "they are images, video, audio, fonts, archives, PDFs or built assets."
         ]
 
     async def batch(

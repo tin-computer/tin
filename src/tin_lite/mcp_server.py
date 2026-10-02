@@ -1558,7 +1558,7 @@ def create_mcp_app(
         decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
         finding_id narrows the preview to one finding. repository_serves_site records a
         member's assertion; the run pins its own binding. repository_warnings names files
-        Tin can't read (a source file over 2 MB, a link, a submodule): a run stops on them.
+        Tin can't read (a source file over 10 MB, a link, a submodule): a run stops on them.
         """
         parsed, preparation = await technical_fix_service(project_id, "preflight_technical_fix")
         if preparation.batch_mode:

@@ -15,7 +15,8 @@ from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
 DOLLAR = NANOS_PER_DOLLAR
-# Hosted defaults (migration 047): $10 per run, $10 a month, $10 per scheduled run.
+# Earlier hosted defaults (migration 047), which projects created before October 2026 keep:
+# $10 per run, $10 a month, $10 per scheduled run.
 HOSTED = {
     "per_run_nanos": 10 * DOLLAR,
     "monthly_nanos": 10 * DOLLAR,
@@ -39,6 +40,27 @@ WARNING = (
 
 def test_weekly_articles_at_hosted_defaults_name_the_schedule_limit_and_call():
     assert spending_warnings([ARTICLE], HOSTED) == [WARNING]
+
+
+def test_weekly_articles_fit_the_new_hosted_defaults():
+    from tin_lite.billing import (
+        HOSTED_DEFAULT_MONTHLY_NANOS,
+        HOSTED_DEFAULT_PER_RUN_NANOS,
+        HOSTED_DEFAULT_SCHEDULE_MAX_NANOS,
+    )
+
+    defaults = {
+        "per_run_nanos": HOSTED_DEFAULT_PER_RUN_NANOS,
+        "monthly_nanos": HOSTED_DEFAULT_MONTHLY_NANOS,
+        "schedule_max_nanos": HOSTED_DEFAULT_SCHEDULE_MAX_NANOS,
+    }
+    # Two weekdays of articles: up to ten $5 runs a month, $50 against $100.
+    assert spending_warnings([{**ARTICLE, "runs": 10}], defaults) == []
+    # A scheduled run as large as a whole traffic system (about $22) starts.
+    traffic = {"title": "Traffic", "runs": 1, "maximum_nanos": 22 * DOLLAR + DOLLAR // 2}
+    assert (
+        spending_warnings([{**traffic, "estimate_nanos": traffic["maximum_nanos"]}], defaults) == []
+    )
 
 
 def test_schedules_that_fit_or_cost_nothing_say_nothing():
