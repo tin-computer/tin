@@ -150,11 +150,12 @@ class ProjectMemoryWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "garden_project_memory",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=3),
-                schedule_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -182,11 +183,12 @@ class ScanReportWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_scan_report",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=3),
-                schedule_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -314,27 +316,31 @@ class OrganicAuditWorkflow:
             )
             if self._stopped:
                 return
+            # Up to eight sequential model calls (two research attempts, then two drafts, blind
+            # readings and reviews), each may wait 10 minutes.
             count = await workflow.execute_activity(
                 "organic_prepare_panel",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=85),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             for index in range(count):
                 if self._stopped:
                     return
+                # An answer and its judgment, each may wait 10 minutes.
                 await workflow.execute_activity(
                     "organic_observe",
                     {"run_id": run_id, "index": index},
-                    start_to_close_timeout=timedelta(minutes=5),
+                    start_to_close_timeout=timedelta(minutes=25),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
             if self._stopped:
                 return
+            # A content review and two branded answers, each may wait 10 minutes.
             await workflow.execute_activity(
                 "organic_brand_checks",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=35),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if workflow.patched("organic-audit-ai-engines-v1"):
@@ -400,11 +406,12 @@ class VisibilityAuditWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # Three model phases (panel, answers, adjudication), each may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_visibility_audit",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
-                schedule_to_close_timeout=timedelta(minutes=30),
+                start_to_close_timeout=timedelta(minutes=35),
+                schedule_to_close_timeout=timedelta(minutes=105),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -440,11 +447,12 @@ class AnswerPageWorkflow:
     async def run(self, run_id: str) -> None:
         try:
             await wait_for_prerequisites(run_id)
+            # A draft and one repair, each may wait 10 minutes.
             await workflow.execute_activity(
                 "draft_answer_page",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
-                schedule_to_close_timeout=timedelta(minutes=20),
+                start_to_close_timeout=timedelta(minutes=25),
+                schedule_to_close_timeout=timedelta(minutes=50),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -505,11 +513,12 @@ class CharacterDesignWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # A draft, up to two repairs and a refinement, each may wait 10 minutes.
             await workflow.execute_activity(
                 "character_design",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=15),
-                schedule_to_close_timeout=timedelta(minutes=30),
+                start_to_close_timeout=timedelta(minutes=45),
+                schedule_to_close_timeout=timedelta(minutes=90),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     maximum_interval=timedelta(seconds=10),
@@ -824,11 +833,12 @@ class WeeklyBriefWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_weekly_brief",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
-                schedule_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -1169,7 +1179,9 @@ class KeywordPlanWorkflow:
             for name in ("keyword_prepare", "keyword_collect"):
                 if self._stopped:
                     return
-                await execute(name, minutes=25 if name == "keyword_collect" else 5)
+                # Screening may wait ten minutes a call: two rounds of batches, each with
+                # one retry, after research.
+                await execute(name, minutes=60 if name == "keyword_collect" else 5)
             count = await execute("keyword_sample_count")
             if workflow.patched("keyword-inspect-batch-v1"):
                 # One activity inspects the samples a few at a time. Each sample keeps its own
