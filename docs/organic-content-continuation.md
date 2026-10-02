@@ -51,9 +51,9 @@ Once the content plan exists, and beside the first draft, it also saves one week
   not reuse the parent's `content.deliver` adaptation, which belongs to the parent run.
 - The configuration is not a child run and adds nothing to the parent's spending bound.
   Each occurrence is an ordinary scheduled run with its own funding: the content.generate
-  ceiling ($5), project limits and standing schedule authority apply. Under the hosted
-  default $10 monthly limit, later occurrences in a month may not start; the Start here
-  handoff says so (see [workflow billing coverage](workflow-billing-coverage.md#weekly-articles-and-the-default-limits--september-29-2026)).
+  ceiling ($5), project limits and standing schedule authority apply. Under the earlier
+  hosted default $10 monthly limit, which projects created before October 2, 2026 keep,
+  later occurrences in a month may not start; the Start here handoff says so (see [workflow billing coverage](workflow-billing-coverage.md#weekly-articles-and-the-default-limits--september-29-2026)).
 - Saving the schedule never fails the recipe. `RESULT.md` and the system facts record it
   as succeeded, skipped (`weekly_articles_off`, `content_plan_unavailable`), blocked
   (`weekly_schedule_unsupported`, `scheduling_unavailable`) or failed

@@ -160,7 +160,7 @@ async def test_an_unreadable_repository_ends_the_run_failed_with_the_reason(
     f = await technical_fixture(publication_db, monkeypatch)
     bundle = f.integrations.github_repository_bundle.return_value
     bundle.complete = False
-    bundle.missing = ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
+    bundle.missing = ({"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},)
     assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
     assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
     saved = await prepared_result(f.db, f.run.id)
@@ -170,8 +170,8 @@ async def test_an_unreadable_repository_ends_the_run_failed_with_the_reason(
     run = await f.db.get_run(f.run.id)
     assert run.status.value == "failed"
     assert run.error_message == (
-        "Tin couldn't read every file in the repository: src/data/posts.json (2.4 MB, over "
-        "the 2 MB limit for files Tin reads). No change proposed."
+        "Tin couldn't read every file in the repository: src/data/posts.json (12.4 MB, over "
+        "the 10 MB limit for files Tin reads). No change proposed."
     )
     assert run.artifact_path == f"reports/technical-fix/{run.id}/RESULT.md"
     assert f.storage.repo.writes == 1

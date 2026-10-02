@@ -118,8 +118,9 @@ on the connection. Where supported, configuring `Idempotency-Key` or `X-Idempote
 sends a stable Tin-derived operation ID. This does not promise universal exactly-once writes.
 No live external-write acceptance is claimed by this slice.
 
-Up to four service bindings and eight total calls share the existing 60-second compute window.
-Requests are at most 16 KB; each response is bounded to 1–64 KB. Sandboxes remain networkless
+Up to four service bindings and 32 total calls share the package's compute window (at most
+900 seconds); Tin waits at most 60 seconds for any one call. Requests are at most 16 KB; each
+response is bounded to 1,024–1,000,000 bytes. Sandboxes remain networkless
 and credential-free. Only the trusted activity invokes the gateway through the existing
 protected E2B controller channel and checks the run, membership, lease and fencing tuple.
 
@@ -150,8 +151,8 @@ MCP. Procedure bindings accept the metadata, but procedure cost displays are not
 
 `max_response_bytes` is measured on the serialized JSON the step receives, and it is what
 bounds result size in practice. A Search Console row costs roughly 110–250 bytes depending on
-its dimensions, so a 64000-byte binding holds about 250–550 rows, far fewer than the provider's
-25000-row maximum. `search_analytics.read` accepts:
+its dimensions, so a 64000-byte binding holds about 250–550 rows and a 1,000,000-byte binding
+about 4,000–9,000, still under the provider's 25000-row maximum. `search_analytics.read` accepts:
 
 - `start_date`, `end_date` (YYYY-MM-DD, at most 366 days apart), `dimensions` (up to three of
   `date`, `query`, `page`, `country`, `device`, `searchAppearance`) and `row_limit` (1–25000).
@@ -182,8 +183,8 @@ call_service(service="search", step="read_panel", operation="search_analytics.re
 `request_service` returns `{status, data}`. `call_service` uses the registered operation's
 response shape. Keep stable step IDs; a completed request replays, a changed request conflicts,
 and an uncertain request blocks automatic retries even under a different step. All service
-aliases share the existing maximum of eight requests, with per-alias allowances and bounded
-responses. Procedures retain their own declared timeout; the code executor's 60-second total
+aliases share the existing maximum of 32 requests, with per-alias allowances and bounded
+responses. Procedures retain their own declared timeout; a code package's `timeout_seconds`
 window does not apply to them.
 
 Services require a fenced `default` or `isolated` procedure profile. Private procedures remain
@@ -335,10 +336,10 @@ and `keywords.overview`, ask for less (a smaller `depth`, fewer keywords) instea
 endpoints are exposed; DataForSEO's task_post endpoints, such as the OnPage crawl, stay in
 native executors.
 
-**Slow and missing data.** A Lighthouse run takes 10-30 seconds. Tin waits 22 seconds, under
-the gateway's 25-second limit, then returns `{"status": "timed_out"}` as a completed result:
+**Slow and missing data.** A Lighthouse run takes 10-30 seconds. Tin waits 55 seconds, under
+the gateway's 60-second limit, then returns `{"status": "timed_out"}` as a completed result:
 the step replays that answer, and a new step can try again. Give each strategy its own step;
-with the 60-second code window, plan for two PageSpeed runs per package run. CrUX has no
+size the package's `timeout_seconds` for the runs it makes, since each may wait up to 55 seconds. CrUX has no
 record for most small sites. `crux.query` then returns `status: "no_field_data"`, a metric
 without enough traffic is `null`, and `pagespeed.run` says `field_status: "no_field_data"`.
 Report that as missing; never show it as zero. A page Lighthouse cannot load returns

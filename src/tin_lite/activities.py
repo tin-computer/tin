@@ -88,6 +88,7 @@ from tin_lite.memory import (
     MemoryGardener,
     MemorySource,
     extract_owned_section,
+    newest_sources,
     validate_memory_index,
 )
 from tin_lite.model_usage import model_usage_scope
@@ -1272,11 +1273,14 @@ class TinActivities:
                     await _refuse_repeated_model_request(
                         self._db, conn, run_id=run_id, step="memory", label="project memory"
                     )
+                    # The newest sources that fit one gardener call; the activity records how
+                    # many older ones were left for a later index.
+                    kept = newest_sources(sources) if sources else []
                     with external_usage_scope(self._db, conn, run_id, "memory"):
                         memory_index = await self._await_with_heartbeats(
                             reporter.garden(
                                 project_name=project.name,
-                                sources=sources,
+                                sources=kept,
                                 owned_section=owned_section,
                             ),
                             details={"stage": "memory_gardener"},
@@ -1293,7 +1297,11 @@ class TinActivities:
                 await self._db.add_activity(
                     run_id=run_id,
                     event_type="memory_gardened",
-                    details={"source_count": len(sources), "changed": changed},
+                    details={
+                        "source_count": len(kept),
+                        "dropped_source_count": len(sources) - len(kept),
+                        "changed": changed,
+                    },
                     dedupe_key=f"{execution_key}:memory_gardened",
                 )
                 await self._db.complete_effect(
@@ -1303,7 +1311,7 @@ class TinActivities:
                         "canonical_commit_sha": canonical_sha,
                         "artifact_path": MEMORY_INDEX_PATH,
                         "changed": changed,
-                        "source_run_ids": [str(source.run_id) for source in sources],
+                        "source_run_ids": [str(source.run_id) for source in kept],
                     },
                 )
             except BaseException as exc:
@@ -3372,7 +3380,7 @@ class TinActivities:
                 )
                 if public_host not in {"127.0.0.1", "localhost"} and proxy_url is None:
                     raise RuntimeError("TIN_LITE_PROXY_URL is required outside local development")
-                workspace_archive: bytes | None = None
+                workspace_archive: Any = None
                 workspace_evidence: bytes | None = None
                 workspace_context: dict[str, str | int] | None = None
                 run_tools_url: str | None = None

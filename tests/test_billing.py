@@ -515,7 +515,7 @@ async def test_legacy_native_usage_and_receipt_recovery_are_charged_once(
     from tin_lite.billing_contracts import test_terms
 
     monkeypatch.setattr(
-        f.billing, "terms", lambda definition, project_id, inputs=None: test_terms(definition)
+        f.billing, "terms", lambda definition, project_id, inputs=None, **_: test_terms(definition)
     )
     run = await native_run(f)
     calls = []

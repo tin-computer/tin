@@ -181,7 +181,7 @@ project's hourly PostHog query budget.
 
 ## Paging and fitting
 
-Each binding declares `max_response_bytes` (1024–64000). Tin measures a response as its
+Each binding declares `max_response_bytes` (1024–1000000). Tin measures a response as its
 serialized JSON, the way the gateway returns it, and keeps the **leading** records that fit.
 
 List operations (both providers) return:
@@ -206,11 +206,12 @@ and eight calls read about 690; a customer record is roughly 250 bytes.
 
 ## Bounds
 
-- At most four service bindings and **eight calls** in total per run, shared across bindings.
+- At most four service bindings and **32 calls** in total per run, shared across bindings.
   A refused call counts; a call refused as a contract error does not.
-- `max_response_bytes` 1024–64000 per binding. Arguments at most 16 KB of JSON.
+- `max_response_bytes` 1024–1000000 per binding. Arguments at most 16 KB of JSON.
 - Tin reads at most 8 MB from Stripe or PostHog for one call before projecting it.
-- Code packages keep the 60-second compute window; procedures keep their declared timeout.
+- Code packages keep their declared compute window (`timeout_seconds`, at most 900) and Tin
+  waits at most 60 seconds for one call; procedures keep their declared timeout.
 - Stable step IDs replay completed responses after a restart; a changed request under the
   same step conflicts. See [recovery](project-api-connections.md#recovery-and-costs).
 

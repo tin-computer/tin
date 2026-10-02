@@ -782,11 +782,20 @@ def test_catalog_rejects_procedure_executor_without_source_package() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("project_revision", [None, "a" * 40])
+# A repository snapshot arrives as bytes or as its temporary file, which streams to the
+# sandbox from its start instead of being read into memory.
+@pytest.mark.parametrize(("project_revision", "streamed"), [(None, False), ("a" * 40, True)])
 async def test_procedure_runtime_returns_bounded_result_without_provider_keys(
     monkeypatch: pytest.MonkeyPatch,
     project_revision,
+    streamed,
 ) -> None:
+    import tempfile
+
+    archive = b"repository-archive"
+    if streamed:
+        archive = tempfile.TemporaryFile()
+        archive.write(b"repository-archive")  # Left at its end, as a finished build leaves it.
     payload = base64.b64encode(
         json.dumps({"summary": "Report ready.", "message": "Open the report."}).encode()
     ).decode()
@@ -874,7 +883,7 @@ async def test_procedure_runtime_returns_bounded_result_without_provider_keys(
             output_max_bytes=250_000,
             project_revision=project_revision,
             result_kind="github.pull_request",
-            workspace_archive=b"repository-archive",
+            workspace_archive=archive,
             workspace_evidence=b'{"pull_requests":[],"version":1}',
         ),
     )
@@ -884,8 +893,14 @@ async def test_procedure_runtime_returns_bounded_result_without_provider_keys(
     context_path, context_bytes = sandbox.files.writes[0]
     assert context_path == "/home/user/.tin-lite/procedure-context.json"
     assert json.loads(context_bytes) == {"workflow_key": "research.deep_dive"}
-    assert sandbox.files.writes[1:] == [
-        ("/home/user/.tin-lite/procedure-workspace.tar.gz", b"repository-archive"),
+    uploaded = sandbox.files.writes[1]
+    assert uploaded[0] == "/home/user/.tin-lite/procedure-workspace.tar.gz"
+    if streamed:
+        assert uploaded[1] is archive and archive.read() == b"repository-archive"
+        archive.close()
+    else:
+        assert uploaded[1] == b"repository-archive"
+    assert sandbox.files.writes[2:] == [
         (
             "/home/user/.tin-lite/open-pull-requests.json",
             b'{"pull_requests":[],"version":1}',

@@ -497,8 +497,8 @@ async def test_runtime_revokes_freezes_captures_then_kills_even_on_capture_error
         async def run(self, command, **kwargs):
             if command.endswith("isolated-procedure check"):
                 return SimpleNamespace(stdout="TIN_ISOLATION_READY_V1")
-            if command.endswith("codex_api_config.py --check-v4"):
-                return SimpleNamespace(stdout="TIN_CODEX_API_READY_V4")
+            if command.endswith("codex_api_config.py --check-v5"):
+                return SimpleNamespace(stdout="TIN_CODEX_API_READY_V5")
             if command == "/opt/tin-lite/run-procedure":
                 return SimpleNamespace(wait=AsyncMock(side_effect=RuntimeError("original failure")))
             if command.endswith("isolated-procedure freeze"):

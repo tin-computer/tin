@@ -95,6 +95,15 @@ async def test_responses_captured_before_invalid_output_and_never_rebought(publi
         assert item["outcome"] == "response_received"
         assert item["provider_reported_cost_usd"] is None
         assert "private prompt" not in json.dumps(view)
+        # The receipt keeps the call's cap and the Responses API's stop signal.
+        [record] = [
+            json.loads(row["result"])
+            for row in await db.pool.fetch(
+                "SELECT result FROM effect_receipts WHERE operation='external_usage_v1'"
+            )
+        ]
+        assert record["max_output_tokens"] == 16_384
+        assert record["stop_reason"] == "completed" and record["output_truncated"] is False
     finally:
         await client.close()
 
@@ -107,7 +116,15 @@ async def test_missing_cancelled_and_malformed_observations_stay_unknown(publica
             await begin_observation("openai", "model", "responses")
         with external_usage_scope(db, conn, run.id, "malformed"):
             observed = await begin_observation("openai", "model", "responses")
-            await observe_response(observed, {"usage": [1], "output": {"bad": True}})
+            await observe_response(
+                observed,
+                {
+                    "usage": [1],
+                    "output": {"bad": True},
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                },
+            )
         for stage, task in [
             ("bad-result", {"cost": 0.42}),
             ("missing-cost", {}),
@@ -122,6 +139,17 @@ async def test_missing_cancelled_and_malformed_observations_stay_unknown(publica
     assert view["inclusive_totals"]["total_cost_usd"] is None
     assert view["own"]["observations"][0]["outcome"] == "unconfirmed"
     assert all(item["usage"]["total_tokens"] is None for item in view["own"]["observations"])
+    records = {
+        json.loads(row["result"])["step"]: json.loads(row["result"])
+        for row in await db.pool.fetch(
+            "SELECT result FROM effect_receipts WHERE operation='external_usage_v1'"
+        )
+    }
+    # A cut-off response says so even when its usage is unreadable.
+    assert records["malformed"]["stop_reason"] == "max_output_tokens"
+    assert records["malformed"]["output_truncated"] is True
+    assert records["cancelled"]["max_output_tokens"] == 16_384
+    assert "max_output_tokens" not in records["bad-result"]  # Tool receipts are unchanged.
 
 
 async def test_sandbox_observation_borrows_connection_and_does_not_extend_cleanup(publication_db):

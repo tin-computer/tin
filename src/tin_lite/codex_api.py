@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
 import secrets
 from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
@@ -28,6 +29,68 @@ class CodexAttemptStopped(SideEffectConflictError):
     """A paid attempt has no completed checkpoint; automatic repurchase is forbidden."""
 
 
+# Relay rejection causes are Tin's own snake_case codes (e.g. context_bound,
+# request_too_large, contract_mismatch, request_limit, upstream_rejected), never
+# provider or request text.
+_REJECTION_REASON = re.compile(r"[a-z][a-z0-9_]{0,47}")
+# Fallback codes for a rejection raised without a named reason.
+REJECTION_STATUS_REASONS = {
+    400: "invalid_request",
+    403: "not_authorized",
+    404: "unsupported_operation",
+    409: "conflict",
+    413: "context_bound",
+    415: "invalid_request",
+    422: "contract_rejected",
+    429: "rate_limited",
+    502: "upstream_failed",
+    504: "relay_timeout",
+}
+
+
+# Plain causes for rejections a founder should read as such; others name the code.
+REJECTION_MESSAGES = {
+    "rate_limited": "OpenAI rate-limited this run's model calls.",
+    "upstream_failed": "OpenAI failed one of this run's model requests.",
+}
+
+
+def is_rejection_reason(value):
+    return isinstance(value, str) and _REJECTION_REASON.fullmatch(value) is not None
+
+
+async def record_relay_rejection(
+    pool, run_id, grant, *, status, reason, operation, upstream_status=None
+):
+    """Name why the relay refused this attempt's request on its receipt, in Postgres.
+
+    Additive: only the running attempt holding this grant is updated, and only Tin's own
+    code, HTTP statuses and the operation name are stored. The first rejection wins: the
+    controller does not retry, so later refusals are consequences, not the cause.
+    """
+    if not is_rejection_reason(reason):
+        reason = REJECTION_STATUS_REASONS.get(status, "rejected")
+    facts = {
+        "status": int(status),
+        "reason": reason,
+        "operation": operation if operation in {"responses", "responses/compact"} else "other",
+        "at": datetime.now(UTC).isoformat(),
+    }
+    if type(upstream_status) is int:
+        facts["upstream_status"] = upstream_status
+    await pool.execute(
+        """UPDATE effect_receipts
+           SET result=result || jsonb_build_object('relay_rejection', $3::jsonb)
+           WHERE operation=$4 AND status='started' AND result->>'run_id'=$1
+             AND result->>'grant_sha256'=$2 AND result->>'outcome'='running'
+             AND NOT result ? 'relay_rejection'""",
+        str(run_id),
+        token_hash(grant),
+        json.dumps(facts),
+        ATTEMPT,
+    )
+
+
 def attempt_failure(record):
     reason = STOP_MESSAGES.get(record.get("stop_reason"))
     if reason is None and record.get("failure_type") == "TimeoutError":
@@ -38,6 +101,14 @@ def attempt_failure(record):
             "timed_out": "Codex execution timed out.",
             "failed": "Codex execution failed before a completed result was recovered.",
         }.get(record.get("outcome"), "Codex execution ended without a confirmed result.")
+    rejection = record.get("relay_rejection")
+    if isinstance(rejection, dict) and is_rejection_reason(rejection.get("reason")):
+        # Allowlisted code and HTTP status only, so the run's failure names its cause.
+        reason += " " + REJECTION_MESSAGES.get(
+            rejection["reason"],
+            f"The model relay rejected a request ({rejection['reason']}, "
+            f"HTTP {int(rejection.get('status') or 0)}).",
+        )
     return CodexAttemptStopped(reason + " The paid attempt will not be repeated automatically.")
 
 
@@ -100,8 +171,8 @@ DIAGRAM_CONTRACT = {
 }
 # Ordinary, funded procedures use the model's per-response/context capacity.
 # Session spend and the existing sandbox timeout bound the job, not lifetime tokens.
-# Keep v1-v3 byte-for-byte intact for admitted runs, included work and other profiles.
-SESSION_CONTRACT = {
+# Keep v1-v4 byte-for-byte intact for admitted runs: a pin is never reinterpreted.
+SESSION_CONTRACT_V4 = {
     "mode": MODE,
     "model": MODEL,
     "protocol": "tin-codex-api-v4",
@@ -110,20 +181,55 @@ SESSION_CONTRACT = {
     "context_window": 1_050_000,
     "auto_compact_tokens": 922_000,
 }
+# v5 keeps v4's per-response output and request size but bounds the model's context:
+# the controller declares a 256,000-token window and compacts from 200,000 tokens, so an
+# ordinary request stays below the 272,000-token long-context price band.
+SESSION_CONTRACT = {
+    **SESSION_CONTRACT_V4,
+    "protocol": "tin-codex-api-v5",
+    "context_window": 256_000,
+    "auto_compact_tokens": 200_000,
+}
+# The same v5 shape for Codex work that is not session-funded: included (Tin-funded)
+# onboarding and its setup children, child budgets, Studio, diagrams/video, design and
+# interactive tasks. Their funding is unchanged, so they keep request and lifetime-token
+# runaway stops, set at four times the most seen on v3 (64 requests, 2.04M tokens).
+# Diagrams need no separate image allowance: every v5 request may carry 8 MiB.
+PROCEDURE_CONTRACT_V5 = {
+    **SESSION_CONTRACT,
+    "max_requests": 256,
+    "max_observed_tokens": 8_000_000,
+}
+DIAGRAM_VALIDATORS = frozenset(
+    {
+        "tin-diagram.reviewed.v1",
+        "tin-diagram.branded.v1",
+        "tin-diagram.branded.v2",
+        "demo-video.v1",
+    }
+)
+SESSION_CONTRACTS = (SESSION_CONTRACT_V4, SESSION_CONTRACT)
+# Contracts whose relay lets one response search, open and find in pages.
+MULTI_TOOL_CONTRACTS = (
+    PROCEDURE_CONTRACT,
+    DIAGRAM_CONTRACT,
+    *SESSION_CONTRACTS,
+    PROCEDURE_CONTRACT_V5,
+)
 
 
 def procedure_contract(validator=None):
-    return (
-        DIAGRAM_CONTRACT
-        if validator
-        in {
-            "tin-diagram.reviewed.v1",
-            "tin-diagram.branded.v1",
-            "tin-diagram.branded.v2",
-            "demo-video.v1",
-        }
-        else PROCEDURE_CONTRACT
-    )
+    """The contract a new admission without session funding pins.
+
+    Diagrams used to need DIAGRAM_CONTRACT's larger image allowance; v5 requests all
+    carry 8 MiB. Already pinned v1-v4 contracts are never upgraded by this function.
+    """
+    del validator
+    return PROCEDURE_CONTRACT_V5
+
+
+def is_session_contract(value):
+    return value in SESSION_CONTRACTS
 
 
 def api_enabled(settings, project_id):
@@ -144,7 +250,7 @@ def supports_api_definition(definition):
 
 
 def is_procedure_contract(value):
-    return value in (PROCEDURE_CONTRACT_V2, PROCEDURE_CONTRACT, DIAGRAM_CONTRACT, SESSION_CONTRACT)
+    return value in (PROCEDURE_CONTRACT_V2, *MULTI_TOOL_CONTRACTS)
 
 
 def is_api_contract(value):

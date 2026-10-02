@@ -651,7 +651,8 @@ def test_versions_on_main_are_unchanged():
 
 
 # The versions #267 introduced, none of them on main yet.
-RELEASED = {"content.generate": "1.9.0", "content.plan": "0.8.0", "content.refresh": "1.1.0"}
+# content.plan 0.9.0 (content-editorial-v8) raised 0.8.0's output cap and changed nothing else.
+RELEASED = {"content.generate": "1.9.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

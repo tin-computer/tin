@@ -60,7 +60,8 @@ class Settings(BaseSettings):
     posthog_host: str = Field(default="https://us.i.posthog.com", alias="TIN_LITE_POSTHOG_HOST")
     luna_model: str = Field(default="gpt-6-luna", alias="TIN_LITE_LUNA_MODEL")
     luna_base_url: str = Field(default="https://api.openai.com/v1", alias="TIN_LITE_LUNA_BASE_URL")
-    luna_timeout_seconds: float = Field(default=90, alias="TIN_LITE_LUNA_TIMEOUT")
+    # How long a model client waits for one response unless a caller sets its own wait.
+    luna_timeout_seconds: float = Field(default=600, alias="TIN_LITE_LUNA_TIMEOUT")
     anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     anthropic_workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
@@ -234,7 +235,7 @@ class Settings(BaseSettings):
     proxy_grant_dir: Path | None = Field(default=None, alias="TIN_LITE_PROXY_GRANT_DIR")
 
     egress_allow_hosts_raw: str = Field(default="", alias="TIN_LITE_EGRESS_ALLOW_HOSTS")
-    sandbox_timeout_seconds: int = Field(default=900, alias="TIN_LITE_SANDBOX_TIMEOUT")
+    sandbox_timeout_seconds: int = Field(default=1800, alias="TIN_LITE_SANDBOX_TIMEOUT")
 
     @model_validator(mode="after")
     def secure_forward_proxy(self) -> Settings:
@@ -244,8 +245,8 @@ class Settings(BaseSettings):
             validate_proxy_url(self.forward_proxy_url.get_secret_value())
             if self.proxy_grant_dir is None or not self.proxy_grant_dir.is_absolute():
                 raise ValueError("TIN_LITE_PROXY_GRANT_DIR must be an absolute directory path")
-            if not 1 <= self.sandbox_timeout_seconds <= 3600:
-                raise ValueError("proxied sandboxes require a timeout between 1 and 3600 seconds")
+            if not 1 <= self.sandbox_timeout_seconds <= 7200:
+                raise ValueError("proxied sandboxes require a timeout between 1 and 7200 seconds")
         return self
 
     @field_validator("app_url", "legacy_public_url")

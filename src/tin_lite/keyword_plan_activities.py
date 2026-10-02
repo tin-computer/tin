@@ -20,6 +20,7 @@ from tin_lite import keyword_plan_v4 as v4
 from tin_lite import keyword_plan_v5 as v5
 from tin_lite import keyword_plan_v6 as v6
 from tin_lite import keyword_plan_v7 as v7
+from tin_lite import keyword_plan_v8 as v8
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -58,17 +59,20 @@ from tin_lite.workflow_evidence import integration_inventory
 
 # How long the worker waits for one model response, by stage. Kept outside the pinned policy:
 # waiting longer never changes the request. Screening and review return one verdict for every
-# candidate, so they can run for minutes; seed proposals keep the provider's default wait.
-MODEL_TIMEOUT_SECONDS = {"triage": 240, "review": 420}
+# candidate, so they can run for minutes; seed proposals keep their 120-second bound below.
+# A v8 screening retry may write up to 64,000 tokens, so screening waits as long as the
+# provider's default (600 seconds); v2-v7 send the same requests and only wait longer.
+MODEL_TIMEOUT_SECONDS = {"triage": 600, "review": 420}
 STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review": "keyword review"}
 # How many provider lookups one activity keeps in flight. Each holds one database connection
 # for its receipt lock (the pool allows ten), and DataForSEO's live endpoints accept far more.
 LOOKUP_CONCURRENCY = 4
 # Screening batches in flight (v7). Each holds a connection for the whole model call, and
-# two rounds of three, each with a retry, still finish inside keyword_collect's 25 minutes.
+# two rounds of three, each with a retry at the full wait (2 x 2 x 630 seconds, 42 minutes),
+# still finish inside keyword_collect's 60 minutes.
 TRIAGE_CONCURRENCY = 3
 # The lowest ceiling any supported policy accepts; the pinned policy may require more.
-MINIMUM_CEILING = Decimal(v7.POLICY["minimum_ceiling_usd"])
+MINIMUM_CEILING = Decimal(v8.POLICY["minimum_ceiling_usd"])
 
 CONTRACTS = {
     POLICY["version"]: (POLICY, INSTRUCTIONS, SCHEMAS),
@@ -78,11 +82,17 @@ CONTRACTS = {
     v5.POLICY["version"]: (v5.POLICY, v5.INSTRUCTIONS, v5.SCHEMAS),
     v6.POLICY["version"]: (v6.POLICY, v6.INSTRUCTIONS, v6.SCHEMAS),
     v7.POLICY["version"]: (v7.POLICY, v7.INSTRUCTIONS, v7.SCHEMAS),
+    v8.POLICY["version"]: (v8.POLICY, v8.INSTRUCTIONS, v8.SCHEMAS),
 }
 # Research and seed contracts shared by later policies; v6 only resizes reservations.
-BUYER_JOB_SEEDS = {v5.POLICY["version"], v6.POLICY["version"], v7.POLICY["version"]}
+BUYER_JOB_SEEDS = {
+    v5.POLICY["version"],
+    v6.POLICY["version"],
+    v7.POLICY["version"],
+    v8.POLICY["version"],
+}
 # Policies that screen in batches and save their research before screening.
-BATCHED_TRIAGE = {v7.POLICY["version"]}
+BATCHED_TRIAGE = {v7.POLICY["version"], v8.POLICY["version"]}
 
 
 def modern_scope(scope):
@@ -93,6 +103,7 @@ def modern_scope(scope):
         v5.POLICY["version"],
         v6.POLICY["version"],
         v7.POLICY["version"],
+        v8.POLICY["version"],
     }
 
 

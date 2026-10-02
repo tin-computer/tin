@@ -20,7 +20,7 @@ from test_rollouts import base_values
 from tin_lite.codex_api import (
     ATTEMPT,
     CONTRACT,
-    PROCEDURE_CONTRACT,
+    PROCEDURE_CONTRACT_V5,
     USAGE,
     attempt_key,
     pinned_contract,
@@ -73,6 +73,7 @@ def result_event(**updates):
 async def setup_relay(db, handler=None):
     _, _, run, _ = await activity_fixture(db)
     record = {
+        "run_id": str(run.id),
         "outcome": "running",
         "contract": CONTRACT,
         "grant_sha256": token_hash(GRANT),
@@ -377,7 +378,7 @@ async def test_pinned_auth_survives_flags_and_ambiguous_attempt_not_restarted(pu
         key = f"{run.id}:procedure_sandbox_create"
         await db.start_effect(conn, execution_key=key, operation="procedure_sandbox_create")
         await db.complete_effect(conn, execution_key=key, result={"codex_auth": selected})
-        assert selected == PROCEDURE_CONTRACT  # Unpinned isolated runs now select v3.
+        assert selected == PROCEDURE_CONTRACT_V5  # Unpinned isolated runs now select v5.
         assert await pinned_contract(db, run.id, conn=conn) == selected
         input = SandboxProcedureInput(
             **{**base_values()},

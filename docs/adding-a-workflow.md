@@ -191,8 +191,9 @@ also isn't an archival command for an already-published workflow.
 
 ## Know the current boundary
 
-The code package runtime is Python 3.12.8 with the standard library, up to 60 seconds and
-one declared text artifact. It supports up to eight managed model calls across four routes;
+The code package runtime is Python 3.12.8 with the standard library, up to 900 seconds and
+one declared text artifact of up to 1,000,000 bytes. It supports up to 32 managed model calls
+across four routes; keep a run's model input under 700,000 bytes (about 200k tokens);
 only the registered OpenAI Luna and Astra routes are currently admitted. There is no `pip`
 installation, raw credential injection or direct network access. Use declared
 [project service bindings](project-api-connections.md) for supported external requests; for

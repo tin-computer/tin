@@ -66,15 +66,23 @@ def safe_path(name):
 
 
 # The most a caller reads out of one snapshot into memory.
-ARCHIVE_MAX_BYTES = 30_000_000
-ARCHIVE_MAX_FILES = 5000
+ARCHIVE_MAX_BYTES = 100_000_000
+ARCHIVE_MAX_FILES = 20_000
+
+
+def _snapshot_reader(archive):
+    # repository_limits.snapshot_reader; this module also runs alone in the sandbox image.
+    if isinstance(archive, (bytes, bytearray, memoryview)):
+        return io.BytesIO(archive)
+    archive.seek(0)
+    return archive
 
 
 def archive_files(archive, *, select=None):
     """The snapshot's files by path. `select(path, size)` keeps only the files a caller reads,
     and the read bounds apply to those; every member is still checked."""
     files, total, seen = {}, 0, set()
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
+    with tarfile.open(fileobj=_snapshot_reader(archive), mode="r:gz") as source:
         for member in source:
             if member.isdir():
                 continue

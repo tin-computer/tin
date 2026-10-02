@@ -130,9 +130,17 @@ def test_v7_changes_only_screening_and_leaves_earlier_pins_alone():
     assert v2.POLICY["triage_reservation_usd"] == "0.50"
     assert v6.POLICY["triage_reservation_usd"] == "0.10"
     assert v6.POLICY["version"] == "keyword-plan-v6"
+    # v7 is deployed and immutable; new definitions pin v8 (catalog 0.8.0) instead.
+    assert v7.POLICY["version"] == "keyword-plan-v7"
+    assert (v7.POLICY["triage_output_tokens"], v7.POLICY["triage_retry_output_tokens"]) == (
+        8000,
+        16000,
+    )
+    assert v7.POLICY["triage_reservation_usd"] == v7.POLICY["triage_retry_reservation_usd"]
+    assert v7.POLICY["triage_reservation_usd"] == "0.02"
     keyword = next(spec for spec in BUILTIN_WORKFLOWS if spec.key == "organic.keyword_plan")
-    assert keyword.definition["keyword_policy"] == v7.POLICY
-    assert keyword.version_label == "0.7.1"
+    assert keyword.definition["keyword_policy"]["version"] == "keyword-plan-v8"
+    assert keyword.version_label == "0.8.0"
 
 
 def test_v7_caps_stay_inside_the_route_and_reservations_cover_their_bounds():
@@ -210,11 +218,11 @@ def test_the_largest_possible_batch_fits_the_request_bound():
 
 async def test_batches_merge_to_exactly_what_one_call_returns():
     results = {}
-    for version in ("v6", "current"):
+    for version in ("v6", "v7"):
         activities, db, _storage, _provider, _model, calls = await collected(version)
         await activities.keyword_collect(str(db.run.id))
         results[version] = (await activities._result(str(db.run.id), "collection"), calls)
-    (single, single_calls), (batched, batched_calls) = results["v6"], results["current"]
+    (single, single_calls), (batched, batched_calls) = results["v6"], results["v7"]
     assert len(single["candidates"]) > 2 * v7.POLICY["triage_batch_size"]
     assert len(single_calls) == 1 and single_calls[0][0] == 5000
     assert len(batched_calls) == -(-len(single["candidates"]) // 50)
@@ -241,7 +249,7 @@ def one_batch_at_a_time(monkeypatch):
 
 async def test_a_cut_off_batch_is_asked_once_more_with_twice_the_cap(one_batch_at_a_time):
     activities, db, _storage, _provider, _model, calls = await collected(
-        "current", cut=lambda request, count: count == 1
+        "v7", cut=lambda request, count: count == 1
     )
     run_id = str(db.run.id)
     await activities.keyword_collect(run_id)
@@ -266,7 +274,7 @@ async def test_a_batch_cut_off_twice_fails_named_and_keeps_paid_research(one_bat
     state = {"cut": True}
     activities, db, _storage, provider, _model, calls = await collected(
         # The second batch's first attempt and its retry both run out of output.
-        "current",
+        "v7",
         cut=lambda request, count: state["cut"] and count in {2, 3},
     )
     run_id = str(db.run.id)
@@ -308,7 +316,7 @@ async def test_a_batch_cut_off_twice_fails_named_and_keeps_paid_research(one_bat
 
 
 async def test_a_refused_retry_is_named_as_a_spending_stop(one_batch_at_a_time):
-    activities, db, *_rest, calls = await collected("current", cut=lambda request, count: True)
+    activities, db, *_rest, calls = await collected("v7", cut=lambda request, count: True)
     run_id = str(db.run.id)
     reserve = activities._reserve
 

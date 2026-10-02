@@ -14,15 +14,20 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite import style_capture as style
 from tin_lite.capture_revisions import approved_style_artifact, contract
-from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
+from tin_lite.model_providers import (
+    DEFAULT_TIMEOUT_SECONDS,
+    MessageRole,
+    ModelMessage,
+    ModelRequest,
+)
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
 from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
-# The provider's own wait for the style model, just inside the step's 180-second budget. Without
-# it the client stops at its 90-second default, before a 6,000-token guide can finish.
-MODEL_TIMEOUT_SECONDS = 165
+# The provider's own wait for the style model: the client default, long enough for its
+# 32,000-token cap. The step's budget is a little longer so the provider times out first.
+MODEL_TIMEOUT_SECONDS = int(DEFAULT_TIMEOUT_SECONDS)
 
 
 class StyleCaptureActivities:
@@ -71,8 +76,11 @@ class StyleCaptureActivities:
                         path=f"workflows/{style.KEY}.json",
                     )
                 )
-                if definition.get("model_route") != style.route_definition() or (
-                    definition.get("style_policy") != style.POLICY
+                policy = style.POLICIES.get((definition.get("style_policy") or {}).get("version"))
+                if (
+                    definition.get("model_route") != style.route_definition()
+                    or policy is None
+                    or definition.get("style_policy") != policy
                 ):
                     raise ValueError("This worker does not serve the selected style contract.")
                 async with conn.transaction():
@@ -96,6 +104,7 @@ class StyleCaptureActivities:
                             "existing_guide": guide,
                             "instructions": definition["style_instructions"],
                             "schema": definition["style_schema"],
+                            "max_output_tokens": policy["max_output_tokens"],
                         },
                     )
             await self.progress(run.id, "read", 1, "Selected writing samples are ready")
@@ -130,7 +139,7 @@ class StyleCaptureActivities:
             await self.db.start_effect(conn, execution_key=key, operation=style.KEY)
             try:
                 with model_usage_scope(run_id=run.id, step="style:capture", conn=conn):
-                    async with asyncio.timeout(180):
+                    async with asyncio.timeout(MODEL_TIMEOUT_SECONDS + 15):
                         result = await self.router.generate(
                             style.ROUTE.key,
                             ModelRequest(
@@ -149,7 +158,10 @@ class StyleCaptureActivities:
                                 ),
                                 output_schema=context["schema"],
                                 output_schema_name="writing_style",
-                                max_output_tokens=style.POLICY["max_output_tokens"],
+                                # Contexts saved before version 2 were pinned to 6,000.
+                                max_output_tokens=context.get(
+                                    "max_output_tokens", style.POLICY_V1["max_output_tokens"]
+                                ),
                             ),
                             timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )

@@ -93,9 +93,10 @@ def test_v6_reservations_cover_list_prices_and_token_bounds():
 def test_v6_worst_run_fits_its_floor_and_the_catalog_defaults():
     assert worst_run(v6.POLICY) == Decimal("1.65") <= Decimal(v6.POLICY["minimum_ceiling_usd"])
     keyword = SPECS["organic.keyword_plan"]
-    # v7 (batched screening) succeeded v6 as the pinned default and keeps its $2 floor.
+    # v7 (batched screening) and then v8 (larger screening caps) succeeded v6 as the pinned
+    # default and keep its $2 floor.
     assert keyword.definition["keyword_policy"]["minimum_ceiling_usd"] == "2"
-    assert keyword.version_label == "0.7.1"
+    assert keyword.version_label == "0.8.0"
     limit = keyword.input_schema["properties"]["max_cost_usd"]
     assert limit["minimum"] == limit["default"] == 2
     system = organic_system.INPUT_SCHEMA["properties"]["keyword_max_cost_usd"]

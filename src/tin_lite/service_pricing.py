@@ -77,8 +77,9 @@ AUDIT_MAXIMUM_USD = 2
 # steps spent unusually much stops its later paid steps rather than exceeding the pool.
 TRAFFIC_SYSTEM_POOL_USD = 10
 # The content plan's share inside the organic parent. Its one model call reads at most
-# 240,000 bytes of evidence plus instructions and schema and writes at most 16,000 tokens:
-# under $0.10 even at long-context rates. Standalone plans keep the $2 native ceiling.
+# 240,000 bytes of evidence plus instructions and schema (about 254,000 tokens) and writes at
+# most 32,000 tokens (content-editorial-v8; v7 wrote 16,000): $0.088 even at long-context
+# rates, under $0.10. Standalone plans keep the $2 native ceiling.
 CONTENT_PLAN_SHARE_USD = 1
 
 

@@ -113,6 +113,9 @@ async def begin_observation(provider, category, endpoint, *, request=None):
         "usage": None,
         "reported_cost_usd": None,
     }
+    if category == "model":
+        # The call's output cap, so a response that stopped at it is visible.
+        record["max_output_tokens"] = count((request or {}).get("max_output_tokens", 16_384))
     billing = getattr(database, "billing", None)
     if billing is not None:
         from tin_lite.service_pricing import amount_nanos, model_maximum
@@ -169,10 +172,20 @@ async def observe_response(observation, response):
     inputs = object_value(raw.get("input_tokens_details"))
     outputs = object_value(raw.get("output_tokens_details"))
     tools = response.get("output")
+    status = response.get("status")
+    incomplete = object_value(response.get("incomplete_details")).get("reason")
+    stop = incomplete if status == "incomplete" else status
     record = {
         **record,
         "model": str(response.get("model") or "")[:150] or None,
         "service_tier": str(response.get("service_tier") or "")[:40] or None,
+        # The Responses API's own stop signal: its status, or why it is incomplete.
+        "stop_reason": stop if isinstance(stop, str) and 0 < len(stop) <= 64 else None,
+        "output_truncated": (
+            status == "incomplete" and incomplete == "max_output_tokens"
+            if isinstance(status, str)
+            else None
+        ),
         "outcome": "response_received",
         "observed_at": datetime.now(UTC).isoformat(),
         "usage": {

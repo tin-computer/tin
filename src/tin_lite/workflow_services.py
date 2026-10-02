@@ -21,6 +21,12 @@ SERVICE_CAPABILITIES = {
 }
 
 
+# Runaway guards, well above real use. Validation only: a binding accepted under the older,
+# smaller maximums keeps validating unchanged.
+MAX_SERVICE_CALLS = 32
+MAX_SERVICE_RESPONSE_BYTES = 1_000_000
+
+
 @dataclass(frozen=True)
 class ServiceBinding:
     name: str
@@ -76,7 +82,10 @@ def service_bindings(value, requirements, *, allow_optional=False):
             )
         ):
             raise ValueError("service needs explicit supported required integration capabilities")
-        for field, low, high in (("max_calls", 1, 8), ("max_response_bytes", 1024, 64_000)):
+        for field, low, high in (
+            ("max_calls", 1, MAX_SERVICE_CALLS),
+            ("max_response_bytes", 1024, MAX_SERVICE_RESPONSE_BYTES),
+        ):
             if type(entry[field]) is not int or not low <= entry[field] <= high:
                 raise ValueError(f"service {field} must be {low}-{high}")
         result.append(
@@ -91,9 +100,10 @@ def service_bindings(value, requirements, *, allow_optional=False):
     if (
         {s.provider_key for s in result} != set(parsed)
         or len({s.provider_key for s in result}) != len(result)
-        or sum(s.max_calls for s in result) > 8
+        or sum(s.max_calls for s in result) > MAX_SERVICE_CALLS
     ):
         raise ValueError(
-            "each dependency needs one binding; at most eight service calls are allowed"
+            "each dependency needs one binding; "
+            f"at most {MAX_SERVICE_CALLS} service calls are allowed"
         )
     return tuple(result)

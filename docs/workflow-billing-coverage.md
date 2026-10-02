@@ -194,6 +194,36 @@ attempts and retries each reserve $0.02. Six batches and six retries ($0.24) rep
 single $0.10 screening reservation, so a full run reserves at most $1.79, still under the $2
 floor. Seeds, review, lookups and samples keep v6's reservations.
 
+Keyword policy v8 (`keyword_plan_v8.py`, October 2, 2026) keeps v7's batches and raises only
+the screening caps, to 32,000 output tokens and 64,000 for the retry. The recorder counts a
+request's bytes plus 4,096 as input tokens, so an 80,000-byte request is 84,096 tokens
+(standard band). The largest first attempt costs 84,096 x $0.125/M + 32,000 x $0.50/M =
+$0.0265 and reserves $0.03; the largest retry costs 84,096 x $0.125/M + 64,000 x $0.50/M =
+$0.0425 and reserves $0.045. Six batches and six retries reserve $0.45, so a full run reserves
+at most seeds $0.10 + review $0.15 + screening $0.45 + 22 lookups $1.10 + 40 samples $0.20 =
+$2.00, which the $2 floor covers exactly (a reservation is refused only when it would pass
+the ceiling). Real screening calls use a few thousand tokens and are charged for those.
+
+Output caps are runaway guards, not expected lengths (October 2, 2026). A model step's cap
+only decides when a long answer fails; billing charges the tokens it used. New definitions
+raise these caps to 32,000 tokens, and runs pinned earlier keep theirs:
+
+- `content.plan` 0.9.0 (`content-editorial-v8`, 16,000 before): at most $0.088 a plan.
+- `style.capture` 1.3.0 (policy 2, 6,000 before), `social.x_style` 1.2.0 (policy 3, 6,000
+  before) and `social.x_revise` 1.2.0 (`x-feedback-v2`, 8,000 before): one GPT-6 Sol call each,
+  at most $0.32 of output against a $2 ceiling.
+- `growth.onboarding_plan` (every step; 6,000-16,000 before), pinned by its contract digest.
+- `creative.character` (24,000 before; four Sol calls at every bound cost about $1.73, inside
+  its $2 ceiling) and the site-health fix (16,000 before), which are not pinned.
+
+`ModelRequest.max_output_tokens` defaults to 32,000 (4,096 before), and a model client waits
+600 seconds for a response unless the caller sets its own wait (`TIN_LITE_LUNA_TIMEOUT`, 90
+before). Native model receipts (`native_model_usage_v1`, and `external_usage_v1` for Responses
+calls) record the call's `max_output_tokens`, the provider's `stop_reason` and whether it
+said the output cap was reached (`output_truncated`). Organic audit, paid ads and code
+workflow caps are unchanged: the audit's $2 ceiling and the paid-ads reservations are sized
+from their current caps.
+
 Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
 unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With
 every input at its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per
@@ -234,8 +264,9 @@ would never stop a normal draft.
 
 ## Weekly articles and the default limits — September 29, 2026
 
-Hosted projects start with $10 per run, $10 a month and $10 per scheduled run (migration 047).
-These defaults are unchanged. Admission counts a charged run at what it cost and a run still
+Hosted projects started with $10 per run, $10 a month and $10 per scheduled run (migration 047).
+Since October 2, 2026 new hosted projects start with $25 per run, $100 a month and $50 per
+scheduled run (see below); projects created before then keep the limits they saved. Admission counts a charged run at what it cost and a run still
 going at its full maximum. A scheduled run starts only if its maximum fits the per-run and
 scheduled-run limits and this month's charges plus its maximum fit the monthly limit.
 
@@ -251,7 +282,7 @@ limits, every active saved schedule's maximum as admission prices it, and the we
 an organic traffic system started by this setup will save. If a schedule's maximum exceeds the
 per-run or scheduled-run limit, or the schedules' runs in a month at their estimates exceed the
 monthly limit, the onboarding result's `relay` gains one line that names the schedule, the
-limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
+limit and `set_project_spending_limits`. With the $10 defaults and one weekday of articles:
 
 > Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
 > $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, so some runs may
@@ -263,4 +294,53 @@ still going counts at its maximum.
 
 The words are saved with the setup, so a retried report reads the same. Projects without
 billing, or with nothing billed on a schedule, get no line.
+
+
+## Higher default limits for new hosted projects — October 2, 2026
+
+In the 30 days before this change, 75 scheduled runs were refused for "no sufficient standing
+spending limit" and four manual starts for the $10 monthly limit. New hosted projects now start
+with $25 per run, $100 a month and $50 per scheduled run (`HOSTED_DEFAULT_PER_RUN_NANOS`,
+`HOSTED_DEFAULT_MONTHLY_NANOS` and `HOSTED_DEFAULT_SCHEDULE_MAX_NANOS` in `billing.py`). The
+largest built-in maximum, an organic traffic system at about $22, fits the per-run and
+scheduled-run limits, and every weekly article a month (each a $10 Codex session) fits the monthly limit, so the
+Start here handoff warns about neither.
+
+Only projects without a policy get these limits. No migration rewrites saved policies: a project
+created earlier keeps $10, $10 and $10 until an admin raises them with
+`set_project_spending_limits` or in Billing. Credits still bound every paid step, and the
+welcome credit stays $10.
+
+## Codex procedure limits as runaway guards — October 2, 2026
+
+Over the 30 days before this change, two Codex sessions (a code map and an email shortlist)
+stopped at exactly $5; the code map's p90 was $4.30 and every other Codex workflow's p90 was at
+most $2.30. Older contracts stopped runs at 64 requests, 2M observed tokens or a 128,000-token
+context. New admissions now pin [contract v5](codex-api-pilot.md#contract-v5-a-bounded-context-and-10-sessions-october-2-2026):
+
+| Limit | Before | Now |
+| --- | --- | --- |
+| Default ceiling of a root Codex run (`content.generate`, code map, email shortlist and others without their own) | $5 | $10 |
+| Ceiling of a Codex child inside a parent budget | $5 | $5, unchanged |
+| `content-refresh.v1` ceiling | $2.50 | $2.50, unchanged |
+| Session context | 1,050,000 tokens, compaction at 922,000 | 256,000 tokens, compaction at 200,000 |
+| Per-request funded and included Codex work | v1/v3: 8-64 requests, 0.1-2M tokens, 4,096-8,192 output, 128,000 context | 256 requests, 8M tokens, 128,000 output, 256,000 context |
+| Per-request reservation | $0.41 (v3) | $1.93 |
+| Maximum declared procedure sandbox time | 3,600 s | 7,200 s |
+| Design and task sandbox time (`TIN_LITE_SANDBOX_TIMEOUT` default) | 900 s | 1,800 s |
+
+Funding is unchanged. Ordinary root procedures are sessions; Studio, diagrams/video, design,
+tasks and parent children reserve per request; both Start here workflows and their approved
+setup children stay included, Tin-funded and bounded by v5's request and token stops, with no
+customer reservation. Parent pools (for example the traffic system's) are unchanged and were
+composed from $5 children, so children keep $5. A procedure that does not declare a timeout
+still gets 900 s: that default is written into built-in definitions, and raising it would
+change pinned catalog contracts without a version. Runs and quotes admitted before
+the change keep their pinned contract and $5.
+
+A $10 session maximum is also its configured estimate. Admission refuses a run only when the
+estimate exceeds the per-run limit, so a $10 run fits a $10 per-run limit. It does count $10
+against the monthly limit while it runs. New hosted projects get $100 a month (above), so a
+weekly `content.generate` fits; a project still on the old $10 monthly limit can admit one a
+month until an admin raises it.
 

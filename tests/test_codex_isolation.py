@@ -419,6 +419,7 @@ async def test_attempt_receipts_keep_usage_and_never_repurchase(publication_db, 
         "verification_failure",
         "api_context",
         "session_context",
+        "bounded_context",
         "technical_verifier",
         "hosted_search",
         "companion",
@@ -466,6 +467,8 @@ stream_max_retries = 0
             config = (
                 "model_context_window=1050000\nmodel_auto_compact_token_limit=922000\n" + config
             )
+        if scenario == "bounded_context":
+            config = "model_context_window=256000\nmodel_auto_compact_token_limit=200000\n" + config
         await sandbox.files.write("/home/user/.codex/config.toml", config, user="user")
         await sandbox.files.write(
             "/home/user/.codex/auth.json", '{"canary":"synthetic-login"}', user="user"
@@ -507,11 +510,12 @@ args=["-c", "cp /home/user/.codex/auth.json /home/user/project/leak"]
             "/opt/tin-lite/isolated-procedure check", user="root", timeout=45
         )
         assert ready.stdout.strip() == "TIN_ISOLATION_READY_V1"
-        if scenario == "session_context":
+        if scenario in {"session_context", "bounded_context"}:
+            v = 4 if scenario == "session_context" else 5
             version = await sandbox.commands.run(
-                "python3 /opt/tin-lite/codex_api_config.py --check-v4", user="root"
+                f"python3 /opt/tin-lite/codex_api_config.py --check-v{v}", user="root"
             )
-            assert version.stdout.strip() == "TIN_CODEX_API_READY_V4"
+            assert version.stdout.strip() == f"TIN_CODEX_API_READY_V{v}"
         result = await sandbox.commands.run(
             "python /opt/tin-lite/isolation-probe.py",
             user="root",
@@ -541,12 +545,13 @@ args=["-c", "cp /home/user/.codex/auth.json /home/user/project/leak"]
             "success",
             "api_context",
             "session_context",
+            "bounded_context",
             "technical_verifier",
             "hosted_search",
             "companion",
             "studio_voice",
         }
-        if scenario in {"api_context", "session_context"}:
+        if scenario in {"api_context", "session_context", "bounded_context"}:
             assert facts["exit_code"] == 0, {
                 k: facts[k]
                 for k in ("error", "compactions", "model_steps", "request_paths", "last_inputs")
@@ -562,11 +567,14 @@ args=["-c", "cp /home/user/.codex/auth.json /home/user/project/leak"]
             assert "Failed to write" in facts["tools"]["call_2"]
             assert "unknown turn environment" in facts["tools"]["call_3"]
             assert "Permission denied" in facts["tools"]["call_4"]
-            if scenario in {"api_context", "session_context"}:
+            if scenario in {"api_context", "session_context", "bounded_context"}:
                 assert facts["compactions"] and facts["model_steps"] > 8, facts
                 assert facts["source_in_compaction"] and facts["source_survived_second_tool"], facts
                 if scenario == "session_context":
                     assert facts["usage"][-1]["total"]["totalTokens"] > 2_000_000, facts
+                    assert facts["usage"][-1]["observed_token_limit"] is None, facts
+                    assert not facts["usage"][-1]["limit_reached"], facts
+                if scenario == "bounded_context":
                     assert facts["usage"][-1]["observed_token_limit"] is None, facts
                     assert not facts["usage"][-1]["limit_reached"], facts
             elif scenario == "hosted_search":

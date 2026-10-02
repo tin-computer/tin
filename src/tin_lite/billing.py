@@ -48,6 +48,11 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     "outreach.awesome_submit": "tin-connected-github-v1",
     "social.x_publish": "tin-x-operator-funded-v1",
 }
+# Spending limits a new hosted project starts with, in nanodollars. Saved policies keep
+# their own limits: these apply only where a project has no policy yet.
+HOSTED_DEFAULT_PER_RUN_NANOS = 25_000_000_000
+HOSTED_DEFAULT_MONTHLY_NANOS = 100_000_000_000
+HOSTED_DEFAULT_SCHEDULE_MAX_NANOS = 50_000_000_000
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
 # A billing_run_budgets row's liability() in SQL: committed usage, plus the execution fee
@@ -76,6 +81,15 @@ _ROOT_CAN_WORK_SQL = f"""EXISTS (
 _UNSTARTED_ESTIMATE_SQL = f"""CASE WHEN b.status='reserved' AND {_ROOT_CAN_WORK_SQL}
     THEN COALESCE((b.terms->'estimate'->>'amount_nanos')::bigint, b.maximum_nanos)
     ELSE 0 END"""
+
+
+def run_room(policy, usage, credits) -> int:
+    """What one new root run may still spend: available credits, capped by the project's
+    per-run limit and the rest of this month's limit."""
+    room = credits["available"]
+    if policy:
+        room = min(room, policy["per_run_nanos"], policy["monthly_nanos"] - usage["exposure"])
+    return room
 
 
 def project_limit_message(policy, estimate, usage) -> str | None:
@@ -124,8 +138,8 @@ class BillingService:
     async def ensure_hosted_project(self, conn, project_id):
         """Hosted policy only. Preserve existing ownership, credits and spending limits.
 
-        The default includes standing schedule authority equal to the per-run limit: credits
-        are checked on every paid step and the monthly limit caps total spend. An admin can
+        The default includes standing schedule authority (HOSTED_DEFAULT_SCHEDULE_MAX_NANOS):
+        credits are checked on every paid step and the monthly limit caps total spend. An admin can
         still clear it in Billing to keep paid scheduled runs off.
         """
         if not getattr(self.settings, "billing_hosted_defaults_enabled", False):
@@ -151,10 +165,13 @@ class BillingService:
         await conn.execute(
             """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                 monthly_nanos, concurrency, schedule_max_nanos, revision)
-            VALUES($1,$2,10000000000,10000000000,1,10000000000,1)
+            VALUES($1,$2,$3,$4,1,$5,1)
             ON CONFLICT(project_id) DO NOTHING""",
             project_id,
             workspace_id,
+            HOSTED_DEFAULT_PER_RUN_NANOS,
+            HOSTED_DEFAULT_MONTHLY_NANOS,
+            HOSTED_DEFAULT_SCHEDULE_MAX_NANOS,
         )
 
     async def ensure_hosted_projects(self, actor):
@@ -276,6 +293,31 @@ class BillingService:
             )
         return account
 
+    async def month_usage(self, conn, project_id):
+        """This month's committed exposure of a project's root runs.
+
+        Per-call funding reserves nothing at admission, so a run that can buy work now counts
+        at the larger of its admitted estimate and its committed liability, as in
+        wallet_credits. Otherwise any number of parallel starts pass before their first paid
+        call and then fail mid-work. begin_operation keeps checking actual commitments for
+        runs already admitted.
+        """
+        period = datetime.now(UTC).date().replace(day=1)
+        return await conn.fetchrow(
+            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
+                                        AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
+                                        THEN charged_nanos
+                                      WHEN status<>'settled'
+                                        AND terms->>'funding'='per_operation_v1'
+                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
+                                                      {_COMMITTED_LIABILITY_SQL})
+                                      WHEN status<>'settled' THEN maximum_nanos
+                                      ELSE 0 END),0) AS exposure
+               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
+            project_id,
+            period,
+        )
+
     async def wallet_credits(self, conn, account):
         """The one definition of a wallet's held and available credits.
 
@@ -370,14 +412,39 @@ class BillingService:
             )
         return {"revision": policy.expected_revision + 1}
 
-    def terms(self, definition, project_id, inputs=None, *, session_budget=True):
+    def terms(
+        self,
+        definition,
+        project_id,
+        inputs=None,
+        *,
+        session_budget=True,
+        before_v5=False,
+        room=None,
+    ):
         return configured_terms(
-            self._terms(definition, project_id, inputs, session_budget=session_budget),
+            self._terms(
+                definition,
+                project_id,
+                inputs,
+                session_budget=session_budget,
+                before_v5=before_v5,
+                room=room,
+            ),
             definition,
             inputs,
         )
 
-    def _terms(self, definition, project_id, inputs=None, *, session_budget=True):
+    def _terms(
+        self,
+        definition,
+        project_id,
+        inputs=None,
+        *,
+        session_budget=True,
+        before_v5=False,
+        room=None,
+    ):
         from tin_lite.codex_api import supports_api_definition
         from tin_lite.free_workflows import onboarding_is_free
         from tin_lite.service_pricing import service_terms
@@ -443,7 +510,9 @@ class BillingService:
         if supports_api_definition(definition) and codex_api_enabled(self.settings, project_id):
             from tin_lite.codex_api_pricing import api_terms
 
-            return api_terms(definition, session_budget=session_budget)
+            return api_terms(
+                definition, session_budget=session_budget, before_v5=before_v5, room=room
+            )
         return test_terms(definition)
 
     async def quote(
@@ -463,6 +532,14 @@ class BillingService:
             account = await conn.fetchrow(
                 "SELECT * FROM billing_accounts WHERE workspace_id=$1", project["workspace_id"]
             )
+            if account and account["run_billing_enabled"]:
+                room = run_room(
+                    await conn.fetchrow(
+                        "SELECT * FROM billing_project_policies WHERE project_id=$1", project_id
+                    ),
+                    await self.month_usage(conn, project_id),
+                    await self.wallet_credits(conn, account),
+                )
         if not account or not account["run_billing_enabled"]:
             return {"enabled": False, "mode": "disabled"}
         configured = None
@@ -492,7 +569,7 @@ class BillingService:
         normalized = normalize_workflow_inputs(
             schema=workflow.definition["input_schema"], project_id=project_id, inputs=inputs
         )
-        terms = self.terms(workflow.definition, project_id, normalized)
+        terms = self.terms(workflow.definition, project_id, normalized, room=room)
         if terms["kind"] == "included":
             return {
                 "enabled": False,
@@ -650,7 +727,7 @@ class BillingService:
                 from tin_lite.codex_api_pricing import api_terms
 
                 if parent_terms.get("codex_api_children"):
-                    terms = api_terms(definition)
+                    terms = api_terms(definition, child=True)
                 else:
                     terms = test_terms(definition)
             else:
@@ -675,13 +752,16 @@ class BillingService:
                 parent["period_start"],
             )
             return
-        terms = self.terms(definition, run["project_id"], object_value(run["input"]))
+        policy = await conn.fetchrow(
+            "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
+        )
+        usage = await self.month_usage(conn, run["project_id"])
+        credits = await self.wallet_credits(conn, account)
+        room = run_room(policy, usage, credits)
+        terms = self.terms(definition, run["project_id"], object_value(run["input"]), room=room)
         if run["trigger_source"] == "schedule":
             await self.require_spending_actor(conn, run, run["project_id"])
             # Standing monetary authority belongs to an explicitly configured policy.
-            policy = await conn.fetchrow(
-                "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
-            )
             if not policy or (policy["schedule_max_nanos"] or 0) < terms["maximum_nanos"]:
                 raise BillingError(
                     "schedule_not_funded",
@@ -699,11 +779,35 @@ class BillingService:
                     "stale_quote", "This quote is unavailable. Start again without a quote.", 402
                 )
             quoted_terms = object_value(quote["terms"]) if quote else None
+            if quoted_terms and quoted_terms.get("kind") == "codex_api":
+                # A quote pinned its ceiling from the room it saw; the limit and credit checks
+                # below still hold the run to today's room.
+                terms = self.terms(
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    room=quoted_terms["maximum_nanos"],
+                )
             # A still-valid pre-session quote keeps its original runtime and funding.
             if quoted_terms and session_funded(terms) and not session_funded(quoted_terms):
                 terms = self.terms(
-                    definition, run["project_id"], object_value(run["input"]), session_budget=False
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=False,
+                    before_v5=True,
                 )
+            # A still-valid quote issued before v5 keeps its v3/v4 contract and $5 ceiling.
+            elif quoted_terms and quoted_terms.get("kind") == "codex_api" and quoted_terms != terms:
+                previous = self.terms(
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=session_funded(quoted_terms),
+                    before_v5=True,
+                )
+                if quoted_terms == previous:
+                    terms = previous
             # A still-valid quote issued before isolated procedures joined v3 keeps v1.
             from tin_lite.codex_api_pricing import isolated_v1_terms, issued_before_isolated_v3
 
@@ -715,6 +819,7 @@ class BillingService:
                             run["project_id"],
                             object_value(run["input"]),
                             session_budget=False,
+                            before_v5=True,
                         )
                     ),
                     definition,
@@ -748,32 +853,9 @@ class BillingService:
                 terms = quoted_terms
         maximum = terms["maximum_nanos"]
         estimate = terms.get("estimate", {}).get("amount_nanos", maximum)
-        policy = await conn.fetchrow(
-            "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
-        )
         period = datetime.now(UTC).date().replace(day=1)
-        # Per-call funding reserves nothing here, so a run that can buy work now counts at
-        # the larger of its admitted estimate and its committed liability, as in
-        # wallet_credits. Otherwise any number of parallel starts pass before their first
-        # paid call and then fail mid-work. begin_operation keeps checking actual
-        # commitments for runs already admitted.
-        usage = await conn.fetchrow(
-            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
-                                        AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
-                                        THEN charged_nanos
-                                      WHEN status<>'settled'
-                                        AND terms->>'funding'='per_operation_v1'
-                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
-                                                      {_COMMITTED_LIABILITY_SQL})
-                                      WHEN status<>'settled' THEN maximum_nanos
-                                      ELSE 0 END),0) AS exposure
-               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
-            run["project_id"],
-            period,
-        )
         if limit := project_limit_message(policy, estimate, usage):
             raise BillingError("project_limit", limit, 402)
-        credits = await self.wallet_credits(conn, account)
         if credits["available"] < estimate:
             set_aside = credits["set_aside"]
             raise BillingError(

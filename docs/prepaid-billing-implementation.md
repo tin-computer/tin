@@ -108,7 +108,7 @@ subscription, key, or webhook was changed.
   rechecks project membership and current spending limits. A scheduled occurrence also needs
   a current saved-workflow creator and explicit `schedule_max_nanos` standing authority.
   The Billing limit editor sets it as "Per scheduled run"; blank keeps paid schedules off.
-  Hosted default policies start with $10.
+  Hosted default policies start with $50 (projects created before October 2, 2026: $10).
 - A start blocked by project limits keeps the `project_limit` code (HTTP 402) and names the one
   limit that applies: no spending policy, the per-run limit against the estimate, or this
   month's limit with the amount already committed. There is no limit on how many runs are
