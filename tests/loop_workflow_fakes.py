@@ -114,12 +114,14 @@ class Models:
         return {"parsed": answer, "text": json.dumps(answer)}
 
 
-def context(files=None, services=None, models=None):
+def context(files=None, services=None, models=None, connections=None):
+    """`connections` is what Tin pins for optional bindings, as ctx["connections"]."""
     return SimpleNamespace(
         files=Files(files),
         services=Services(services or {}),
         models=Models(models or {}),
         run_id="00000000-0000-4000-8000-000000000001",
+        connections=connections,
     )
 
 

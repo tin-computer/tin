@@ -22,6 +22,13 @@ COMMUNITY = (
 )
 CONTENT = ["/blog/", "/docs/", "/guides/", "/changelog/"]
 MAX_ROWS = 12
+# The readout's opening line when PostHog is not read, by connection state.
+SEARCH_ONLY = {
+    "not_connected": "PostHog is not connected, so this readout covers search only: visits, "
+    "channels, signups and reading are not measured. Connect PostHog in Integrations to add them.",
+    "needs_attention": "PostHog needs attention in Integrations, so this week's readout covers "
+    "search only: visits, channels, signups and reading are not measured.",
+}
 
 
 def binomial_p(x1, x2):
@@ -76,6 +83,9 @@ def build(d):
     channels = d["channels"]  # name -> [sessions, prior, signup sessions, prior] or None
     touch = d["first_touch"]  # label -> counts, or None
     signups = d["signups_week"]  # [week, prior] or None
+    # PostHog is optional: without a working connection the readout covers search only.
+    posthog = d.get("posthog", "connected")
+    measured = posthog == "connected"
     tests = []
 
     def test(key, x1, x2):
@@ -256,7 +266,17 @@ def build(d):
         [t for t in tests if t.get("call", "").startswith("change")], key=lambda t: t["adj"]
     )[:2]
     head = []
-    if signups is not None:
+    if not measured:
+        if week_now and week_before:
+            head.append(
+                f"{week_now['clicks']} search clicks this week against {week_before['clicks']} "
+                f"the week before (Search Console, {span([week_now['start'], week_now['end']])}; "
+                f"{t_clicks.get('call')})."
+            )
+        else:
+            head.append("Search clicks are unknown this week.")
+        head.append(SEARCH_ONLY.get(posthog, SEARCH_ONLY["needs_attention"]))
+    elif signups is not None:
         head.append(
             f"{signups[0]} people signed up this week against {signups[1]} the week before "
             f"(PostHog, {now_span} vs {before_span}; n = {signups[0] + signups[1]}; "
@@ -290,57 +310,64 @@ def build(d):
             f"A launch happened {which} ({dates}), so the week-over-week calls compare against a "
             "launch week and are not a trend."
         )
-    title = f"{called[0]['key'].capitalize()} moved this week" if called else "Growth this week"
+    title = (
+        f"{called[0]['key'].capitalize()} moved this week"
+        if called
+        else "Growth this week"
+        if measured
+        else "Search this week"
+    )
     lines = [f"# {title}", "", " ".join(head), "", "## Needs a decision"]
     lines += [f"- **{x[0]}.** Evidence: {x[1]} Owner: {x[2]}." for x in decisions] or [
         "Nothing needs a decision this week."
     ]
     lines.append("")
 
-    ranking = "activated signups" if activation else "any signup (activation is not set)"
-    lines += [
-        "## Where people came from",
-        f"Ranked by first-touch {ranking}. Sessions and signup sessions from PostHog, "
-        f"{now_span} vs {before_span}; first-touch signups by the person's first referrer.",
-    ]
-    if channels:
+    if measured:
+        ranking = "activated signups" if activation else "any signup (activation is not set)"
         lines += [
-            "| Channel | Sessions | Signup sessions | First-touch signups | Activated "
-            "| Call (sessions) |",
-            "|---|---:|---:|---:|---:|---|",
+            "## Where people came from",
+            f"Ranked by first-touch {ranking}. Sessions and signup sessions from PostHog, "
+            f"{now_span} vs {before_span}; first-touch signups by the person's first referrer.",
         ]
+        if channels:
+            lines += [
+                "| Channel | Sessions | Signup sessions | First-touch signups | Activated "
+                "| Call (sessions) |",
+                "|---|---:|---:|---:|---:|---|",
+            ]
 
-        def rank_key(item):
-            cell = (touch or {}).get(item[0]) or {}
-            return (-(cell.get("week_activated" if activation else "week") or 0), -item[1][0])
+            def rank_key(item):
+                cell = (touch or {}).get(item[0]) or {}
+                return (-(cell.get("week_activated" if activation else "week") or 0), -item[1][0])
 
-        for name, cell in sorted(channels.items(), key=rank_key):
-            counts = (touch or {}).get(name) if touch is not None else None
-            verdict = (
-                "not tested (internal)"
-                if name == "Internal"
-                else channel_tests.get(name, ({}, {}))[0].get("call", "not tested")
-            )
+            for name, cell in sorted(channels.items(), key=rank_key):
+                counts = (touch or {}).get(name) if touch is not None else None
+                verdict = (
+                    "not tested (internal)"
+                    if name == "Internal"
+                    else channel_tests.get(name, ({}, {}))[0].get("call", "not tested")
+                )
+                lines.append(
+                    f"| {name} | {cell[0]} vs {cell[1]} | {cell[2]} vs {cell[3]} | "
+                    f"{(counts or {}).get('week', 0) if touch is not None else 'unknown'} | "
+                    f"{(counts or {}).get('week_activated', 0) if touch and activation else 'n/a'} "
+                    f"| {verdict} |"
+                )
+            direct = channels.get("Direct", [0])[0]
             lines.append(
-                f"| {name} | {cell[0]} vs {cell[1]} | {cell[2]} vs {cell[3]} | "
-                f"{(counts or {}).get('week', 0) if touch is not None else 'unknown'} | "
-                f"{(counts or {}).get('week_activated', 0) if touch and activation else 'n/a'} "
-                f"| {verdict} |"
+                f"Direct is a measurement gap, not a channel: {direct} sessions this week had no "
+                "referrer."
             )
-        direct = channels.get("Direct", [0])[0]
-        lines.append(
-            f"Direct is a measurement gap, not a channel: {direct} sessions this week had no "
-            "referrer."
-        )
-    else:
-        lines.append("Channel rows are unknown this week.")
-    hosts = d["referrers"]
-    if hosts:
-        named = [h for h in hosts if h[0] == "Referral" and h[1]][:8]
-        lines.append(
-            "Named referrers: " + (", ".join(f"{h[1]} {h[2]}" for h in named) or "none") + "."
-        )
-    lines.append("")
+        else:
+            lines.append("Channel rows are unknown this week.")
+        hosts = d["referrers"]
+        if hosts:
+            named = [h for h in hosts if h[0] == "Referral" and h[1]][:8]
+            lines.append(
+                "Named referrers: " + (", ".join(f"{h[1]} {h[2]}" for h in named) or "none") + "."
+            )
+        lines.append("")
 
     lines += ["## Search"]
     if week_now and week_before:
@@ -405,165 +432,181 @@ def build(d):
         )
     lines.append("")
 
-    lines += ["## AI assistants"]
-    if assistants:
-        for name, cell in sorted(assistants.items(), key=lambda kv: -kv[1][0]):
-            counts = (touch or {}).get(name) or {}
+    if measured:
+        lines += ["## AI assistants"]
+        if assistants:
+            for name, cell in sorted(assistants.items(), key=lambda kv: -kv[1][0]):
+                counts = (touch or {}).get(name) or {}
+                lines.append(
+                    f"- {name}: {cell[0]} sessions vs {cell[1]}; "
+                    f"{counts.get('week', 0) if touch is not None else 'unknown'} first-touch "
+                    "signups this week."
+                )
+        else:
             lines.append(
-                f"- {name}: {cell[0]} sessions vs {cell[1]}; "
-                f"{counts.get('week', 0) if touch is not None else 'unknown'} first-touch "
-                "signups this week."
-            )
-    else:
-        lines.append(
-            "No AI assistant sessions were recorded this week"
-            + ("." if assistants is not None else " (the referrer read failed).")
-        )
-    lines.append(
-        "Signup answers naming an AI assistant over 28 days: "
-        + (
-            str(answers["ai"])
-            if answers and answers["answered"]
-            else "no answers recorded"
-            if answers is not None
-            else "unknown"
-        )
-        + "."
-    )
-    seen = audit.get("seen_on")
-    lines.append(f"Organic audit: {'first read ' + seen if seen else 'no audit found'}.")
-    lines.append(
-        "What stays invisible: app visits without a referrer land in Direct, and AI Overviews and "
-        "AI Mode sit inside Search Console's web totals. Branded clicks are the proxy to watch."
-    )
-    lines.append("")
-
-    content_paths = d["content_paths"]
-    lines += [
-        "## Content",
-        f"Prefixes: {', '.join(content_paths)}. PostHog, {now_span} vs {before_span}.",
-    ]
-    content = d["content"]
-    if content:
-        lines += [
-            "| Page | Views | Readers | Median time | >15 s | Read to 90% | "
-            "First-touch signups (28 d) |",
-            "|---|---:|---:|---:|---:|---:|---:|",
-        ]
-
-        def share(part, whole):
-            if whole >= 5:
-                return pct(part, whole)
-            return "too few" if whole else "not tracked"
-
-        for row in content[:MAX_ROWS]:
-            if row["median"] is not None and row["timed"] >= 5:
-                median = f"{round(float(row['median']))} s"
-            else:
-                median = f"too few ({row['timed']})" if row["timed"] else "not tracked"
-            lines.append(
-                f"| {row['path']} | {row['views']} vs {row['views_prior']} | {row['readers']} | "
-                f"{median} | {share(row['over15'], row['timed'])} | "
-                f"{share(row['deep'], row['depth'])} | "
-                f"{row['touches'] if row['touches'] is not None else 'unknown'} |"
+                "No AI assistant sessions were recorded this week"
+                + ("." if assistants is not None else " (the referrer read failed).")
             )
         lines.append(
-            "Assisted signups (people who read a post before signing up) are not measured yet."
-        )
-    else:
-        lines.append(
-            "No views under the content prefixes this week"
-            + ("." if content is not None else " (not read).")
-        )
-    lines.append("")
-
-    lines += ["## Landing pages"]
-    landing = d["landing"]
-    if landing:
-        lines += [
-            "| Entry page | Sessions | Signup rate this week | The week before |",
-            "|---|---:|---|---|",
-        ]
-        for path, now_s, before_s, now_su, before_su in landing[:MAX_ROWS]:
-            lines.append(
-                f"| {path} | {now_s} vs {before_s} | {now_su} of {now_s} ({pct(now_su, now_s)}) "
-                f"| {before_su} of {before_s} ({pct(before_su, before_s)}) |"
-            )
-    else:
-        lines.append("Landing pages are unknown this week.")
-    lines.append("")
-
-    lines += ["## Social, community and email"]
-    for name in ("Social", "Email"):
-        if channels and name in channels:
-            lines.append(
-                f"- {name}: {channels[name][0]} sessions vs {channels[name][1]}; "
-                f"{channels[name][2]} signup sessions."
-            )
-    for _, host, now_s, before_s, _, now_su in [h for h in hosts or [] if community(h[1])][:8]:
-        lines.append(
-            f"- {host} (community): {now_s} sessions vs {before_s}; {now_su} signup sessions."
-        )
-    lines.append(
-        "Untagged email clicks and shares in Slack, Discord or WhatsApp arrive as Direct, so a "
-        "send or posting week can explain a Direct bump. Open rates are left out because Apple "
-        "Mail Privacy Protection preloads the pixel."
-    )
-    lines.append("")
-
-    lines += ["## Paid"]
-    if channels and "Paid" in channels:
-        lines.append(
-            f"Site-side paid sessions {channels['Paid'][0]} vs {channels['Paid'][1]}; signup "
-            f"sessions {channels['Paid'][2]} (PostHog)."
-        )
-    else:
-        lines.append(
-            "No paid sessions this week (PostHog)."
-            if channels
-            else "Paid sessions are unknown this week."
-        )
-    lines.append(
-        "Ad platform conversions are never added to site-side counts; ads.monitor reports them."
-    )
-    lines.append("")
-
-    lines += ["## Funnels and attribution (28 days)"]
-    if touch:
-        lines += ["| First-touch channel | Signups | Activated | Paid |", "|---|---:|---:|---:|"]
-        for name, value in sorted(touch.items(), key=lambda kv: -kv[1]["signups"]):
-            lines.append(
-                f"| {name} | {value['signups']} | "
-                f"{value['activated'] if activation else 'n/a'} | "
-                f"{value['paid'] if paid_event else 'n/a'} |"
-            )
-        lines.append(
-            "Signup answers: "
+            "Signup answers naming an AI assistant over 28 days: "
             + (
-                f"{answers['answered']} people answered a signup-source question"
+                str(answers["ai"])
                 if answers and answers["answered"]
-                else "none recorded"
+                else "no answers recorded"
+                if answers is not None
+                else "unknown"
             )
-            + ". Self-reported answers break ties and never make a total. Last-touch "
-            "attribution is not read."
+            + "."
         )
-    else:
+        seen = audit.get("seen_on")
+        lines.append(f"Organic audit: {'first read ' + seen if seen else 'no audit found'}.")
         lines.append(
-            "Unknown: "
-            + ("no signup event is set." if not signup else "the signup read failed or was cut.")
+            "What stays invisible: app visits without a referrer land in Direct, and AI Overviews "
+            "and AI Mode sit inside Search Console's web totals. Branded clicks are the proxy to "
+            "watch."
         )
-    lines.append("")
+        lines.append("")
+
+        content_paths = d["content_paths"]
+        lines += [
+            "## Content",
+            f"Prefixes: {', '.join(content_paths)}. PostHog, {now_span} vs {before_span}.",
+        ]
+        content = d["content"]
+        if content:
+            lines += [
+                "| Page | Views | Readers | Median time | >15 s | Read to 90% | "
+                "First-touch signups (28 d) |",
+                "|---|---:|---:|---:|---:|---:|---:|",
+            ]
+
+            def share(part, whole):
+                if whole >= 5:
+                    return pct(part, whole)
+                return "too few" if whole else "not tracked"
+
+            for row in content[:MAX_ROWS]:
+                if row["median"] is not None and row["timed"] >= 5:
+                    median = f"{round(float(row['median']))} s"
+                else:
+                    median = f"too few ({row['timed']})" if row["timed"] else "not tracked"
+                lines.append(
+                    f"| {row['path']} | {row['views']} vs {row['views_prior']} | "
+                    f"{row['readers']} | "
+                    f"{median} | {share(row['over15'], row['timed'])} | "
+                    f"{share(row['deep'], row['depth'])} | "
+                    f"{row['touches'] if row['touches'] is not None else 'unknown'} |"
+                )
+            lines.append(
+                "Assisted signups (people who read a post before signing up) are not measured yet."
+            )
+        else:
+            lines.append(
+                "No views under the content prefixes this week"
+                + ("." if content is not None else " (not read).")
+            )
+        lines.append("")
+
+        lines += ["## Landing pages"]
+        landing = d["landing"]
+        if landing:
+            lines += [
+                "| Entry page | Sessions | Signup rate this week | The week before |",
+                "|---|---:|---|---|",
+            ]
+            for path, now_s, before_s, now_su, before_su in landing[:MAX_ROWS]:
+                lines.append(
+                    f"| {path} | {now_s} vs {before_s} | {now_su} of {now_s} "
+                    f"({pct(now_su, now_s)}) "
+                    f"| {before_su} of {before_s} ({pct(before_su, before_s)}) |"
+                )
+        else:
+            lines.append("Landing pages are unknown this week.")
+        lines.append("")
+
+        lines += ["## Social, community and email"]
+        for name in ("Social", "Email"):
+            if channels and name in channels:
+                lines.append(
+                    f"- {name}: {channels[name][0]} sessions vs {channels[name][1]}; "
+                    f"{channels[name][2]} signup sessions."
+                )
+        for _, host, now_s, before_s, _, now_su in [h for h in hosts or [] if community(h[1])][:8]:
+            lines.append(
+                f"- {host} (community): {now_s} sessions vs {before_s}; {now_su} signup sessions."
+            )
+        lines.append(
+            "Untagged email clicks and shares in Slack, Discord or WhatsApp arrive as Direct, so a "
+            "send or posting week can explain a Direct bump. Open rates are left out because Apple "
+            "Mail Privacy Protection preloads the pixel."
+        )
+        lines.append("")
+
+        lines += ["## Paid"]
+        if channels and "Paid" in channels:
+            lines.append(
+                f"Site-side paid sessions {channels['Paid'][0]} vs {channels['Paid'][1]}; signup "
+                f"sessions {channels['Paid'][2]} (PostHog)."
+            )
+        else:
+            lines.append(
+                "No paid sessions this week (PostHog)."
+                if channels
+                else "Paid sessions are unknown this week."
+            )
+        lines.append(
+            "Ad platform conversions are never added to site-side counts; ads.monitor reports them."
+        )
+        lines.append("")
+
+        lines += ["## Funnels and attribution (28 days)"]
+        if touch:
+            lines += [
+                "| First-touch channel | Signups | Activated | Paid |",
+                "|---|---:|---:|---:|",
+            ]
+            for name, value in sorted(touch.items(), key=lambda kv: -kv[1]["signups"]):
+                lines.append(
+                    f"| {name} | {value['signups']} | "
+                    f"{value['activated'] if activation else 'n/a'} | "
+                    f"{value['paid'] if paid_event else 'n/a'} |"
+                )
+            lines.append(
+                "Signup answers: "
+                + (
+                    f"{answers['answered']} people answered a signup-source question"
+                    if answers and answers["answered"]
+                    else "none recorded"
+                )
+                + ". Self-reported answers break ties and never make a total. Last-touch "
+                "attribution is not read."
+            )
+        else:
+            lines.append(
+                "Unknown: "
+                + (
+                    "no signup event is set."
+                    if not signup
+                    else "the signup read failed or was cut."
+                )
+            )
+        lines.append("")
 
     lines += [
         "## Data notes",
         f"Weeks: {weeks['current'][0]} to {weeks['current'][1]} vs {weeks['prior'][0]} to "
         f"{weeks['prior'][1]}, Pacific dates ending on Search Console's last final day; "
-        "PostHog is read for the same dates.",
+        + ("PostHog is read for the same dates." if measured else "PostHog is not read."),
         f"Calls that ran: {', '.join(d['calls']) or 'none'}; no model call. Rows tested: m = "
         f"{len(tests)} (Holm correction).",
-        f"Exclusions: {d['exclusions']}.",
-        f"Signup event: {signup or 'not set'}; activation: {activation or 'not set'} within "
-        f"{d['activation_days']} days; paid event: {paid_event or 'not set'}.",
+    ]
+    if measured:
+        lines += [
+            f"Exclusions: {d['exclusions']}.",
+            f"Signup event: {signup or 'not set'}; activation: {activation or 'not set'} within "
+            f"{d['activation_days']} days; paid event: {paid_event or 'not set'}.",
+        ]
+    lines += [
         (
             "Spike weeks: launch dates "
             + ", ".join(x.isoformat() for x in launches)
