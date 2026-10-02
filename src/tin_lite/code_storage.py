@@ -384,9 +384,8 @@ class CodeStorage:
             not _is_commit_sha(commit_sha)
             or not safe_project_file_path(path)
             or type(max_bytes) is not int
-            # 64,000 for an ordinary read; the memory index may hold up to
-            # memory.MAX_MEMORY_BYTES (700,000).
-            or not 1 <= max_bytes <= 700_000
+            # A code workflow reads files up to the same bound publication compares.
+            or not 1 <= max_bytes <= _PUBLICATION_TEXT_MAX_BYTES
         ):
             raise ValueError("project file read requires a safe path and bounded revision")
         key = ("code_project_file", repo_id, commit_sha, path)
@@ -544,6 +543,7 @@ class CodeStorage:
             GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
         )
         from tin_lite.project_files import safe_project_file_path
+        from tin_lite.workflow_code import MAX_OUTPUT_BYTES
         from tin_lite.writing_style import STYLE_PATH
 
         code = executor == "workflow.code"
@@ -555,7 +555,7 @@ class CodeStorage:
                 and path.split("/")[0]
                 not in {".tin-lite", "procedures", "registry", "workflow_packages"}
             )
-            limit, target = 64_000, f"procedures/{run_id}/{generation}"
+            limit, target = MAX_OUTPUT_BYTES, f"procedures/{run_id}/{generation}"
         elif executor == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
             valid_path = path == GROWTH_ONBOARDING_PLAN_PATH
             limit, target = 40_000, f"native-plan/{run_id}/{generation}"

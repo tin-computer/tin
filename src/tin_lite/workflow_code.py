@@ -21,7 +21,17 @@ MODEL_TARGETS = frozenset({("openai", "gpt-6-luna"), ("openai", "gpt-6-sol")})
 ROUTE_KEYS = ("provider", "model", "max_calls", "max_input_bytes", "max_output_tokens")
 MAX_FILE_BYTES = 64_000
 MAX_PACKAGE_BYTES = 256_000
-MAX_OUTPUT_BYTES = 64_000
+MAX_OUTPUT_BYTES = 1_000_000
+# Runaway guards, set well above real use; the validator only admits definitions, so a
+# revision accepted under an older, smaller maximum keeps validating unchanged.
+MAX_TIMEOUT_SECONDS = 900
+MAX_ROUTE_CALLS = 16
+MAX_MODEL_CALLS = 32
+MAX_ROUTE_INPUT_BYTES = 256_000
+MAX_ROUTE_OUTPUT_TOKENS = 32_000
+# All model input one code run may send, summed over its calls: about 200k tokens at the
+# ~3.5 bytes per token real workflow input shows. Enforced per call in code_models.
+MAX_RUN_MODEL_INPUT_BYTES = 700_000
 # An output file name may carry the run's date and a slug the package picks, so repeated
 # runs keep separate, readable files. Nothing else is substituted.
 OUTPUT_PLACEHOLDERS = {"{date}": r"\d{4}-\d{2}-\d{2}", "{slug}": r"[a-z0-9]+(?:-[a-z0-9]+)*"}
@@ -80,15 +90,17 @@ def model_routes(value):
                 f"supported provider/model pairs: {supported_models()}"
             )
         for field, lower, upper in (
-            ("max_calls", 1, 4),
-            ("max_input_bytes", 1024, 32_000),
-            ("max_output_tokens", 64, 4096),
+            ("max_calls", 1, MAX_ROUTE_CALLS),
+            ("max_input_bytes", 1024, MAX_ROUTE_INPUT_BYTES),
+            ("max_output_tokens", 64, MAX_ROUTE_OUTPUT_TOKENS),
         ):
             if type(route[field]) is not int or not lower <= route[field] <= upper:
                 raise ValueError(f"model {field} must be {lower}-{upper}")
         routes.append(CodeModelRoute(name=name, **route))
-    if sum(r.max_calls for r in routes) > 8:
-        raise ValueError("code workflows allow at most eight managed model calls")
+    if sum(r.max_calls for r in routes) > MAX_MODEL_CALLS:
+        raise ValueError(
+            f"code workflows allow at most {MAX_MODEL_CALLS} managed model calls in total"
+        )
     return tuple(routes)
 
 
@@ -174,8 +186,8 @@ def validate_code_definition(definition) -> CodeSpec:
     if entrypoint not in files or not entrypoint.endswith(".py"):
         raise ValueError("entrypoint must be a declared Python file")
     timeout = code["timeout_seconds"]
-    if type(timeout) is not int or not 1 <= timeout <= 60:
-        raise ValueError("code timeout must be 1-60 seconds")
+    if type(timeout) is not int or not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
+        raise ValueError(f"code timeout must be 1-{MAX_TIMEOUT_SECONDS} seconds")
     output = code["output"]
     if not isinstance(output, dict) or set(output) != {"kind", "path", "media_type", "max_bytes"}:
         raise ValueError("code output must declare one bounded project artifact")

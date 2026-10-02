@@ -25,8 +25,17 @@ from pathlib import Path
 ROOT = Path("/home/user/project")
 CONTROL = Path("/root/tin-code")
 PYTHON = "/opt/tin-lite/metadata-venv/bin/python"
-MAX_RESULT = 64_000 * 6 + 2048
-MAX_RPC = 128_000
+# A 1,000,000-byte artifact (workflow_code.MAX_OUTPUT_BYTES) with every byte JSON-escaped.
+MAX_RESULT = 1_000_000 * 6 + 2048
+# One bridge message either way. The largest replies are a 1,000,000-byte file read as base64
+# (about 1.34 MB) and a 1,000,000-byte model or service response; requests are re-encoded as
+# ASCII JSON on their way out, which can triple non-ASCII text. Must match
+# e2b_runtime.CODE_BRIDGE_MAX_BYTES.
+MAX_RPC = 4_000_000
+FILE_CALLS = 256
+SERVICE_CALLS = 128
+# How long the author's side waits for one reply; the worker sets it to its execution window.
+_reply_seconds = 60
 SOCKET = "/run/tin-code-model.sock"
 SERVICE_ERROR_EXIT = 3
 """Exit status when authored code let a service error from the bridge escape.
@@ -70,7 +79,7 @@ class Models:
         if len(raw) > MAX_RPC:
             raise ValueError("Model request exceeds its bound.")
         with socket.socket(socket.AF_UNIX) as client:
-            client.settimeout(60)
+            client.settimeout(_reply_seconds)
             client.connect(SOCKET)
             client.sendall(raw)
             response = json.loads(client.makefile("rb").readline(MAX_RPC + 1))
@@ -107,7 +116,7 @@ class Files(Models):
     def read_section(self, heading):
         """One owned section of project memory, such as "### Code map", from wiki/INDEX.md.
 
-        Found where its workflow wrote it, even when the whole index is over the read limit.
+        Found where its workflow wrote it, without reading the whole index.
         """
         encoded = self._call(
             {
@@ -195,7 +204,7 @@ def managed_process(command, timeout):
                             file_calls += 1
                         else:
                             service_calls += 1
-                        if file_calls > 64 or service_calls > 32:
+                        if file_calls > FILE_CALLS or service_calls > SERVICE_CALLS:
                             raise ValueError("code bridge call limit exceeded")
                         (CONTROL / "request.json").write_text(json.dumps(request), encoding="utf-8")
                         print("TIN_MODEL_REQUEST", flush=True)
@@ -227,6 +236,9 @@ def worker():
     context = json.loads(Path("/run/tin-code-context.json").read_bytes())
     timeout = context["timeout_seconds"]
     resource.setrlimit(resource.RLIMIT_CPU, (timeout, timeout))
+    # A model call may take most of the window; the controller enforces the deadline itself.
+    global _reply_seconds
+    _reply_seconds = max(60, timeout)
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
     namespace = runpy.run_path(str(ROOT / context["entrypoint"]))

@@ -54,12 +54,15 @@ Current supported routes are explicitly `openai/gpt-6-luna` and `openai/gpt-6-so
 the existing OpenAI adapter and pinned supplier price card. Other providers/models and custom
 URLs fail validation; a configured credential alone does not admit an unpriced route.
 
-Bounds: at most four route aliases, 1–4 calls per route and eight total; 1,024–32,000 serialized
-input bytes per call (instructions, data, schema and envelope included); 64–4,096 output tokens;
-64,000 response bytes. Output schemas use a small closed subset: required object fields, bounded
-arrays, primitives and enums; no references or remote schema loading. The runtime retains its
-60-second maximum execution window, including model wait time. Each supplier call has a
-30-second limit. These limits do not promise all eight calls will fit in one execution window.
+Bounds: at most four route aliases, 1–16 calls per route and 32 total; 1,024–256,000 serialized
+input bytes per call (instructions, data, schema and envelope included); 64–32,000 output tokens;
+1,000,000 response bytes. All model calls in one run send at most 700,000 input bytes together
+(about 200k tokens); a call that would pass that fails the run with `model_input_budget`, and
+every call the run has started counts, including retried and unconfirmed ones. Output schemas
+use a small closed subset: required object fields, bounded arrays, primitives and enums; no
+references or remote schema loading. The package's `timeout_seconds` (at most 900) is its whole
+execution window, including model wait time, and also bounds each supplier call's wait. These
+limits are runaway guards, not a promise that all 32 calls fit in one execution window.
 
 ## Authority, isolation and recovery
 
@@ -104,7 +107,11 @@ zero-credit admission, no paid operation or deduction. A model-enabled definitio
 price card. This requires no paid estimation call or quote-approval step.
 
 Hosted model runs require an enabled credit account. Existing project spending policy and
-per-operation reservations enforce the pinned maximum. Tin records each observed call and
+per-operation reservations enforce the pinned maximum. The maximum assumes every declared call
+uses its route's whole output allowance and a 4,096-token request envelope, and that the run's
+700,000 input bytes, at three bytes per token, all go to the most expensive calls (no call more
+than its route's `max_input_bytes`). Each call reserves its own serialized input the same way
+before dispatch. Runs admitted before this formula keep the maximum pinned in their terms. Tin records each observed call and
 settles through the existing ledger, including usage incurred before validation failure. The
 estimate ceiling rounds upward to a cent; actual usage retains the shared rounding policy.
 Tiny model usage may therefore settle to $0.00 while remaining a measured, paid supplier call.

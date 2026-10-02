@@ -177,7 +177,7 @@ def test_v11_is_exactly_what_main_shipped_and_v12_adds_only_the_summary():
         k: v for k, v in v11.items() if k not in NEUTRAL_KEYS
     }
     # The budget sits under what a code workflow may read, which the publication enforces.
-    assert V12_AUDIT_POLICY["summary_max_bytes"] < SUMMARY_READ_LIMIT == MAX_FILE_BYTES
+    assert V12_AUDIT_POLICY["summary_max_bytes"] < SUMMARY_READ_LIMIT <= MAX_FILE_BYTES
 
 
 @pytest.mark.asyncio
@@ -572,8 +572,10 @@ def test_a_500_page_crawl_keeps_the_summary_under_64_kb():
     )
     named = audit_paths(run_id) | summary_paths(run_id)
     raw = docs[named["SUMMARY.json"]]
-    assert len(docs[named["evidence.json"]]) > MAX_FILE_BYTES  # what code could not read
-    assert len(raw) <= V12_AUDIT_POLICY["summary_max_bytes"] < MAX_FILE_BYTES
+    assert (
+        len(docs[named["evidence.json"]]) > SUMMARY_READ_LIMIT
+    )  # code could not read it when v12 shipped
+    assert len(raw) <= V12_AUDIT_POLICY["summary_max_bytes"] < SUMMARY_READ_LIMIT <= MAX_FILE_BYTES
     assert docs[named["LATEST.json"]] == raw
     summary = json.loads(raw)
     truncated = summary["truncated"]
@@ -620,7 +622,7 @@ def test_long_findings_over_many_checks_still_fit():
         }
         for i in range(300)
     ]
-    assert len(canonical_json(findings)) > MAX_FILE_BYTES
+    assert len(canonical_json(findings)) > SUMMARY_READ_LIMIT
     run_id = str(uuid4())
     raw = summary_document(
         run_id=run_id,

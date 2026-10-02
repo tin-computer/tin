@@ -76,9 +76,9 @@ USAGE_PROVIDER = {PAGESPEED_PROVIDER: "pagespeed", DATAFORSEO_PROVIDER: "datafor
 # overrun is Tin's loss, not a larger customer charge. At the argument bounds below every
 # live read costs well under this ($0.03 at most at DataForSEO's September 2026 prices).
 CALL_CEILING_USD = {DATAFORSEO_PROVIDER: "0.05"}
-# Tin's own wait for Google, under the gateway's 25-second per-call limit, so a slow
+# Tin's own wait for Google, under the gateway's 60-second per-call limit, so a slow
 # Lighthouse run comes back as a "timed_out" result rather than an unresolved request.
-GOOGLE_SECONDS = 22
+GOOGLE_SECONDS = 55
 MAX_GOOGLE_BYTES = 12_000_000
 PAGESPEED_ENDPOINT = "https://www.googleapis.com/pagespeedonline/v5/runPagespeed"
 CRUX_ENDPOINT = "https://chromeuxreport.googleapis.com/v1/records:queryRecord"

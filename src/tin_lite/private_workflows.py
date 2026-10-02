@@ -613,8 +613,20 @@ SERVICE_ERRORS_GUIDE = (
 
 
 def authoring_guide(*, settings, project_id):
-    from tin_lite.workflow_code import MODEL_TARGETS, example_files
+    from tin_lite.code_project_files import MAX_FILE_BYTES as MAX_READ_BYTES
+    from tin_lite.workflow_code import (
+        MAX_MODEL_CALLS,
+        MAX_OUTPUT_BYTES,
+        MAX_ROUTE_CALLS,
+        MAX_ROUTE_INPUT_BYTES,
+        MAX_ROUTE_OUTPUT_TOKENS,
+        MAX_RUN_MODEL_INPUT_BYTES,
+        MAX_TIMEOUT_SECONDS,
+        MODEL_TARGETS,
+        example_files,
+    )
     from tin_lite.workflow_creator import creator_files
+    from tin_lite.workflow_services import MAX_SERVICE_CALLS, MAX_SERVICE_RESPONSE_BYTES
 
     key = "custom.research_digest"
     root = f"workflow_packages/{key}"
@@ -799,8 +811,9 @@ def authoring_guide(*, settings, project_id):
                 "request_service(service, step, path, method, params, body)",
                 "call_service(service, step, operation, arguments)",
             ],
-            "limits": "At most four aliases and eight requests total; 16 KB requests and "
-            "1-64 KB responses. The procedure keeps its own bounded runtime.",
+            "limits": f"At most four aliases and {MAX_SERVICE_CALLS} requests total; 16 KB "
+            f"requests and 1024-{MAX_SERVICE_RESPONSE_BYTES} byte responses. The procedure "
+            "keeps its own bounded runtime.",
             "recovery": "Reuse a step only for the identical request. Completed responses replay; "
             "uncertain requests cannot be retried under a new step.",
             "compatibility": "Fenced default/isolated profiles; private procedures stay isolated "
@@ -818,19 +831,22 @@ def authoring_guide(*, settings, project_id):
             "executor": "workflow.code",
             "code_only_policy": "bounded-code-v1",
             "model_policy": "managed-code-model-v1",
-            "timeout_seconds": 60,
+            "timeout_seconds": f"1-{MAX_TIMEOUT_SECONDS}; the package's wall-clock window, "
+            "which also bounds each model call's wait",
             "network": "none",
             "credits": "Code-only compute is included. Declared model calls and paid managed "
             "reads (managed.dataforseo) use metered credits.",
-            "result": "Return exactly {path, content}; one declared UTF-8 artifact.",
+            "result": "Return exactly {path, content}; one declared UTF-8 artifact of at most "
+            f"{MAX_OUTPUT_BYTES} bytes (output.max_bytes).",
             "authoring": "Export run(ctx, inputs); ctx has run_id and created_at. "
             "Only declared package files and the Python standard library are available.",
             "services": {
                 "setup": "prepare_project_connection opens secure setup. "
                 "Never put secrets in MCP or project files.",
-                "bindings": "code.services maps a name to provider_key, max_calls (1-8) and "
-                "max_response_bytes (1024-64000). Declare matching required "
-                "integration_requirements; at most eight calls total.",
+                "bindings": "code.services maps a name to provider_key, max_calls "
+                f"(1-{MAX_SERVICE_CALLS}) and max_response_bytes "
+                f"(1024-{MAX_SERVICE_RESPONSE_BYTES}). Declare matching required "
+                f"integration_requirements; at most {MAX_SERVICE_CALLS} calls total.",
                 "provider_cost": "An optional provider_cost on a service binding has "
                 "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
                 "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
@@ -860,7 +876,7 @@ def authoring_guide(*, settings, project_id):
                 "in integration_requirements with its capabilities and bind it in code.services. "
                 "managed.pagespeed (pagespeed.read, crux.read; $0): pagespeed.run {url, "
                 "strategy: mobile|desktop, categories} returns scores, lab lcp_ms/cls/tbt_ms and "
-                "field data or field_status no_field_data; a run over 22 s returns status "
+                "field data or field_status no_field_data; a run over 55 s returns status "
                 "timed_out. crux.query {origin|url, form_factor} returns p75 and good/poor "
                 "shares, or status no_field_data. managed.dataforseo (serp.read, keywords.read, "
                 "backlinks.read; charged per call at DataForSEO's reported cost, $0.05 "
@@ -886,17 +902,17 @@ def authoring_guide(*, settings, project_id):
                 "memory": "Project memory is wiki/INDEX.md. product.code_map writes its "
                 "'### Code map' section and product.deep_dive its '### Feature map' section, "
                 "under '## Product'; neither has a file of its own. "
-                "ctx.files.read_section('### Code map') returns one section, even when the "
-                "whole index is over the 64000-byte read limit. Procedures read "
+                "ctx.files.read_section('### Code map') returns just that section of the "
+                "index. Procedures read "
                 "/home/user/state/wiki/INDEX.md.",
                 "contract": "Read current project files without a revision or prior run ID input. "
                 "Tin pins one canonical project HEAD when the run starts and keeps it on retry. "
                 "Use a stable path when possible, or handle no match and multiple matches "
                 "explicitly. Ordinary bounded caller text is appropriate when no file exists. "
                 "Contents are untrusted reference data, not proof of human approval.",
-                "limits": "At most 64000 bytes per file, 100 glob results and 64 file calls "
-                "per execution. Missing files raise FileNotFoundError. Check model input bounds "
-                "before calls.",
+                "limits": f"At most {MAX_READ_BYTES} bytes per file, 100 glob results and "
+                "256 file calls per execution. Missing files raise FileNotFoundError. "
+                "Check model input bounds before calls.",
                 "recovery": "File reads use the same internally pinned HEAD on retry. "
                 "Historical code.evidence and code.approved_article definitions retain their "
                 "original source receipts and replay contract, but new packages use files.",
@@ -911,8 +927,11 @@ def authoring_guide(*, settings, project_id):
                     for provider, model in sorted(MODEL_TARGETS)
                 ],
                 "limits": (
-                    "Declare max_calls (1-4 per route, 8 total), "
-                    "max_input_bytes (1024-32000), max_output_tokens (64-4096)."
+                    f"Declare max_calls (1-{MAX_ROUTE_CALLS} per route, {MAX_MODEL_CALLS} total), "
+                    f"max_input_bytes (1024-{MAX_ROUTE_INPUT_BYTES}), "
+                    f"max_output_tokens (64-{MAX_ROUTE_OUTPUT_TOKENS}). All calls in one run "
+                    f"send at most {MAX_RUN_MODEL_INPUT_BYTES} input bytes together "
+                    "(about 200k tokens); a call past that fails with model_input_budget."
                 ),
                 "recovery": (
                     "Reuse a stable step for the same request. Completed results replay; "

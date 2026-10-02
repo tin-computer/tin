@@ -15,7 +15,7 @@ from tin_lite.procedures import CODE_MAP_SECTION, memory_section_text
 from tin_lite.project_files import safe_project_file_path
 
 OPERATION = "code_project_files_v1"
-MAX_FILE_BYTES = 64_000
+MAX_FILE_BYTES = 1_000_000
 MAX_GLOB_RESULTS = 100
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 # Project memory keeps each workflow-owned map as a section of wiki/INDEX.md (product.code_map
@@ -200,7 +200,7 @@ class CodeProjectFiles:
                 raw.decode("utf-8")
             except UnicodeError as exc:
                 raise CodeProjectFileError("file_not_utf8") from exc
-        # Base64 keeps even quote/control-heavy UTF-8 below the 128 KiB IPC frame.
+        # Base64 keeps even quote/control-heavy UTF-8 within the code bridge's message bound.
         return base64.b64encode(raw).decode("ascii")
 
     async def _memory_section(self, project, source, heading):

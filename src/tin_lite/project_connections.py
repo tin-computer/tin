@@ -405,10 +405,11 @@ async def request_api(
     if config["idempotency_header"] and payload["method"] not in READ_METHODS:
         headers[config["idempotency_header"]] = hashlib.sha256(operation_id.encode()).hexdigest()
     own = client is None
-    client = client or httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=15)
+    # Under the gateway's 60-second per-call limit, so a slow API is a known failure.
+    client = client or httpx.AsyncClient(trust_env=False, follow_redirects=False, timeout=50)
     try:
         async with (
-            asyncio.timeout(20),
+            asyncio.timeout(55),
             client.stream(
                 payload["method"],
                 httpx.URL(config["origin"] + payload["path"]).copy_with(host=ips[0]),

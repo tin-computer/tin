@@ -78,8 +78,10 @@ async def test_posthog_example_rejects_an_unbounded_model_report():
 @pytest.mark.parametrize(
     "change",
     [
-        lambda d: d["procedure"]["services"]["crm"].update(max_calls=5),
-        lambda d: d["procedure"]["services"]["crm"].update(max_response_bytes=64001),
+        # 29 + the other binding's 4 passes the 32-call total; 33 passes one binding's maximum.
+        lambda d: d["procedure"]["services"]["crm"].update(max_calls=29),
+        lambda d: d["procedure"]["services"]["crm"].update(max_calls=33),
+        lambda d: d["procedure"]["services"]["crm"].update(max_response_bytes=1_000_001),
         lambda d: d["procedure"]["services"]["crm"].update(origin="https://other.example"),
         lambda d: d["procedure"]["services"]["crm"].update(provider_key="custom.api.other"),
         lambda d: d["procedure"]["services"].pop("analytics"),
