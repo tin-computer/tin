@@ -392,7 +392,6 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
         ProjectSpendingPolicy(
             per_run_nanos=10_000_000_000,
             monthly_nanos=20_000_000_000,
-            concurrency=2,
             expected_revision=0,
         ),
     )

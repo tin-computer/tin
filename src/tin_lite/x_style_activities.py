@@ -13,6 +13,12 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_style
+from tin_lite.billing_contracts import BillingError
+from tin_lite.integrations import (
+    IntegrationAuthorizationError,
+    IntegrationError,
+    IntegrationNotConfiguredError,
+)
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import credential_findings
@@ -69,10 +75,12 @@ class XStyleActivities:
                     path=f"workflows/{x_style.KEY}.json",
                 )
             )
+            version = (definition.get("x_style_policy") or {}).get("version")
+            policy, instructions = x_style.CONTRACTS.get(version, (None, None))
             if (
                 definition.get("model_route") != x_style.route_definition()
-                or definition.get("x_style_policy") != x_style.POLICY
-                or definition.get("x_style_instructions") != x_style.INSTRUCTIONS
+                or definition.get("x_style_policy") != policy
+                or definition.get("x_style_instructions") != instructions
                 or definition.get("x_style_schema") != x_style.MODEL_SCHEMA
             ):
                 raise ValueError("Worker does not serve the selected X style contract")
@@ -91,11 +99,96 @@ class XStyleActivities:
                 await self.db.complete_effect(
                     conn,
                     execution_key=key,
-                    result={"revision": revision, "existing_guide": guide},
+                    result={
+                        "revision": revision,
+                        "existing_guide": guide,
+                        "policy_version": version,
+                    },
                 )
         await self.progress(run.id, "read", 1, "X writing sources are ready")
 
     async def _examples(self, run, context):
+        # A context saved before version 2 belongs to a run pinned to version 1.
+        if context.get("policy_version", 1) == 1:
+            return await self._examples_v1(run, context)
+        inputs = run.input or {}
+        source = inputs.get("sample_source", "auto")
+        writing = []
+        if source != "connected":
+            if inputs.get("supplied_samples"):
+                writing += x_style.writing_examples(inputs["supplied_samples"], source="supplied")
+            if inputs.get("source_path"):
+                body = await self._sample_file(run, context, inputs["source_path"])
+                writing += x_style.writing_examples(body, source=inputs["source_path"])
+        connection = None
+        if source == "connected":
+            connection = await self._sampling_connection(run, required=True)
+        elif source == "auto":
+            # Auto learns from everything available: the connected public account too, when
+            # there is one. Without it, supplied writing or preferences alone, as before.
+            connection = await self._sampling_connection(
+                run, required=not writing and not inputs.get("preferences")
+            )
+        posts, counts = [], {}
+        if connection is not None:
+            pages, cursor = [], None
+            for _ in range(x_style.MAX_TIMELINE_CALLS):
+                page = await self.x.timeline(
+                    connection,
+                    limit=50,
+                    exclude_retweets=True,
+                    exclude_replies=False,
+                    pagination_token=cursor,
+                )
+                pages.append(page)
+                cursor = page.get("next_cursor")
+                if not cursor:
+                    break
+            posts, counts = x_style.own_posts(pages, now=datetime.now(UTC))
+        selection = x_style.sample(posts, writing, counts)
+        if not selection["examples"] and (source == "connected" or not inputs.get("preferences")):
+            raise ValueError(
+                "No usable own posts were found; supply writing samples or preferences"
+            )
+        account = (
+            connection.external_account_id
+            if selection["metadata"]["post_count"]
+            else inputs.get("account_id") or "unbound"
+        )
+        return selection["examples"], selection["metadata"], account
+
+    async def _sample_file(self, run, context, path):
+        project = await self.db.get_project(run.project_id)
+        entry = await self.storage.read_output_destination(
+            repo_id=project.state_repo_id, revision=context["revision"], path=path
+        )
+        if entry is None:
+            raise ValueError("The selected X sample file is missing at the pinned revision")
+        body = entry[1].decode("utf-8")
+        if credential_findings(body):
+            raise ValueError("Remove credentials from the X sample file")
+        return body
+
+    async def _sampling_connection(self, run, *, required):
+        """The connected public account to sample, or None when auto can do without it."""
+        inputs = run.input or {}
+        try:
+            connection = await self.x.connection(run.project_id, capability="x.posts.read")
+        except (IntegrationAuthorizationError, IntegrationNotConfiguredError):
+            if required:
+                raise
+            return None
+        if connection.configuration.get("protected") is not False:
+            if required:
+                raise ValueError("X voice sampling requires a confirmed public account")
+            return None
+        if inputs.get("account_id") and inputs["account_id"] != connection.external_account_id:
+            if required:
+                raise ValueError("X account changed; reconnect or choose the current account")
+            return None
+        return connection
+
+    async def _examples_v1(self, run, context):
         inputs = run.input or {}
         examples = []
         if inputs.get("supplied_samples"):
@@ -166,7 +259,7 @@ class XStyleActivities:
                 end_time=end.replace(microsecond=0).isoformat().replace("+00:00", "Z"),
             )
             pages.append(page)
-        selection = x_style.select_own_posts(pages, now=now)
+        selection = x_style.select_own_posts_v1(pages, now=now)
         if not selection["examples"]:
             raise ValueError(
                 "No usable own posts were found; supply writing samples or preferences"
@@ -213,7 +306,7 @@ class XStyleActivities:
                         result = await self.router.generate(
                             x_style.ROUTE.key,
                             ModelRequest(
-                                system=x_style.INSTRUCTIONS,
+                                system=x_style.CONTRACTS[context.get("policy_version", 1)][1],
                                 messages=(
                                     ModelMessage(role=MessageRole.USER, content=json.dumps(packet)),
                                 ),
@@ -256,10 +349,16 @@ class XStyleActivities:
                         "request_id": result.request_id,
                     },
                 )
-            except Exception:
+            except Exception as exc:
+                # Tin's own refusals say what stopped the guide; anything else stays generic.
+                reason = (
+                    f"{str(exc).rstrip('.')}. "
+                    if isinstance(exc, (ValueError, IntegrationError, BillingError))
+                    else ""
+                )
                 raise ApplicationError(
-                    "X voice extraction could not be confirmed; no replacement was purchased. "
-                    "The current guide is unchanged.",
+                    f"X voice extraction could not be confirmed. {reason}No replacement was "
+                    "purchased. The current guide is unchanged.",
                     non_retryable=True,
                 ) from None
 

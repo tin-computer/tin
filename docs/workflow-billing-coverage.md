@@ -74,8 +74,8 @@ OpenRouter route needs a verified explicit rate card before a billed request can
 be dispatched; keys or model prefixes never choose a provider or a price.
 
 The normal native maximum is $2, the organic audit maximum is $2 (it was $5 until
-September 29, 2026; see below), and keyword planning uses its configured total research
-ceiling. These are conservative estimates
+September 29, 2026; see below; audits pinned to `organic-audit-v13` add their $1 AI-engine
+ceiling, so $3), and keyword planning uses its configured total research ceiling. These are conservative estimates
 and ceilings, not fixed charges. The organic parent ceiling composes its selected stages:
 audit, keyword research, planning, optional technical fix, and, for the current content
 continuation, drafting and optional delivery. The pinned definition and inputs determine
@@ -164,6 +164,7 @@ the worst case one run can reach, so a normal run is never refused. Charges stay
 | --- | --- | --- | --- |
 | `organic.keyword_plan` (new runs) | $10 default, $5 floor | $2 default and floor | Keyword policy v6 reserves at most $1.65 for a full run |
 | `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
+| `organic.audit` (v13) | $2 | $3 | The same questions on six AI engines, within their own $1 ceiling (eight questions cost at most $0.62) |
 | `organic.traffic_system` | $26 ($31 with a technical fix) | $12, with or without a technical fix; $10 draft-only | The keyword limit plus a $10 pool (see "The traffic system's pool" below) |
 | `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
 | `organic.traffic_system` 0.5.0 | — | $17.50 ($22.50); $12.50 draft-only | The above plus the first page refresh, $2.50 |

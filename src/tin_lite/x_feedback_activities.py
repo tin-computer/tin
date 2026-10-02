@@ -1,6 +1,7 @@
 """Bounded, receipted X revisions. Draft and remembered preferences commit together."""
 
 import asyncio
+import hashlib
 import json
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_feedback, x_style
+from tin_lite.domain import result_line
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import ProjectFileMutation
@@ -44,6 +46,31 @@ class XFeedbackActivities:
         ):
             raise ValueError("The guide is already approved or no longer awaiting review.")
         return source, snapshot, packet
+
+    async def references(self, run):
+        """The guide revision's reference files, exactly as pinned when the founder sent them."""
+        pinned = json.loads(run.input.get("references") or "[]")
+        if not pinned:
+            return []
+        project = await self.db.get_project(run.project_id)
+        references = []
+        for ref in pinned:
+            raw = await self.storage.read_bounded_project_file(
+                repo_id=project.state_repo_id,
+                commit_sha=ref["revision"],
+                path=ref["path"],
+                max_bytes=x_feedback.MAX_REFERENCE_BYTES,
+            )
+            if (
+                raw is None
+                or len(raw) != ref["bytes"]
+                or hashlib.sha256(raw).hexdigest() != ref["sha256"]
+            ):
+                raise ApplicationError(
+                    f"{ref['path']} does not match the file you sent.", non_retryable=True
+                )
+            references.append({"path": ref["path"], "text": raw.decode("utf-8")})
+        return references
 
     @activity.defn(name="x_feedback_generate")
     async def generate(self, run_id: str):
@@ -84,12 +111,13 @@ class XFeedbackActivities:
                 raise ApplicationError(
                     "Worker does not serve this X revision contract.", non_retryable=True
                 )
-            model_packet = {
-                "kind": snapshot["kind"],
-                "post": packet["post"],
-                "guide": packet["guide"],
-                "feedback": run.input["feedback"],
-            }
+            model_packet = x_feedback.model_packet(
+                kind=snapshot["kind"],
+                post=packet["post"],
+                guide=packet["guide"],
+                feedback=run.input["feedback"],
+                references=await self.references(run),
+            )
             content = json.dumps(model_packet, ensure_ascii=False)
             if len(content.encode()) > x_feedback.POLICY["max_input_bytes"]:
                 raise ApplicationError(
@@ -224,6 +252,9 @@ class XFeedbackActivities:
                     )
                     path = snapshot["path"]
                     ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
+                    # The file is committed; a summary longer than the run's one-line result
+                    # must not fail the projection and leave the revision unrecorded.
+                    line = result_line(model["summary"])
                     if snapshot["kind"] == "guide":
                         await conn.execute(
                             "UPDATE workflow_runs SET canonical_commit_sha=$2, "
@@ -231,7 +262,7 @@ class XFeedbackActivities:
                             UUID(snapshot["source_run_id"]),
                             sha,
                             ref,
-                            model["summary"],
+                            line,
                         )
                     await self.db._complete_readonly_report_projection(
                         conn,
@@ -240,7 +271,7 @@ class XFeedbackActivities:
                         canonical_commit_sha=sha,
                         artifact_path=path,
                         artifact_ref=ref,
-                        summary=model["summary"],
+                        summary=line,
                         workflow_key=x_feedback.KEY,
                     )
 

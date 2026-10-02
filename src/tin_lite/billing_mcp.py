@@ -113,7 +113,6 @@ def register_billing_tools(server, *, runtime, settings, caller):
         project_id: str,
         per_run_usd: str,
         monthly_usd: str,
-        concurrency: int,
         expected_revision: int,
         schedule_max_usd: str | None = None,
     ) -> dict[str, Any]:
@@ -125,7 +124,6 @@ def register_billing_tools(server, *, runtime, settings, caller):
         policy = ProjectSpendingPolicy(
             per_run_nanos=usd_nanos(per_run_usd),
             monthly_nanos=usd_nanos(monthly_usd),
-            concurrency=concurrency,
             expected_revision=expected_revision,
             schedule_max_nanos=usd_nanos(schedule_max_usd) if schedule_max_usd else None,
         )

@@ -16,6 +16,7 @@ from tin_lite.workflows import (
     CodexProcedureWorkflow,
     DesignMdWorkflow,
     KeywordPlanWorkflow,
+    OrganicAuditWorkflow,
     ProjectMemoryWorkflow,
     ProjectTaskWorkflow,
     ScanReportWorkflow,
@@ -120,6 +121,13 @@ ACCEPTED_HISTORIES = (
         KeywordPlanWorkflow,
         "organic.keyword_plan:5f0b2c8e-3d4a-4f6b-9a1e-7c2d8e9f0a1b",
         FIXTURES / "keyword_plan_history.json",
+    ),
+    # Recorded locally from main at d69d337, before organic-audit-ai-engines-v1: an audit
+    # that published without asking any AI engine.
+    (
+        OrganicAuditWorkflow,
+        "organic.audit:6b1f0c2e-8d3a-4e5f-9a7b-2c4d6e8f0a13",
+        FIXTURES / "organic_audit_history.json",
     ),
 )
 

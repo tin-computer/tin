@@ -46,6 +46,7 @@ from tin_lite.domain import (
     WorkflowRun,
     WorkflowStatus,
     Workspace,
+    result_line,
 )
 from tin_lite.projects import ProjectCreationConflictError
 from tin_lite.rollouts import RolloutFile
@@ -3732,9 +3733,7 @@ class Database:
         assert row is not None
         return _run(row)
 
-    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
-        row = await self.pool.fetchrow(
-            """
+    _PENDING_DECISION = """
             SELECT COALESCE(decision.id, run.id) AS id,
                    run.id AS run_id,
                    run.project_id,
@@ -3744,13 +3743,23 @@ class Database:
             FROM workflow_runs AS run
             LEFT JOIN run_decisions AS decision
               ON decision.run_id = run.id AND decision.status = 'pending'
-            WHERE run.status = 'needs_input'
-              AND (decision.id = $1 OR (decision.id IS NULL AND run.id = $1))
+            WHERE run.status = 'needs_input' AND {match}
             ORDER BY decision.created_at DESC NULLS LAST
             LIMIT 1
-            """,
+            """
+
+    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            self._PENDING_DECISION.format(
+                match="(decision.id = $1 OR (decision.id IS NULL AND run.id = $1))"
+            ),
             decision_id,
         )
+        return dict(row) if row is not None else None
+
+    async def get_pending_decision_for_run(self, *, run_id: UUID) -> dict[str, Any] | None:
+        """The run's decision waiting in Decisions, the way get_pending_decision reads it."""
+        row = await self.pool.fetchrow(self._PENDING_DECISION.format(match="run.id = $1"), run_id)
         return dict(row) if row is not None else None
 
     async def apply_run_decision(
@@ -5136,7 +5145,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("launch cannot complete in its current state")
@@ -5617,6 +5626,7 @@ class Database:
                 "paid_ads_monitor_stopped",
                 "Google Ads check",
             ),
+            "social.x_draft": ("x-draft", "x_draft_stopped", "X draft"),
         }[workflow_key]
         async with self.pool.acquire() as conn, self.project_state_lock(conn, project_id):
             async with conn.transaction():
@@ -6871,7 +6881,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("submission run cannot complete in its current state")
@@ -6942,9 +6952,9 @@ class Database:
                 SET status = $7, canonical_commit_sha = $2, artifact_path = $3,
                     artifact_ref = $4,
                     error_message = CASE WHEN $7 = 'failed' THEN $5::text ELSE NULL END,
-                    result_summary = COALESCE($5::text, result_summary),
+                    result_summary = COALESCE($8::text, result_summary),
                     progress_summary = CASE WHEN $6 = 'organic.audit'
-                        THEN COALESCE($5::text, progress_summary) ELSE progress_summary END,
+                        THEN COALESCE($8::text, progress_summary) ELSE progress_summary END,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
@@ -6975,6 +6985,7 @@ class Database:
                 if workflow_key in {"organic.technical_fix", "content.refresh", "website.change"}
                 else workflow_key,
                 final_status,
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("report cannot complete in its current state")

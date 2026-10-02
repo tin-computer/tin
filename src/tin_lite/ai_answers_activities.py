@@ -1,9 +1,9 @@
 """Trusted activity that measures AI answers; Temporal carries identifiers only.
 
-No workflow calls this yet. The organic audit will, once its v11 policy lands: it saves the
-panel with ``save_request`` and then runs ``ai_answers_measure`` with the run id and a stage
-name. The prompts, brand and answers stay in effect receipts in Postgres; the activity
-returns counts and cost only.
+The organic audit calls it from policy organic-audit-v13: ``organic_prepare_ai_engines`` saves
+the panel with ``save_request``, and the workflow then runs ``ai_answers_measure`` with the run
+id and the stage name. The prompts, brand and answers stay in effect receipts in Postgres; the
+activity returns counts and cost only.
 """
 
 from __future__ import annotations

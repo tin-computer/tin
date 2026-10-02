@@ -29,6 +29,10 @@ class PublicWorkflow:
     id: UUID
     key: str
     public_mcp: PublicMCPExposure | None = None
+    # False keeps a package registered, so saved configurations and schedules keep running,
+    # while new setups, the organic system, discovery and the ChatGPT plugin no longer offer
+    # it (give it no public_mcp). A maintainer choice, not a field authors set in the package.
+    public_discovery: bool = True
 
     @property
     def definition_path(self) -> str:
@@ -41,7 +45,15 @@ class PublicWorkflow:
         # Read only the explicitly selected manifest through the shared safe decoder.
         # Never import package code or discover unregistered folders for tool exposure.
         raw = CheckoutStorage(REPOSITORY_ROOT)._read(self.definition_path)
-        return decode_workflow_source(raw, definition_path=self.definition_path).definition
+        source = decode_workflow_source(raw, definition_path=self.definition_path)
+        return self.catalog_definition(source.definition)
+
+    def catalog_definition(self, definition: dict[str, Any]) -> dict[str, Any]:
+        """The stored definition: the manifest's, plus the maintainer's discovery choice.
+
+        Catalog visibility, as for hidden built-ins; the package's files are unchanged.
+        """
+        return definition if self.public_discovery else {**definition, "public_discovery": False}
 
     @property
     def executor(self):
@@ -99,12 +111,12 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(
         UUID("4bf8c067-1709-427d-a00f-b0b53c871751"),
         "organic.error_surface",
-        PublicMCPExposure("start_error_surface_research", destructive=True, open_world=True),
+        public_discovery=False,
     ),
     PublicWorkflow(
         UUID("2136b2ff-7570-40bf-97d3-e37889aea964"),
         "organic.mention_backlinks",
-        PublicMCPExposure("start_mention_backlinks", destructive=True, open_world=True),
+        public_discovery=False,
     ),
     PublicWorkflow(
         UUID("7633e65c-d59d-4e96-a3f1-7e082d1cac5b"),
@@ -153,6 +165,11 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     ),
     PublicWorkflow(UUID("234d05ce-c9e6-46c5-8299-5ec3973645ef"), "competitor.sunset_rescue"),
     PublicWorkflow(UUID("4cfd20c4-6aaa-46d7-a5c1-1f67032a4358"), "growth.framework_starter"),
+    PublicWorkflow(UUID("cf62caaa-fc6f-4a32-b0bd-8babceec534d"), "organic.traffic_snapshot"),
+    PublicWorkflow(UUID("51b9959f-3f5c-4df3-b417-f6fbf12d19fc"), "organic.content_efficacy"),
+    PublicWorkflow(UUID("d6a097d3-056f-4ffd-af85-3205f32f58f8"), "organic.site_architecture"),
+    PublicWorkflow(UUID("896b8e66-ea09-4dda-ac11-7a1824282349"), "content.blog_index"),
+    PublicWorkflow(UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"), "organic.prompt_panel"),
 )
 
 
@@ -199,7 +216,11 @@ async def load_public_workflows(*, root: Path | None = None) -> tuple[PackagePub
         files.update({path: storage._read(path) for path in source.resource_paths.values()})
         publications.append(
             PackagePublication(
-                selection.id, selection.key, package.definition_path, source.definition, files
+                selection.id,
+                selection.key,
+                package.definition_path,
+                selection.catalog_definition(source.definition),
+                files,
             )
         )
     return tuple(publications)

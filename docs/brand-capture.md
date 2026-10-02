@@ -75,7 +75,8 @@ and describes each destination as new or carried forward unchanged. “Approve�
 the exact reviewed pair. The [reviewed-document harness](reviewed-project-documents.md)
 provides atomic adoption, destination conflict checks and retry recovery. Editing a
 destination during review requires a new decision; neither file is partially applied.
-In Decisions the pair is approved with “Approve”, or turned down with “Discard”: the run
+In Decisions the pair is approved with “Approve”, or turned down with “Discard” (MCP
+`discard_workflow_review`): the run
 ends as declined, the proposals stay readable in Files, and the current files are unchanged.
 
 There is no “request changes” button (Emre, 10/1). From 1.2.0 the founder's coding agent

@@ -5,6 +5,7 @@ from copy import deepcopy
 from uuid import UUID
 
 from tin_lite.organic_audit import (
+    AI_ENGINE_POLICY_KEYS,
     AUDIT_POLICY,
     PANEL_PREPARATION_POLICY_KEYS,
     SITE_EVIDENCE_POLICY_KEYS,
@@ -23,6 +24,7 @@ NEUTRAL_KEYS = {
     "respect_sitemap",
     *SITE_EVIDENCE_POLICY_KEYS,
     *PANEL_PREPARATION_POLICY_KEYS,
+    *AI_ENGINE_POLICY_KEYS,
 }
 
 

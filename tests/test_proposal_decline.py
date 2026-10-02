@@ -153,6 +153,41 @@ async def test_a_declined_proposal_is_decided_once(publication_db):
 
 
 @pytest.mark.asyncio
+async def test_the_dashboard_and_mcp_discard_through_one_service(publication_db):
+    from tin_lite.proposal_decline import ONLY_REVIEWS, discard_review
+
+    db = publication_db
+    _, run_id = await proposal(db)
+    runtime = SimpleNamespace(database=db)
+    # Another project's run reads the same as a run that doesn't exist.
+    for actor, target in (("user_stranger", run_id), (MEMBER, uuid4())):
+        with pytest.raises(LookupError, match="run not found"):
+            await discard_review(runtime=runtime, run_id=target, actor=actor)
+    first = await discard_review(runtime=runtime, run_id=run_id, actor=MEMBER)
+    assert (first.status.value, first.review_decision) == ("stopped", "declined")
+    # Discarding again returns the run as it was left; one decision is recorded.
+    again = await discard_review(runtime=runtime, run_id=run_id, actor=MEMBER)
+    assert again.id == first.id and again.review_decision == "declined"
+    assert (
+        await db.pool.fetchval(
+            "SELECT count(*) FROM workflow_review_commands WHERE source_run_id=$1", run_id
+        )
+        == 1
+    )
+    # What waits without something to approve is refused, as the dashboard refuses it.
+    _, other = await proposal(db)
+    await db.pool.execute("UPDATE run_decisions SET kind='select' WHERE run_id=$1", other)
+    with pytest.raises(ValueError, match=ONLY_REVIEWS):
+        await discard_review(runtime=runtime, run_id=other, actor=MEMBER)
+    decision = await db.get_pending_decision_for_run(run_id=other)
+    async with client_for(db) as client:
+        response = await client.post(
+            f"/api/decisions/{decision['id']}/apply", json={"action": "decline"}
+        )
+    assert response.status_code == 409 and response.json()["detail"] == ONLY_REVIEWS
+
+
+@pytest.mark.asyncio
 async def test_any_waiting_draft_can_be_discarded_once(publication_db):
     db = publication_db
     _, brand = await proposal(db, "brand.capture")

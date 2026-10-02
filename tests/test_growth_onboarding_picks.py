@@ -39,7 +39,6 @@ PICKS = [
 async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.KEY, hold=True):
     _, storage, run, _ = await activity_fixture(db, review=True)
     for key in (
-        "visibility.audit",
         "organic.audit",
         "outreach.email_shortlist",
         "site.health_improve",
