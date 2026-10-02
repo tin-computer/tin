@@ -16,14 +16,13 @@ from organic_site_stub import SyntheticSite, html_page, sitemap
 from test_organic_audit import activities_fixture
 from test_procedure_publication import HistoryStorage
 
-from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_project_files import MAX_FILE_BYTES
 from tin_lite.organic_audit import (
     ARTIFACT_LIMITS,
-    AUDIT_POLICY,
     LATEST_SUMMARY_PATH,
     SUMMARY_READ_LIMIT,
     V11_AUDIT_POLICY,
+    V12_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     canonical_json,
@@ -166,22 +165,19 @@ def test_v11_is_exactly_what_main_shipped_and_v12_adds_only_the_summary():
     assert digest(v11) == V11_POLICY_DIGEST
     assert digest(ai_contract(V11)) == V11_CONTRACT_DIGEST
     assert digest(ai_schemas(V11)) == V11_SCHEMAS_DIGEST
-    assert AUDIT_POLICY["version"] == V12 and audit_policy() is AUDIT_POLICY
-    assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
+    assert V12_AUDIT_POLICY["version"] == V12 and audit_policy(V12) is V12_AUDIT_POLICY
+    assert {k: v for k, v in V12_AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in v11.items() if k != "version"},
         "summary_max_bytes": 60_000,
         "max_internal_links": 250,
     }
     # The same questions, answers and grading as v11, so an answer completion may cross them.
     assert ai_contract(V12) == ai_contract(V11) and ai_schemas(V12) == ai_schemas(V11)
-    assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
+    assert {k: v for k, v in V12_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in v11.items() if k not in NEUTRAL_KEYS
     }
-    workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.8.0"
-    assert workflow.definition["audit_policy"] == AUDIT_POLICY
     # The budget sits under what a code workflow may read, which the publication enforces.
-    assert AUDIT_POLICY["summary_max_bytes"] < SUMMARY_READ_LIMIT == MAX_FILE_BYTES
+    assert V12_AUDIT_POLICY["summary_max_bytes"] < SUMMARY_READ_LIMIT == MAX_FILE_BYTES
 
 
 @pytest.mark.asyncio
@@ -202,13 +198,13 @@ async def test_a_v11_run_reads_and_writes_exactly_what_it_did_before_v12():
 
 @pytest.mark.asyncio
 async def test_v12_writes_the_summary_and_an_identical_latest_copy():
-    files, pages = await site_evidence(AUDIT_POLICY)
-    docs = documents(AUDIT_POLICY, files, pages)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
+    docs = documents(V12_AUDIT_POLICY, files, pages)
     paths = audit_paths(RUN_ID) | summary_paths(RUN_ID)
     assert set(docs) == set(paths.values())
     assert LATEST_SUMMARY_PATH == paths["LATEST.json"] == "reports/organic-audit/LATEST.json"
     raw = docs[paths["SUMMARY.json"]]
-    assert docs[LATEST_SUMMARY_PATH] == raw and len(raw) <= AUDIT_POLICY["summary_max_bytes"]
+    assert docs[LATEST_SUMMARY_PATH] == raw and len(raw) <= V12_AUDIT_POLICY["summary_max_bytes"]
     summary = json.loads(raw)
     findings = json.loads(docs[paths["findings.json"]])
     evidence = json.loads(docs[paths["evidence.json"]])
@@ -304,9 +300,9 @@ async def test_v12_writes_the_summary_and_an_identical_latest_copy():
 
 @pytest.mark.asyncio
 async def test_click_depth_and_inbound_links_on_a_small_link_graph():
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     summary = json.loads(
-        documents(AUDIT_POLICY, files, pages)[summary_paths(RUN_ID)["LATEST.json"]]
+        documents(V12_AUDIT_POLICY, files, pages)[summary_paths(RUN_ID)["LATEST.json"]]
     )
     rows = rows_of(summary)
     assert {path: row["depth"] for path, row in rows.items()} == {
@@ -347,7 +343,7 @@ def test_a_link_list_missing_a_link_is_capped_so_depth_is_not_exact():
             url=f"{BASE}/",
             charset="utf-8",
             truncated=truncated,
-            max_links=AUDIT_POLICY["max_internal_links"],
+            max_links=V12_AUDIT_POLICY["max_internal_links"],
         )
 
     plain = facts('<a href="/a">A</a>')
@@ -545,7 +541,7 @@ def test_a_500_page_crawl_keeps_the_summary_under_64_kb():
     paths, files, facts, crawl, search = large_site()
     # A low evidence bound also shows the link lists leave evidence first, after the summary
     # has counted them.
-    policy = {**AUDIT_POLICY, "max_evidence_bytes": 1_500_000}
+    policy = {**V12_AUDIT_POLICY, "max_evidence_bytes": 1_500_000}
     run_id = str(uuid4())
     docs = site_check_documents(
         run_id=run_id,
@@ -577,7 +573,7 @@ def test_a_500_page_crawl_keeps_the_summary_under_64_kb():
     named = audit_paths(run_id) | summary_paths(run_id)
     raw = docs[named["SUMMARY.json"]]
     assert len(docs[named["evidence.json"]]) > MAX_FILE_BYTES  # what code could not read
-    assert len(raw) <= AUDIT_POLICY["summary_max_bytes"] < MAX_FILE_BYTES
+    assert len(raw) <= V12_AUDIT_POLICY["summary_max_bytes"] < MAX_FILE_BYTES
     assert docs[named["LATEST.json"]] == raw
     summary = json.loads(raw)
     truncated = summary["truncated"]
@@ -630,7 +626,7 @@ def test_long_findings_over_many_checks_still_fit():
         run_id=run_id,
         scope={"url": f"{BASE}/", "host": HOST, "market": "US", "started_at": "2026-09-30"},
         hosts=(HOST,),
-        policy=AUDIT_POLICY,
+        policy=V12_AUDIT_POLICY,
         view=view,
         crawl_pages=crawl,
         cover={"status": "complete"},
@@ -641,7 +637,7 @@ def test_long_findings_over_many_checks_still_fit():
         findings_sha256="a" * 64,
         evidence_sha256="b" * 64,
     )
-    assert len(raw) <= AUDIT_POLICY["summary_max_bytes"]
+    assert len(raw) <= V12_AUDIT_POLICY["summary_max_bytes"]
     summary = json.loads(raw)
     assert summary["findings"]["total"] == 300
     assert len(summary["findings"]["by_check"]) == MAX_CHECKS
@@ -680,10 +676,10 @@ async def publish(
 @pytest.mark.asyncio
 async def test_each_v12_publication_replaces_latest_and_never_a_run_file():
     storage = HistoryStorage()
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     first, second, third = RUN_ID, str(uuid4()), str(uuid4())
-    one = documents(AUDIT_POLICY, files, pages, run_id=first)
-    two = documents(AUDIT_POLICY, files, pages, run_id=second)
+    one = documents(V12_AUDIT_POLICY, files, pages, run_id=first)
+    two = documents(V12_AUDIT_POLICY, files, pages, run_id=second)
     await publish(storage, first, one)
     await publish(storage, second, two)
     tree = storage.repo.trees[storage.repo.head]
@@ -692,7 +688,7 @@ async def test_each_v12_publication_replaces_latest_and_never_a_run_file():
     first_summary = summary_paths(first)["SUMMARY.json"]
     assert tree[first_summary][1] == one[first_summary]
     # A run's own files stay create-only, its summary included.
-    three = documents(AUDIT_POLICY, files, pages, run_id=third)
+    three = documents(V12_AUDIT_POLICY, files, pages, run_id=third)
     storage.repo.edit({summary_paths(third)["SUMMARY.json"]: b"{}"})
     writes = storage.repo.writes
     with pytest.raises(OutputConflictError):
@@ -715,15 +711,15 @@ async def test_each_v12_publication_replaces_latest_and_never_a_run_file():
 @pytest.mark.asyncio
 async def test_a_lost_response_recovers_even_after_a_later_audit_replaced_latest():
     storage = HistoryStorage()
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     first, second = RUN_ID, str(uuid4())
-    one = documents(AUDIT_POLICY, files, pages, run_id=first)
+    one = documents(V12_AUDIT_POLICY, files, pages, run_id=first)
     saved = {}
     storage.repo.lose_response = True
     with pytest.raises(PublicationPendingError):
         await publish(storage, first, one, saved=saved)
     original = storage.repo.head
-    await publish(storage, second, documents(AUDIT_POLICY, files, pages, run_id=second))
+    await publish(storage, second, documents(V12_AUDIT_POLICY, files, pages, run_id=second))
     later = storage.repo.head
     assert await publish(storage, first, one, intent=saved) == original
     assert storage.repo.head == later and storage.repo.writes == 2
@@ -756,10 +752,10 @@ def latest_run(storage):
 @pytest.mark.asyncio
 async def test_an_audit_that_started_earlier_but_publishes_later_leaves_latest_alone():
     storage = HistoryStorage()
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     newer, older = str(uuid4()), str(uuid4())
-    await publish(storage, newer, documents(AUDIT_POLICY, files, pages, run_id=newer))
-    slow = documents(AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
+    await publish(storage, newer, documents(V12_AUDIT_POLICY, files, pages, run_id=newer))
+    slow = documents(V12_AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
     await publish(storage, older, slow)
     tree = storage.repo.trees[storage.repo.head]
     assert latest_run(storage) == newer
@@ -770,13 +766,13 @@ async def test_an_audit_that_started_earlier_but_publishes_later_leaves_latest_a
     latest = str(uuid4())
     later = "2026-10-01T00:00:00+00:00"
     await publish(
-        storage, latest, documents(AUDIT_POLICY, files, pages, run_id=latest, started_at=later)
+        storage, latest, documents(V12_AUDIT_POLICY, files, pages, run_id=latest, started_at=later)
     )
     assert latest_run(storage) == latest
     storage.repo.edit({LATEST_SUMMARY_PATH: b"edited by hand"})
     again = str(uuid4())
     await publish(
-        storage, again, documents(AUDIT_POLICY, files, pages, run_id=again, started_at=EARLIER)
+        storage, again, documents(V12_AUDIT_POLICY, files, pages, run_id=again, started_at=EARLIER)
     )
     assert latest_run(storage) == again
 
@@ -785,8 +781,8 @@ async def test_an_audit_that_started_earlier_but_publishes_later_leaves_latest_a
 async def test_a_latest_path_that_is_not_a_file_is_left_alone_and_the_audit_still_publishes():
     storage = HistoryStorage()
     storage.repo.edit({f"{LATEST_SUMMARY_PATH}/notes.md": b"a folder"})
-    files, pages = await site_evidence(AUDIT_POLICY)
-    docs = documents(AUDIT_POLICY, files, pages)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
+    docs = documents(V12_AUDIT_POLICY, files, pages)
     await publish(storage, RUN_ID, docs)
     tree = storage.repo.trees[storage.repo.head]
     assert LATEST_SUMMARY_PATH not in tree
@@ -799,14 +795,14 @@ async def test_a_latest_path_that_is_not_a_file_is_left_alone_and_the_audit_stil
 @pytest.mark.asyncio
 async def test_an_answer_completion_writes_its_own_summary_and_never_latest():
     storage = HistoryStorage()
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     source, completion = str(uuid4()), str(uuid4())
-    await publish(storage, source, documents(AUDIT_POLICY, files, pages, run_id=source))
+    await publish(storage, source, documents(V12_AUDIT_POLICY, files, pages, run_id=source))
     # A completion copies its source's scope, start included, and reads no pages.
-    docs = documents(AUDIT_POLICY, files, [], run_id=completion, completion=provenance(source))
+    docs = documents(V12_AUDIT_POLICY, files, [], run_id=completion, completion=provenance(source))
     paths = audit_paths(completion) | {"SUMMARY.json": summary_paths(completion)["SUMMARY.json"]}
     assert set(docs) == set(paths.values())
-    assert publication_contract(completion, AUDIT_POLICY, completion=True) == (
+    assert publication_contract(completion, V12_AUDIT_POLICY, completion=True) == (
         paths,
         {**ARTIFACT_LIMITS, "SUMMARY.json": SUMMARY_READ_LIMIT},
         frozenset(),
@@ -822,10 +818,10 @@ async def test_an_answer_completion_writes_its_own_summary_and_never_latest():
 @pytest.mark.asyncio
 async def test_a_retry_keeps_its_first_choice_until_that_attempt_is_proven_absent():
     storage = HistoryStorage()
-    files, pages = await site_evidence(AUDIT_POLICY)
+    files, pages = await site_evidence(V12_AUDIT_POLICY)
     older, newer = str(uuid4()), str(uuid4())
-    slow = documents(AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
-    fast = documents(AUDIT_POLICY, files, pages, run_id=newer)
+    slow = documents(V12_AUDIT_POLICY, files, pages, run_id=older, started_at=EARLIER)
+    fast = documents(V12_AUDIT_POLICY, files, pages, run_id=newer)
     # The slow audit decides to replace LATEST.json, then loses the race to a newer audit
     # before its commit lands: the retry finds no landed attempt and decides again.
     saved = {}
@@ -843,7 +839,7 @@ async def test_a_retry_keeps_its_first_choice_until_that_attempt_is_proven_absen
     )
     # A landed attempt that left LATEST.json alone reconciles to that same commit.
     oldest = str(uuid4())
-    late = documents(AUDIT_POLICY, files, pages, run_id=oldest, started_at=EARLIER)
+    late = documents(V12_AUDIT_POLICY, files, pages, run_id=oldest, started_at=EARLIER)
     saved = {}
     storage.repo.lose_response = True
     with pytest.raises(PublicationPendingError):
@@ -891,4 +887,5 @@ async def test_the_publish_receipt_still_verifies_only_the_three_audit_files():
     assert receipt["summary_path"] == summary_paths(run_id)["SUMMARY.json"]
     assert receipt["summary_sha256"] == hashlib.sha256(summary).hexdigest()
     assert tree[LATEST_SUMMARY_PATH][1] == summary
-    assert json.loads(summary)["policy_version"] == V12
+    # The fixture pins the current policy, which keeps v12's summary.
+    assert json.loads(summary)["policy_version"] == audit_policy()["version"]

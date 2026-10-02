@@ -513,7 +513,8 @@ The panel decides the grading, not the run's policy: panels drafted for the ladd
 `unsearched: true`, and an explicit answer completion of an older audit keeps grading the
 way that audit did. Answer pages take their questions from the newest organic or AI
 visibility audit, and Start here no longer suggests a separate AI visibility audit beside
-the organic traffic system. `visibility.audit` stays runnable for saved configurations.
+the organic traffic system. `visibility.audit` is out of discovery and the organic
+system (catalog 1.3.0) but stays runnable for saved configurations.
 
 ### Answer structure of top pages
 
@@ -598,7 +599,82 @@ crawled page. In the tests a synthetic crawl of 500 pages with 130-character pat
 
 ### For the weekly workflows
 
-The page tree (`organic.site_architecture`) can read click depth and inbound links from
-`LATEST.json` instead of reporting click depth as not measured, and page decisions and the
-traffic snapshot can take the per-page checks from it instead of globbing
-`reports/organic-audit/*/findings.json`. Those workflows need a change of their own to do so.
+The weekly loop reads `LATEST.json` (or a named run's `SUMMARY.json`) and never globs
+`reports/organic-audit/*/findings.json`, which can pass 64 KB. Each checks the summary's
+`host` against its own site and sets a mismatch aside:
+
+- The page tree (`organic.site_architecture`) shows each page's click depth, exact or "at
+  most" as `links.depth` says, and inbound links. Possible orphans are pages the orphan
+  check names or that no read page links to; a key page more than three clicks deep fires
+  its trigger only on an exact depth.
+- Page decisions (`organic.content_efficacy`) and the traffic snapshot take each page's
+  checks from its row. The summary does not say which competing pages pair up, so page
+  decisions takes one group from a single competing-pages finding and otherwise pairs pages
+  by Search Console queries. The snapshot's page entries keep their `[id, check, priority]`
+  shape with a null id, since the summary names checks, not finding IDs.
+- `listed` against `pages`: a check whose findings affect more pages than the rows name
+  (examples only, site-level or outside the crawl) is not spread over pages. Page decisions
+  names those checks in its notes, and the snapshot keeps them under
+  `audit.unlisted_checks`.
+
+An audit from before v12 writes no summary: the page tree then says click depth is not
+measured, and the other two attach no checks.
+
+## 0.9 — the buyer prompt panel and six AI engines (organic-audit-v13)
+
+v11 and v12 are on main and may deploy at any time, so these changes are a new pinned
+policy, `organic-audit-v13` (catalog organic.audit 0.9.0). It keeps v12 and adds
+`prompt_panel` and the `ai_engines` keys. Runs pinned to v11 or v12 draft their own
+questions and ask no engine, exactly as before; tests freeze v12's policy and the files a
+synthetic v12 run writes, and a workflow history recorded on main still replays.
+
+### The buyer prompt panel
+
+When an `organic.prompt_panel` run has succeeded for the audited site, a v13 audit asks that
+panel's questions instead of drafting its own (`prompt_panel`):
+
+- There is no review step; the founder decided the panel needs none. The panel workflow
+  publishes a panel only when every check in its `check_panel` passes, so Tin reads the
+  newest succeeded `organic.prompt_panel` run at its own published revision. The panel must
+  name the audited host and carry `"status": "ready"`.
+- The audit asks at most `max_questions` (eight) of its 32 prompts, allocated to the four
+  families by weight with the largest remainder, one prompt per stage before a second. The
+  panel's core family weighs 0.40, so it gets three of the eight. Answers per question and
+  the cost bound are unchanged.
+- The product name, aliases and competitors come from the panel. There is no research,
+  drafting or review call; `panel_preparation.method` is `buyer_prompt_panel`.
+- The choice is saved once, so a retry asks the same questions. An earlier audit is reused
+  only when it asked exactly this panel; a new panel starts a new baseline.
+  `refresh_questions` still drafts a new set. Without a usable panel the audit drafts its
+  own questions, as v12 does.
+
+### Six AI engines
+
+The audit's own answers come from one model with web search. v13 also asks the same frozen
+questions on six answer engines through DataForSEO ([AI answers](ai-answers-dataforseo.md)):
+
+| Engine | Measurement | What it shows |
+|---|---|---|
+| ChatGPT, Gemini | `consumer_app_answer` | The app's answer and sources. ChatGPT is not forced to search, so it answers as the app does. |
+| Google AI Mode, AI Overview | `consumer_app_answer` | Google's AI answer and references; an Overview only when Google shows one. |
+| Claude, Perplexity | `api_model_answer` | The vendor's API model on the live endpoint, with web search. Not claude.ai or perplexity.ai. |
+
+- **When:** after the brand checks, before publication. The workflow step is behind the
+  `organic-audit-ai-engines-v1` patch; `organic_prepare_ai_engines` returns no stage for
+  earlier policies, so their runs ask nothing.
+- **Cost ceiling:** `ai_engines_max_cost_usd` ($1), cut to what the audit's own limit has
+  left, and reserved in the audit's budget ledger. One question on all six engines costs at
+  most $0.0776, so eight cost at most $0.62. Questions that don't fit are not asked, one per
+  buyer job in turn so every job keeps a question, and the report names the ones left out.
+  The audit's billing maximum is $2 plus this ceiling for v13 runs.
+- **What it reports:** AUDIT.md shows the apps and the API models in separate tables:
+  answered, mentioned, cited your site, named first and cost per engine, and the answers
+  missing with why. `evidence.json` keeps every answer (at most 4,000 characters) and up to
+  ten cited URLs under `ai_visibility.engines`. SUMMARY.json and LATEST.json get
+  `ai_engines`: one row per engine (`engine`, `measurement`, `model`, `asked`, `answered`,
+  `mentioned`, `cited`, `recommended_first`, `cost_usd`), with no answers or URLs, so the
+  summary stays under 64 KB.
+- **When it does not run:** an answer completion, an audit without questions, or a ceiling
+  that fits no question is reported as not measured with its reason. A measurement that
+  fails leaves the audit to publish without it, and the report says it did not finish;
+  answers already bought stay in receipts and are billed.

@@ -17,6 +17,7 @@ from tin_lite.organic_audit_ai import (
     PanelReview,
     payload,
 )
+from tin_lite.organic_audit_engines import per_question_usd
 from tin_lite.service_pricing import (
     AUDIT_MAXIMUM_USD,
     CARD,
@@ -73,8 +74,12 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
     # v10 asks at most 8 questions three times with web search and once without, plus a
     # review of the top pages: 28 searched and 61 unsearched calls, about $1.92.
     assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
+    # v13 also asks the same questions on six AI engines within their own pinned ceiling.
+    engines = per_question_usd(policy) * questions
+    assert engines <= Decimal(policy["ai_engines_max_cost_usd"]) == 1
     terms = service_terms(SPECS["organic.audit"].definition)
-    assert terms["maximum_nanos"] == AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR == 2 * NANOS_PER_DOLLAR
+    assert terms["maximum_nanos"] == (AUDIT_MAXIMUM_USD + 1) * NANOS_PER_DOLLAR
+    assert total + engines < AUDIT_MAXIMUM_USD + 1
 
 
 def test_content_plan_share_covers_its_one_model_call():

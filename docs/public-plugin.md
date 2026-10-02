@@ -82,7 +82,9 @@ metadata: a stable public tool name and effect hints. This metadata is not seria
 Input schemas come from `client_input_schema(entry.definition)`; the project is bound
 outside workflow inputs by the shared run service. The public tool inventory combines
 `BUILTIN_WORKFLOWS` and `PUBLIC_WORKFLOWS`:
-29 native workflows plus 18 reviewed published packages, for 47 named starts.
+28 native workflows plus 16 reviewed published packages, for 44 named starts. Workflows hidden
+from discovery (`visibility.audit`, `organic.error_surface`, `organic.mention_backlinks`) have
+no start tool; their saved configurations keep running in Tin.
 Package schemas are read through the same safe manifest decoder used by catalog
 publication. No package code runs during discovery, and unregistered folders,
 `example.*` packages and private `custom.*` workflows are not exposed.
@@ -95,8 +97,10 @@ expand the public callable surface.
 
 Subsequent catalog additions remain outside this release's reviewed tool set:
 `website.change`, `content.refresh`, `social.x_revise`, `social.x_draft`,
-`social.x_style`, `social.x_publish`, `social.x_compose`, `competitor.sunset_rescue`
-and `growth.framework_starter`. They keep their ordinary Tin registration. Adding
+`social.x_style`, `social.x_publish`, `social.x_compose`, `competitor.sunset_rescue`,
+`growth.framework_starter` and the organic loop's five packages (`organic.traffic_snapshot`,
+`organic.content_efficacy`, `organic.site_architecture`, `content.blog_index` and
+`organic.prompt_panel`). They keep their ordinary Tin registration. Adding
 ChatGPT tools for them requires an explicit review of their effects and controls.
 
 Every start takes a project UUID and required request UUID. Choose exactly one form:

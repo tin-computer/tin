@@ -37,8 +37,8 @@ A procedure writes only its declared output. A weekly package keeps its history 
 
 | Package | Builds on | Hands off to | Onboarding program |
 |---|---|---|---|
-| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Organic search content |
-| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | AI visibility |
+| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Hidden from discovery; saved configurations keep running |
+| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | Hidden from discovery; saved configurations keep running |
 | `competitor.watch` | its last report, keyword plan and ads competitors, Feature map | `content.public_article`, `content.plan`, `research.deep_dive` | Pricing and packaging |
 | `competitor.sunset_rescue` | its earlier reports, competitor-watch reports, onboarding plan, Feature map, Code map, keyword plan | `content.public_article`, `project.task`, `outreach.community_threads` | Pricing and packaging |
 | `qa.buyer_trust` | signup walkthrough, Feature map, onboarding plan | `site.health_improve` (code), founder (policy, host) | Conversion and trust |
@@ -56,10 +56,17 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
+| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy`, `organic.site_architecture`, `content.blog_index` read its data file; its weekly readout routes decisions to `growth.signup_source`, `content.refresh` and `organic.audit` | Organic traffic |
+| `organic.content_efficacy` | traffic snapshot, organic audit, onboarding plan, brand guide, earlier `content.refresh` drafts | `website.change` (URL changes with stable IDs, from its phase 3); refresh rows wait for the content workflow | Organic traffic, technical SEO |
+| `organic.site_architecture` | organic audit summary, Search Console, traffic snapshot, page decisions | `website.change` (its `redirects.json` block, from phase 3), `content.refresh`, `content.diagram` | Technical SEO |
+| `content.blog_index` | connected repository, saved article route (`save_page_route`), Code map, traffic snapshot | founder merges the PR; `content.deliver` adds a missing route with the next article | Organic traffic |
+| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` asks the newest panel for its site | Organic traffic |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`
-line each. A new Registry package needs the same.
+line each. A new Registry package needs the same. A package registered with
+`public_discovery=False` in `public_workflows.py` keeps running for saved configurations but
+leaves programs.json and discovery.
 
 ## Code examples
 

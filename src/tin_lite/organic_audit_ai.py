@@ -22,6 +22,7 @@ from tin_lite.organic_audit import (
     V9_AUDIT_POLICY,
     V10_AUDIT_POLICY,
     V11_AUDIT_POLICY,
+    V12_AUDIT_POLICY,
     audit_policy,
     canonical_json,
     digest,
@@ -536,6 +537,7 @@ def read_response(
                 V9_AUDIT_POLICY,
                 V10_AUDIT_POLICY,
                 V11_AUDIT_POLICY,
+                V12_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             and len(completed) == policy["max_tool_calls"]

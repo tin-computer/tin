@@ -9,6 +9,9 @@ go first, then the pages of least use, and `truncated` says what went.
 
 Inbound links and click depth come from the links on the pages Tin read. They are measured
 inside the crawl, not across the whole site, and the summary says so.
+
+From organic-audit-v13 it also holds `ai_engines`: one row per AI engine the questions were
+asked on, with answers from the apps and from API models labelled apart.
 """
 
 from __future__ import annotations
@@ -237,7 +240,7 @@ def build_summary(
         if finding.get("priority") in by_priority:
             by_priority[finding["priority"]] += 1
     by_id = {finding.get("id"): finding for finding in findings}
-    return {
+    summary = {
         "schema_version": SCHEMA_VERSION,
         "kind": "organic_audit_summary",
         "run_id": run_id,
@@ -313,6 +316,12 @@ def build_summary(
         },
         "truncated": False,
     }
+    if policy.get("ai_engines"):
+        # organic-audit-v13: one row per AI engine, apps and API models labelled apart.
+        from tin_lite.organic_audit_engines import headline
+
+        summary["ai_engines"] = headline(ai.get("engines"))
+    return summary
 
 
 def ai_headline(ai: dict) -> dict:

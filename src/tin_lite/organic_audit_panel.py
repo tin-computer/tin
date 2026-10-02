@@ -9,6 +9,7 @@ import re
 from urllib.parse import urlsplit
 from uuid import UUID
 
+from tin_lite import prompt_panel
 from tin_lite.organic_audit import audit_policy, canonical_json, digest, question_results
 from tin_lite.organic_audit_ai import (
     AuditValidationError,
@@ -125,11 +126,86 @@ def limit_panel(panel: dict, *, max_jobs: int, repetitions: int, unsearched: boo
     }
 
 
-async def reuse_panel(activities, run_id, scope):
+async def panel_questions(activities, run_id, scope):
+    """The newest succeeded buyer prompt panel for this site, as audit questions.
+
+    organic.prompt_panel publishes a panel only when every check passes, so a succeeded run is
+    ready to ask; there is no review step. It is read at that run's own published revision, so
+    a later panel does not change it. The choice is saved once, so a retry asks the same
+    questions.
+    """
+    saved = await activities._result(run_id, "prompt_panel")
+    if saved is not None:
+        return saved.get("panel")
+    run = await activities._active(run_id)
+    reader = getattr(activities.db, "list_prerequisite_runs", None)
+    policy = audit_policy(scope["policy_version"])
+    chosen = None
+    if reader is not None and not run.input.get("refresh_questions"):
+        project = await activities.db.get_project(run.project_id)
+        hosts = {prompt_panel.host_of(h) for h in audit_hosts(scope)}
+        rows = await reader(
+            project_id=run.project_id, workflow_keys=[prompt_panel.WORKFLOW_KEY], limit=10
+        )
+        for key, source in rows:
+            if key != prompt_panel.WORKFLOW_KEY or not getattr(
+                source, "canonical_commit_sha", None
+            ):
+                continue
+            try:
+                raw = await activities.storage.read_canonical_artifact(
+                    repo_id=project.state_repo_id,
+                    commit_sha=source.canonical_commit_sha,
+                    path=source.artifact_path or prompt_panel.PANEL_PATH,
+                )
+            except (LookupError, ValueError):
+                continue
+            block = prompt_panel.parse(raw)
+            if (
+                block is None
+                or block.get("status") != "ready"
+                or prompt_panel.host_of(block.get("target")) not in hosts
+            ):
+                continue
+            asked = prompt_panel.questions(block, policy["max_questions"], scope["url"])
+            if not asked:
+                continue
+            value = {
+                "site_type": "product",
+                "host": scope["host"],
+                **prompt_panel.identity(block, scope["host"]),
+                "public_description": "The buyer prompt panel for this site.",
+                "questions": asked,
+                "origin": {
+                    "workflow": prompt_panel.WORKFLOW_KEY,
+                    "run_id": str(source.id),
+                    "revision": source.canonical_commit_sha,
+                    "panel_sha256": digest(block),
+                },
+            }
+            aliases = audit_hosts(scope)[1:]
+            if aliases:
+                value["site_hosts"] = list(audit_hosts(scope))
+            unsearched = bool(policy.get("unsearched_answers"))
+            chosen = {
+                **value,
+                "sha256": digest(value),
+                "planned_observations": len(asked) * (policy["repetitions"] + int(unsearched)),
+                "repetitions": policy["repetitions"],
+                **({"unsearched": True} if unsearched else {}),
+            }
+            break
+    await activities._save(run_id, "prompt_panel", {"panel": chosen})
+    return chosen
+
+
+async def reuse_panel(activities, run_id, scope, *, prompts=None):
     """The newest published audit of this project, host and market with a v10 question set.
 
     Its panel is copied unchanged, with its per-question results as the comparison
     baseline. A run that asked for new questions, or has no earlier set, drafts its own.
+    With a buyer prompt panel, only an earlier audit that asked exactly that panel is reused,
+    so a new panel starts a new baseline.
     """
     run = await activities._active(run_id)
     policy = audit_policy(scope["policy_version"])
@@ -154,6 +230,7 @@ async def reuse_panel(activities, run_id, scope):
         panel = await activities._result(source_id, "panel") or {}
         if (
             panel.get("status") != "completed"
+            or (prompts is not None and panel.get("sha256") != prompts["sha256"])
             or source_scope.get("host") != scope["host"]
             or source_scope.get("market") != scope["market"]
             or panel.get("repetitions") != policy["repetitions"]
@@ -200,9 +277,27 @@ async def prepare_panel(activities, run_id):
     scope = await activities._result(run_id, "scope")
     policy_version = scope["policy_version"]
     policy = audit_policy(policy_version)
-    reused = await reuse_panel(activities, run_id, scope)
+    prompts = (
+        await panel_questions(activities, run_id, scope) if policy.get("prompt_panel") else None
+    )
+    reused = await reuse_panel(activities, run_id, scope, prompts=prompts)
     if reused:
         return reused["planned_observations"]
+    if prompts:
+        await activities._save(
+            run_id,
+            "panel_preparation",
+            {
+                "status": "completed",
+                "reason": None,
+                "method": "buyer_prompt_panel",
+                "source_run_id": prompts["origin"]["run_id"],
+                "attempts": [],
+                "research_sha256": None,
+            },
+        )
+        saved = await activities._save(run_id, "panel", {"status": "completed", **prompts})
+        return saved["planned_observations"]
     aliases = audit_hosts(scope)[1:]
     reason, research, research_stage = None, None, None
     attempts = []

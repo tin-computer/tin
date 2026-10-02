@@ -480,11 +480,6 @@ async def system_facts(*, database: Any, project_id: UUID, run_id: UUID) -> dict
 
 
 WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
-    "visibility.audit": {
-        "first": "about ten minutes",
-        "lands": "Files, reports/AI_VISIBILITY.md",
-        "watch": "whether AI answers start naming the product; expect movement in weeks, not days",
-    },
     "organic.audit": {
         "first": "about fifteen minutes",
         "lands": "Files, the audit report and its findings",
@@ -555,7 +550,7 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "watch": "changes to protected pages such as /sign-in always wait for your merge",
     },
     "content.answer_page": {
-        "first": "about ten minutes after a visibility audit",
+        "first": "about ten minutes after an organic audit",
         "lands": "Decisions, as a draft to review",
         "watch": "publish what you approve; search impressions follow in weeks",
     },
@@ -638,16 +633,6 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "first": "about fifteen minutes",
         "lands": "Files, reports/BUYER_TRUST.md",
         "watch": "the verdict and fixes; code fixes go to Improve site health",
-    },
-    "organic.error_surface": {
-        "first": "about thirty minutes",
-        "lands": "Files, reports/error-surface/<run>.md",
-        "watch": "add it to the content plan as a context file",
-    },
-    "organic.mention_backlinks": {
-        "first": "about fifteen minutes",
-        "lands": "Files, reports/backlink-asks/<run>.md",
-        "watch": "send the asks you like yourself; later weeks recheck for the link",
     },
     "outreach.paying_segment": {
         "first": "a few minutes",

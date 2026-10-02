@@ -1,0 +1,140 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.site_architecture",
+    "title": "Plan the site's page tree and redirects",
+    "description": "Plan the site's page tree, URL and navigation rules from live data: the latest organic audit's summary (click depth, inbound links and checks for each page it crawled), a year of Search Console clicks, the traffic snapshot's visits and Page decisions. One model call names and groups the sections; code computes the rest. When URLs must change, it lists the exact redirects for website.change, which asks you about each one before it changes the site. Follow-ups after a change compare clicks with the saved baseline. It does not read the repository: click depth and possible orphans come from the pages the audit read. Plans only; changes nothing itself.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "prerequisites": [
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit's summary (reports/organic-audit/LATEST.json, from policy v12) supplies click depth, inbound links, possible orphans, pages that compete for one search and the sitemap size."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "content/efficacy.md",
+        "producer": "organic.content_efficacy",
+        "reason": "Page decisions name the merges and retirements the tree has to absorb."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "analytics/traffic-snapshot.json",
+        "producer": "organic.traffic_snapshot",
+        "reason": "The snapshot's visits per landing page keep a page with visits but no search clicks from being moved without a redirect."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "follow_up"
+          ],
+          "default": "plan",
+          "title": "Plan, or follow up after a change"
+        },
+        "planned_change": {
+          "type": "string",
+          "enum": [
+            "none",
+            "redesign",
+            "url_change",
+            "platform_move",
+            "domain_move"
+          ],
+          "default": "none",
+          "title": "Change you are planning"
+        },
+        "new_paths": {
+          "type": "string",
+          "maxLength": 8000,
+          "default": "",
+          "title": "New routes, one old -> new path or new route per line"
+        },
+        "new_origin": {
+          "type": "string",
+          "maxLength": 255,
+          "default": "",
+          "title": "New HTTPS origin, for a domain move only"
+        },
+        "applied_on": {
+          "type": "string",
+          "maxLength": 10,
+          "default": "",
+          "title": "Date the change went live (YYYY-MM-DD), for a follow-up"
+        },
+        "key_pages": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "title": "Key pages (optional)",
+          "description": "Leave empty to use home, pricing, signup and the most clicked feature pages."
+        }
+      },
+      "required": [
+        "project_id"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": [
+          "search_analytics.read"
+        ],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "architecture.py"
+      ],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "sections": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 20000,
+          "max_output_tokens": 2048
+        }
+      },
+      "services": {
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 3,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/organic/site-architecture/SITE_ARCHITECTURE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}
