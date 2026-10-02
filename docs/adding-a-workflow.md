@@ -193,7 +193,7 @@ also isn't an archival command for an already-published workflow.
 
 The code package runtime is Python 3.12.8 with the standard library, up to 900 seconds and
 one declared text artifact of up to 1,000,000 bytes. It supports up to 32 managed model calls
-across four routes, with at most 700,000 bytes (about 200k tokens) of model input per run;
+across four routes; keep a run's model input under 700,000 bytes (about 200k tokens);
 only the registered OpenAI Luna and Astra routes are currently admitted. There is no `pip`
 installation, raw credential injection or direct network access. Use declared
 [project service bindings](project-api-connections.md) for supported external requests; for

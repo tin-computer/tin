@@ -56,9 +56,9 @@ URLs fail validation; a configured credential alone does not admit an unpriced r
 
 Bounds: at most four route aliases, 1–16 calls per route and 32 total; 1,024–256,000 serialized
 input bytes per call (instructions, data, schema and envelope included); 64–32,000 output tokens;
-1,000,000 response bytes. All model calls in one run send at most 700,000 input bytes together
-(about 200k tokens); a call that would pass that fails the run with `model_input_budget`, and
-every call the run has started counts, including retried and unconfirmed ones. Output schemas
+1,000,000 response bytes. A run's model calls should stay under 700,000 input bytes together
+(about 200k tokens). That bound is a soft gate: a call that passes it is still sent, and Tin
+logs one operator warning for the run, counting every call the run has started. Output schemas
 use a small closed subset: required object fields, bounded arrays, primitives and enums; no
 references or remote schema loading. The package's `timeout_seconds` (at most 900) is its whole
 execution window, including model wait time, and also bounds each supplier call's wait. These
@@ -108,9 +108,9 @@ price card. This requires no paid estimation call or quote-approval step.
 
 Hosted model runs require an enabled credit account. Existing project spending policy and
 per-operation reservations enforce the pinned maximum. The maximum assumes every declared call
-uses its route's whole output allowance and a 4,096-token request envelope, and that the run's
-700,000 input bytes, at three bytes per token, all go to the most expensive calls (no call more
-than its route's `max_input_bytes`). Each call reserves its own serialized input the same way
+uses its route's whole output allowance, its whole `max_input_bytes` at three bytes per token,
+and a 4,096-token request envelope. The 700,000-byte run warning refuses nothing, so it does not
+lower the maximum. Each call reserves its own serialized input the same way
 before dispatch. Runs admitted before this formula keep the maximum pinned in their terms. Tin records each observed call and
 settles through the existing ledger, including usage incurred before validation failure. The
 estimate ceiling rounds upward to a cent; actual usage retains the shared rounding policy.

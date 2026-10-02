@@ -60,7 +60,7 @@ Keep rubric questions independent; no overall score. Maintainers review cases an
 - Managed steps: optional code.model_routes, at most four routes and 32 total calls.
   Each names provider/model/max_calls/max_input_bytes/max_output_tokens. Supported targets:
   openai/gpt-6-luna and openai/gpt-6-sol. Per-route max_calls 1–16, input bytes 1024–256000,
-  output tokens 64–32000; all calls in a run send at most 700000 input bytes together. Call await ctx.models.generate(route=..., step=..., instructions=...,
+  output tokens 64–32000; keep a run's total model input under 700000 bytes (about 200k tokens). Call await ctx.models.generate(route=..., step=..., instructions=...,
   data=..., output_schema=...). Validate result["parsed"] before use. Keep step IDs stable.
 - codex.procedure: PROMPT.md plus skills/<name>/SKILL.md and declared text resources.
   Candidate resources use .md, .json, .txt, .yaml or .yml; .py files belong to workflow.code.

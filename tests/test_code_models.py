@@ -46,7 +46,6 @@ from tin_lite.model_providers import ModelRouter, OpenAIModelProvider, ProviderN
 from tin_lite.model_usage import ModelUsageRecorder
 from tin_lite.service_pricing import model_maximum
 from tin_lite.workflow_code import (
-    MAX_RUN_MODEL_INPUT_BYTES,
     example_files,
     validate_code_definition,
 )
@@ -204,17 +203,17 @@ def routes_definition(**routes):
     return body
 
 
-def priced(terms, model, shares, output_tokens):
-    """The run maximum's own pricing: a byte share at three bytes a token, plus rounding."""
+def priced(terms, model, sizes, output_tokens):
+    """The run maximum's own pricing: each call's bytes at three bytes a token."""
     return sum(
         model_maximum(
             terms,
             provider="openai",
             model=model,
-            input_tokens=share // 3 + 1 + 4096,
+            input_tokens=call_input_tokens(size),
             output_tokens=output_tokens,
         )
-        for share in shares
+        for size in sizes
     )
 
 
@@ -222,11 +221,11 @@ def cents(nanos):
     return -(-nanos // 10_000_000) * 10_000_000
 
 
-def test_the_run_maximum_reserves_three_bytes_per_token_within_the_run_input_budget():
+def test_the_run_maximum_reserves_three_bytes_per_token_for_every_declared_call():
     small = {"max_calls": 2, "max_input_bytes": 100_000, "max_output_tokens": 4000}
     terms = model_terms(routes_definition(draft=("gpt-6-sol", small)))
-    # Under the run budget every call's own input allowance counts, at a third of a token
-    # per byte and the 4,096-token envelope; no longer one token per byte.
+    # Every call's own input allowance counts, at a third of a token per byte and the
+    # 4,096-token envelope; no longer one token per byte.
     assert terms["maximum_nanos"] == cents(priced(terms, "gpt-6-sol", [100_000] * 2, 4000))
     old = 2 * model_maximum(
         terms, provider="openai", model="gpt-6-sol", input_tokens=104_096, output_tokens=4000
@@ -234,53 +233,17 @@ def test_the_run_maximum_reserves_three_bytes_per_token_within_the_run_input_bud
     assert terms["maximum_nanos"] < old
 
     big = {"max_calls": 16, "max_input_bytes": 256_000, "max_output_tokens": 32_000}
-    capped = model_terms(routes_definition(draft=("gpt-6-sol", big)))
-    # 16 x 256,000 bytes is far past the run budget: only 700,000 bytes of input are priced.
-    shares = [256_000, 256_000, 188_000] + [0] * 13
-    assert capped["maximum_nanos"] == cents(priced(capped, "gpt-6-sol", shares, 32_000))
-
-
-def test_a_shared_input_budget_is_priced_at_the_most_expensive_route():
-    cheap = {"max_calls": 16, "max_input_bytes": 256_000, "max_output_tokens": 1000}
-    dear = {"max_calls": 2, "max_input_bytes": 256_000, "max_output_tokens": 1000}
-    terms = model_terms(routes_definition(bulk=("gpt-6-luna", cheap), judge=("gpt-6-sol", dear)))
-    sol = priced(terms, "gpt-6-sol", [256_000, 256_000], 1000)
-    luna = priced(terms, "gpt-6-luna", [188_000] + [0] * 15, 1000)
-    assert terms["maximum_nanos"] == cents(sol + luna)
+    full = model_terms(routes_definition(draft=("gpt-6-sol", big)))
+    # The run input warning refuses nothing, so it does not lower the maximum.
+    assert full["maximum_nanos"] == cents(priced(full, "gpt-6-sol", [256_000] * 16, 32_000))
 
 
 @pytest.mark.parametrize("model", ["gpt-6-luna", "gpt-6-sol"])
 def test_every_admissible_sequence_of_calls_fits_the_pinned_run_maximum(model):
     limits = {"max_calls": 16, "max_input_bytes": 256_000, "max_output_tokens": 32_000}
     terms = model_terms(routes_definition(a=(model, limits), b=(model, limits)))
-
-    def reserved(sizes):
-        # What each call's begin_operation holds before dispatch.
-        return sum(
-            model_maximum(
-                terms,
-                provider="openai",
-                model=model,
-                input_tokens=call_input_tokens(size),
-                output_tokens=32_000,
-            )
-            for size in sizes
-        )
-
-    # The largest calls the run budget admits, and many odd-sized ones whose rounding adds up.
-    for sizes in ([256_000, 256_000, 187_971] + [1] * 29, [21_874] * 32):
-        assert sum(sizes) <= MAX_RUN_MODEL_INPUT_BYTES
-        assert reserved(sizes) <= terms["maximum_nanos"]
-    # One largest call fits a single-call route's own maximum.
-    one = model_terms(routes_definition(a=(model, {**limits, "max_calls": 1})))
-    single = model_maximum(
-        one,
-        provider="openai",
-        model=model,
-        input_tokens=call_input_tokens(256_000),
-        output_tokens=32_000,
-    )
-    assert single <= one["maximum_nanos"]
+    # Every call at its full allowance, past the run's input warning, is still reserved.
+    assert priced(terms, model, [256_000] * 32, 32_000) <= terms["maximum_nanos"]
 
 
 def sdk_router(f, *, invalid=False, uncertain=False, calls=None, outputs=None):
@@ -573,7 +536,7 @@ async def test_step_fingerprint_call_limit_and_active_authority(billed, monkeypa
     await code.models.router.close()
 
 
-async def test_model_input_is_bounded_across_the_run_and_its_retries(billed, monkeypatch):
+async def test_model_input_past_the_run_bound_is_sent_and_logged_once(billed, monkeypatch, caplog):
     f = billed
     server, _, code, active, calls = await prepare(f, monkeypatch, route={"max_calls": 3})
     run_id = (await start(f, server, active))["id"]
@@ -582,30 +545,24 @@ async def test_model_input_is_bounded_across_the_run_and_its_retries(billed, mon
     first = request_bytes(request_contract(spec, payload())[1])
     second = request_bytes(request_contract(spec, payload(step="second"))[1])
     # Room for the first call and not quite the second.
-    monkeypatch.setattr(code_models, "MAX_RUN_MODEL_INPUT_BYTES", first + second - 1)
+    monkeypatch.setattr(code_models, "RUN_MODEL_INPUT_WARNING_BYTES", first + second - 1)
+    caplog.set_level("WARNING", logger="tin_lite.code_models")
     async with f.db.pool.acquire() as conn:
         await code.models.generate(conn=conn, **bound, payload=payload())
         key = f"{run_id}:code-model:{code_models.digest('classify_orders')}"
         assert (await f.db.get_effect(key)).result["input_bytes"] == first
-        with pytest.raises(CodeModelError, match="Model input for this run exceeds") as refused:
-            await code.models.generate(conn=conn, **bound, payload=payload(step="second"))
-        assert refused.value.code == "model_input_budget"
-        # A completed step still replays: it sends nothing new.
-        assert (await code.models.generate(conn=conn, **bound, payload=payload()))["parsed"]
-    assert len(calls) == 1
-    assert (
-        await f.db.pool.fetchval(
-            "SELECT count(*) FROM effect_receipts WHERE operation=$1", OPERATION
-        )
-        == 1
-    )
+        assert not caplog.records
+        # The soft gate sends the call that crosses the bound and warns once.
+        assert (await code.models.generate(conn=conn, **bound, payload=payload(step="second")))[
+            "parsed"
+        ]
+        assert (await code.models.generate(conn=conn, **bound, payload=payload(step="third")))[
+            "parsed"
+        ]
+    warnings = [r.getMessage() for r in caplog.records if "model input passed" in r.getMessage()]
+    assert len(warnings) == 1 and f"run={run_id}" in warnings[0]
+    assert len(calls) == 3
     await code.models.router.close()
-
-
-def test_the_model_input_error_names_the_run_budget():
-    assert str(CodeModelError("model_input_budget")) == (
-        f"Model input for this run exceeds {MAX_RUN_MODEL_INPUT_BYTES} bytes across its calls."
-    )
 
 
 @pytest.mark.parametrize("supplier_schema_failure", [True, False])

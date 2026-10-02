@@ -624,9 +624,9 @@ def authoring_guide(*, settings, project_id):
         MAX_ROUTE_CALLS,
         MAX_ROUTE_INPUT_BYTES,
         MAX_ROUTE_OUTPUT_TOKENS,
-        MAX_RUN_MODEL_INPUT_BYTES,
         MAX_TIMEOUT_SECONDS,
         MODEL_TARGETS,
+        RUN_MODEL_INPUT_WARNING_BYTES,
         example_files,
     )
     from tin_lite.workflow_creator import creator_files
@@ -933,9 +933,8 @@ def authoring_guide(*, settings, project_id):
                 "limits": (
                     f"Declare max_calls (1-{MAX_ROUTE_CALLS} per route, {MAX_MODEL_CALLS} total), "
                     f"max_input_bytes (1024-{MAX_ROUTE_INPUT_BYTES}), "
-                    f"max_output_tokens (64-{MAX_ROUTE_OUTPUT_TOKENS}). All calls in one run "
-                    f"send at most {MAX_RUN_MODEL_INPUT_BYTES} input bytes together "
-                    "(about 200k tokens); a call past that fails with model_input_budget."
+                    f"max_output_tokens (64-{MAX_ROUTE_OUTPUT_TOKENS}). Keep a run's model input "
+                    f"under {RUN_MODEL_INPUT_WARNING_BYTES} bytes in total (about 200k tokens)."
                 ),
                 "recovery": (
                     "Reuse a stable step for the same request. Completed results replay; "

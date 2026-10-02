@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import asdict
@@ -22,10 +23,12 @@ from tin_lite.model_providers import (
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.service_pricing import CARD, model_maximum
 from tin_lite.workflow_code import (
-    MAX_RUN_MODEL_INPUT_BYTES,
     MODEL_TARGETS,
+    RUN_MODEL_INPUT_WARNING_BYTES,
     validate_code_definition,
 )
+
+logger = logging.getLogger(__name__)
 
 OPERATION = "code_model_call_v1"
 MAX_RESPONSE_BYTES = 1_000_000
@@ -40,9 +43,6 @@ ERRORS = {
     "model_unavailable": "The declared managed model route is unavailable.",
     "model_step_conflict": "This model step already has a different request. Use a distinct step.",
     "model_call_limit": "The workflow reached its declared model-call limit.",
-    "model_input_budget": (
-        f"Model input for this run exceeds {MAX_RUN_MODEL_INPUT_BYTES} bytes across its calls."
-    ),
     "model_result_unconfirmed": (
         "A model call has an unconfirmed result. Tin will not purchase it again automatically."
     ),
@@ -80,36 +80,20 @@ def call_input_tokens(input_bytes):
 def model_routes_maximum(terms, routes):
     """The most a run's declared model calls can cost at these terms.
 
-    Every call may use its route's whole output allowance and request envelope. The input
-    bytes are shared: at most MAX_RUN_MODEL_INPUT_BYTES across the run, and no call more than
-    its route's max_input_bytes. Filling the most expensive calls first gives the worst case.
+    Every call may send its route's whole max_input_bytes, at BYTES_PER_INPUT_TOKEN, and use
+    its whole output allowance. The run's input warning does not lower this: it refuses nothing.
     """
-    calls = [route for route in routes for _ in range(route.max_calls)]
-
-    def price(route, input_bytes):
-        return model_maximum(
+    return sum(
+        route.max_calls
+        * model_maximum(
             terms,
             provider=route.provider,
             model=route.model,
-            # One extra token covers each call's own rounding up of a byte share.
-            input_tokens=input_bytes // BYTES_PER_INPUT_TOKEN + 1 + REQUEST_ENVELOPE_TOKENS,
+            input_tokens=call_input_tokens(route.max_input_bytes),
             output_tokens=route.max_output_tokens,
         )
-
-    remaining = MAX_RUN_MODEL_INPUT_BYTES
-    total = 0
-    # Fractional knapsack: the input budget goes to the highest price per input byte first.
-    for route in sorted(
-        calls,
-        key=lambda route: (
-            (price(route, route.max_input_bytes) - price(route, 0)) / route.max_input_bytes
-        ),
-        reverse=True,
-    ):
-        share = min(remaining, route.max_input_bytes)
-        remaining -= share
-        total += price(route, share)
-    return total
+        for route in routes
+    )
 
 
 def model_terms(definition):
@@ -321,17 +305,26 @@ class CodeModels:
             )
             if used >= route.max_calls:
                 raise CodeModelError("model_call_limit")
-            # Every call this run has started counts, whatever its outcome or attempt, so a
-            # retried activity cannot send the budget again. Receipts written before this
-            # bound carry no byte count and count as zero.
+            # A soft gate: a run whose model input passes the expected bound still sends the
+            # call, and the crossing is logged once for operators. Every started call counts,
+            # whatever its outcome; receipts written before input_bytes was recorded count as 0.
             sent = await conn.fetchval(
                 """SELECT COALESCE(sum((result->>'input_bytes')::bigint), 0)
                    FROM effect_receipts WHERE operation=$1 AND execution_key LIKE $2""",
                 OPERATION,
                 prefix + "%",
             )
-            if sent + input_bytes > MAX_RUN_MODEL_INPUT_BYTES:
-                raise CodeModelError("model_input_budget")
+            if sent <= RUN_MODEL_INPUT_WARNING_BYTES < sent + input_bytes:
+                logger.warning(
+                    "code workflow model input passed %s bytes: run=%s workflow=%s step=%s "
+                    "sent=%s call=%s",
+                    RUN_MODEL_INPUT_WARNING_BYTES,
+                    run.id,
+                    workflow.key,
+                    step,
+                    sent,
+                    input_bytes,
+                )
             record = {
                 "version": 1,
                 "run_id": str(run.id),

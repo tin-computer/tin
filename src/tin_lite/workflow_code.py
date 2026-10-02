@@ -29,9 +29,10 @@ MAX_ROUTE_CALLS = 16
 MAX_MODEL_CALLS = 32
 MAX_ROUTE_INPUT_BYTES = 256_000
 MAX_ROUTE_OUTPUT_TOKENS = 32_000
-# All model input one code run may send, summed over its calls: about 200k tokens at the
-# ~3.5 bytes per token real workflow input shows. Enforced per call in code_models.
-MAX_RUN_MODEL_INPUT_BYTES = 700_000
+# Model input one code run is expected to stay under, summed over its calls: about 200k tokens
+# at the ~3.5 bytes per token real workflow input shows. A soft gate: code_models logs a
+# warning when a run passes it and still sends the call.
+RUN_MODEL_INPUT_WARNING_BYTES = 700_000
 # An output file name may carry the run's date and a slug the package picks, so repeated
 # runs keep separate, readable files. Nothing else is substituted.
 OUTPUT_PLACEHOLDERS = {"{date}": r"\d{4}-\d{2}-\d{2}", "{slug}": r"[a-z0-9]+(?:-[a-z0-9]+)*"}
