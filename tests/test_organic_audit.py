@@ -547,5 +547,5 @@ def test_registry_pins_policy_and_instructions_without_github_or_review():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
     assert definition["audit_policy"] == AUDIT_POLICY
     assert definition["audit_instructions"] == AI_CONTRACT
-    assert definition["schedule_modes"] == ["on_demand"]
+    assert definition["schedule_modes"] == ["on_demand", "monthly"]
     assert not definition.get("human_review") and not definition.get("integration_requirements")

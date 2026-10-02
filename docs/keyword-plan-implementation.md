@@ -47,7 +47,8 @@ schema version explicitly. No new table, executor, model route, UI, or consumer 
 
 ## Contract
 
-- Native, on-demand `organic.keyword_plan`; independent from `organic.audit`, MCP-first.
+- Native `organic.keyword_plan`, on demand or (from 0.7.1) on a monthly schedule, such as
+  quarterly with `months: [1, 4, 7, 10]`; independent from `organic.audit`, MCP-first.
 - Required: exact HTTPS website origin, English-language buyer context, and one supported
   market (US, GB, CA, AU). Optional seeds, competitor hosts, exact audit run, and Search Console.
 - An explicit per-run dollar limit is bounded by the switchboard ceiling, which defaults to

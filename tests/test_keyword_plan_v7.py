@@ -132,7 +132,7 @@ def test_v7_changes_only_screening_and_leaves_earlier_pins_alone():
     assert v6.POLICY["version"] == "keyword-plan-v6"
     keyword = next(spec for spec in BUILTIN_WORKFLOWS if spec.key == "organic.keyword_plan")
     assert keyword.definition["keyword_policy"] == v7.POLICY
-    assert keyword.version_label == "0.7.0"
+    assert keyword.version_label == "0.7.1"
 
 
 def test_v7_caps_stay_inside_the_route_and_reservations_cover_their_bounds():
