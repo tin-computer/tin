@@ -830,7 +830,10 @@ def authoring_guide(*, settings, project_id):
                 "Never put secrets in MCP or project files.",
                 "bindings": "code.services maps a name to provider_key, max_calls (1-8) and "
                 "max_response_bytes (1024-64000). Declare matching required "
-                "integration_requirements; at most eight calls total.",
+                "integration_requirements; at most eight calls total. A founder-connected provider "
+                "may be required: false; ctx['connections'] then gives its state for the run "
+                "(connected, not_connected or needs_attention), and calls only work when "
+                "connected.",
                 "provider_cost": "An optional provider_cost on a service binding has "
                 "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
                 "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
