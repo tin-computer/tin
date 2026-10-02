@@ -108,7 +108,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
     assert rows["outreach.email_campaign"]["reason"] == "Connect workspace.google first."
     assert rows["organic.audit"]["required_inputs"] == ["site_url", "market"]
     assert rows["research.deep_dive"]["schedule_modes"] == ["on_demand", "daily", "weekly"]
-    assert rows["organic.audit"]["schedule_modes"] == ["on_demand"]
+    assert rows["organic.audit"]["schedule_modes"] == ["on_demand", "monthly"]
     assert "notes" in rows["qa.signup_walkthrough"]["optional_inputs"]
     assert {item["provider_key"]: item["connected"] for item in state["integrations"]} == {
         "analytics.gsc": False,

@@ -90,7 +90,7 @@ def test_v13_is_the_default_and_adds_the_panel_and_the_engines_to_v12():
         k: v for k, v in V12_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
     workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.9.0"
+    assert workflow.version_label == "0.9.1"
     assert workflow.definition["audit_policy"] == AUDIT_POLICY
 
 

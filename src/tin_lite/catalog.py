@@ -1226,9 +1226,10 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.7.0",
+        # 0.7.1: the same keyword-plan-v7 run, now also on a monthly or quarterly schedule.
+        version_label="0.7.1",
         system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "monthly"),
         model_route=ModelRoute(
             key=KEYWORD_ROUTE_KEY,
             provider=ProviderName.OPENAI,
@@ -1337,7 +1338,8 @@ BUILTIN_WORKFLOWS = (
             "with evidence and fixes. No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.9.0",
+        # 0.9.1: the same organic-audit-v13 run, now also on a monthly or quarterly schedule.
+        version_label="0.9.1",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1345,7 +1347,7 @@ BUILTIN_WORKFLOWS = (
             capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "monthly"),
         input_schema={
             "type": "object",
             "additionalProperties": False,

@@ -167,10 +167,25 @@ def test_monthly_runs_only_where_the_workflow_declares_it() -> None:
         cadence="monthly", day_of_month=1, local_time="09:00", timezone="UTC"
     )
     ensure_schedule_allowed({"schedule_modes": ["on_demand", "monthly"]}, monthly)
-    # The default modes and every shipped built-in leave monthly out until a workflow opts in.
+    # The default modes leave monthly out; a workflow opts in by naming it.
     with pytest.raises(WorkflowInputError, match="does not support monthly"):
         ensure_schedule_allowed({}, monthly)
-    assert not any("monthly" in w.definition.get("schedule_modes", []) for w in BUILTIN_WORKFLOWS)
+    assert {
+        w.key for w in BUILTIN_WORKFLOWS if "monthly" in w.definition.get("schedule_modes", [])
+    } == {"organic.keyword_plan", "organic.audit"}
+    quarterly = WorkflowSchedule(
+        cadence="monthly", day_of_month=1, months=[1, 4, 7, 10], local_time="09:00", timezone="UTC"
+    )
+    for key in ("organic.keyword_plan", "organic.audit"):
+        definition = next(w for w in BUILTIN_WORKFLOWS if w.key == key).definition
+        ensure_schedule_allowed(definition, quarterly)
+        with pytest.raises(WorkflowInputError, match="does not support weekly"):
+            ensure_schedule_allowed(
+                definition,
+                WorkflowSchedule(
+                    cadence="weekly", weekdays=["monday"], local_time="09:00", timezone="UTC"
+                ),
+            )
 
 
 def test_monthly_words() -> None:

@@ -628,6 +628,9 @@ policy, `organic-audit-v13` (catalog organic.audit 0.9.0). It keeps v12 and adds
 questions and ask no engine, exactly as before; tests freeze v12's policy and the files a
 synthetic v12 run writes, and a workflow history recorded on main still replays.
 
+Catalog organic.audit 0.9.1 runs the same v13 policy and also allows a monthly schedule
+(`schedule_modes: ["on_demand", "monthly"]`), so the audit can rerun quarterly.
+
 ### The buyer prompt panel
 
 When an `organic.prompt_panel` run has succeeded for the audited site, a v13 audit asks that
