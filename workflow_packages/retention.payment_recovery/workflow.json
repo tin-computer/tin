@@ -1,0 +1,72 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "retention.payment_recovery",
+    "title": "Recover failed payments before the customer churns",
+    "description": "Find failed Stripe charges from the selected lookback window and draft one short recovery email per matched customer for the founder to review and send.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "schedule_modes": ["on_demand"],
+    "human_review": {
+      "eligible": true,
+      "summary": "Review the failed-payment recovery drafts before sending"
+    },
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 90,
+          "default": 7,
+          "title": "Days to check for failed charges"
+        },
+        "max_customers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "default": 20,
+          "title": "Maximum customers to include"
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "payments.stripe",
+        "capabilities": ["charges.read", "customers.read"],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": ["main.py"],
+      "timeout_seconds": 60,
+      "services": {
+        "stripe": {
+          "provider_key": "payments.stripe",
+          "max_calls": 8,
+          "max_response_bytes": 64000
+        }
+      },
+      "model_routes": {
+        "draft_email": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 1,
+          "max_input_bytes": 16000,
+          "max_output_tokens": 2048
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "outreach/payment_recovery/RECOVERY_QUEUE.md",
+        "media_type": "text/markdown",
+        "max_bytes": 24000
+      }
+    }
+  }
+}
