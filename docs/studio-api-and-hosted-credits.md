@@ -45,8 +45,9 @@ OpenAI key configured:
 - Authenticated project discovery enables credit funding for that user's workspaces
   with an established owner. It does not change billing administrators or balances.
 - The existing once-per-person $10 welcome grant remains the only automatic credit.
-- Projects without a policy receive $10 per-run/$10 monthly limits and $10 standing
-  authority per scheduled run, so schedules Start here sets up
+- Projects without a policy receive $25 per-run/$100 monthly limits and $50 standing
+  authority per scheduled run (projects created before October 2, 2026 keep the $10/$10/$10
+  they were given), so schedules Start here sets up
   can run. Credits and the monthly limit still bound every paid step; an admin can clear the
   scheduled-run limit in Billing to keep paid schedules off. Existing policies stay intact.
 - New supported Codex executions use the API without per-project enrollment.

@@ -48,6 +48,11 @@ CONNECTED_ACCOUNT_EXECUTORS = {
     "outreach.awesome_submit": "tin-connected-github-v1",
     "social.x_publish": "tin-x-operator-funded-v1",
 }
+# Spending limits a new hosted project starts with, in nanodollars. Saved policies keep
+# their own limits: these apply only where a project has no policy yet.
+HOSTED_DEFAULT_PER_RUN_NANOS = 25_000_000_000
+HOSTED_DEFAULT_MONTHLY_NANOS = 100_000_000_000
+HOSTED_DEFAULT_SCHEDULE_MAX_NANOS = 50_000_000_000
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
 # A billing_run_budgets row's liability() in SQL: committed usage, plus the execution fee
@@ -124,8 +129,8 @@ class BillingService:
     async def ensure_hosted_project(self, conn, project_id):
         """Hosted policy only. Preserve existing ownership, credits and spending limits.
 
-        The default includes standing schedule authority equal to the per-run limit: credits
-        are checked on every paid step and the monthly limit caps total spend. An admin can
+        The default includes standing schedule authority (HOSTED_DEFAULT_SCHEDULE_MAX_NANOS):
+        credits are checked on every paid step and the monthly limit caps total spend. An admin can
         still clear it in Billing to keep paid scheduled runs off.
         """
         if not getattr(self.settings, "billing_hosted_defaults_enabled", False):
@@ -151,10 +156,13 @@ class BillingService:
         await conn.execute(
             """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                 monthly_nanos, concurrency, schedule_max_nanos, revision)
-            VALUES($1,$2,10000000000,10000000000,1,10000000000,1)
+            VALUES($1,$2,$3,$4,1,$5,1)
             ON CONFLICT(project_id) DO NOTHING""",
             project_id,
             workspace_id,
+            HOSTED_DEFAULT_PER_RUN_NANOS,
+            HOSTED_DEFAULT_MONTHLY_NANOS,
+            HOSTED_DEFAULT_SCHEDULE_MAX_NANOS,
         )
 
     async def ensure_hosted_projects(self, actor):

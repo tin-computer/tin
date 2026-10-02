@@ -234,8 +234,9 @@ would never stop a normal draft.
 
 ## Weekly articles and the default limits — September 29, 2026
 
-Hosted projects start with $10 per run, $10 a month and $10 per scheduled run (migration 047).
-These defaults are unchanged. Admission counts a charged run at what it cost and a run still
+Hosted projects started with $10 per run, $10 a month and $10 per scheduled run (migration 047).
+Since October 2, 2026 new hosted projects start with $25 per run, $100 a month and $50 per
+scheduled run (see below); projects created before then keep the limits they saved. Admission counts a charged run at what it cost and a run still
 going at its full maximum. A scheduled run starts only if its maximum fits the per-run and
 scheduled-run limits and this month's charges plus its maximum fit the monthly limit.
 
@@ -251,7 +252,7 @@ limits, every active saved schedule's maximum as admission prices it, and the we
 an organic traffic system started by this setup will save. If a schedule's maximum exceeds the
 per-run or scheduled-run limit, or the schedules' runs in a month at their estimates exceed the
 monthly limit, the onboarding result's `relay` gains one line that names the schedule, the
-limit and `set_project_spending_limits`. With the defaults and one weekday of articles:
+limit and `set_project_spending_limits`. With the $10 defaults and one weekday of articles:
 
 > Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at up to
 > $5.00 a run, up to $25.00 a month, above this project's $10.00 monthly limit, so some runs may
@@ -264,3 +265,18 @@ still going counts at its maximum.
 The words are saved with the setup, so a retried report reads the same. Projects without
 billing, or with nothing billed on a schedule, get no line.
 
+
+## Higher default limits for new hosted projects — October 2, 2026
+
+In the 30 days before this change, 75 scheduled runs were refused for "no sufficient standing
+spending limit" and four manual starts for the $10 monthly limit. New hosted projects now start
+with $25 per run, $100 a month and $50 per scheduled run (`HOSTED_DEFAULT_PER_RUN_NANOS`,
+`HOSTED_DEFAULT_MONTHLY_NANOS` and `HOSTED_DEFAULT_SCHEDULE_MAX_NANOS` in `billing.py`). The
+largest built-in maximum, an organic traffic system at about $22, fits the per-run and
+scheduled-run limits, and up to ten weekly $5 articles a month fit the monthly limit, so the
+Start here handoff warns about neither.
+
+Only projects without a policy get these limits. No migration rewrites saved policies: a project
+created earlier keeps $10, $10 and $10 until an admin raises them with
+`set_project_spending_limits` or in Billing. Credits still bound every paid step, and the
+welcome credit stays $10.

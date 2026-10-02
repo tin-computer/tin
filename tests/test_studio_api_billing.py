@@ -263,8 +263,9 @@ async def test_hosted_welcome_enrolls_once_with_default_policy(billed, legacy):
     policy = await f.db.pool.fetchrow(
         "SELECT * FROM billing_project_policies WHERE project_id=$1", f.project.id
     )
-    assert policy["per_run_nanos"] == policy["monthly_nanos"] == 10_000_000_000
-    assert policy["schedule_max_nanos"] == 10_000_000_000
+    assert policy["per_run_nanos"] == 25_000_000_000
+    assert policy["monthly_nanos"] == 100_000_000_000
+    assert policy["schedule_max_nanos"] == 50_000_000_000
     assert api_enabled(f.settings, f.project.id)
 
 
