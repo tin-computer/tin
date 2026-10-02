@@ -645,9 +645,11 @@ pause for review.
 `qa.signup_walkthrough`. The first two write product understanding into project memory rather
 than into new files: each owns one subsection of `wiki/INDEX.md` → `## Product` (`### Code map`
 from the connected GitHub repository, `### Feature map` from the docs, the live signed-in product,
-and the code map), declared through `output.section` and checked by the `memory-section.v1`
-validator, which rejects any change outside the owned section and any feature line outside the
-closed status and claim vocabulary. `project.memory` keeps that block verbatim, and a procedure
+and the code map), declared through `output.section`. Tin keeps only that section from the
+procedure's output and writes it into the index as the run's base had it, so everything outside
+the section comes from the base byte for byte. The `memory-section.v1` validator then rejects a
+missing or oversized section and any feature line outside the closed status and claim
+vocabulary. `project.memory` keeps that block verbatim, and a procedure
 commit to the index refreshes the memory projection immediately. `product.code_map` reads a
 read-only repository snapshot while writing into the project-state checkout at `/home/user/state`.
 The two browser procedures reuse the walkthrough's active test identity (`identity.reuse: active`)

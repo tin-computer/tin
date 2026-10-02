@@ -7,6 +7,7 @@ from tin_lite.domain import StaleGenerationError
 from tin_lite.procedures import (
     ANALYTICS_BRIEF_VALIDATOR,
     MEMORY_SECTION_VALIDATOR,
+    settle_procedure_artifact,
     validate_procedure_artifact,
 )
 from tin_lite.publication import OutputCheckpoint, PublicationPendingError
@@ -46,6 +47,8 @@ async def retain(*, db, conn, storage, run, project, spec, base, content=None):
         await _lease(db, conn, run)
         intent = existing.result if existing else None
         if content is not None:
+            # A section-owning draft keeps only its own section, as a finished output does.
+            content = settle_procedure_artifact(content, spec=spec, base=base)
             validate_procedure_artifact(content, spec=_partial(spec), base=base)
             if content == base:
                 return
