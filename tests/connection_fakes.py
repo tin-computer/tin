@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 from tin_lite import posthog_connection
-from tin_lite.code_services import CodeServiceError
+from tin_lite.code_services import MESSAGE_LIMIT, CodeServiceError
 from tin_lite.connection_records import ServiceArgumentError as ArgumentError
 from tin_lite.integrations import (
     POSTHOG_CAPABILITIES,
@@ -50,6 +50,7 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
 )
+from tin_lite.provider_errors import ProviderErrorDetail, explain
 from tin_lite.stripe_connection import (
     OPERATIONS,
     RESOURCE_NAMES,
@@ -223,7 +224,13 @@ POSTHOG_REFUSALS = {
     "reauthorization_required": posthog_connection.PostHogUnauthorized,
     "permission_denied": posthog_connection.PostHogPermissionDenied,
     "query_error": lambda: posthog_connection.query_rejected(
-        "Unable to resolve field: missing_column"
+        ProviderErrorDetail(
+            "PostHog",
+            400,
+            "validation_error",
+            "invalid_input",
+            "Unable to resolve field: missing_column",
+        )
     ),
 }
 
@@ -293,8 +300,10 @@ class FakePostHogConnection:
                     max_response_bytes=self.max_response_bytes,
                 )
         except ServiceCallRefused as exc:
-            record["error"] = str(exc)[:500]
-            raise CodeServiceError(record["error"]) from None
+            # The gateway's composition: Tin's sentence, then what PostHog said.
+            record["error"] = explain(str(exc), exc.provider_error)[:MESSAGE_LIMIT]
+            detail = exc.provider_error.to_dict() if exc.provider_error else None
+            raise CodeServiceError(record["error"], code=exc.code, provider_error=detail) from None
         except ServiceResponseTooLarge:
             raise CodeServiceError(
                 "The service response exceeded this binding's max_response_bytes "

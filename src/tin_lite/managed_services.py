@@ -32,6 +32,8 @@ from tin_lite.integrations import (
     IntegrationUpstreamError,
     ServiceCallRefused,
 )
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 
 PAGESPEED_PROVIDER = "managed.pagespeed"
 DATAFORSEO_PROVIDER = "managed.dataforseo"
@@ -635,17 +637,21 @@ class ManagedServices:
             except (ValueError, UnicodeError, RecursionError):
                 return response.status_code, None
 
-    @staticmethod
-    def _refuse(status: int, product: str) -> None:
+    def _google_error(self, status: int, payload: Any) -> ProviderErrorDetail:
+        return provider_error_detail("Google", status, payload, secrets=(self._google_key(),))
+
+    def _refuse(self, status: int, product: str, payload: Any) -> None:
         if status == 429:
             raise IntegrationRateLimitedError(
-                f"Google rate-limited Tin's {product} reads; try again later in a new step."
+                f"Google rate-limited Tin's {product} reads; try again later in a new step.",
+                provider_error=self._google_error(status, payload),
             )
         if status in {401, 403}:
             raise ServiceCallRefused(
                 f"Google refused Tin's {product} key; an operator needs to check "
                 "TIN_LITE_PAGESPEED_API_KEY and that the API is enabled for it.",
                 code="provider_refused",
+                provider_error=self._google_error(status, payload),
             )
 
     async def _pagespeed(self, request: dict) -> dict:
@@ -660,7 +666,7 @@ class ManagedServices:
             return {**base, "status": "timed_out", "seconds": GOOGLE_SECONDS}
         except (httpx.HTTPError, OSError):
             return {**base, "status": "unavailable", "reason": "request_failed"}
-        self._refuse(status, "PageSpeed Insights")
+        self._refuse(status, "PageSpeed Insights", payload)
         if status == 200 and isinstance(payload, dict):
             return pagespeed_result(request, payload)
         if status in {400, 500} and isinstance(payload, dict):
@@ -687,7 +693,7 @@ class ManagedServices:
             return {**base, "status": "timed_out", "seconds": GOOGLE_SECONDS}
         except (httpx.HTTPError, OSError):
             return {**base, "status": "unavailable", "reason": "request_failed"}
-        self._refuse(status, "CrUX")
+        self._refuse(status, "CrUX", payload)
         if status == 404:
             # CrUX has no record for most small sites. That is an answer, not zeros.
             return {**base, "status": "no_field_data"}
@@ -695,6 +701,7 @@ class ManagedServices:
             raise ServiceCallRefused(
                 "CrUX did not accept this origin or URL; check that it is public and canonical.",
                 code="invalid_request",
+                provider_error=self._google_error(status, payload),
             )
         if status == 200 and isinstance(payload, dict):
             return crux_result(request, payload)
@@ -717,7 +724,18 @@ class ManagedServices:
                 spec.endpoint, {**request, "tag": tag}, scope_keys=("tag",), settle_errors=True
             )
         except DataForSEOTaskError as exc:
-            raise _refusal(exc.status_code) from None
+            raise _refusal(
+                exc.status_code,
+                provider_error_detail(
+                    "DataForSEO",
+                    None,
+                    {"code": str(exc.status_code), "status_message": exc.status_message},
+                    secrets=(
+                        self.settings.dataforseo_login.get_secret_value(),
+                        self.settings.dataforseo_password.get_secret_value(),
+                    ),
+                ),
+            ) from None
         except DataForSEOError:
             # Sent, but its outcome is unconfirmed: a server error, an oversized or malformed
             # answer, or one for another request. The read and its cost stay unconfirmed, and
@@ -728,25 +746,29 @@ class ManagedServices:
         return dataforseo_result(operation, request, task, max_response_bytes=max_response_bytes)
 
 
-def _refusal(code: int) -> ServiceCallRefused:
-    """DataForSEO status codes as Tin's own messages; never provider bodies."""
+def _refusal(code: int, provider_error: ProviderErrorDetail | None = None) -> ServiceCallRefused:
+    """DataForSEO status codes as Tin's own messages; its status message rides as provider_error."""
     if code == 40202:
         return IntegrationRateLimitedError(
-            "DataForSEO rate-limited Tin's reads; try again later in a new step."
+            "DataForSEO rate-limited Tin's reads; try again later in a new step.",
+            provider_error=provider_error,
         )
     if 40100 <= code < 40400:
         return ServiceCallRefused(
             f"DataForSEO refused Tin's account (status {code}); this read is unavailable "
             "until an operator checks Tin's DataForSEO access and balance.",
             code="provider_refused",
+            provider_error=provider_error,
         )
     if 40400 <= code < 50000:
         return ServiceCallRefused(
             f"DataForSEO rejected the request (status {code}); check the target, keywords, "
             "location_code and language_code.",
             code="invalid_request",
+            provider_error=provider_error,
         )
     return ServiceCallRefused(
         f"DataForSEO could not complete the read (status {code}); try again in a new step.",
         code="provider_error",
+        provider_error=provider_error,
     )

@@ -8,11 +8,12 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
 from tin_lite import content_refresh as refresh
-from tin_lite.content_delivery import delivery_key
+from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, delivery_key
 from tin_lite.organic_audit import audit_hosts, audit_paths
 
 LATEST_AUDIT_SQL = """
@@ -25,13 +26,20 @@ LATEST_AUDIT_SQL = """
     ORDER BY run.finished_at DESC NULLS LAST, run.created_at DESC
     LIMIT 1
 """
+# content.refresh runs, and content.generate runs that refreshed a plan item's page (they
+# save the same preparation receipt), so the six-week wait and the results cover both.
 EARLIER_REFRESHES_SQL = """
-    SELECT id, status, review_decision, created_at
-    FROM workflow_runs
-    WHERE project_id = $1 AND workflow_id = $2 AND id <> $3
-    ORDER BY created_at DESC
+    SELECT run.id, run.status, run.review_decision, run.created_at
+    FROM workflow_runs AS run
+    WHERE run.project_id = $1 AND run.id <> $3
+      AND (run.workflow_id = $2 OR (run.workflow_id = $4 AND EXISTS (
+          SELECT 1 FROM effect_receipts AS prepared
+          WHERE prepared.execution_key = run.id::text || ':content_refresh_prepare'
+            AND prepared.status = 'completed')))
+    ORDER BY run.created_at DESC
     LIMIT 50
 """
+NO_RUN = UUID(int=0)
 
 
 def _time(value: str | None) -> datetime | None:
@@ -111,6 +119,77 @@ class ContentRefreshSources:
             }
         current = await self.read_page(selection["url"], audit["evidence"])
         return {**base, "audit": audit["pin"], "page": selection, "current": current}
+
+    async def planned_page(self, run, *, url: str, revision: str) -> dict:
+        """The refresh context for the page a plan item names, for content.generate 1.9.0.
+
+        The same evidence content.refresh pins for the page it chooses: the latest audit's
+        search findings and Search Console rows for the page, the text it shows today, the
+        positioning and style files at `revision`, and earlier refreshes' results. It is saved
+        under the refresh receipt, so the six-week wait, the before-and-after results and the
+        refresh applier treat it like any refresh. A page whose refresh still waits is refused
+        before any compute.
+        """
+        key = f"{run.id}:{refresh.PREPARATION}"
+        async with self.db.effect_lock(key, refresh.PREPARATION) as (conn, saved):
+            if saved and saved.status == "completed":
+                return saved.result
+            context = await self._planned_context(run, url, revision)
+            await self.db.start_effect(conn, execution_key=key, operation=refresh.PREPARATION)
+            await self.db.complete_effect(conn, execution_key=key, result=context)
+            return context
+
+    async def _planned_context(self, run, url: str, revision: str) -> dict:
+        project = await self.db.get_project(run.project_id)
+        now = self._clock()
+        history = await self.history(run, now)
+        path = refresh.url_key(url)
+        if any(item["path"] == path and item["blocks"] for item in history):
+            raise ValueError(
+                f"{path} has a refresh in review, waiting to go live, or live for less than six "
+                "weeks. Tin waits so each refresh can show whether it worked."
+            )
+        audit = await self.latest_audit(project)
+        if audit is None:
+            raise ValueError(
+                "No finished organic audit yet. Run the audit first; a refresh starts from its "
+                "search evidence."
+            )
+        results = await self.results(run, history, now)
+        current = await self.read_page(url, audit["evidence"])
+        # Only paragraphs a refresh may replace travel with the draft's bounded context.
+        current["paragraphs"] = [
+            text for text in current["paragraphs"] if len(text) <= refresh.LIMITS["paragraph"]
+        ]
+        return {
+            "project_revision": revision,
+            "results": results,
+            "results_markdown": refresh.results_markdown(results),
+            "positioning_sources": await self.positioning_sources(project, revision),
+            "style_guide": refresh.STYLE_PATH
+            if await self._exists(project, revision, refresh.STYLE_PATH)
+            else None,
+            "limits": refresh.LIMITS,
+            "max_paragraphs": refresh.MAX_PARAGRAPHS,
+            "audit": audit["pin"],
+            "page": refresh.page_entry(audit["findings"], audit["evidence"], url),
+            "current": current,
+        }
+
+    async def waiting_pages(self, project_id, now: datetime | None = None) -> set[str]:
+        """Paths whose refresh still waits: in review, approved but not live, in an open (or
+        unchecked) pull request, or live for less than six weeks.
+
+        Reads Postgres only and saves nothing, so selection can ask without calling GitHub: an
+        unchecked pull request counts as open, as content.refresh counts one past its checks.
+        """
+        reader = ContentRefreshSources(database=self.db, storage=self.storage, clock=self._clock)
+        items = await reader.history(
+            SimpleNamespace(id=NO_RUN, project_id=project_id),
+            now or self._clock(),
+            save_live=False,
+        )
+        return {item["path"] for item in items if item["blocks"]}
 
     async def latest_audit(self, project) -> dict | None:
         row = await self.db.pool.fetchrow(LATEST_AUDIT_SQL, project.id)
@@ -195,10 +274,13 @@ class ContentRefreshSources:
         )
         return raw is not None
 
-    async def history(self, run, now: datetime) -> list[dict[str, Any]]:
-        """Earlier refreshes: their page, whether they went live, and whether they block it."""
+    async def history(self, run, now: datetime, *, save_live=True) -> list[dict[str, Any]]:
+        """Earlier refreshes: their page, whether they went live, and whether they block it.
+
+        `save_live=False` reads without recording the go-live dates it learns.
+        """
         rows = await self.db.pool.fetch(
-            EARLIER_REFRESHES_SQL, run.project_id, refresh.WORKFLOW_ID, run.id
+            EARLIER_REFRESHES_SQL, run.project_id, refresh.WORKFLOW_ID, run.id, DRAFT_WORKFLOW_ID
         )
         items, checks = [], 0
         for row in rows:
@@ -233,7 +315,7 @@ class ContentRefreshSources:
                         waiting = True
                 else:
                     waiting = now - row["created_at"] < refresh.WAIT
-                if live_at is not None:
+                if live_at is not None and save_live:
                     await self._save_live(row["id"], live_at)
             items.append(
                 {

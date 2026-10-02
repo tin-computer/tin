@@ -26,7 +26,6 @@ class ProjectSpendingPolicy(BaseModel):
     model_config = ConfigDict(extra="forbid")
     per_run_nanos: Money
     monthly_nanos: Money
-    concurrency: Annotated[int, Field(strict=True, ge=1, le=20)] = 1
     schedule_max_nanos: Money | None = None
     expected_revision: Annotated[int, Field(strict=True, ge=0)]
 

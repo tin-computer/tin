@@ -864,8 +864,11 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
     assert deep_dive["schedule_modes"] == next(
         row["schedule_modes"] for row in full_rows if row["key"] == "product.deep_dive"
     )
-    # visibility.audit requires target, but Tin fills its default, so the caller need not.
-    assert by_key["visibility.audit"]["required_inputs"] == []
+    # The technical fix requires repository_serves_site, but Tin fills its default, so the
+    # caller need not. (visibility.audit, the earlier example, left discovery.)
+    fix_inputs = by_key["organic.technical_fix"]["required_inputs"]
+    assert "audit_run_id" in fix_inputs and "repository_serves_site" not in fix_inputs
+    assert "visibility.audit" not in by_key
     descriptions = [row["description"] for row in short_rows]
     assert all("\n" not in text and len(text) <= 160 for text in descriptions)
     assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))

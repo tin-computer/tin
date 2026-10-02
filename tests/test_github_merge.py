@@ -269,3 +269,68 @@ async def test_a_lost_merge_response_is_recovered_without_merging_again(tmp_path
         recovered = await merge(service, binding)
     assert recovered["merged"] is True and recovered["commit"] == MERGED
     assert github.requests.count(("PUT", "/repos/example-org/site/pulls/12/merge")) == 1
+
+
+class Protection(GitHub):
+    """GitHub answering the branch's protection summary and its active rules."""
+
+    def __init__(self, branch=None, rules=None):
+        super().__init__()
+        self.branch, self.rules = branch, rules
+
+    async def __call__(self, request):
+        path = request.url.path
+        if path == "/repos/example-org/site/branches/main":
+            self.requests.append(("GET", path))
+            return self.branch or httpx.Response(404, json={"message": "Not Found"})
+        if path == "/repos/example-org/site/rules/branches/main":
+            self.requests.append(("GET", path))
+            return self.rules or httpx.Response(403, json={"message": "Forbidden"})
+        return await super().__call__(request)
+
+
+@pytest.mark.asyncio
+async def test_required_checks_come_from_branch_protection_and_rulesets(tmp_path) -> None:
+    database = FakeIntegrationDatabase()
+    connected(database)
+    github = Protection(
+        branch=httpx.Response(
+            200,
+            json={
+                "name": "main",
+                "protected": True,
+                "protection": {
+                    "enabled": True,
+                    "required_status_checks": {
+                        "enforcement_level": "everyone",
+                        "contexts": ["build"],
+                        "checks": [{"context": "build", "app_id": 1}, {"context": "lint"}],
+                    },
+                },
+            },
+        ),
+        rules=httpx.Response(
+            200,
+            json=[
+                {"type": "pull_request", "parameters": {}},
+                {
+                    "type": "required_status_checks",
+                    "parameters": {"required_status_checks": [{"context": "e2e"}]},
+                },
+            ],
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        found = await service.github_required_status_checks(
+            project_id=PROJECT_ID, repository="example-org/site", branch="main"
+        )
+    assert found == {"readable": True, "contexts": ["build", "lint", "e2e"]}
+    # Neither read allowed: nothing says which checks are required.
+    github = Protection()
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        found = await service.github_required_status_checks(
+            project_id=PROJECT_ID, repository="example-org/site", branch="main"
+        )
+    assert found == {"readable": False, "contexts": []}

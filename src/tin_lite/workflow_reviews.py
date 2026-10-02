@@ -164,17 +164,14 @@ class WorkflowReviews:
 
         candidate = await self.db.get_run(run_id)
         if await supports(self.db, candidate):
-            if reference_files:
-                raise ValueError(
-                    "X revisions use the draft's existing supporting facts. Put factual "
-                    "corrections in feedback."
-                )
+            # A writing guide may learn from reference files; a post keeps to its own facts.
             return await XFeedback(self.runtime, self.settings).request_changes(
                 run_id=run_id,
                 actor=actor,
                 feedback=feedback,
                 request_id=request_id,
                 token=token,
+                reference_files=reference_files,
                 post_id=post_id,
                 billing_quote_id=billing_quote_id,
                 trigger_client=trigger_client,

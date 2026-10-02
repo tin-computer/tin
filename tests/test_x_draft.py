@@ -3,11 +3,12 @@
 import json
 from copy import deepcopy
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import httpx
 import pytest
+from temporalio.exceptions import ApplicationError
 from test_private_workflows import ACTOR, app, mcp, structured
 from test_private_workflows import fixture as project_fixture
 from test_procedure_publication import publication_db as publication_db
@@ -233,3 +234,74 @@ async def test_child_budget_admission_requires_pinned_recipe(publication_db):
         assert not await service.valid_child(
             conn, parent, child, prepared["definitions"]["compose"]
         )
+
+
+def temporal_handles(f):
+    handle = SimpleNamespace(cancel=AsyncMock())
+    f.runtime.temporal.get_workflow_handle = Mock(return_value=handle)
+    return handle
+
+
+@pytest.mark.parametrize("voice", ["pending", "needs_input"])
+async def test_stop_procedure_stops_an_x_draft_and_keeps_a_proposed_voice_guide(
+    publication_db, monkeypatch, voice
+):
+    f = await fixture(publication_db, connected=True)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    child = UUID((await step(f, run, "style"))["run_id"])
+    await f.db.pool.execute("UPDATE workflow_runs SET status=$2 WHERE id=$1", child, voice)
+    handle = temporal_handles(f)
+    server = mcp(f, monkeypatch)
+    stopped = structured(await server.call_tool("stop_procedure", {"run_id": str(run.id)}))
+    assert stopped["status"] == "stopped"
+    assert (await f.db.get_run(run.id)).status.value == "stopped"
+    handle.cancel.assert_awaited()
+    guide = await f.db.get_run(child)
+    if voice == "needs_input":
+        # A guide waiting in Decisions stays the founder's to approve or discard.
+        assert guide.status.value == "needs_input"
+        assert stopped["voice_guide_run_id"] == str(child)
+        assert "stays in Decisions" in stopped["notice"]
+    else:
+        # Prepared for the parent to start: a stopped parent never will.
+        assert guide.status.value == "stopped" and stopped["voice_guide_run_id"] is None
+    with pytest.raises(ApplicationError, match="no longer active"):
+        await step(f, run, "compose")
+    again = structured(await server.call_tool("stop_procedure", {"run_id": str(run.id)}))
+    assert again["status"] == "stopped"
+
+
+async def test_stop_procedure_stops_an_x_drafts_composition(publication_db):
+    from tin_lite.procedure_control import stop_procedure
+
+    f = await fixture(publication_db, connected=True, guide=True)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    assert (await step(f, run, "style")) == {"status": "skipped"}
+    compose = UUID((await step(f, run, "compose"))["run_id"])
+    temporal_handles(f)
+    result = await stop_procedure(runtime=f.runtime, run_id=run.id, actor=ACTOR)
+    assert result["status"] == "stopped" and result["voice_guide_run_id"] is None
+    assert (await f.db.get_run(compose)).status.value == "stopped"
+
+
+async def test_discarding_the_voice_guide_stops_the_draft_instead_of_failing_it(publication_db):
+    from tin_lite.proposal_decline import decline_proposal
+
+    f = await fixture(publication_db, connected=True)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    child = UUID((await step(f, run, "style"))["run_id"])
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='needs_input', review_required=true WHERE id=$1", child
+    )
+    await decline_proposal(database=f.db, run_id=child, actor=ACTOR)
+    # The cancelled voice child unwinds the parent through its failure activity.
+    await f.activities.failure(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "stopped" and done.error_message is None
+    assert await f.db.pool.fetchval(
+        "SELECT count(*) FROM activity_events WHERE run_id=$1 AND event_type='x_draft_stopped'",
+        run.id,
+    )

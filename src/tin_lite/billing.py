@@ -58,13 +58,13 @@ _COMMITTED_LIABILITY_SQL = """LEAST(maximum_nanos,
       + 9999999) / 10000000) * 10000000)"""
 # A run that can do work now: it is pending or running, or it still holds its sandbox lease
 # without waiting on its founder. Only these runs buy calls (begin_operation needs pending or
-# running) or occupy an execution slot. A run waiting on its founder (needs_input, paused)
-# does neither until a person acts, and one that has ended does neither once its lease is
-# released, even before its bill settles.
+# running). A run waiting on its founder (needs_input, paused) buys none until a person
+# acts, and one that has ended buys none once its lease is released, even before its bill
+# settles.
 _RUN_CAN_WORK_SQL = """(tree_run.status IN ('pending','running')
     OR (tree_run.lease_active AND tree_run.status NOT IN ('needs_input','paused')))"""
 # A root budget (aliased b) with such a run anywhere in its tree. One fragment for the wallet's
-# set-aside, the monthly limit and the concurrent-run limit, so they cannot drift apart.
+# set-aside and the monthly limit, so they cannot drift apart.
 _ROOT_CAN_WORK_SQL = f"""EXISTS (
         SELECT 1 FROM billing_run_budgets tree JOIN workflow_runs tree_run
           ON tree_run.id=tree.run_id
@@ -92,15 +92,6 @@ def project_limit_message(policy, estimate, usage) -> str | None:
             f"This workflow is estimated at up to ${usd(estimate)}, which would exceed "
             f"this month's ${usd(policy['monthly_nanos'])} project limit "
             f"(${usd(usage['exposure'])} already committed)." + LIMIT_HINT
-        )
-    if usage["active"] >= policy["concurrency"]:
-        active = usage["active"]
-        return (
-            f"{active} run{'' if active == 1 else 's'} {'is' if active == 1 else 'are'} "
-            f"already in progress; the project's concurrent-run limit is "
-            f"{policy['concurrency']}. Runs waiting for your review or answer don't count. "
-            "Wait for a run to finish, or raise the limit with set_project_spending_limits "
-            "or on the Billing page."
         )
     return None
 
@@ -155,6 +146,8 @@ class BillingService:
             workspace_id,
             admin,
         )
+        # `concurrency` is no longer read: the money limits bound spending. The column is
+        # written until a later migration drops it, so this release needs no migration.
         await conn.execute(
             """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                 monthly_nanos, concurrency, schedule_max_nanos, revision)
@@ -365,15 +358,14 @@ class BillingService:
             await conn.execute(
                 """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                        monthly_nanos, concurrency, schedule_max_nanos)
-                   VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(project_id) DO UPDATE
-                   SET per_run_nanos=$3, monthly_nanos=$4, concurrency=$5, schedule_max_nanos=$6,
+                   VALUES($1,$2,$3,$4,1,$5) ON CONFLICT(project_id) DO UPDATE
+                   SET per_run_nanos=$3, monthly_nanos=$4, schedule_max_nanos=$5,
                        revision=billing_project_policies.revision+1, updated_at=now()
                    WHERE billing_project_policies.project_id=$1""",
                 project_id,
                 workspace_id,
                 policy.per_run_nanos,
                 policy.monthly_nanos,
-                policy.concurrency,
                 policy.schedule_max_nanos,
             )
         return {"revision": policy.expected_revision + 1}
@@ -427,6 +419,7 @@ class BillingService:
                         "organic-traffic-v3",
                         "organic-traffic-v4",
                         "organic-traffic-v5",
+                        "organic-traffic-v6",
                     }
                 ):
                     raise BillingError(
@@ -764,10 +757,6 @@ class BillingService:
         # wallet_credits. Otherwise any number of parallel starts pass before their first
         # paid call and then fail mid-work. begin_operation keeps checking actual
         # commitments for runs already admitted.
-        # Only a root with a run that can do work now takes a concurrent-run slot, so runs
-        # waiting for review or an answer don't block new work. A waiting run that resumes
-        # is not admitted again: it continues even if that puts the project over its limit,
-        # and new starts wait until the count drops below it.
         usage = await conn.fetchrow(
             f"""SELECT COALESCE(sum(CASE WHEN status='settled'
                                         AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
@@ -777,9 +766,7 @@ class BillingService:
                                         THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
                                                       {_COMMITTED_LIABILITY_SQL})
                                       WHEN status<>'settled' THEN maximum_nanos
-                                      ELSE 0 END),0) AS exposure,
-                      count(*) FILTER(WHERE status<>'settled'
-                                        AND {_ROOT_CAN_WORK_SQL}) AS active
+                                      ELSE 0 END),0) AS exposure
                FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
             run["project_id"],
             period,
@@ -911,7 +898,13 @@ class BillingService:
                 and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
             )
         if parent["executor"] == "organic.traffic_system":
-            from tin_lite.organic_system import REFRESH_KEY, STEPS, refreshes_pages
+            from tin_lite.organic_system import (
+                REFRESH_KEY,
+                STEPS,
+                policy_steps,
+                refreshes_pages,
+                writes_with_website_change,
+            )
 
             if definition["key"] == REFRESH_KEY:
                 # The v5 recipe's first page refresh, pinned at preparation like its steps.
@@ -923,6 +916,27 @@ class BillingService:
                     and refreshes_pages(prepared.result.get("policy"))
                     and prepared.result["definitions"].get("refresh") == definition
                 )
+            prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+            policy = (prepared.result or {}).get("policy") if prepared else None
+            if writes_with_website_change(policy):
+                # v6: website.change is both the technical and the delivery step, so its step
+                # comes from the start key and it must be the definition pinned for that step.
+                # content.deliver and organic.technical_fix are not v6 children.
+                steps = policy_steps(policy)
+                pinned = prepared.status == "completed" and prepared.result.get("definitions", {})
+                if definition["key"] == steps["delivery"]:
+                    step = key.removeprefix(f"system:{parent_id}:")
+                    return bool(
+                        step in {"technical", "delivery"}
+                        and pinned
+                        and pinned.get(step) == definition
+                    )
+                step = next(
+                    (s for s, workflow in steps.items() if workflow == definition["key"]), None
+                )
+                if step == "draft" and (not pinned or pinned.get(step) != definition):
+                    return False
+                return step is not None and key == f"system:{parent_id}:{step}"
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
                 from tin_lite.organic_system import drafts_articles
@@ -1523,8 +1537,7 @@ class BillingService:
                 """SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM project_memberships m
                     WHERE m.project_id=p.id AND m.clerk_user_id=$2)
                     THEN p.name ELSE NULL END AS name,
-                    b.revision, b.per_run_nanos, b.monthly_nanos,
-                    b.concurrency, b.schedule_max_nanos
+                    b.revision, b.per_run_nanos, b.monthly_nanos, b.schedule_max_nanos
                    FROM projects p LEFT JOIN billing_project_policies b ON b.project_id=p.id
                    WHERE p.workspace_id=$1 AND p.deleted_at IS NULL AND ($3 OR p.id=$4)
                    ORDER BY p.created_at, p.id LIMIT 100""",

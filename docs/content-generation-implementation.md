@@ -53,6 +53,14 @@ MCP `get_run` returns the same Postgres mode, step, counts, percentage, summary 
 update time used by the dashboard, including the selected article before compute. This is a
 read-only projection addition for every workflow, not a new progress subsystem.
 
+## Plan item kinds — 1.9.0
+
+A plan item may be an article, an answer page for an AI-visibility gap, or a refresh of an
+existing page. 1.9.0 drafts all three under the same editorial pair, with each kind's own
+checks, review wording and delivery: an answer goes to the site through `website.change` at the
+founder's route, and a refresh goes through the refresh applier. Older pins draft articles only.
+See [one content.generate](one-content-generate.md).
+
 ## Acceptance
 
 Test invalid/cross-project/deferred/stale selections before compute; unchanged retry binding;

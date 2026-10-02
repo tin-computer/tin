@@ -65,13 +65,16 @@ your own accounts before use; ordinary contributor tests need no production cred
   with its automatic changes and approval-gated proposals.
 - [Content programs](content-program-implementation.md), [draft generation](content-generation-implementation.md),
   [review and revisions](content-review.md) and [repository-aware delivery](repository-aware-content-delivery.md).
-- [website.change](website-change.md): approved changes to a founder's site; its two modes,
-  recorded approvals, protected paths and the change-row contract.
+- [One content.generate](one-content-generate.md): typed plan items, and how articles, answer
+  pages and page refreshes are drafted, reviewed and delivered.
+- [website.change](website-change.md): approved changes to a founder's site (pages, and the
+  technical fixes the latest audit found); its two modes, recorded approvals, protected paths
+  and the change-row contract.
 - [Writing style capture](writing-style-capture.md) and [editorial judgment](content-editorial-judgment.md).
 - [Brand and design capture](brand-capture.md) and [reviewed document pairs](reviewed-project-documents.md).
 - [Organic system execution](organic-system-execution.md) and [content continuation](organic-content-continuation.md).
 - [AI answers through DataForSEO](ai-answers-dataforseo.md): what each answer engine measures,
-  vendor prices and how the organic audit will call it.
+  vendor prices and how the organic audit calls it.
 - [Refreshing existing pages](content-refresh.md): the weekly page refresh and its exact source patch.
 - [Technical repair](technical-fix.md): finding selection, supported repairs and verification limits.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)

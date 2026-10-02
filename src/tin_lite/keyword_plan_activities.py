@@ -19,6 +19,7 @@ from tin_lite import keyword_plan_v3 as v3
 from tin_lite import keyword_plan_v4 as v4
 from tin_lite import keyword_plan_v5 as v5
 from tin_lite import keyword_plan_v6 as v6
+from tin_lite import keyword_plan_v7 as v7
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -63,8 +64,11 @@ STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review"
 # How many provider lookups one activity keeps in flight. Each holds one database connection
 # for its receipt lock (the pool allows ten), and DataForSEO's live endpoints accept far more.
 LOOKUP_CONCURRENCY = 4
+# Screening batches in flight (v7). Each holds a connection for the whole model call, and
+# two rounds of three, each with a retry, still finish inside keyword_collect's 25 minutes.
+TRIAGE_CONCURRENCY = 3
 # The lowest ceiling any supported policy accepts; the pinned policy may require more.
-MINIMUM_CEILING = Decimal(v6.POLICY["minimum_ceiling_usd"])
+MINIMUM_CEILING = Decimal(v7.POLICY["minimum_ceiling_usd"])
 
 CONTRACTS = {
     POLICY["version"]: (POLICY, INSTRUCTIONS, SCHEMAS),
@@ -73,9 +77,12 @@ CONTRACTS = {
     v4.POLICY["version"]: (v4.POLICY, v4.INSTRUCTIONS, v4.SCHEMAS),
     v5.POLICY["version"]: (v5.POLICY, v5.INSTRUCTIONS, v5.SCHEMAS),
     v6.POLICY["version"]: (v6.POLICY, v6.INSTRUCTIONS, v6.SCHEMAS),
+    v7.POLICY["version"]: (v7.POLICY, v7.INSTRUCTIONS, v7.SCHEMAS),
 }
 # Research and seed contracts shared by later policies; v6 only resizes reservations.
-BUYER_JOB_SEEDS = {v5.POLICY["version"], v6.POLICY["version"]}
+BUYER_JOB_SEEDS = {v5.POLICY["version"], v6.POLICY["version"], v7.POLICY["version"]}
+# Policies that screen in batches and save their research before screening.
+BATCHED_TRIAGE = {v7.POLICY["version"]}
 
 
 def modern_scope(scope):
@@ -85,7 +92,22 @@ def modern_scope(scope):
         v4.POLICY["version"],
         v5.POLICY["version"],
         v6.POLICY["version"],
+        v7.POLICY["version"],
     }
+
+
+def triage_reservations(policy: dict) -> list[tuple[str, str]]:
+    """Screening's share of the budget, held back before research spends the rest."""
+    if policy["version"] in BATCHED_TRIAGE:
+        return [
+            (v7.batch_stage(index), policy["triage_reservation_usd"])
+            for index in range(v7.batch_count(policy))
+        ]
+    return [("triage", policy["triage_reservation_usd"])]
+
+
+class ScreeningStopped(Exception):
+    """A screening batch failed; its failure record is already saved."""
 
 
 class KeywordPlanActivities:
@@ -264,21 +286,46 @@ class KeywordPlanActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
 
-    async def _model(self, run_id: str, stage: str, data: dict, *, schema=None):
+    async def _model_call(
+        self,
+        run_id: str,
+        stage: str,
+        data: dict,
+        *,
+        schema=None,
+        contract=None,
+        output_tokens=None,
+        reservation=None,
+    ):
+        """One receipted model call; returns its `_paid` result without judging it.
+
+        `contract` names the instructions, schema and limits when the receipt `stage` is a
+        batch of one (`triage:2` uses triage's); a batch passes its own output cap and
+        reservation. Without them the request is exactly what every earlier policy sent.
+        """
         scope = await self._result(run_id, "scope")
         policy, instructions, schemas = CONTRACTS[scope.get("policy_version", POLICY["version"])]
+        contract = contract or stage
+        limits = "seed" if contract == "seeds" else contract
         encoded = canonical_json(data).decode()
         if len(encoded.encode()) > POLICY["max_model_input_bytes"]:
             raise ApplicationError("Keyword review input exceeds its bound.", non_retryable=True)
         request = ModelRequest(
             messages=(ModelMessage(role=MessageRole.USER, content=encoded),),
-            system=instructions[stage],
-            output_schema=schema if schema is not None else schemas[stage],
-            output_schema_name=f"keyword_{stage}",
-            max_output_tokens=policy[f"{'seed' if stage == 'seeds' else stage}_output_tokens"],
+            system=instructions[contract],
+            output_schema=schema if schema is not None else schemas[contract],
+            output_schema_name=f"keyword_{contract}",
+            max_output_tokens=output_tokens or policy[f"{limits}_output_tokens"],
         )
+        bound = policy.get(f"{contract}_max_request_bytes")
+        if bound and len(json.dumps(asdict(request), ensure_ascii=False).encode()) > bound:
+            # The reservation is priced from this bound; a larger request is never sent.
+            raise ApplicationError(
+                f"Keyword {STAGE_NAMES.get(contract, contract)} input exceeds its bound.",
+                non_retryable=True,
+            )
 
-        timeout = MODEL_TIMEOUT_SECONDS.get(stage)
+        timeout = MODEL_TIMEOUT_SECONDS.get(contract)
 
         async def call():
             async with asyncio.timeout(timeout + 30 if timeout else 120):
@@ -294,14 +341,17 @@ class KeywordPlanActivities:
                 "provider": result.provider.value,
             }
 
-        result = await self._paid(
+        return await self._paid(
             run_id,
             stage,
             {"route": ROUTE_KEY, **asdict(request)},
-            policy[f"{'seed' if stage == 'seeds' else stage}_reservation_usd"],
+            reservation or policy[f"{limits}_reservation_usd"],
             call,
             classify=model_failure_reason,
         )
+
+    async def _model(self, run_id: str, stage: str, data: dict, *, schema=None):
+        result = await self._model_call(run_id, stage, data, schema=schema)
         if result["status"] != "completed":
             await self._save(
                 run_id,
@@ -555,7 +605,7 @@ class KeywordPlanActivities:
         await self._save(run_id, "scope", scope)
         await self._reserve(run_id, "review", policy["review_reservation_usd"])
         if modern_scope(scope):
-            await self._reserve(run_id, "triage", policy["triage_reservation_usd"])
+            await self._reserve_in_order(run_id, triage_reservations(policy))
         await self.db.mark_run_running(run.id)
 
     async def _gsc(self, run_id: str):
@@ -615,6 +665,18 @@ class KeywordPlanActivities:
         source_id, run_id = str(previous.id), str(run.id)
         collection = await self._result(source_id, "collection")
         if not collection:
+            # v7 saves its research before screening, so a run that failed while screening
+            # hands it on: the retry screens again but buys none of the lookups.
+            research = await self._result(source_id, "research")
+            if research and not await self._result(run_id, "research"):
+                await self._save(
+                    run_id,
+                    "research",
+                    {
+                        **research,
+                        "reused_from_run_id": research.get("reused_from_run_id") or source_id,
+                    },
+                )
             return False
         scope = await self._result(run_id, "scope")
 
@@ -758,20 +820,8 @@ class KeywordPlanActivities:
         sources["gsc"] = gsc
         return seeds, competitors, sources
 
-    @activity.defn
-    async def keyword_collect(self, run_id: str) -> None:
-        if await self._result(run_id, "collection"):
-            return
-        run = await self._active(run_id)
-        if await self._reuse_collected_research(run):
-            return
-        scope = await self._result(run_id, "scope")
-        policy = self._policy(scope)
-        if not await self._reserve(run_id, "review", policy["review_reservation_usd"]):
-            raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
-        modern = modern_scope(scope)
-        if modern and not await self._reserve(run_id, "triage", policy["triage_reservation_usd"]):
-            raise ApplicationError("Keyword screening budget is unavailable.", non_retryable=True)
+    async def _research(self, run, scope: dict, modern: bool) -> dict:
+        """Buy the lookups and select the candidates screening will judge."""
         await self.db.project_run_progress(
             run_id=run.id,
             mode="indeterminate",
@@ -828,7 +878,6 @@ class KeywordPlanActivities:
                 "Search Console uses a bounded 90-day query/page sample, "
                 "filtered to the exact host and market; coverage is not complete."
             )
-        coverage["notes"] = notes
         if modern:
             notes += [
                 "Competitor footprints are seed-filtered, not whole-domain rankings.",
@@ -836,13 +885,139 @@ class KeywordPlanActivities:
                 "Buyer relevance is model-assessed before choosing search-result samples; "
                 "it is not proven demand.",
             ]
+        coverage["notes"] = notes
+        return {
+            "seeds": seeds,
+            "competitors": competitors,
+            "sources": sources,
+            "candidates": candidates,
+            "coverage": coverage,
+        }
+
+    async def _screen_batch(self, run_id: str, scope: dict, policy: dict, index, batch, count):
+        """One screening batch; a batch cut off at its output cap is asked once more with a
+        larger cap, under its own stage and reservation. Returns (labelled rows, stages)."""
+        data, schema = v2.triage_input(scope, batch), v2.model_schema("triage", batch)
+        stages = [v7.batch_stage(index)]
+        result = await self._model_call(
+            run_id,
+            stages[0],
+            data,
+            schema=schema,
+            contract="triage",
+            output_tokens=policy["triage_output_tokens"],
+            reservation=policy["triage_reservation_usd"],
+        )
+        if result["status"] != "completed" and result.get("reason") == "output_truncated":
+            stages.append(v7.batch_stage(index, retry=True))
+            result = await self._model_call(
+                run_id,
+                stages[1],
+                data,
+                schema=schema,
+                contract="triage",
+                output_tokens=policy["triage_retry_output_tokens"],
+                reservation=policy["triage_retry_reservation_usd"],
+            )
+            if result["status"] != "completed" and result.get("reason") in {
+                "output_truncated",
+                "spending_limit",
+            }:
+                await self._save(
+                    run_id,
+                    "failure",
+                    {
+                        "code": "output_truncated",
+                        "stage": "triage",
+                        "batch": index,
+                        "batches": count,
+                        "reason": result.get("reason"),
+                    },
+                )
+                raise ScreeningStopped
+        if result["status"] != "completed":
+            await self._save(
+                run_id,
+                "failure",
+                {"code": "model_unavailable", "stage": "triage", "reason": result.get("reason")},
+            )
+            raise ScreeningStopped
+        try:
+            return v2.qualified_candidates(result["value"]["data"], batch), stages
+        except ValueError:
+            await self._save(run_id, "failure", {"code": "validation", "stage": "triage"})
+            raise ScreeningStopped from None
+
+    async def _screen_in_batches(self, run_id: str, scope: dict, policy: dict, candidates):
+        """Screen `candidates` a batch at a time and merge the labels back in their order.
+
+        After a batch fails no further batch starts; batches in flight finish, and every
+        completed batch keeps its receipt, so a retried activity replays it.
+        """
+        groups = v7.batches(candidates, policy["triage_batch_size"])
+        try:
+            results = await self._bounded(
+                [
+                    partial(self._screen_batch, run_id, scope, policy, index, batch, len(groups))
+                    for index, batch in enumerate(groups)
+                ],
+                limit=TRIAGE_CONCURRENCY,
+            )
+        except ScreeningStopped:
+            failure = await self._result(run_id, "failure") or {}
+            raise ApplicationError(
+                "Keyword screening stopped at its output limit; no further batch was bought."
+                if failure.get("code") == "output_truncated"
+                else "The saved keyword screening failed validation."
+                if failure.get("code") == "validation"
+                else "The keyword model result was unavailable; no replacement was purchased.",
+                non_retryable=True,
+            ) from None
+        rows = [row for labelled, _stages in results for row in labelled]
+        return rows, [stage for _labelled, stages in results for stage in stages]
+
+    @activity.defn
+    async def keyword_collect(self, run_id: str) -> None:
+        if await self._result(run_id, "collection"):
+            return
+        run = await self._active(run_id)
+        if await self._reuse_collected_research(run):
+            return
+        scope = await self._result(run_id, "scope")
+        policy = self._policy(scope)
+        if not await self._reserve(run_id, "review", policy["review_reservation_usd"]):
+            raise ApplicationError("Keyword review budget is unavailable.", non_retryable=True)
+        modern = modern_scope(scope)
+        if modern and not all(await self._reserve_in_order(run_id, triage_reservations(policy))):
+            raise ApplicationError("Keyword screening budget is unavailable.", non_retryable=True)
+        batched = policy["version"] in BATCHED_TRIAGE
+        research = await self._result(run_id, "research") if batched else None
+        if research is None:
+            research = await self._research(run, scope, modern)
+            if batched:
+                # Saved before screening: a run that fails while screening keeps its research,
+                # and a retry of it reuses the lookups instead of buying them again.
+                research = await self._save(run_id, "research", research)
+        seeds, competitors, sources = (
+            research["seeds"],
+            research["competitors"],
+            research["sources"],
+        )
+        candidates, coverage = research["candidates"], dict(research["coverage"])
+        screening = {}
+        if modern:
             await self.db.project_run_progress(
                 run_id=run.id,
                 mode="indeterminate",
                 step="screening",
                 summary="Screening keywords for the product's actual buyers.",
             )
-            if candidates:
+            if candidates and batched:
+                candidates, stages = await self._screen_in_batches(
+                    run_id, scope, policy, candidates
+                )
+                screening["triage_stages"] = stages
+            elif candidates:
                 labels = await self._model(
                     run_id,
                     "triage",
@@ -868,6 +1043,12 @@ class KeywordPlanActivities:
                 "sources": sources,
                 "candidates": candidates,
                 "coverage": coverage,
+                **screening,
+                **(
+                    {"reused_from_run_id": research["reused_from_run_id"]}
+                    if research.get("reused_from_run_id")
+                    else {}
+                ),
             },
         )
 
@@ -1035,7 +1216,7 @@ class KeywordPlanActivities:
                         "models": {
                             stage: receipt_evidence(await self._result(run_id, stage))
                             for stage in (
-                                ("seeds", "triage", "review")
+                                ("seeds", *collection.get("triage_stages", ["triage"]), "review")
                                 if modern_scope(scope)
                                 else ("seeds", "review")
                             )
@@ -1124,6 +1305,18 @@ class KeywordPlanActivities:
                 f"Keyword planning stopped because {model_failure_cause(failure)}. "
                 "Saved research was retained; no replacement call was purchased."
             )
+        elif failure.get("code") == "output_truncated":
+            batch = f"{failure.get('batch', 0) + 1} of {failure.get('batches', 1)}"
+            retry = (
+                "a retry with twice the limit would have passed the run's spending limit"
+                if failure.get("reason") == "spending_limit"
+                else "so did its retry with twice the limit"
+            )
+            message = (
+                f"Keyword planning stopped because screening batch {batch} stopped at its "
+                f"output-token limit, and {retry}. Completed batches and the paid research were "
+                "kept; retrying the run reuses the research instead of buying it again."
+            )
         await self.db.project_failure(
             run_id=UUID(run_id),
             error_message=message
@@ -1152,6 +1345,8 @@ def model_failure_cause(failure: dict) -> str:
         return f"the connection to the model provider failed during the {stage} call"
     if reason == "invalid_result":
         return f"the {stage} model call returned a result Tin could not use"
+    if reason == "output_truncated":
+        return f"the {stage} model call stopped at its output-token limit before it finished"
     if reason == "route_unavailable":
         return f"the model for the {stage} step is not configured on this worker"
     if reason == "spending_limit":

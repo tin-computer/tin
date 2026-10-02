@@ -110,13 +110,9 @@ subscription, key, or webhook was changed.
   The Billing limit editor sets it as "Per scheduled run"; blank keeps paid schedules off.
   Hosted default policies start with $10.
 - A start blocked by project limits keeps the `project_limit` code (HTTP 402) and names the one
-  limit that applies: no spending policy, the per-run limit against the estimate, this month's
-  limit with the amount already committed, or the concurrent-run limit with the count of runs in
-  progress. Only a root with a pending or running run, or one still holding its sandbox lease
-  outside a wait on its founder, takes a slot; runs waiting for review or an answer, paused runs
-  and ended runs do not, whether or not their bill has settled. A waiting run that resumes is
-  not admitted again: it continues even if the project is then over its limit, and new starts
-  wait until the count drops below it.
+  limit that applies: no spending policy, the per-run limit against the estimate, or this
+  month's limit with the amount already committed. There is no limit on how many runs are
+  active at once: each unsettled run already counts toward the monthly limit at its estimate.
 - Direct plan-file edits remain ordinary project-file operations. Paid **AI amendments** through
   the content-program revision API are not enrolled yet: that alternate start cannot supply an
   accepted quote, so it is rejected in billed workspaces. Audit, keyword planning, the organic

@@ -512,6 +512,52 @@ async def test_uncertain_model_is_not_repurchased_and_remains_unknown(billed, mo
     await code.models.router.close()
 
 
+async def test_a_run_tin_includes_calls_its_model_without_a_budget(billed, monkeypatch):
+    # Admission includes an approved onboarding setup step: it records billing-included and
+    # no budget row, and billing funds its model calls itself. Nothing refuses the call.
+    f = billed
+    server, _, code, active, calls = await prepare(f, monkeypatch)
+    run_id = (await start(f, server, active))["id"]
+    bound = await bound_model(f, code, run_id)
+    await f.db.pool.execute("DELETE FROM billing_run_budgets WHERE run_id=$1", UUID(run_id))
+    await f.db.pool.execute("UPDATE billing_accounts SET reserved_nanos=0")
+    included = f"billing-included:{run_id}"
+    async with f.db.pool.acquire() as conn:
+        await f.db.start_effect(conn, execution_key=included, operation="included_workflow_v1")
+        await f.db.complete_effect(
+            conn,
+            execution_key=included,
+            result={"run_id": run_id, "root_run_id": run_id, "reason": "onboarding"},
+        )
+        response = await code.models.generate(conn=conn, **bound, payload=payload())
+    assert response["parsed"] and len(calls) == 1
+    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
+    await code.models.router.close()
+
+
+async def test_the_packages_declared_runtime_bounds_a_model_call(billed, monkeypatch):
+    # No separate, shorter limit: a call slower than the package may run is cut at that
+    # runtime and stays unconfirmed, never bought twice.
+    f = billed
+    server, _, code, active, calls = await prepare(f, monkeypatch)
+    run_id = (await start(f, server, active))["id"]
+    bound = await bound_model(f, code, run_id)
+    bound["spec"] = replace(bound["spec"], timeout_seconds=0.2)
+    generate = code.models.router.generate
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(1)
+        return await generate(*args, **kwargs)
+
+    monkeypatch.setattr(code.models.router, "generate", slow)
+    async with f.db.pool.acquire() as conn:
+        for _ in range(2):
+            with pytest.raises(CodeModelError, match="unconfirmed"):
+                await code.models.generate(conn=conn, **bound, payload=payload())
+    assert not calls
+    await code.models.router.close()
+
+
 async def test_worker_restart_reuses_completed_model_call(billed, temporal_env, monkeypatch):
     f, compute = billed, ModelCompute(lose_once=True)
     server, common, code, active, calls = await prepare(

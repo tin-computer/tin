@@ -344,6 +344,12 @@ def _validate_search_metadata(text: str) -> str:
     return text[match.end() :]
 
 
+def search_structure_problems(text: str) -> list[str]:
+    """The search-structure checks on a page without frontmatter; content.generate answer
+    drafts (content_draft.validate_answer) reuse them."""
+    return _search_structure_problems(text)
+
+
 def _search_structure_problems(text: str) -> list[str]:
     """Catch the missing pieces of a search-structured page, not matters of taste."""
     problems: list[str] = []

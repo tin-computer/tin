@@ -603,6 +603,15 @@ def workflow_source_view(workflow, settings):
     }
 
 
+SERVICE_ERRORS_GUIDE = (
+    "A failed call carries Tin's message. When the provider answered and refused, the "
+    "message ends with what it said (for example a HogQL error), and provider_error holds "
+    "{provider, status, type, code, message}: the message redacted (credentials, tokens, "
+    "the person part of email addresses) and cut to 1500 characters. Other failures keep "
+    "Tin's generic message."
+)
+
+
 def authoring_guide(*, settings, project_id):
     from tin_lite.workflow_code import MODEL_TARGETS, example_files
     from tin_lite.workflow_creator import creator_files
@@ -742,6 +751,9 @@ def authoring_guide(*, settings, project_id):
                     }
                 ],
             },
+            "run_id": "A run knows its own Tin run ID. workflow.code reads ctx['run_id']; a "
+            "codex.procedure's brief ends with a RUN CONTEXT line naming it, and its commands "
+            "read the same value from TIN_RUN_ID. Use it where the output names its run.",
             "notes": "Declare required capabilities; connections alone grant a procedure nothing. "
             "Repository verification runs as the credential-free worker. Project context selection "
             "is not a narrower read permission. Existing PR overlap and result bounds apply.",
@@ -798,6 +810,9 @@ def authoring_guide(*, settings, project_id):
             "and unknown unless independently verified; call limits are not dollar ceilings.",
             "managed": "managed.pagespeed (free) works through call_service. Paid managed "
             "services such as managed.dataforseo are for workflow.code packages only.",
+            "errors": SERVICE_ERRORS_GUIDE
+            + " A call_service or request_service tool error is JSON with code, message "
+            "and provider_error.",
         },
         "code_contract": {
             "executor": "workflow.code",
@@ -862,9 +877,18 @@ def authoring_guide(*, settings, project_id):
                 "rate limit or missing permission, is a named error for that step "
                 "and does not block later steps. Connected-provider costs remain separate from "
                 "Tin credits; managed.dataforseo reads are charged to Tin credits.",
+                "errors": SERVICE_ERRORS_GUIDE
+                + " In code, catch ValueError and read its code and provider_error attributes.",
             },
             "files": {
-                "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern)",
+                "context": "ctx.files.read_text(path), read_bytes(path), glob(pattern), "
+                "read_section(heading)",
+                "memory": "Project memory is wiki/INDEX.md. product.code_map writes its "
+                "'### Code map' section and product.deep_dive its '### Feature map' section, "
+                "under '## Product'; neither has a file of its own. "
+                "ctx.files.read_section('### Code map') returns one section, even when the "
+                "whole index is over the 64000-byte read limit. Procedures read "
+                "/home/user/state/wiki/INDEX.md.",
                 "contract": "Read current project files without a revision or prior run ID input. "
                 "Tin pins one canonical project HEAD when the run starts and keeps it on retry. "
                 "Use a stable path when possible, or handle no match and multiple matches "

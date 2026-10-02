@@ -337,6 +337,8 @@ class OrganicAuditWorkflow:
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
+            if workflow.patched("organic-audit-ai-engines-v1"):
+                await self._measure_ai_engines(run_id)
             await workflow.execute_activity(
                 "organic_publish",
                 run_id,
@@ -361,6 +363,36 @@ class OrganicAuditWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             raise
+
+    async def _measure_ai_engines(self, run_id: str) -> None:
+        """organic-audit-v13: the same questions on six AI engines (ai_answers_measure).
+
+        Earlier policies return no stage. A measurement that fails leaves the audit to
+        publish without it, and the report says it did not finish.
+        """
+        try:
+            stage = await workflow.execute_activity(
+                "organic_prepare_ai_engines",
+                run_id,
+                start_to_close_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=5, maximum_interval=timedelta(seconds=30)
+                ),
+            )
+            if not stage or self._stopped:
+                return
+            # The LLM Scraper's standard queue can take 45 minutes; the activity heartbeats.
+            await workflow.execute_activity(
+                "ai_answers_measure",
+                {"run_id": run_id, "stage": stage},
+                start_to_close_timeout=timedelta(minutes=60),
+                heartbeat_timeout=timedelta(minutes=2),
+                retry_policy=RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(minutes=1)),
+            )
+        except ActivityError:
+            workflow.logger.warning(
+                "AI engine measurement needs attention", extra={"run_id": run_id}
+            )
 
 
 @workflow.defn(name=VISIBILITY_AUDIT_WORKFLOW_NAME)

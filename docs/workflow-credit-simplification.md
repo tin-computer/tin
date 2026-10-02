@@ -17,7 +17,7 @@ balance and project limits. It charges verified usage, not the estimate.
    estimate through a read-only HTTP/MCP preview and the configuration surface.
 2. **One admission path.** Dashboard, MCP, direct/saved starts, revisions and scheduled
    occurrences share the existing admission service. A normal start needs no quote
-   ID. Check the estimate, available credits, project limits and concurrency before
+   ID. Check the estimate, available credits and project limits before
    dispatch. Preserve explicit scheduled spending authority. Free onboarding and
    approved setup children remain free. No enrollment, limit or Stripe-mode changes.
 3. **Managed-operation funding.** Reuse `billing_operations` and `committed_nanos`. Managed model and service budgets
@@ -39,10 +39,8 @@ balance and project limits. It charges verified usage, not the estimate.
    Decline before buying a call if funding is insufficient; retain existing receipts
    and durable files. Do not invent automatic resume support or blindly repurchase
    uncertain calls. Existing bounded unknown-cost reconciliation still applies.
-   A terminal run's unresolved bill retains monetary liability but no execution slot;
-   active children and leases still count toward the project's concurrency limit. A run
-   waiting for review or an answer takes no slot either. When it resumes it counts again
-   but is not admitted again, so it continues even over the limit and new starts wait.
+   A terminal run's unresolved bill retains monetary liability. Projects have no limit on
+   how many runs are active at once; the money limits bound spending.
    Parent steps aggregate once, and terminal settlement creates one ledger charge.
 5. **Quiet UI.** Remove the per-run approval dialog and the reserved-balance line.
    Preserve stable request IDs through ambiguous responses. Show configured estimated

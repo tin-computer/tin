@@ -1,0 +1,100 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use a fictional northpine.example project (traffic snapshot, organic audit summary, Page decisions), synthetic Search Console rows and a stubbed model answer; tests/test_site_architecture.py supplies them offline. They are not live evidence.",
+    "The plan reads no repository. Click depth, inbound links and possible orphans come from the organic audit's summary (reports/organic-audit/LATEST.json, written from audit policy v12), over the pages the audit read."
+  ],
+  "cost_drivers": [
+    "Up to three Search Console reads and one gpt-6-luna call of up to 20,000 input bytes and 2,048 output tokens; a stop report makes no model call. Unmeasured until qualification."
+  ],
+  "effects": [
+    "Replaces reports/organic/site-architecture/SITE_ARCHITECTURE.md. website.change (source planned) reads its redirects.json block and asks about each row; nothing here edits a page, redirect or PR."
+  ],
+  "cases": [
+    {
+      "id": "url_change",
+      "description": "/features moves to /product, and an old /old-reports redirect points at a page that moves too. The plan retargets /old-reports straight at /product/reports and asks about /features/invoicing, which has clicks and no new route.",
+      "inputs": {
+        "mode": "plan",
+        "planned_change": "url_change",
+        "new_paths": "/features -> /product\n/features/reports -> /product/reports\n/old-reports -> /features/reports\n/pricing"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "| /old-reports | /product/reports | 301 |",
+          "/features/invoicing: 80 clicks in 12 months; redirect, 404 or 410?",
+          "<!-- redirects.json:start -->",
+          "\"schema\": \"site_architecture.redirects/1\"",
+          "<!-- baseline.json:start -->",
+          "Redirects for website.change"
+        ],
+        "excludes": ["Approval status", "apply by hand"]
+      }
+    },
+    {
+      "id": "orphaned_pricing",
+      "description": "No planned change; the audit's summary flags /pricing as a possible orphan that no read page links to, and /blog/late-fees sits four clicks from home. The gate passes on both, and each page's click depth comes from the summary.",
+      "inputs": {"mode": "plan"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["a possible orphan in the audit's crawl", "1 click from home", "more than 3 clicks from home", "/pricing", "## Navigation"],
+        "excludes": ["Status: stopped", "Click depth is not measured", "repository link graph"]
+      }
+    },
+    {
+      "id": "no_audit_summary",
+      "description": "The only audit predates policy v12, so there is no LATEST.json; a planned URL change still plans, and click depth is said to be not measured instead of guessed.",
+      "inputs": {"mode": "plan", "planned_change": "url_change", "new_paths": "/pricing -> /plans"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Click depth is not measured: there is no organic audit summary", "/plans"],
+        "excludes": ["1 click from home", "They are exact", "| not reached |"]
+      }
+    },
+    {
+      "id": "thin_data_stop",
+      "description": "One page in Search Console, no audit, snapshot or Page decisions and no trigger: a clean stop with explicit unknowns.",
+      "inputs": {"mode": "plan", "planned_change": "none"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped", "What was checked", "Run again when", "not assessed"],
+        "excludes": ["<!-- redirects.json:start -->", "orphan count: 0"]
+      }
+    },
+    {
+      "id": "follow_up_without_date",
+      "description": "No applied_on input: the follow-up stops and asks for the date before any comparison.",
+      "inputs": {"mode": "follow_up"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped"],
+        "excludes": ["Search Console before and after", "redirect passed"]
+      }
+    },
+    {
+      "id": "truncated_gsc",
+      "description": "The 12-month page read comes back truncated during a URL change; the plan states incomplete coverage instead of false zeros.",
+      "inputs": {"mode": "plan", "planned_change": "url_change", "new_paths": "/pricing -> /plans"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["/plans", "unknown", "truncated"],
+        "excludes": ["redirect passed"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "sources",
+      "question": "Does every number name its source and window (Search Console 12 months, snapshot 28 days, the audit summary's crawl), with click depth exact or an upper bound as the summary says, and not measured rather than guessed when there is no summary?"
+    },
+    {
+      "id": "redirects",
+      "question": "Is every moved must-keep URL represented once, with no chain, no source that is also a target and no unrelated home redirect, and does the redirects.json block match the table?"
+    },
+    {
+      "id": "evidence",
+      "question": "Does the gate pass or stop only on supported evidence, with unknown kept apart from zero?"
+    }
+  ]
+}

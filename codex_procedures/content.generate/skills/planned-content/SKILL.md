@@ -5,6 +5,8 @@ description: Assess current coverage, then draft only useful, fact-grounded plan
 
 1. Read the exact brief, buyer intent, action, destination and verification requirements in
    the run context. Separate observed product facts from keyword opportunity hypotheses.
+   `content_draft.kind` names an answer page (use the answer-page skill too) or a page refresh
+   (use the page-refresh skill too); without it the item is an article.
 2. Read the project writing guide when present. Use its rhythm, structure and editorial
    preferences without treating style as factual evidence. Explicit direction can refine
    expression but cannot override output ownership or invent claims.

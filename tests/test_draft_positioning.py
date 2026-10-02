@@ -19,7 +19,7 @@ NOTE = b"# Positioning\n\nLead with the whole system, not one channel.\n"
 
 
 def test_the_plan_follows_the_projects_positioning_instead_of_setting_it():
-    assert editorial.POLICY["version"] == "content-editorial-v6"
+    assert editorial.POLICY["version"] == "content-editorial-v7"
     assert "Strategy owns product positioning" not in editorial.INSTRUCTIONS
     assert "Never narrow, downplay or reframe the product" in flat(editorial.INSTRUCTIONS)
     # Plans pinned to v5 keep their exact instructions.
@@ -30,6 +30,7 @@ def test_the_plan_follows_the_projects_positioning_instead_of_setting_it():
         **definition,
         "content_policy": editorial.V5_POLICY,
         "content_instructions": editorial.V5_INSTRUCTIONS,
+        "content_schema": editorial.PORTFOLIO_SCHEMA,
     }
     assert editorial.contract(old).INSTRUCTIONS == editorial.V5_INSTRUCTIONS
     assert "Strategy owns product positioning" in editorial.V5_INSTRUCTIONS

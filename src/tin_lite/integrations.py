@@ -37,6 +37,8 @@ from tin_lite.domain import (
     Workflow,
 )
 from tin_lite.email_outreach import build_email_message, campaign_message_id
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 from tin_lite.repository_limits import (
     REPOSITORY_BLOB_FALLBACKS,
     REPOSITORY_DOWNLOAD_MAX_BYTES,
@@ -177,6 +179,18 @@ class IntegrationUpstreamError(IntegrationError):
     pass
 
 
+class IntegrationProviderError(IntegrationUpstreamError):
+    """The provider answered with an error status; the message stays Tin's own.
+
+    `provider_error` holds what the provider said (status, type, code and a redacted message).
+    Founder-facing routes keep showing Tin's message; the run gateway shows both.
+    """
+
+    def __init__(self, message: str, *, provider_error: ProviderErrorDetail) -> None:
+        super().__init__(message)
+        self.provider_error = provider_error
+
+
 class IntegrationInputError(IntegrationError):
     """The person's own input was rejected before anything was stored."""
 
@@ -189,21 +203,31 @@ class ServiceCallRefused(IntegrationError):
     """The provider answered and refused one read: a known outcome with a Tin-authored message.
 
     The service gateway settles the step with `code` instead of treating it as uncertain, so a
-    later step may try again. Messages never carry provider bodies or credentials.
+    later step may try again. The message is Tin's own and never carries a provider body or a
+    credential; `provider_error`, when the provider explained itself, holds its status, error
+    type and code and its message, cut and redacted (see provider_errors.py).
     """
 
-    def __init__(self, message: str, *, code: str) -> None:
+    def __init__(
+        self, message: str, *, code: str, provider_error: ProviderErrorDetail | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.provider_error = provider_error
 
 
 class IntegrationRateLimitedError(ServiceCallRefused):
     """The provider rate-limited a read; retry it later under a new step."""
 
     def __init__(
-        self, message: str, *, reason: str | None = None, retry_after: int | None = None
+        self,
+        message: str,
+        *,
+        reason: str | None = None,
+        retry_after: int | None = None,
+        provider_error: ProviderErrorDetail | None = None,
     ) -> None:
-        super().__init__(message, code="rate_limited")
+        super().__init__(message, code="rate_limited", provider_error=provider_error)
         self.reason, self.retry_after = reason, retry_after
 
 
@@ -1917,6 +1941,102 @@ class IntegrationService:
             == repository.casefold(),
         }
 
+    async def github_changed_paths(
+        self, *, project_id: UUID, repository: str, base: str, head: str
+    ) -> dict[str, Any]:
+        """The files that changed between two commits of the selected repository, as GitHub's
+        compare reports them. `complete` is False when GitHub cut the list short (300
+        files) or the commits are not related; callers then treat every file as changed.
+        Only paths leave this method.
+        """
+        if not _SHA.fullmatch(base or "") or not _SHA.fullmatch(head or ""):
+            raise IntegrationError("GitHub commits to compare are invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        payload = _provider_json(
+            await self._client.get(
+                f"https://api.github.com/repos/{quote(repository, safe='/')}/compare/"
+                f"{base}...{head}",
+                headers=self._github_headers(token),
+                params={"per_page": 100},
+            ),
+            provider="GitHub",
+        )
+        files = payload.get("files") if isinstance(payload.get("files"), list) else []
+        paths: list[str] = []
+        for item in files:
+            if not isinstance(item, dict):
+                continue
+            for key in ("filename", "previous_filename"):
+                name = item.get(key)
+                if isinstance(name, str) and _safe_github_path(name) and name not in paths:
+                    paths.append(name)
+        return {
+            "paths": paths,
+            "complete": payload.get("status") in {"ahead", "identical"} and len(files) < 300,
+        }
+
+    async def github_required_status_checks(
+        self, *, project_id: UUID, repository: str, branch: str
+    ) -> dict[str, Any]:
+        """The status checks a branch requires before a merge, as GitHub reports them.
+
+        Reads classic branch protection (the branch's protection summary) and rulesets (the
+        branch's active rules). `readable` is False when neither could be read; callers treat
+        that as no required checks. Only check names leave this method.
+        """
+        if not _safe_github_ref(branch):
+            raise IntegrationError("GitHub branch is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}"
+        headers = self._github_headers(token)
+        contexts: list[str] = []
+        readable = False
+
+        def add(name):
+            if isinstance(name, str) and 0 < len(name) <= 255 and name not in contexts:
+                contexts.append(name)
+
+        try:
+            summary = _provider_json(
+                await self._client.get(
+                    f"{root}/branches/{quote(branch, safe='')}", headers=headers
+                ),
+                provider="GitHub",
+            )
+            readable = True
+            protection = summary.get("protection")
+            required = (
+                protection.get("required_status_checks") if isinstance(protection, dict) else None
+            )
+            if isinstance(required, dict):
+                for name in required.get("contexts") or []:
+                    add(name)
+                for check in required.get("checks") or []:
+                    add(check.get("context") if isinstance(check, dict) else None)
+        except (IntegrationError, httpx.HTTPError):
+            pass
+        try:
+            rules = _provider_list(
+                await self._client.get(
+                    f"{root}/rules/branches/{quote(branch, safe='')}",
+                    headers=headers,
+                    params={"per_page": 100},
+                ),
+                provider="GitHub",
+            )
+            readable = True
+            for rule in rules:
+                if not isinstance(rule, dict) or rule.get("type") != "required_status_checks":
+                    continue
+                parameters = (
+                    rule.get("parameters") if isinstance(rule.get("parameters"), dict) else {}
+                )
+                for check in parameters.get("required_status_checks") or []:
+                    add(check.get("context") if isinstance(check, dict) else None)
+        except (IntegrationError, httpx.HTTPError):
+            pass
+        return {"readable": readable, "contexts": contexts[:50]}
+
     async def github_merge_pull_request(
         self,
         *,
@@ -1947,7 +2067,8 @@ class IntegrationService:
             raise IntegrationError("GitHub pull request to merge is invalid")
         if not commit_title.strip() or len(commit_title) > 200 or not _safe_github_ref(branch):
             raise IntegrationError("GitHub merge request is invalid")
-        if not 1 <= len(files) <= 10 or not all(_safe_github_path(item.path) for item in files):
+        # Up to 20: a website.change technical batch (site-fix-v5's file cap).
+        if not 1 <= len(files) <= 20 or not all(_safe_github_path(item.path) for item in files):
             raise IntegrationError("GitHub merge must name the pull request's files")
 
         def request_fingerprint(repository):
@@ -5213,29 +5334,33 @@ def _gmail_message_is_reply(value: dict[str, Any], *, sender_email: str, after: 
     return False
 
 
-def _provider_json(response: httpx.Response, *, provider: str) -> dict[str, Any]:
+def _provider_payload(response: httpx.Response, *, provider: str) -> Any:
+    """The parsed body; an error status keeps the provider's own words beside Tin's message."""
     try:
-        payload = response.json()
+        payload, invalid = response.json(), None
     except ValueError as exc:
-        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from exc
+        payload, invalid = None, exc
     if response.is_error:
-        raise IntegrationUpstreamError(
-            f"{provider} could not complete the request ({response.status_code})"
-        )
+        raise IntegrationProviderError(
+            f"{provider} returned an invalid response"
+            if invalid
+            else f"{provider} could not complete the request ({response.status_code})",
+            provider_error=provider_error_detail(provider, response.status_code, payload),
+        ) from invalid
+    if invalid is not None:
+        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from invalid
+    return payload
+
+
+def _provider_json(response: httpx.Response, *, provider: str) -> dict[str, Any]:
+    payload = _provider_payload(response, provider=provider)
     if not isinstance(payload, dict):
         raise IntegrationUpstreamError(f"{provider} returned an invalid response")
     return payload
 
 
 def _provider_list(response: httpx.Response, *, provider: str) -> list[Any]:
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        raise IntegrationUpstreamError(f"{provider} returned an invalid response") from exc
-    if response.is_error:
-        raise IntegrationUpstreamError(
-            f"{provider} could not complete the request ({response.status_code})"
-        )
+    payload = _provider_payload(response, provider=provider)
     if not isinstance(payload, list):
         raise IntegrationUpstreamError(f"{provider} returned an invalid response")
     return payload

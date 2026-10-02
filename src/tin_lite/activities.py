@@ -108,6 +108,7 @@ from tin_lite.procedures import (
     validate_procedure_pull_request,
 )
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
+from tin_lite.redaction import scrub_secrets
 from tin_lite.rollouts import RolloutCapture
 from tin_lite.scan import ScanReporter, ScanSource, validate_scan_report
 from tin_lite.schedules import ScheduledWorkflowSkip, WorkflowSchedule, next_run_after
@@ -354,6 +355,7 @@ class TinActivities:
                 start_idempotency_key=f"schedule:{payload['occurrence_id']}",
             )
         ):
+            from tin_lite import content_draft
             from tin_lite.code_schedules import pause_for_issue
             from tin_lite.content_draft_sources import (
                 ScheduledDraftHold,
@@ -368,6 +370,7 @@ class TinActivities:
                     integrations=self._integrations,
                     project_id=configured.project_id,
                     inputs=configured.inputs,
+                    kinds=content_draft.supported_kinds(workflow_definition.definition),
                 )
             except ScheduledDraftHold:
                 await self._db.advance_project_workflow_schedule(
@@ -605,7 +608,7 @@ class TinActivities:
                     design = design_api.procedure(creation["timeout_seconds"])
                     creation["context"] = (
                         (existing.result or {}).get("context") if existing else None
-                    ) or design.sandbox_context(inputs=run.input or {})
+                    ) or design.sandbox_context(inputs=run.input or {}, run_id=run.id)
                 await self._db.save_effect_progress(
                     conn, execution_key=execution_key, result=creation
                 )
@@ -2804,6 +2807,10 @@ class TinActivities:
             run = await self._require_run(run_id)
             if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                 return False
+            if content_repository_delivery.repairs_site(run):
+                return await self._prepare_website_repairs(run)
+            if content_repository_delivery.applies_plan(run):
+                return await self._apply_blog_index(run)
             await content_repository_delivery.saved_source(self._db, run_id)
             await self._db.mark_run_running(run_id)
             await self._db.project_run_progress(
@@ -2821,11 +2828,16 @@ class TinActivities:
             run = await self._require_run(run_id)
             if run.status.value not in {"pending", "running"}:
                 raise StaleGenerationError("The draft is no longer active")
+            from tin_lite.content_draft_sources import pinned_kinds
+
             context = await self._await_with_heartbeats(
-                ContentDraftSources(database=self._db, storage=self._storage).prepare(
+                ContentDraftSources(
+                    database=self._db, storage=self._storage, integrations=self._integrations
+                ).prepare(
                     run,
                     output_validator=procedure.output_validator,
                     positioning=content_draft.POSITIONING_MARKER in procedure.prompt,
+                    kinds=await pinned_kinds(self._storage, _definition, run),
                 ),
                 details={"stage": "content_draft_preparation"},
             )
@@ -2870,6 +2882,64 @@ class TinActivities:
                 summary="Preparing a bounded metadata-only change.",
             )
         return handled
+
+    async def _prepare_website_repairs(self, run) -> bool:
+        """A website.change run with the audit's changes: site-fix-v5's preparation of the
+        rows it pinned. True when nothing is left to change; it then reports and ends."""
+        from tin_lite import website_change_audit
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=0,
+            total=3,
+            step="verify_source",
+            summary="Checking the audit's changes on the live site and the repository.",
+        )
+        handled = await self._await_with_heartbeats(
+            website_change_audit.prepare(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "technical_verification"},
+        )
+        if not handled:
+            await self._db.project_run_progress(
+                run_id=run.id,
+                mode="steps",
+                current=1,
+                total=3,
+                step="prepare_patch",
+                summary="Preparing one pull request for the audit's changes.",
+            )
+        return handled
+
+    async def _apply_blog_index(self, run) -> bool:
+        """A website.change run with the blog index plan: no Codex session. Tin opens the pull
+        request with the plan's files, merges it under the mode rules, and reports."""
+        from tin_lite import website_change_blog_index
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=1,
+            total=2,
+            step="apply_blog_index",
+            summary="Opening a pull request with the blog index plan's files.",
+        )
+        return await self._await_with_heartbeats(
+            website_change_blog_index.apply(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "website_change_blog_index"},
+        )
 
     async def _prepare_content_refresh(self, run_id: UUID) -> bool:
         """Pin the refresh's page and sources; with nothing due, report it and stop here."""
@@ -3127,9 +3197,13 @@ class TinActivities:
             api_attempt = await self._db.get_effect(attempt_key(run_id), conn=conn)
 
             repository_delivery = content_repository_delivery.adapts(run)
+            # A website.change run with the audit's changes is a repair, not a page delivery.
+            technical_run = bool(procedure.repair_policy) or (
+                content_repository_delivery.repairs_site(run)
+            )
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
-                or procedure.repair_policy
+                or technical_run
                 or repository_delivery
             ):
                 if run.ephemeral_branch != f"procedures/{run.id}/{run.generation}":
@@ -3208,7 +3282,7 @@ class TinActivities:
                         "sandbox_killed": False,
                         **(
                             {"ephemeral_commit_sha": recovered_revision}
-                            if procedure.repair_policy or repository_delivery
+                            if technical_run or repository_delivery
                             else {}
                         ),
                         **(
@@ -3420,7 +3494,8 @@ class TinActivities:
                             self._db, run_id
                         )
                         expected_binding = content_repository_delivery.binding_from(content_source)
-                    if procedure.repair_policy:
+                    website_repairs = content_repository_delivery.repairs_site(run)
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite.technical_fix_execution import binding_from, prepared_result
 
                         technical = await prepared_result(self._db, run_id)
@@ -3445,6 +3520,13 @@ class TinActivities:
                     }
                     if technical is not None:
                         workspace_context["technical_fix"] = technical
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        # The rows, publish mode and protected paths beside the plan.
+                        workspace_context["website_change"] = website_change_audit.workspace(
+                            await content_repository_delivery.saved_source(self._db, run_id)
+                        )
                     if content_source is not None:
                         # website.change reads its change row, route and protected paths too.
                         workspace_context[
@@ -3513,6 +3595,7 @@ class TinActivities:
                                 workspace=workspace_context,
                                 identity=identity_context,
                                 payment_card=payment_card,
+                                run_id=run.id,
                             ),
                             output_path=checkpoint_path,
                             output_max_bytes=procedure.output_max_bytes,
@@ -3782,9 +3865,12 @@ class TinActivities:
                     raise RuntimeError("procedure result has no checkpoint path")
                 from tin_lite import content_repository_delivery
 
-                immutable_checkpoint = bool(
-                    procedure.repair_policy
-                ) or content_repository_delivery.adapts(run)
+                website_repairs = content_repository_delivery.repairs_site(run)
+                immutable_checkpoint = (
+                    bool(procedure.repair_policy)
+                    or website_repairs
+                    or content_repository_delivery.adapts(run)
+                )
                 checkpoint = (
                     b""
                     if immutable_checkpoint
@@ -3817,7 +3903,7 @@ class TinActivities:
                         source = await content_repository_delivery.saved_source(self._db, run_id)
                         copy_proof = content_repository_delivery.validate_patch(manifest, source)
                         expected_binding = content_repository_delivery.binding_from(source)
-                    if procedure.repair_policy:
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite import technical_fix
                         from tin_lite.technical_fix_execution import (
                             TechnicalFixExecution,
@@ -3870,7 +3956,16 @@ class TinActivities:
                             ),
                         )
                     artifact_path = procedure_receipt_path(spec=procedure, run_id=run_id)
-                    if technical is not None:
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        receipt = website_change_audit.report(
+                            technical,
+                            await content_repository_delivery.saved_source(self._db, run_id),
+                            reason="no_safe_patch" if no_change else None,
+                            pull_request=pull_request,
+                        )
+                    elif technical is not None:
                         receipt = technical_fix.report(
                             technical,
                             reason="no_safe_patch" if no_change else None,
@@ -3932,6 +4027,8 @@ class TinActivities:
                                 "outcome": "no_change" if no_change else "pull_request",
                                 "summary": "No safe patch proposed; finding remains unresolved."
                                 if no_change
+                                else "The pull request for the audit's changes is open."
+                                if website_repairs
                                 else "Verified title-only PR ready for review.",
                                 "message": receipt.decode(),
                             }
@@ -4109,7 +4206,12 @@ class TinActivities:
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
         from tin_lite import content_draft
-        from tin_lite.content_editorial_judgment import LABELS, NO_DRAFT, validate_pair
+        from tin_lite.content_editorial_judgment import (
+            LABELS,
+            NO_DRAFT,
+            covering_page,
+            validate_pair,
+        )
 
         editorial = None
         if procedure.output_validator == content_draft.EDITORIAL_VALIDATOR:
@@ -4182,9 +4284,17 @@ class TinActivities:
                 if editorial:
                     result["content_editorial"] = editorial
                     if editorial["outcome"] in NO_DRAFT:
+                        # The page that already covers the brief, so the plan item and the
+                        # run both say where its reader is served today.
+                        covered = covering_page(
+                            editorial, procedure.content_draft_context.get("host")
+                        )
+                        if covered:
+                            result["covered_by"] = covered
                         result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}: "
-                            f"{procedure.content_draft_context['item']['title']}. "
+                            f"{LABELS[editorial['outcome']]}"
+                            + (f" by {covered}" if covered else "")
+                            + f": {procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
                 if analytics is not None and analytics_brief.summary(analytics):
@@ -4261,13 +4371,22 @@ class TinActivities:
             if delivery and delivery.get("approval_label")
             else ""
         )
+        summary = f"{workflow_definition.title} is ready for your review. {destination}".strip()
+        if str(run.workflow_id) == "00000000-0000-4000-8000-000000000031":
+            # An answer page or a page refresh says what its approval does.
+            from tin_lite import content_draft
+
+            prepared = await self._db.get_effect(content_draft.receipt_key(run_id))
+            kind = content_draft.context_kind(prepared.result if prepared else None)
+            if kind != content_draft.ARTICLE:
+                summary = content_draft.KIND_REVIEW[kind]
         required = await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=artifact_title,
-            summary=f"{workflow_definition.title} is ready for your review. {destination}".strip(),
+            summary=summary,
             explanation=" ".join(part for part in (lede, destination) if part),
         )
         if required:
@@ -4438,6 +4557,25 @@ class TinActivities:
         from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
+        if content_repository_delivery.applies_plan(run):
+            # The blog index run merged or left its pull request while it applied the plan.
+            return
+        if content_repository_delivery.repairs_site(run):
+            if run.status == RunStatus.SUCCEEDED:
+                from tin_lite import website_change_audit
+
+                # Tin merges the audit's approved changes once the required checks pass,
+                # then checks the live site; anything else stays open for the founder.
+                await self._await_with_heartbeats(
+                    website_change_audit.publish(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "website_change_merge"},
+                )
+            return
         if content_repository_delivery.adapts(run):
             if run.status == RunStatus.SUCCEEDED:
                 # The procedure already opened its PR. When the page's approval asked to
@@ -5586,23 +5724,6 @@ class TinActivities:
     def _require_active_lease(run) -> None:
         if not run.lease_active:
             raise StaleGenerationError("run generation does not own the active lease")
-
-
-_SECRET_IN_TEXT = re.compile(
-    r"(?i)(bearer\s+|(?:api[_-]?key|token|secret|password|authorization)=)[^\s&\"']+"
-    r"|\b(?:sk|rk|re|ghp|gho|ghu|pat|xoxb|xoxp)_[A-Za-z0-9_-]{8,}\b"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
-)
-
-
-def scrub_secrets(text: str) -> str:
-    """Mask credentials an exception text may carry (headers, query strings, key prefixes, JWTs)."""
-
-    def mask(match: re.Match[str]) -> str:
-        lead = match.group(1) or ""
-        return f"{lead}[redacted]"
-
-    return _SECRET_IN_TEXT.sub(mask, text)
 
 
 def _safe_failure(exc: BaseException) -> str:

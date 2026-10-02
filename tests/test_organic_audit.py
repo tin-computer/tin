@@ -471,9 +471,11 @@ class MemoryDB:
         )
 
 
-async def activities_fixture(*, budget="8"):
+async def activities_fixture(*, budget="8", policy=None):
     db, storage = MemoryDB(), HistoryStorage()
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
+    if policy is not None:  # A run pinned to an earlier policy.
+        definition = {**definition, "audit_policy": policy}
     storage.read_canonical_artifact = AsyncMock(return_value=canonical_json(definition))
     provider = SimpleNamespace(
         validate_target=AsyncMock(return_value=("https://example.com/", "example.com")),

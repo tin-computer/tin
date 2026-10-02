@@ -105,6 +105,11 @@ def service_terms(definition, *, inputs=None):
     kinds = ["native_model"]
     if executor == "organic.audit":
         maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
+        # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
+        # ceiling ($1; eight questions cost at most $0.63 at the pinned request prices).
+        engines = (definition.get("audit_policy") or {}).get("ai_engines_max_cost_usd")
+        if engines is not None:
+            maximum += amount_nanos(engines) or 0
     elif executor == "organic.keyword_plan":
         maximum = amount_nanos(inputs.get("max_cost_usd", 9))
         kinds = ["native_model", "tool"]
@@ -123,6 +128,7 @@ def service_terms(definition, *, inputs=None):
                 "organic-traffic-v3",
                 "organic-traffic-v4",
                 "organic-traffic-v5",
+                "organic-traffic-v6",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -131,10 +137,12 @@ def service_terms(definition, *, inputs=None):
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
             pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
-            if version == "organic-traffic-v5":
+            if version in {"organic-traffic-v5", "organic-traffic-v6"}:
                 # v5's first page refresh is a child run; later weekly refreshes are ordinary
                 # scheduled runs with their own funding. The pool grows by the refresh's own
-                # ceiling, since a production run has not measured one yet.
+                # ceiling, since a production run has not measured one yet. v6 keeps v5's
+                # children; its technical and delivery steps are website.change runs, each
+                # with the same $5 procedure ceiling as the workflows they replace.
                 from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
 
                 maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]

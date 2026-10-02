@@ -208,7 +208,11 @@ def test_schema_and_exact_legacy_and_current_policies():
     old["model_route"]["key"] = legacy.ROUTE_KEY
     assert editorial.contract(old).POLICY == legacy.POLICY
     v2 = deepcopy(definition)
-    v2.update(content_policy=editorial.V2_POLICY, content_instructions=editorial.V2_INSTRUCTIONS)
+    v2.update(
+        content_policy=editorial.V2_POLICY,
+        content_instructions=editorial.V2_INSTRUCTIONS,
+        content_schema=editorial.PORTFOLIO_SCHEMA,
+    )
     assert editorial.contract(v2).POLICY == editorial.V2_POLICY
     definition["content_policy"]["max_pages"] += 1
     with pytest.raises(ValueError, match="pinned"):

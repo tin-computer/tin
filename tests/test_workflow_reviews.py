@@ -65,7 +65,7 @@ async def setup(db, monkeypatch, *, planned=False):
     return f
 
 
-async def save(f, run, *, assessment=False):
+async def save(f, run, *, assessment=False, outcome="already_covered"):
     if f.workflow.key == content_draft.KEY:
         await ContentDraftSources(database=f.db, storage=f.storage).prepare(
             run, output_validator=content_draft.CLEAN_VALIDATOR
@@ -81,7 +81,7 @@ async def save(f, run, *, assessment=False):
     if assessment:
         result["content_editorial"] = {
             "schema": "content-editorial-check.v1",
-            "outcome": "already_covered",
+            "outcome": outcome,
         }
     key = f"{run.id}:procedure_canonical_commit"
     async with f.db.effect_lock(key, "procedure_canonical_commit") as (conn, _):

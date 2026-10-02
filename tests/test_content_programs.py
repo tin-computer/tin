@@ -114,8 +114,11 @@ async def setup(database, monkeypatch, *, editorial=False):
                 from test_content_plan_editorial import portfolio
 
                 result = portfolio(min(30, data["capacity"]))
+                typed = "TypedOpportunity" in request.output_schema["$defs"]
                 for opportunity in result["opportunities"]:
                     opportunity["source_ids"] = [data["sources"][0]["source_id"]]
+                    if typed:
+                        opportunity["kind"] = "article"
                 existing = [i for b in data["selected_batches"] for i in b["items"]]
                 if existing:
                     for index, opportunity in enumerate(result["opportunities"]):

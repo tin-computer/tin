@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use synthetic repositories and Search Console fakes with the stated metadata; they do not prove live access or a qualified run.",
+    "The build case supplies an offline renderer so server HTML, feed and sitemap can be checked; the fixture clock is 2026-09-29."
+  ],
+  "cost_drivers": [
+    "Codex context grows with the route and source complexity, post count and diff size; offline rendering uses time within the 1800-second limit.",
+    "At most four Search Console reads."
+  ],
+  "effects": [
+    "Writes one plan at reports/blog-index/{run_id}/PLAN.md, with a blog-index-patch/1 block of at most five files or none. The repository is read-only: no pull request, post, build setting, merge or deploy. website.change applies the patch only after the founder approves it."
+  ],
+  "cases": [
+    {
+      "id": "ordinary_build",
+      "description": "A Markdown post route reads content/blog with 12 posts, one dated 2026-09-30; content/page-routes.json saves /blog/{slug}; there is no index route or feed, and the sitemap stamps build time.",
+      "inputs": {"mode": "auto"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["<!-- blog-index-patch.json:start -->", "blog-index-patch/1", "/blog/{slug}", "hidden until 2026-09-30", "/rss.xml", "## Numbers"],
+        "excludes": ["ItemList", "lastmod = now()", "\"path\": \"package.json\"", "pull request opened"]
+      }
+    },
+    {
+      "id": "no_article_route",
+      "description": "The repository has no post route and no route is saved: the plan has no files, and it carries the founder question.",
+      "inputs": {"mode": "auto"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["no_change", "no_article_route", "<!-- blog-index-patch.json:start -->", "Where on your site should articles go?", "save_page_route"],
+        "excludes": ["/answers/"]
+      }
+    },
+    {
+      "id": "under_100_with_truncated_search",
+      "description": "34 eligible posts and a partial index with 20 links; page_size 10. All 34 go on the index with no numbered pages; Search Console is truncated, so featured and search totals are unknown.",
+      "inputs": {"mode": "improve", "page_size": 10},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["34", "unknown"],
+        "excludes": ["/blog/page/2"]
+      }
+    },
+    {
+      "id": "check_only",
+      "description": "A renderable index missing one post: check mode names one next fix and plans no files.",
+      "inputs": {"mode": "check"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["no_change", "check_only", "<!-- blog-index-patch.json:end -->"],
+        "excludes": ["```diff"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "source_and_reach",
+      "question": "Does the planned index read the traced source with its exclusions, and does preview HTML in the scratch copy put every eligible post, including a new synthetic one, within two clicks?"
+    },
+    {
+      "id": "patch",
+      "question": "Does the patch name the commit it read, hold at most five files with their full text, leave the repository snapshot unchanged, and avoid package.json, lockfiles and build, CI or deploy settings?"
+    },
+    {
+      "id": "route",
+      "question": "Is the index at the chosen article route's folder, and without a route does the run ask the founder instead of guessing?"
+    },
+    {
+      "id": "numbers",
+      "question": "Are post clicks and impressions from complete Search Console reads with their windows, and are unavailable numbers unknown rather than zero?"
+    }
+  ]
+}

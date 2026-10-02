@@ -265,6 +265,129 @@ async def test_guide_revision_keeps_original_gate_and_approval_pins_revised_copy
     assert (await f.db.get_run(original.id)).status.value == "succeeded"
 
 
+SAMPLES = "style/samples/ege-writing.md"
+LONG_FORM = "I write the reasoning first, then the claim.\n\nCandid, unhurried, specific.\n"
+
+
+async def test_a_guide_revision_learns_from_reference_files(publication_db):
+    f = await setup(publication_db, guide=True)
+    f.storage.repo.edit({SAMPLES: LONG_FORM.encode()})
+    run = await request(f, reference_files=[SAMPLES])
+    pinned = json.loads(run.input["references"])
+    assert [(r["path"], r["bytes"]) for r in pinned] == [(SAMPLES, len(LONG_FORM.encode()))]
+    # A later edit to the file doesn't change what the founder sent.
+    f.storage.repo.edit({SAMPLES: b"Edited after the request."})
+    await f.activities.generate(str(run.id))
+    packet = json.loads(f.router.generate.await_args.args[1].messages[0].content)
+    assert packet["references"] == [{"path": SAMPLES, "text": LONG_FORM}]
+    await f.activities.publish(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "succeeded"
+    assert RULE in current(f, f.source.artifact_path).decode()
+
+
+async def test_a_revision_without_references_sends_what_it_always_has(publication_db):
+    f = await setup(publication_db, guide=True)
+    run = await request(f)
+    assert "references" not in run.input
+    await f.activities.generate(str(run.id))
+    packet = json.loads(f.router.generate.await_args.args[1].messages[0].content)
+    assert list(packet) == ["kind", "post", "guide", "feedback"]
+
+
+async def test_post_revisions_keep_to_their_own_facts(publication_db):
+    f = await setup(publication_db)
+    f.storage.repo.edit({SAMPLES: LONG_FORM.encode()})
+    with pytest.raises(ValueError, match="existing supporting facts"):
+        await request(f, reference_files=[SAMPLES])
+
+
+@pytest.mark.parametrize(
+    ("files", "content", "message"),
+    [
+        (["style/samples/missing.md"], None, "not in the project's files"),
+        ([SAMPLES], b"x" * 20_001, "larger than 20 KB"),
+        ([SAMPLES], b"Deploy with OPENAI_API_KEY=sk-proj-abc123def456ghi789", "Remove credentials"),
+        ([SAMPLES], b"\xff\xfe\x00screenshot", "not a text file"),
+        ([SAMPLES, SAMPLES], LONG_FORM.encode(), "up to eight"),
+        ([f"notes/{i}.md" for i in range(9)], None, "up to eight"),
+    ],
+    ids=["missing", "oversized", "credential", "binary", "repeated", "too-many"],
+)
+async def test_unusable_reference_files_are_refused_clearly(
+    publication_db, files, content, message
+):
+    f = await setup(publication_db, guide=True)
+    if content is not None:
+        f.storage.repo.edit({SAMPLES: content})
+    with pytest.raises(ValueError, match=message):
+        await request(f, reference_files=files)
+    assert not f.router.generate.await_count
+
+
+async def test_references_never_loosen_the_guide_contract(publication_db):
+    # A plausible revision that moves the guide to another account is still refused.
+    f = await setup(publication_db, guide=True)
+    f.storage.repo.edit({SAMPLES: LONG_FORM.encode()})
+    proposal = current(f, f.source.artifact_path).decode()
+    f.router.generate.return_value.parsed["text"] = proposal.replace(
+        "X account ID: 12345", "X account ID: 99999"
+    )
+    run = await request(f, reference_files=[SAMPLES])
+    writes = f.storage.repo.writes
+    with pytest.raises(ApplicationError, match="could not be validated"):
+        await f.activities.generate(str(run.id))
+    assert f.storage.repo.writes == writes
+
+
+async def test_a_reference_that_no_longer_matches_is_never_sent(publication_db):
+    f = await setup(publication_db, guide=True)
+    f.storage.repo.edit({SAMPLES: LONG_FORM.encode()})
+    run = await request(f, reference_files=[SAMPLES])
+    pinned = json.loads(run.input["references"])
+    pinned[0]["sha256"] = "0" * 64
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET input = jsonb_set(input, '{references}', to_jsonb($2::text)) "
+        "WHERE id=$1",
+        run.id,
+        json.dumps(pinned),
+    )
+    with pytest.raises(ApplicationError, match="does not match the file you sent"):
+        await f.activities.generate(str(run.id))
+    assert not f.router.generate.await_count
+
+
+@pytest.mark.parametrize("guide", [True, False])
+async def test_a_long_change_summary_still_records_the_revision(publication_db, guide):
+    # A run's result_summary holds one line of 160 characters. A longer change summary used
+    # to fail the projection after the file was committed, so the revision showed as failed.
+    f = await setup(publication_db, guide=guide)
+    summary = "Rewrote the voice section around the founder's character and plain speech. " * 4
+    f.router.generate.return_value.parsed["summary"] = summary
+    run = await request(f)
+    await f.activities.generate(str(run.id))
+    await f.activities.publish(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.status.value == "succeeded" and len(done.result_summary) <= 160
+    assert done.result_summary.startswith("Rewrote the voice section")
+    assert done.result_summary.endswith("…")
+    view = await f.reviews.view(f.source.id, ACTOR, "" if guide else "p1")
+    assert view["change_summary"] == done.result_summary
+    if guide:
+        source = await f.db.get_run(f.source.id)
+        assert source.canonical_commit_sha == done.canonical_commit_sha
+
+
+def test_every_result_summary_is_one_line_that_fits_its_column():
+    from tin_lite.domain import RESULT_LINE_CHARS, result_line
+
+    assert result_line(None) is None
+    assert result_line("  Saved   the\nguide. ") == "Saved the guide."
+    long = result_line("word " * 100)
+    assert len(long) <= RESULT_LINE_CHARS and long.endswith("word…")
+    assert result_line("x" * 400) == "x" * (RESULT_LINE_CHARS - 1) + "…"
+
+
 async def test_guide_review_document_reads_latest_file_and_binds_its_content(publication_db):
     from tin_lite.x_posts import digest
 

@@ -243,7 +243,8 @@ async def test_generation_and_executor_cannot_be_substituted(publication_db, mon
         "UPDATE workflow_runs SET executor='project.task' WHERE id=$1",
         f.run.id,
     )
-    with pytest.raises(LookupError):
+    # A run of another kind is named, not reported missing.
+    with pytest.raises(SideEffectConflictError, match="not project.task runs"):
         await stop(f)
     f.runtime.sandboxes.kill.assert_not_awaited()
 

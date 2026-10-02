@@ -1354,6 +1354,127 @@ def create_mcp_app(
         )
 
     @server.tool()
+    async def preflight_website_change(
+        project_id: str,
+        expected_repository: str,
+        repository_serves_site: StrictBool,
+        source: Literal["audit", "planned", "blog_index"] = "audit",
+        finding_ids: list[str] | None = None,
+        decisions: list[str] | None = None,
+        protected_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Preview what website.change would make from a source, and record its change rows
+        (list_website_changes) so the founder can approve or decline each once, here or in
+        Decisions. No run, paid compute, branch or pull request is created.
+
+        source audit: the technical fixes the latest audit found. planned: the redirects and
+        noindex changes page decisions and the site architecture plan made. blog_index: the
+        newest content.blog_index plan, one change applied as it is.
+
+        plan.repairs is what the next run makes, decisions_needed the judgment calls, and
+        plan.left_out the rest (copy, manual steps such as deleting a page, declined rows,
+        rows already in a pull request, rows waiting for approval). Answer each
+        decisions_needed item yourself from the codebase and what you know about the product,
+        following ask; ask the founder only the ones you're unsure of, and pass the answers as
+        decisions (["finding_id=choice"]). changes shows each row's status and whether it
+        touches a protected page (suggestion ask). next_run says whether the next run
+        publishes (Tin merges once the required checks pass, for approved rows) or opens a
+        pull request for the founder. Start website.change with the same source and arguments.
+        """
+        from tin_lite import website_change_audit
+        from tin_lite.integrations import IntegrationError
+        from tin_lite.technical_fix_sources import TechnicalFixError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preflight_website_change")
+        try:
+            found = await website_change_audit.preview(
+                database=runtime().database,
+                storage=runtime().storage,
+                integrations=runtime().integrations,
+                project_id=project,
+                source=source,
+                inputs={
+                    "expected_repository": expected_repository,
+                    "repository_serves_site": repository_serves_site,
+                    "finding_ids": finding_ids or [],
+                    "decisions": decisions or [],
+                    "protected_paths": protected_paths or [],
+                },
+            )
+        except TechnicalFixError as exc:
+            raise ToolError(f"{exc.code}: {exc}") from exc
+        except (LookupError, ValueError, IntegrationError) as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        relay = found.pop("relay")
+        return {**found, **_founder_words(relay=relay)}
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_protected_paths(project_id: str) -> dict[str, Any]:
+        """Read the project's protected pages: site paths whose changes always wait for the
+        founder's merge, even when approved.
+
+        `defaults` (/sign-in, /sign-up, /auth-complete) are always protected and cannot be
+        removed. `paths` are the pages the founder added; `effective` is both. `revision` is
+        what set_protected_paths needs, and `history` shows who changed the list and when.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="get_protected_paths")
+        try:
+            return await website_change.read_protected_paths(
+                runtime().database, project_id=project, actor=token.subject
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+
+    @server.tool()
+    async def set_protected_paths(
+        project_id: str, paths: list[str], expected_revision: int, request_id: str
+    ) -> dict[str, Any]:
+        """Replace the project's protected pages, after the founder names them.
+
+        A protected page, and every page under it, always opens a pull request for the
+        founder to merge, even when the change was approved: use it for pages another app
+        shares, such as /partners or /app. Pass site paths such as /partners (a full URL is
+        reduced to its path); [] keeps only the defaults, which cannot be removed. Pass the
+        revision from get_protected_paths. Reuse request_id when retrying.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="set_protected_paths")
+        try:
+            saved = await website_change.save_protected_paths(
+                runtime().database,
+                project_id=project,
+                actor=token.subject,
+                paths=paths,
+                expected_revision=expected_revision,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        pages = ", ".join(saved["effective"])
+        return {
+            **saved,
+            **_founder_words(
+                relay=[
+                    f"Saved. Changes to these pages always wait for your merge: {pages}, and "
+                    "every page under them."
+                ]
+            ),
+        }
+
+    @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
@@ -3028,7 +3149,7 @@ def create_mcp_app(
 
     @server.tool()
     async def stop_procedure(run_id: str) -> dict[str, Any]:
-        """Stop a code workflow or Codex procedure and its sandbox before publication starts.
+        """Stop a code workflow, Codex procedure or X draft before publication starts.
 
         Saved output is retained. Never recalls a PR or undoes an external action.
         If cleanup is pending, call again to retry cleanup. Does not pause or resume tasks.
@@ -3560,6 +3681,8 @@ def create_mcp_app(
         one separately metered generation of the SAME piece, not the next roadmap item.
         Feedback may name or describe project files for the procedure to inspect; no file
         selection is required. reference_files optionally pins exact supplied file contents.
+        For X, an X writing guide accepts reference_files (up to eight text project files,
+        such as writing samples or notes to learn the voice from); an X post does not.
         Return its run/review link. Article and initial-guide approval remain separate;
         X post publication still requires an exact preview and explicit confirmation.
         """
@@ -3687,6 +3810,39 @@ def create_mcp_app(
                 "pages use the route they choose."
             )
         return words, cost
+
+    @server.tool()
+    async def discard_workflow_review(run_id: str) -> dict[str, Any]:
+        """Discard what a run has waiting in Decisions, only when the founder asked you to.
+
+        The proposal is declined: the run ends as declined, nothing it proposed is used,
+        published or applied, and its files stay readable in Files. Use it for a draft or
+        guide the founder turned down, or for an older proposal a newer one replaced. A
+        one-off project task is stopped instead. Discarding again returns the same result.
+        """
+        from tin_lite.proposal_decline import discard_review
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="discard_workflow_review"
+        )
+        try:
+            discarded = await discard_review(runtime=runtime(), run_id=run.id, actor=token.subject)
+        except LookupError as exc:
+            raise ToolError(f"not_found: {exc}") from exc
+        except project_task_control.ProjectTaskDeliveryError as exc:
+            raise ToolError(f"delivery_failed: {exc}") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        return {
+            "id": str(discarded.id),
+            "project_id": str(discarded.project_id),
+            "status": discarded.status.value,
+            "review_decision": discarded.review_decision,
+            **_founder_words(
+                relay="Discarded. Nothing from it was used, and its files stay in Files."
+            ),
+        }
 
     @server.tool()
     async def approve_workflow_run(
@@ -4130,6 +4286,7 @@ def create_mcp_app(
             and workflow.key == "website.change"
             and workflow.project_id is None
         ):
+            from tin_lite import website_change
             from tin_lite.content_repository_delivery import discover
             from tin_lite.page_routes import PageRouteService, ask_the_founder
 
@@ -4143,10 +4300,14 @@ def create_mcp_app(
                 routes = {}
             # One question at a time: answer pages first, then articles.
             unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            protected = await website_change.project_protected_paths(
+                runtime().database.pool, project_id=parsed_project_id
+            )
             draft_preparation = {
                 "preparation": {
                     **await discover(runtime().database, parsed_project_id),
                     "page_routes": routes,
+                    "protected_paths": protected["effective"],
                     **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
                     "instruction": "Choose an approved article, answer page or public article "
                     "by title from preparation.articles, and confirm the website repository "
@@ -4155,10 +4316,18 @@ def create_mcp_app(
                     "flow. An answer page or public article needs a chosen route first: when "
                     "preparation.page_routes has none for its type, ask the founder as "
                     "ask_the_founder describes and call save_page_route. A page approved in "
-                    "Tin by a named reviewer publishes (Tin merges the PR once GitHub reports "
-                    "it clean); otherwise, and for protected pages such as /sign-in, the PR "
-                    "waits for the founder. Add protected_paths for pages another app shares. "
-                    "Never approve a draft just to publish it.",
+                    "Tin by a named reviewer, with commit to main, publishes (Tin merges the "
+                    "PR once the repository's required checks pass); otherwise, and for the "
+                    "pages in preparation.protected_paths, the PR waits for the founder. To "
+                    "protect more pages, such as ones another app shares, ask the founder and "
+                    "call set_protected_paths. Never approve a draft just to publish it. For "
+                    "the technical fixes the latest audit found (source audit), the URL "
+                    "changes page decisions and the site plan made (planned) or the blog index "
+                    "plan (blog_index), call preflight_website_change first, then start "
+                    "website.change with that source, repository_serves_site and any answered "
+                    "decisions; changes the founder approved (in Decisions, or "
+                    "approve_website_change) publish, the rest open a PR. Deleting a page stays "
+                    "with the founder.",
                 }
             }
         if (
@@ -4179,8 +4348,9 @@ def create_mcp_app(
                         "arguments": {"project_id": str(parsed_project_id)},
                     },
                     "instruction": "Choose a content program, then start content.generate "
-                    "with only program_id. Tin selects the next article in chronological plan "
-                    "order and prevents duplicate drafts. Do not ask the user to pick an article "
+                    "with only program_id. Tin selects the next item in chronological plan "
+                    "order (an article, an answer page or a page refresh) and prevents duplicate "
+                    "drafts. Do not ask the user to pick an article "
                     "by default. Only supply item_id when they explicitly choose another article; "
                     "rewrite=true also requires that explicit item_id. "
                     "Reuse request_id when retrying the same start. If your tool list is cached, "
