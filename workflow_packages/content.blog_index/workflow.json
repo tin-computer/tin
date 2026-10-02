@@ -2,8 +2,8 @@
   "package_format": "tin-workflow-package-v1",
   "definition": {
     "key": "content.blog_index",
-    "title": "Build or fix the blog index",
-    "description": "Make every published article reachable within two clicks: trace where your connected repository keeps its posts, then open an unmerged PR for a blog index that lists them from that source, with dates, summaries, categories when there are enough posts, an RSS feed and sitemap dates taken from each post. Uses the route you chose for articles; if none is chosen yet, it asks you once instead. Reports each post's search clicks and impressions. Never merges or deploys.",
+    "title": "Plan the blog index",
+    "description": "Plan a blog index that makes every published article reachable within two clicks: trace where your connected repository keeps its posts, read it without changing it, and write a plan with the exact files for an index that lists them from that source, with dates, summaries, categories when there are enough posts, an RSS feed and sitemap dates taken from each post. Uses the route you chose for articles; if none is chosen yet, it asks you once instead. Reports each post's search clicks and impressions. Opens no pull request: website.change builds the index from the plan once you approve it.",
     "version": "1.0.0",
     "executor": "codex.procedure",
     "system": "organic-traffic",
@@ -57,7 +57,7 @@
     "integration_requirements": [
       {
         "provider_key": "infra.github",
-        "capabilities": ["contents.read", "contents.write", "pull_requests.read", "pull_requests.write"],
+        "capabilities": ["contents.read"],
         "required": true
       },
       {"provider_key": "analytics.gsc", "capabilities": ["search_analytics.read"], "required": true}
@@ -68,28 +68,25 @@
       "skill_files": [
         "skills/blog-index/SKILL.md",
         "skills/blog-index/MEASUREMENT.md",
-        "skills/blog-index/RESULT.md"
+        "skills/blog-index/PLAN.md"
       ],
       "entry_skill": "blog-index",
       "workspace": {
         "kind": "github.repository",
         "provider_key": "infra.github",
-        "capabilities": ["contents.read", "pull_requests.read"]
+        "capabilities": ["contents.read"],
+        "limits": {"max_files": 1000, "max_bytes": 100000000}
       },
       "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
       "services": {
         "gsc": {"provider_key": "analytics.gsc", "max_calls": 4, "max_response_bytes": 32000}
       },
       "output": {
-        "kind": "github.pull_request",
-        "provider_key": "infra.github",
-        "max_files": 5,
-        "max_bytes": 120000,
-        "receipt_path_template": "reports/blog-index/{run_id}/RESULT.md",
-        "allow_no_change": true
-      },
-      "verification": {
-        "commands": ["git diff --check", "git status --short"]
+        "kind": "project.artifact",
+        "path_template": "reports/blog-index/{run_id}/PLAN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 200000,
+        "validator": "blog-index-plan.v1"
       }
     }
   }

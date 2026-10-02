@@ -4,8 +4,8 @@ Sources: the latest organic audit's summary (reports/organic-audit/LATEST.json, 
 12 months of Search Console, the traffic snapshot (28-day sessions) and Page decisions
 (content/efficacy.md). It does not read the site's repository. One model call names and groups
 the sections; code computes everything else: the inventory, the gate, the tree, the rules,
-the redirects website.change will read (the `redirects.json` block, unchanged) and the baseline
-a follow-up compares against.
+the redirects in the `redirects.json` block (website.change reads it, PR #266, source
+`planned`) and the baseline a follow-up compares against.
 
 Click depth and inbound links come from the audit summary: the fewest clicks from the homepage
 through the pages the audit read, exact or an upper bound as the summary says. URL depth (path
