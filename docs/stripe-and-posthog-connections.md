@@ -347,6 +347,14 @@ call_service(service="analytics", step="signups", operation="query.hogql",
                         "query": "SELECT toDate(timestamp) AS day, count() AS signups FROM events WHERE event = 'signed_up' AND timestamp >= '2026-09-01' GROUP BY day ORDER BY day LIMIT 31"})
 ```
 
+A code workflow may mark a connected provider `"required": false` when it still has a useful
+result without it; `organic.traffic_snapshot` does this for PostHog. The run then starts without
+the connection, and Tin pins the binding's state for the run in `ctx["connections"]`, such as
+`{"posthog": "not_connected"}` (or `connected`, `needs_attention`). A call to a binding that is
+not `connected` raises a `ValueError` with code `not_connected` and sends nothing; a connection
+made mid-run applies from the next run. Tin-held (`managed.*`) and custom API services, and
+procedure bindings, stay required.
+
 Both manifests are excerpts; the full packages above validate with
 `uv run tin-lite validate-community`. Private `custom.*` copies may bind these connections too.
 

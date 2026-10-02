@@ -217,7 +217,11 @@ def validate_code_definition(definition) -> CodeSpec:
         output["media_type"],
         maximum,
         model_routes(code.get("model_routes", {})),
-        service_bindings(code.get("services", {}), definition.get("integration_requirements")),
+        service_bindings(
+            code.get("services", {}),
+            definition.get("integration_requirements"),
+            allow_optional=True,
+        ),
         article_input,
         evidence,
     )

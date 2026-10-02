@@ -36,7 +36,14 @@ class ServiceBinding:
     max_response_bytes: int
 
 
-def service_bindings(value, requirements):
+def service_bindings(value, requirements, *, allow_optional=False):
+    """Validate service bindings against their integration requirements.
+
+    With `allow_optional` (code workflows), a first-party connection may be optional: the run
+    starts without it, and the code reads its state from ctx["connections"] (code_services).
+    Managed services and custom API connections stay required.
+    """
+    from tin_lite import managed_services
     from tin_lite.integrations import parse_integration_requirements
     from tin_lite.project_connections import CUSTOM_KEY
 
@@ -57,9 +64,16 @@ def service_bindings(value, requirements):
             validate_provider_cost(entry["provider_cost"])
         provider = entry["provider_key"]
         requirement = parsed.get(provider) if isinstance(provider, str) else None
+        optional = (
+            requirement is not None
+            and not requirement.required
+            and allow_optional
+            and not CUSTOM_KEY.fullmatch(provider)
+            and not managed_services.is_managed(provider)
+        )
         if (
             requirement is None
-            or not requirement.required
+            or not (requirement.required or optional)
             or not set(requirement.capabilities)
             <= (
                 {"http.read", "http.write"}

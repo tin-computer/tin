@@ -850,7 +850,10 @@ def authoring_guide(*, settings, project_id):
                 "bindings": "code.services maps a name to provider_key, max_calls "
                 f"(1-{MAX_SERVICE_CALLS}) and max_response_bytes "
                 f"(1024-{MAX_SERVICE_RESPONSE_BYTES}). Declare matching required "
-                f"integration_requirements; at most {MAX_SERVICE_CALLS} calls total.",
+                f"integration_requirements; at most {MAX_SERVICE_CALLS} calls total. A "
+                "founder-connected provider may be required: false; ctx['connections'] then "
+                "gives its state for the run (connected, not_connected or needs_attention), and "
+                "calls only work when connected.",
                 "provider_cost": "An optional provider_cost on a service binding has "
                 "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
                 "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
