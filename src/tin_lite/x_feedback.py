@@ -26,6 +26,8 @@ INPUT_SCHEMA = {
         "feedback": {"type": "string", "minLength": 1, "maxLength": 8000},
         "review_token": {"type": "string", "minLength": 64, "maxLength": 64},
         "snapshot": {"type": "string", "maxLength": 4000},
+        # A guide revision's pinned reference files, as JSON: path, revision, bytes, sha256.
+        "references": {"type": "string", "maxLength": 4000},
     },
     "required": ["project_id", "source_run_id", "post_id", "feedback", "review_token", "snapshot"],
 }
@@ -70,6 +72,18 @@ A guide's explicit preferences take precedence over sampled habits; newer explic
 qualify older preferences. Do not change the account or broaden a guide to other channels.
 """
 POLICY = {"version": "x-feedback-v1", "max_input_bytes": 60000, "max_output_tokens": 8000}
+# A guide revision may read up to eight project files (samples, notes) the feedback points at.
+MAX_REFERENCE_FILES = 8
+MAX_REFERENCE_BYTES = 20_000
+
+
+def model_packet(*, kind, post, guide, feedback, references=()):
+    """The revision's one model input. References appear only when the request has them, so a
+    revision without them sends exactly what it always has."""
+    packet = {"kind": kind, "post": post, "guide": guide, "feedback": feedback}
+    if references:
+        packet["references"] = [{"path": r["path"], "text": r["text"]} for r in references]
+    return packet
 
 
 def validate_result(value, *, feedback, guide, account, kind):

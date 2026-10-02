@@ -92,7 +92,6 @@ async def test_a_deleted_project_has_no_billing_surface(billed):
             ProjectSpendingPolicy(
                 per_run_nanos=1_000_000_000_000,
                 monthly_nanos=1_000_000_000_000,
-                concurrency=20,
                 expected_revision=revision,
             ),
         )

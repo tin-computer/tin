@@ -105,6 +105,11 @@ def service_terms(definition, *, inputs=None):
     kinds = ["native_model"]
     if executor == "organic.audit":
         maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
+        # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
+        # ceiling ($1; eight questions cost at most $0.63 at the pinned request prices).
+        engines = (definition.get("audit_policy") or {}).get("ai_engines_max_cost_usd")
+        if engines is not None:
+            maximum += amount_nanos(engines) or 0
     elif executor == "organic.keyword_plan":
         maximum = amount_nanos(inputs.get("max_cost_usd", 9))
         kinds = ["native_model", "tool"]

@@ -2,8 +2,8 @@
 
 `src/tin_lite/ai_answers.py` asks a panel of buyer questions on several AI answer engines
 and returns one row per question and engine. `src/tin_lite/ai_answers_activities.py` runs
-it as a trusted Temporal activity, `ai_answers_measure`. Nothing calls it yet; a later change
-wires it into the organic audit. See [Calling it from the audit](#calling-it-from-the-audit).
+it as a trusted Temporal activity, `ai_answers_measure`. The organic audit calls it from
+policy `organic-audit-v13`. See [Calling it from the audit](#calling-it-from-the-audit).
 
 ## What each engine measures
 
@@ -121,19 +121,24 @@ without calling DataForSEO. It sits on the trusted worker lane (`activity_lanes.
 
 ## Calling it from the audit
 
-A later change wires it into `organic.audit` under a new pinned audit policy, so released
-policies stay as they are:
+`organic.audit` calls it under its own pinned policy, `organic-audit-v13`, so v11 and v12 stay
+as released (see [the audit notes](organic-audit-implementation.md)):
 
-1. In the panel step, after the panel is reviewed, call `save_request` with the panel's
-   questions, the scope's host as `domain`, the resolved brand name and aliases, the scope's
-   market and a share of the audit ceiling as `max_cost_usd`.
-2. In the workflow, run `ai_answers_measure` on the trusted queue with a start-to-close
-   timeout above the deadline (about 50 minutes), a heartbeat timeout of about a minute and
-   the usual bounded retry policy.
-3. In the report step, read the rows with `read_result` and grade them next to the current
-   OpenAI web-search answers, labelled by measurement kind.
-4. Raise `AUDIT_MAXIMUM_USD` by the panel's estimate and extend `tests/test_organic_ceilings.py`.
-   A `visibility.audit` caller would also need `tool` in its billed operations.
+1. After the brand checks, `organic_prepare_ai_engines` takes the audit's frozen questions,
+   one per buyer job in turn, and saves them with `save_request` under the stage `engines`:
+   the scope's host as `domain`, the panel's name, aliases and competitors, the scope's
+   market, all six engines on the standard queue and a 2,700-second deadline.
+2. Its `max_cost_usd` is what the policy allows (`ai_engines_max_cost_usd`, $1) and the
+   audit's own spending limit has left, reserved in the audit's budget ledger. Questions that
+   don't fit are not asked; when none fits nothing is posted. Eight questions on the six
+   engines cost at most $0.62 at the pinned prices.
+3. The workflow then runs `ai_answers_measure` on the trusted queue: a 60-minute
+   start-to-close timeout, a two-minute heartbeat timeout and three attempts. A measurement
+   that fails leaves the audit to publish without it; the report says it did not finish.
+4. The publication reads the rows with `read_result`. AUDIT.md shows apps and API models in
+   separate tables, `evidence.json` keeps every answer and its cited URLs, and SUMMARY.json
+   gets one row per engine under `ai_engines`.
+5. `service_pricing` raises the audit's maximum by the engines' ceiling for v13 runs only.
 
 ## Open questions
 

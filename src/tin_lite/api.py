@@ -2870,24 +2870,21 @@ async def apply_decision(
             detail="Use Request changes to revise the draft. Approval does not apply feedback.",
         )
     if payload.action == "decline":
-        from tin_lite.proposal_decline import decline_proposal
+        from tin_lite.proposal_decline import discard_review
 
-        if decision["kind"] != "review":
-            raise HTTPException(
-                status_code=409,
-                detail="Only a decision with something to approve can be discarded.",
-            )
-        if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
-            return await stop_project_task(decision["run_id"], request, user)
         try:
-            declined = await decline_proposal(
-                database=database, run_id=decision["run_id"], actor=user.clerk_user_id
+            discarded = await discard_review(
+                runtime=request.app.state.runtime,
+                run_id=decision["run_id"],
+                actor=user.clerk_user_id,
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="decision not found") from exc
+        except project_task_control.ProjectTaskDeliveryError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return RunView.model_validate(declined)
+        return RunView.model_validate(discarded)
     if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
         result = await approve_project_task(decision["run_id"], request, user)
     else:
@@ -4074,26 +4071,17 @@ async def stop_project_task(
     request: Request,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> RunView:
-    run = await _project_task_from_postgres(run_id, request, user)
-    if run.status == RunStatus.STOPPED:
-        return RunView.model_validate(run)
+    await _project_task_from_postgres(run_id, request, user)
     try:
-        run = await request.app.state.runtime.database.request_task_control(
-            run_id=run_id, control="stop"
+        run = await project_task_control.stop_project_task(
+            runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
         )
-        delivered = await request.app.state.runtime.sandboxes.control_task(
-            run_id=str(run_id), control={"type": "stop"}
-        )
-        handle = request.app.state.runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
-        await handle.signal("stop")
-        if not delivered and run.sandbox_id is not None:
-            await request.app.state.runtime.sandboxes.kill(run.sandbox_id)
-    except RuntimeError as exc:
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except project_task_control.ProjectTaskConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="task stop was not accepted"
-        ) from exc
+    except project_task_control.ProjectTaskDeliveryError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return RunView.model_validate(run)
 
 

@@ -480,6 +480,24 @@ class StaleGenerationError(RuntimeError):
     """Raised when a sandbox generation no longer owns the active session lease."""
 
 
+# A run's result_summary holds one line of at most 160 characters (migration 019).
+RESULT_LINE_CHARS = 160
+
+
+def result_line(text: str | None) -> str | None:
+    """A run's one-line result: whitespace collapsed, cut at a word with "…" when longer.
+
+    Every writer of result_summary goes through this, so a long model summary can never fail
+    the projection after its files are committed.
+    """
+    if text is None:
+        return None
+    line = " ".join(text.split())
+    if len(line) <= RESULT_LINE_CHARS:
+        return line
+    return line[: RESULT_LINE_CHARS - 1].rsplit(" ", 1)[0].rstrip(" ,;:") + "…"
+
+
 class SideEffectConflictError(RuntimeError):
     """Raised when an execution key is reused for a different operation."""
 

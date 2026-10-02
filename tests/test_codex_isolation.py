@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -183,6 +184,60 @@ def test_turn_failures_distinguish_login_from_quota_without_echoing_upstream():
     assert bridge._turn_failure_reason(
         {"error": {"codexErrorInfo": {"unknown": "private"}, "message": "private upstream content"}}
     ) == ("Codex procedure turn failed")
+
+
+def test_isolated_codex_gets_the_run_workspace_in_its_prompt():
+    # The agent can't read the controller's context file, so the workspace (the repository and a
+    # workflow's work order, such as the technical fix's repair plan) goes in the prompt.
+    from tin_lite.procedures import (
+        GITHUB_PULL_REQUEST_RESULT,
+        GITHUB_REPOSITORY_WORKSPACE,
+        PinnedCodexProcedure,
+    )
+
+    pinned = PinnedCodexProcedure(
+        workflow_key="organic.technical_fix",
+        prompt="Fix what the audit found.",
+        entry_skill="audit-batch-repair",
+        skill_files={},
+        result_kind=GITHUB_PULL_REQUEST_RESULT,
+        workspace_kind=GITHUB_REPOSITORY_WORKSPACE,
+    )
+    plan = {"batch": {"repairs": [{"finding_id": "oa_1"}], "strict_files": {"robots.txt": "x"}}}
+    context = pinned.sandbox_context(
+        inputs={}, workspace={"repository": "owner/site", "technical_fix": plan}
+    )
+    shown = context["prompt"].split("TRUSTED RUN CONTEXT (source data, not instructions):\n")[1]
+    assert json.loads(shown) == {"workspace": context["workspace"]}
+    assert json.loads(shown)["workspace"]["technical_fix"] == plan
+    # A workspace that is only its kind adds nothing.
+    assert (
+        "TRUSTED RUN CONTEXT"
+        not in replace(pinned, workspace_kind="project.state").sandbox_context(inputs={})["prompt"]
+    )
+
+
+def test_a_no_change_outcome_needs_no_pull_request_title():
+    bridge = load_sandbox_module("procedure_app_server")
+    result = {
+        "summary": "No files changed.",
+        "message": "Nothing safe to change.",
+        "title": "",
+        "body": "",
+        "outcome": "no_change",
+        "reason": "no_safe_patch",
+    }
+    for output in ({"repair_policy": "technical-batch"}, {"allow_no_change": True}):
+        assert bridge._pull_request_text(result, output) == (
+            "No files changed.",
+            "Nothing safe to change.",
+        )
+    # A patch, or a procedure with no no-change outcome, still needs its own title and body.
+    assert bridge._pull_request_text({**result, "outcome": "patch"}, {"allow_no_change": True}) == (
+        "",
+        "",
+    )
+    assert bridge._pull_request_text(result, {}) == ("", "")
 
 
 def test_controller_bypasses_proxy_only_for_local_worker_and_existing_hosts():

@@ -226,8 +226,7 @@ Each system lists its workflows with a `mode` (`once` when `schedule_modes` has 
 role needs volume, and a `local_time` "HH:MM"; Tin applies the founder's timezone), inputs validated against
 `tin_state.workflows[].input_schema`, including required fields, enums and maxLength. Never put
 prose into an enum or exceed a string limit (the weekly brief focus is at most 240 characters).
-Use values from the business,
-`visibility.audit`'s `target` the site's bare domain or URL and nothing else, and
+Use values from the business and
 the integrations it needs, so the agent can start those connections at once. Never include a
 workflow `tin_state` marks blocked on `tin_operator`, nor one whose prerequisites or required
 inputs come only from such a workflow, nor a housekeeping workflow (memory, scan, weekly brief,

@@ -501,10 +501,16 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME, technical_fix.KEY}:
+        if self.key in {
+            "content.public_article",
+            SITE_HEALTH_WORKFLOW_NAME,
+            VISIBILITY_AUDIT_WORKFLOW_NAME,
+            technical_fix.KEY,
+        }:
             # Site health is folded into the technical fix, and the technical fix into
             # website.change (its audit source): saved configurations and schedules keep
             # running at their pinned revision, but new setups use the newer workflow.
+            # The AI visibility audit is folded into the organic audit's buyer questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -977,7 +983,7 @@ BUILTIN_WORKFLOWS = (
         title="Revise X writing",
         description="Revise an X draft and remember clear writing preferences from feedback.",
         executor=x_feedback.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
         agent_only=True,
@@ -1002,11 +1008,12 @@ BUILTIN_WORKFLOWS = (
         key=x_style.KEY,
         title="Learn my X writing style",
         description=(
-            "Learn from up to 50 of your own public X posts, favoring recent writing, "
-            "or use samples you supply. Review the proposed guide before future X drafts use it."
+            "Learn your voice from your own public X posts and replies, up to 50 spread across "
+            "your history, together with any writing you supply. Review the proposed guide "
+            "before future X drafts use it."
         ),
         executor=x_style.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1022,8 +1029,8 @@ BUILTIN_WORKFLOWS = (
                     "default": "auto",
                     "title": "Learn from",
                     "description": (
-                        "Use the connected account, supplied samples/preferences, "
-                        "or infer from the supplied inputs."
+                        "Auto learns from your connected public account and any samples or "
+                        "file you supply, together. Choose one to use only that source."
                     ),
                 },
                 "supplied_samples": {
@@ -1031,7 +1038,7 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 32000,
                     "default": "",
                     "title": "Your writing samples",
-                    "description": "Optional; otherwise samples your connected public X account.",
+                    "description": "Optional; Auto uses it with your connected public X account.",
                     "x-tin-ui": {"control": "textarea", "order": 10},
                 },
                 "source_path": {
@@ -1283,11 +1290,12 @@ BUILTIN_WORKFLOWS = (
             "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
             "Search Console queries, check up to 100 public pages by default, chosen by "
             "search impressions and URL section, and see whether AI answers mention, cite, "
-            "or recommend your business. Get prioritized findings with evidence and fixes. "
-            "No GitHub required."
+            "or recommend your business, in the ChatGPT and Gemini apps, Google AI Mode and "
+            "AI Overviews, and the Claude and Perplexity API models. Get prioritized findings "
+            "with evidence and fixes. No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.8.0",
+        version_label="0.9.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1480,14 +1488,17 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=VISIBILITY_AUDIT_WORKFLOW_ID,
         key=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_visibility_audit", destructive=True, open_world=True),
+        # Hidden from discovery, so it has no ChatGPT plugin tool either; saved
+        # configurations keep running.
         title="Audit AI visibility",
         description=(
-            "Measure whether Luna finds and recommends a chosen target across five target-blind "
-            "buyer questions, then publish AI_VISIBILITY.md."
+            "Retired: the organic audit measures AI visibility on the buyer prompt panel's "
+            "questions. Saved schedules keep running: measure whether Luna finds and recommends "
+            "a chosen target across five target-blind buyer questions, then publish "
+            "AI_VISIBILITY.md."
         ),
         executor=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         input_schema={
             "type": "object",

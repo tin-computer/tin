@@ -1,11 +1,12 @@
 """After a site repair's pull request merges, check the live site for its findings.
 
 A PR is not a deployed repair. Once GitHub says it merged, Tin reads the same files or pages
-it read before the change and records whether the problem is gone. It looks at most every ten
-minutes while someone reads the run (MCP `get_run`, the run's live-check API), and stops a
-fortnight after the merge. `site-fix-v5` runs check each finding in the pull request, and
-name the ones only the next audit can confirm (redirect chains, internal links). Older
-policies have no such record.
+it read before the change and records whether the problem is gone. Checks happen while someone
+reads the run (MCP `get_run`, the run's live-check API): until the merge, every read asks
+GitHub, so a read right after merging sees it; after the merge, the live site is read at most
+every ten minutes, and not after a fortnight. `site-fix-v5` runs check each finding in the
+pull request, and name the ones only the next audit can confirm (redirect chains, internal
+links). Older policies have no such record.
 """
 
 from __future__ import annotations
@@ -169,6 +170,8 @@ class LiveRecheck:
         merged_at = _parse(record.get("merged_at"))
         if merged_at is not None and now - merged_at > STOP_AFTER:
             return False
+        if not record.get("merged"):
+            return True  # One GitHub read; the wait below is for reading the live site.
         checked = _parse(record.get("checked_at"))
         return checked is None or now - checked >= CHECK_EVERY
 

@@ -48,6 +48,8 @@ class X:
         self.post_timeout = False
         self.reject_access1 = False
         self.timeline_status = 200
+        self.timeline_errors = []
+        self.timeline_data = True
         self.account = "12345"
         self.protected = False
 
@@ -96,15 +98,14 @@ class X:
         if path.endswith("/tweets") and request.method == "GET":
             if self.timeline_status != 200:
                 return self.reply(self.timeline_status, {}, {"retry-after": "37"})
-            return self.reply(
-                200,
-                {
-                    "data": [
-                        {"id": "100", "text": "Original", "created_at": "2026-09-01T00:00:00Z"}
-                    ],
-                    "meta": {"next_token": "CURSOR"},
-                },
-            )
+            body = {"meta": {"next_token": "CURSOR"}}
+            if self.timeline_data:
+                body["data"] = [
+                    {"id": "100", "text": "Original", "created_at": "2026-09-01T00:00:00Z"}
+                ]
+            if self.timeline_errors:
+                body["errors"] = self.timeline_errors
+            return self.reply(200, body)
         if path == "/2/tweets" and request.method == "POST":
             if self.reject_access1 and request.headers["Authorization"] == "Bearer access1":
                 return self.reply(401, {})
@@ -226,6 +227,24 @@ async def test_timeline_bounds_and_rate_limit():
     with pytest.raises(IntegrationRateLimitedError) as exc:
         await integrations.x.timeline(connection)
     assert exc.value.retry_after == 37
+    await integrations.close()
+
+
+@pytest.mark.asyncio
+async def test_a_timeline_keeps_its_posts_when_a_referenced_post_is_gone():
+    # X returns the posts with a partial error for a quoted or replied-to post that was
+    # deleted; that note must not throw away the page.
+    integrations, _, api = await service()
+    connection, _ = await connect(integrations, api)
+    api.timeline_errors = [
+        {"title": "Not Found Error", "resource_type": "post", "type": "resource-not-found"}
+    ]
+    page = await integrations.x.timeline(connection)
+    assert [post["id"] for post in page["posts"]] == ["100"] and page["next_cursor"] == "CURSOR"
+    # Errors with no data are still an incomplete result.
+    api.timeline_data = False
+    with pytest.raises(IntegrationUpstreamError, match="incomplete"):
+        await integrations.x.timeline(connection)
     await integrations.close()
 
 

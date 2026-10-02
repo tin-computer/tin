@@ -285,7 +285,6 @@ async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritati
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=500 * NANOS_PER_DOLLAR,
-            concurrency=5,
             schedule_max_nanos=NANOS_PER_DOLLAR,
             expected_revision=1,
         ),

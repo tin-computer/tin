@@ -78,14 +78,6 @@ def project_limit_message(policy, estimate, usage) -> str | None:
             f"this month's ${usd(policy['monthly_nanos'])} project limit "
             f"(${usd(usage['exposure'])} already committed)." + LIMIT_HINT
         )
-    if usage["active"] >= policy["concurrency"]:
-        active = usage["active"]
-        return (
-            f"{active} run{'' if active == 1 else 's'} {'is' if active == 1 else 'are'} "
-            f"already active; the project's concurrent-run limit is {policy['concurrency']}. "
-            "Wait for a run to finish, or raise the limit with set_project_spending_limits "
-            "or on the Billing page."
-        )
     return None
 
 
@@ -139,6 +131,8 @@ class BillingService:
             workspace_id,
             admin,
         )
+        # `concurrency` is no longer read: the money limits bound spending. The column is
+        # written until a later migration drops it, so this release needs no migration.
         await conn.execute(
             """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                 monthly_nanos, concurrency, schedule_max_nanos, revision)
@@ -323,15 +317,14 @@ class BillingService:
             await conn.execute(
                 """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                        monthly_nanos, concurrency, schedule_max_nanos)
-                   VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(project_id) DO UPDATE
-                   SET per_run_nanos=$3, monthly_nanos=$4, concurrency=$5, schedule_max_nanos=$6,
+                   VALUES($1,$2,$3,$4,1,$5) ON CONFLICT(project_id) DO UPDATE
+                   SET per_run_nanos=$3, monthly_nanos=$4, schedule_max_nanos=$5,
                        revision=billing_project_policies.revision+1, updated_at=now()
                    WHERE billing_project_policies.project_id=$1""",
                 project_id,
                 workspace_id,
                 policy.per_run_nanos,
                 policy.monthly_nanos,
-                policy.concurrency,
                 policy.schedule_max_nanos,
             )
         return {"revision": policy.expected_revision + 1}
@@ -731,13 +724,7 @@ class BillingService:
                                         THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
                                                       {_COMMITTED_LIABILITY_SQL})
                                       WHEN status<>'settled' THEN maximum_nanos
-                                      ELSE 0 END),0) AS exposure,
-                      count(*) FILTER(WHERE status<>'settled' AND EXISTS (
-                        SELECT 1 FROM billing_run_budgets child
-                        JOIN workflow_runs r ON r.id=child.run_id
-                        WHERE child.root_run_id=b.root_run_id
-                          AND (r.status NOT IN ('succeeded','failed','stopped')
-                               OR r.lease_active))) AS active
+                                      ELSE 0 END),0) AS exposure
                FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
             run["project_id"],
             period,
@@ -1516,8 +1503,7 @@ class BillingService:
                 """SELECT p.id, CASE WHEN EXISTS (SELECT 1 FROM project_memberships m
                     WHERE m.project_id=p.id AND m.clerk_user_id=$2)
                     THEN p.name ELSE NULL END AS name,
-                    b.revision, b.per_run_nanos, b.monthly_nanos,
-                    b.concurrency, b.schedule_max_nanos
+                    b.revision, b.per_run_nanos, b.monthly_nanos, b.schedule_max_nanos
                    FROM projects p LEFT JOIN billing_project_policies b ON b.project_id=p.id
                    WHERE p.workspace_id=$1 AND p.deleted_at IS NULL AND ($3 OR p.id=$4)
                    ORDER BY p.created_at, p.id LIMIT 100""",
