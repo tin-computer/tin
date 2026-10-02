@@ -18,7 +18,7 @@ There are four outcomes:
 | Outcome | Result | Next selection |
 | --- | --- | --- |
 | Draft | Clean article plus generation notes; normal approval and configured delivery | Existing article ordering |
-| Already covered | Short assessment plus notes; no article approval or delivery | Next manual start may select the next item |
+| Already covered | Short assessment plus notes; no article approval or delivery; the run and the plan item record the page that covers it | The item is marked covered; the next manual or weekly start selects the next item |
 | Brief needs revision | Assessment explains necessary change of target/intent/scope | Hold until amendment or explicit recheck |
 | Insufficient evidence | Assessment explains missing/unavailable coverage | Hold until amendment or explicit recheck |
 
@@ -55,10 +55,18 @@ not the truth of an editorial verdict or a promise of ranking/citation gains.
 
 Both checkpoint files are validated before publication. The canonical commit receipt carries
 the small validated `content_editorial` projection (`content-editorial-check.v1`). Only that
-run/revision-bound proof lets this template complete without an article review. The pinned
-`review_required` flag is not rewritten and no approval is manufactured. Finalization still
+run/revision-bound proof lets this template complete without an article review. Finalization
+clears the run's `review_required` flag for such a result, because nothing waits for a
+decision (run 1e474e10 kept the flag with no decision, so it read like a draft waiting in
+Decisions); no approval is manufactured and `review_decision` stays empty. Finalization still
 rejects terminal failures/stops and an already-open review gate. Delivery ignores no-copy
 outcomes, and its article extraction independently rejects assessment documents.
+
+An already-covered result also names the page that covers the brief: the first inspected
+compared page on the planned site. The canonical commit receipt records it as `covered_by`, the
+run summary starts "Already covered by <page>", and program progress shows the item as
+`covered` (`page`, `reason`, `run_id`), so the plan editor links the page and the next draft
+moves on. Runs saved before `covered_by` existed get the same page from their judgment.
 
 HTTP/MCP and My System read the same receipt-backed progress. Assessments are readable through
 Activity and the generic reader; the existing roadmap topic disclosure links to the assessment.

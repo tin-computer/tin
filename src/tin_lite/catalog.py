@@ -285,6 +285,32 @@ CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
     queue_clause="Page refresh ready to review",
 )
 
+# Emre's v2 organic map: content.generate is the one workflow that writes copy, so these two
+# stay registered for pinned runs and saved schedules but leave discovery.
+RETIRED_CONTENT_KEYS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, content_refresh.KEY})
+
+# content.generate 1.9.0 drafts three kinds of plan item. The article keeps the planned-content
+# policy above; an answer page and a page refresh each get their own review wording, and all
+# three take feedback as a revision of the same document.
+CONTENT_KIND_REVIEW_POLICIES = {
+    content_plan.ANSWER: HumanReviewPolicy(
+        reason="Produces a public page that answers one buyer question.",
+        review_label="Review answer page",
+        defer_label="Not now",
+        summary=content_draft.KIND_REVIEW[content_plan.ANSWER],
+        queue_clause="Answer page ready to review",
+        revision_adapter="content-revision.v1",
+    ),
+    content_plan.REFRESH: HumanReviewPolicy(
+        reason="Changes the title, snippet or opening copy of a live page.",
+        review_label="Review refresh",
+        defer_label="Not now",
+        summary=content_draft.KIND_REVIEW[content_plan.REFRESH],
+        queue_clause="Page refresh ready to review",
+        revision_adapter="content-revision.v1",
+    ),
+}
+
 GROWTH_ONBOARDING_REVIEW_POLICY = HumanReviewPolicy(
     reason="Tin sets up only the systems the founder picked, with the tools they connected.",
     review_label="Set it up",
@@ -478,6 +504,16 @@ class BuiltinWorkflow:
             definition["paid_ads_monitor_policy"] = dict(paid_ads_monitor.POLICY)
             definition["paid_ads_monitor_routes"] = paid_ads_monitor.route_definitions()
             definition["paid_ads_monitor_contract_sha256"] = paid_ads_monitor.contract_digest()
+        if self.key in RETIRED_CONTENT_KEYS:
+            # content.generate drafts answer pages and page refreshes from the content plan.
+            # Pinned runs and saved schedules keep running these at their revisions; new setups,
+            # the organic system and discovery no longer offer them.
+            definition["public_discovery"] = False
+        if self.key == content_draft.KEY:
+            definition[content_draft.KINDS_FIELD] = list(content_plan.KINDS)
+            definition["human_review_kinds"] = {
+                kind: policy.definition() for kind, policy in CONTENT_KIND_REVIEW_POLICIES.items()
+            }
         if self.key == content_plan.KEY:
             definition["content_policy"] = dict(content_plan_editorial.POLICY)
             definition["content_instructions"] = content_plan_editorial.INSTRUCTIONS
@@ -785,13 +821,15 @@ BUILTIN_WORKFLOWS = (
         key=content_draft.KEY,
         public_mcp=PublicMCPExposure("start_content_draft", destructive=True, open_world=True),
         title="Draft planned content",
-        description="Check current coverage before drafting the next planned article "
-        "in your style. "
-        "Save useful copy for review, or explain why no draft is needed. "
-        "Optional GitHub PR delivery follows article approval. "
-        "Nothing is merged or published and the roadmap stays unchanged.",
+        description="Check current coverage before drafting the next item in your content "
+        "plan, in your style: a new article, an answer page for a buyer question AI assistants "
+        "miss you on, or a refresh of an existing page's title, snippet and opening. Save useful "
+        "copy for review, or explain why no draft is needed. After approval an article follows "
+        "your delivery setting, an answer page goes to your site through website.change at the "
+        "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
+        "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.8.0",
+        version_label="1.9.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -874,7 +912,9 @@ BUILTIN_WORKFLOWS = (
         key=content_refresh.KEY,
         title="Refresh an existing page",
         description=(
-            "Pick the page from your latest audit with the most search impressions at stake: "
+            "Retired: Draft planned content refreshes the pages your content plan schedules. "
+            "Saved schedules keep running: pick the page from your latest audit with the most "
+            "search impressions at stake: "
             "searchers see it near the top but rarely click, or it ranks just below the top "
             "results. Propose a new title, meta description and, where they miss the search, "
             "H1 and opening answer, in your positioning and voice. After you approve in "
@@ -883,7 +923,7 @@ BUILTIN_WORKFLOWS = (
             "runs report its clicks before and after."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.1.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand", "weekly"),
         review_policy=CONTENT_REFRESH_REVIEW_POLICY,
@@ -1142,11 +1182,13 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
         title="Plan upcoming content",
         description=(
-            "Turn an audit and keyword research into an editable two-week to six-month roadmap. "
-            "Save to My system to prepare weekly batches. Does not write articles or publish."
+            "Turn an audit and keyword research into an editable two-week to six-month roadmap: "
+            "new articles, answer pages for buyer questions AI assistants miss you on, and "
+            "refreshes of existing pages. Save to My system to prepare weekly batches. Does not "
+            "write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.7.0",
+        version_label="0.8.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1524,14 +1566,17 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ANSWER_PAGE_WORKFLOW_ID,
         key=ANSWER_PAGE_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_answer_page", destructive=True, open_world=True),
+        # Retired from discovery, so it has no ChatGPT plugin tool either; content.generate
+        # (start_content_draft) drafts answer pages, and saved configurations keep running.
         title="Draft an answer page",
         description=(
-            "Create a public-facing Markdown content draft from the latest AI visibility "
-            "findings; not for general advice or internal business questions."
+            "Retired: Draft planned content writes answer pages for the AI-visibility gaps your "
+            "content plan schedules. Saved schedules keep running: create a public-facing "
+            "Markdown content draft from the latest AI visibility findings; not for general "
+            "advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.6.0",
+        version_label="1.7.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",

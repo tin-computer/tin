@@ -15,6 +15,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from tin_lite import content_draft
+from tin_lite.content_plan import item_kind
 from tin_lite.content_programs import ContentPrograms
 from tin_lite.domain import RunStatus
 from tin_lite.integrations import (
@@ -458,6 +459,11 @@ def delivery_projection(run, intent, receipt):
     }
 
 
+# A content.generate answer page reaches the site through website.change (a metered adaptation
+# at the founder's chosen route), never as Markdown in content/answers/.
+WEBSITE_CHANGE = "website.change"
+
+
 class ContentDelivery:
     def __init__(self, *, database, storage=None, integrations=None):
         self.db, self.storage, self.integrations = database, storage, integrations
@@ -537,16 +543,27 @@ class ContentDelivery:
         settings = DeliverySettings.model_validate(configured["settings"])
         if settings.mode == "draft_only":
             return None
-        path, _ = destination(settings, selected)
+        kind = item_kind(selected["item"])
+        # A refresh edits the page's own source, and an answer page is adapted to the site at
+        # its route: neither has a Markdown destination path.
+        path = None if kind != content_draft.ARTICLE else destination(settings, selected)[0]
         if self.integrations is None:
             raise ValueError("Connect GitHub before drafting for repository delivery.")
         binding = await self.integrations.github_repository_binding(
             project_id=project_id, expected_repository=settings.repository
         )
         return {
+            **(
+                {"kind": REFRESH_KIND}
+                if kind == content_draft.REFRESH
+                else {"adapter": ADAPTER, "via": WEBSITE_CHANGE}
+                if kind == content_draft.ANSWER
+                else {}
+            ),
             "settings": settings.model_dump(),
             "settings_revision": configured["revision"],
             "path": path,
+            **({"route": selected.get("page_route")} if kind == content_draft.ANSWER else {}),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
             "installation_id": binding.installation_id,
@@ -565,6 +582,19 @@ class ContentDelivery:
             (selected.result or {}).get("delivery")
             if selected and selected.status == "completed"
             else None
+        )
+
+    async def plan_kind(self, run):
+        """What a content.generate run drafted: an article, an answer page or a page refresh.
+
+        Read from the run's prepared context, which records a kind only for an answer or a
+        refresh (content.generate 1.9.0). Other workflows have none.
+        """
+        if run.workflow_id != DRAFT_WORKFLOW_ID:
+            return None
+        prepared = await self.db.get_effect(content_draft.receipt_key(run.id))
+        return content_draft.context_kind(
+            prepared.result if prepared and prepared.status == "completed" else None
         )
 
     async def program_for(self, run):
@@ -597,8 +627,19 @@ class ContentDelivery:
         existing = existing.result if existing and existing.status == "completed" else None
         if run.review_decision == "approved":
             return existing  # The approval already happened; its delivery choice stands.
-        if run.workflow_id == REFRESH_WORKFLOW_ID:
+        kind = await self.plan_kind(run)
+        if run.workflow_id == REFRESH_WORKFLOW_ID or kind == content_draft.REFRESH:
+            # A page refresh, from content.refresh or a content.generate refresh item.
             return await self.choose_refresh(run=run, mode=mode, remember=remember, actor=actor)
+        if kind == content_draft.ANSWER and mode in REPOSITORY_MODES:
+            # An answer page always goes to the site through website.change at its route.
+            return await self.choose_adaptation(
+                run=run,
+                mode=mode,
+                remember=remember,
+                actor=actor,
+                trigger_source=trigger_source,
+            )
         if adapt and run.workflow_id in ADAPTED_WORKFLOW_IDS and mode in REPOSITORY_MODES:
             return await self.choose_adaptation(
                 run=run,
@@ -723,13 +764,17 @@ class ContentDelivery:
         )
         from tin_lite.page_routes import PageRouteService
 
+        answer = await self.plan_kind(run) == content_draft.ANSWER
         record = {
             "adapter": ADAPTER,
+            **({"via": WEBSITE_CHANGE} if answer else {}),
             "settings": chosen.model_dump(),
             "settings_revision": configured["revision"] if configured else None,
             "path": None,
             # Where the founder chose these pages live, pinned at approval; None when unset.
-            "route": await PageRouteService(database=self.db, storage=self.storage).route_for(run),
+            "route": await PageRouteService(database=self.db, storage=self.storage).route_for(
+                run, page_type="answer_page" if answer else None
+            ),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
             "installation_id": binding.installation_id,
@@ -1206,14 +1251,14 @@ class ContentDelivery:
         if not intent or adapted(intent):
             # An adapted page ships through content.deliver (see adapt), never as plain Markdown.
             return
-        if intent.get("kind") == REFRESH_KIND:
-            return await self.deliver_refresh(run, intent)
         if run.workflow_id == DRAFT_WORKFLOW_ID:
             from tin_lite.content_editorial_judgment import NO_DRAFT, saved
 
             judgment = await saved(self.db, run)
             if judgment and judgment["outcome"] in NO_DRAFT:
                 return  # No copy, review, or supplier effect exists to deliver.
+        if intent.get("kind") == REFRESH_KIND:
+            return await self.deliver_refresh(run, intent)
         if run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
             raise ValueError("Approve this draft before publishing it.")
         direct_commit = chosen_mode(intent) == "github_commit"

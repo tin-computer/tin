@@ -7,20 +7,74 @@ from uuid import UUID
 
 from tin_lite import content_draft
 from tin_lite.content_draft_progress import check_existing, history, next_item
-from tin_lite.content_plan import plan_path
+from tin_lite.content_plan import ANSWER, ARTICLE, KINDS, REFRESH, item_kind, plan_path
 from tin_lite.content_plan_sources import positioning_files
 from tin_lite.content_programs import ContentPrograms
+from tin_lite.content_refresh import url_key
 from tin_lite.organic_audit import digest
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.writing_style import STYLE_PATH
 
+# What a reader calls each kind in a refusal.
+KIND_NOUNS = {ARTICLE: "an article", ANSWER: "an answer page", REFRESH: "a page refresh"}
+# How a refusal names the workflow to start again once the founder answers.
+KEY_START = content_draft.KEY
+
+
+def answer_brief(selection, evidence, *, route=None, today=None):
+    """What an answer draft answers: the item's buyer question, the audit's gap questions it
+    cites, and where approved answer pages go."""
+    from tin_lite.content_plan_editorial import ANSWER_CHECK
+
+    questions = [
+        question["question"]
+        for row in evidence
+        if (row.get("data") or {}).get("check_id") == ANSWER_CHECK
+        for question in ((row["data"].get("verification") or {}).get("questions") or [])
+        if isinstance(question, dict) and isinstance(question.get("question"), str)
+    ]
+    return {
+        "question": selection["item"]["title"],
+        "gap_questions": list(dict.fromkeys(questions))[:12],
+        "route": route,
+        "today": today,
+    }
+
 
 class ContentDraftSources:
-    def __init__(self, *, database, storage):
-        self.db, self.storage = database, storage
+    def __init__(self, *, database, storage, integrations=None, refreshes=None):
+        self.db, self.storage, self.integrations = database, storage, integrations
         self.programs = ContentPrograms(database=database, storage=storage)
+        # content.refresh's evidence for a refresh item; tests pass a fixture reader and clock.
+        self._refreshes = refreshes
 
-    async def discover(self, *, project_id, program_id=None):
+    def refreshes(self):
+        if self._refreshes is None:
+            from tin_lite.content_refresh_sources import ContentRefreshSources
+
+            self._refreshes = ContentRefreshSources(
+                database=self.db, storage=self.storage, integrations=self.integrations
+            )
+        return self._refreshes
+
+    async def waiting(self, project_id, plan):
+        """Refresh items whose page still waits for an earlier refresh's results."""
+        pages = {
+            url_key(item["destination"])
+            for batch in plan["batches"]
+            for item in batch["items"]
+            if item_kind(item) == REFRESH
+        }
+        if not pages:
+            return set()
+        return pages & await self.refreshes().waiting_pages(project_id)
+
+    async def discover(self, *, project_id, program_id=None, kinds=None):
+        """The program's items and the next one to draft.
+
+        `kinds` are the kinds the drafting definition writes (all, by default); an item of
+        another kind, or a refresh whose page still waits, is passed over, not drafted.
+        """
         if program_id is None:
             rows = await self.db.pool.fetch(
                 "SELECT p.project_workflow_id AS id, w.name FROM content_programs p "
@@ -35,20 +89,45 @@ class ContentDraftSources:
         held = set((facts["pending_revision"] or {}).get("batch_ids", []))
         configured = await self.programs.configured(project_id, program_id)
         progress = await history(self.db.pool, project_id=project_id, program_id=program_id)
+        kinds = tuple(kinds or KINDS)
+        waiting = await self.waiting(project_id, read["plan"])
         items = []
         for batch in sorted(read["plan"]["batches"], key=lambda b: b["due_date"]):
             for item in batch["items"]:
                 prior = progress.get(item["id"])
                 assessment = (prior or {}).get("assessment")
                 changed = bool(prior and prior["brief_sha256"] != digest(item))
+                kind = item_kind(item)
+                passed_over = (
+                    "unsupported_kind"
+                    if kind not in kinds
+                    else "refresh_waiting"
+                    if kind == REFRESH and url_key(item["destination"]) in waiting
+                    else None
+                )
                 eligible = (
                     item["readiness"] != "deferred"
                     and batch["id"] not in held
                     and configured.status == "active"
+                    and passed_over is None
+                )
+                covered = (
+                    {
+                        "page": prior.get("covered_by"),
+                        "reason": assessment.get("rationale"),
+                        "run_id": prior["run_id"],
+                    }
+                    if prior and prior["stage"] == "already_covered" and assessment and not changed
+                    else None
                 )
                 items.append(
                     {
                         **item,
+                        "kind": kind,
+                        "passed_over": passed_over,
+                        # Already covered: skipped, with the page that covers it and why, until
+                        # the brief changes or someone explicitly rechecks it.
+                        "covered": covered,
                         "batch_id": batch["id"],
                         "due_date": batch["due_date"],
                         "held": batch["id"] in held,
@@ -138,18 +217,26 @@ class ContentDraftSources:
                 ),
             },
             "instruction": "Start content.generate with only program_id to assess and, if useful, "
-            "draft the next article "
-            "in plan order. Use item_id only when the user explicitly chooses another article; "
+            "draft the next item "
+            "in plan order: an article, an answer page or a page refresh (each item's kind). An "
+            "answer page needs the route the founder chose for such pages: when the start asks, "
+            "ask the founder once and call save_page_route. A refresh waits while its page's last "
+            "refresh is in review or live for less than six weeks (passed_over). "
+            "Use item_id only when the user explicitly chooses another item; "
             "rewrite=true additionally requires that explicit item_id. Reuse the request ID for "
             "retries. Plan dates are editorial dates, "
-            "not automatic publication. Already-covered items are recorded separately from drafts. "
+            "not automatic publication. Already-covered items are recorded separately from drafts, "
+            "with the page that covers them (covered), and the next run moves past them. "
             "A no-draft run never starts another item. Missing coverage or a brief needing "
             "revision "
             "holds the next selection until the brief changes or the user explicitly rechecks it "
             "with item_id and rewrite=true. Revisions are tool metadata, not a user choice.",
         }
 
-    async def choose(self, *, project_id, inputs, retry_of_run_id=None):
+    async def choose(self, *, project_id, inputs, retry_of_run_id=None, kinds=None):
+        """Select one item for a draft run. `kinds` are the kinds the pinned definition drafts
+        (content_draft.supported_kinds); an answer also needs the founder's chosen route."""
+        kinds = tuple(kinds or KINDS)
         selected_inputs = dict(inputs)
         mode = "selected" if inputs.get("item_id") else "next"
         if inputs.get("rewrite") and not inputs.get("item_id"):
@@ -178,7 +265,7 @@ class ContentDraftSources:
             mode = "retry"
         elif not inputs.get("item_id"):
             discovery = await self.discover(
-                project_id=project_id, program_id=UUID(inputs["program_id"])
+                project_id=project_id, program_id=UUID(inputs["program_id"]), kinds=kinds
             )
             if not discovery["next"]["available"]:
                 raise ValueError(discovery["next"]["reason"])
@@ -194,7 +281,43 @@ class ContentDraftSources:
             rewrite=inputs.get("rewrite", False),
             item=selected["item"],
         )
-        return {**selected, "mode": mode, "input_sha256": digest(inputs)}
+        route = await self.check_kind(project_id, selected, kinds)
+        return {
+            **selected,
+            **({"page_route": route} if route else {}),
+            "mode": mode,
+            "input_sha256": digest(inputs),
+        }
+
+    async def check_kind(self, project_id, selected, kinds):
+        """Refuse an item this definition cannot draft yet; return an answer's chosen route.
+
+        An older content.generate drafts articles only. A refresh waits while its page's last
+        refresh is in review or not yet six weeks live. An answer page goes to the site at the
+        route the founder chose for such pages (#244), so Tin asks for it before drafting.
+        """
+        item = selected["item"]
+        kind = item_kind(item)
+        if kind not in kinds:
+            raise ValueError(
+                f"This version of content.generate drafts {', '.join(kinds)} items only, and "
+                f'"{item["title"]}" is {KIND_NOUNS[kind]}. Start the current version to draft it.'
+            )
+        if kind == REFRESH and await self.waiting(project_id, {"batches": [{"items": [item]}]}):
+            raise ValueError(
+                f"{item['destination']} has a refresh in review, waiting to go live, or live for "
+                "less than six weeks. Tin waits so each refresh can show whether it worked."
+            )
+        if kind != ANSWER:
+            return None
+        from tin_lite.page_routes import PageRouteService, route_question
+
+        routes = (await PageRouteService(database=self.db, storage=self.storage).read(project_id))[
+            "routes"
+        ]
+        if not routes.get("answer_page"):
+            raise ValueError(route_question("answer_page", selected["host"], KEY_START))
+        return routes["answer_page"]
 
     async def selection(self, run_id):
         receipt = await self.db.get_effect(content_draft.selection_key(run_id))
@@ -274,7 +397,16 @@ class ContentDraftSources:
         receipt = await self.db.get_effect(content_draft.receipt_key(run_id))
         return receipt.result if receipt and receipt.status == "completed" else None
 
-    async def prepare(self, run, *, output_validator=content_draft.VALIDATOR, positioning=False):
+    async def prepare(
+        self, run, *, output_validator=content_draft.VALIDATOR, positioning=False, kinds=None
+    ):
+        """Pin the selected item's brief, evidence and style before compute.
+
+        `kinds` are the kinds the pinned definition drafts (articles only by default). An
+        answer or a refresh records its kind and its own sources; an article's context is
+        exactly what earlier versions prepared.
+        """
+        kinds = tuple(kinds or (ARTICLE,))
         if output_validator not in content_draft.VALIDATORS:
             raise ValueError("Unsupported draft output contract.")
         key = content_draft.receipt_key(run.id)
@@ -312,6 +444,10 @@ class ContentDraftSources:
                     "output_validator": output_validator,
                 }
                 context["frontmatter"] = content_draft.provenance(context)
+                if context.get("refresh"):
+                    # The revised refresh applies to the same page text, so it pins the same
+                    # refresh context under its own run for history, results and delivery.
+                    await self.pin_refresh(run.id, context["refresh"])
                 await self.db.start_effect(conn, execution_key=key, operation=content_draft.KEY)
                 await self.db.complete_effect(conn, execution_key=key, result=context)
                 return context
@@ -330,6 +466,12 @@ class ContentDraftSources:
             if not inputs.get("item_id"):
                 raise ValueError("The run is missing its pinned article selection.")
             selection = await self.select(project_id=run.project_id, inputs=inputs)
+            kind = item_kind(selection["item"])
+            if kind not in kinds:
+                raise ValueError(
+                    f"This version of content.generate drafts articles only, and "
+                    f'"{selection["item"]["title"]}" is {KIND_NOUNS[kind]}.'
+                )
             project = await self.db.get_project(run.project_id)
             style = await self.storage.read_canonical_artifact_if_exists(
                 repo_id=project.state_repo_id,
@@ -421,9 +563,49 @@ class ContentDraftSources:
             if output_validator in content_draft.CLEAN_VALIDATORS:
                 context["output_validator"] = output_validator
                 context["frontmatter"] = content_draft.provenance(context)
+            if kind == ANSWER:
+                context["kind"] = ANSWER
+                context["answer"] = answer_brief(
+                    selection,
+                    context["evidence"],
+                    route=(chosen or {}).get("page_route"),
+                    today=(run.created_at.date().isoformat() if run.created_at else None),
+                )
+            elif kind == REFRESH:
+                context["kind"] = REFRESH
+                context["refresh"] = await self.refreshes().planned_page(
+                    run,
+                    url=selection["item"]["destination"],
+                    revision=selection["project_revision"],
+                )
+            context = content_draft.bounded(context)
             await self.db.start_effect(conn, execution_key=key, operation=content_draft.KEY)
             await self.db.complete_effect(conn, execution_key=key, result=context)
             return context
+
+    async def pin_refresh(self, run_id, refresh_context):
+        from tin_lite.content_refresh import PREPARATION
+
+        key = f"{UUID(str(run_id))}:{PREPARATION}"
+        async with self.db.effect_lock(key, PREPARATION) as (conn, saved):
+            if saved and saved.status == "completed":
+                return
+            await self.db.start_effect(conn, execution_key=key, operation=PREPARATION)
+            await self.db.complete_effect(conn, execution_key=key, result=refresh_context)
+
+
+async def pinned_kinds(storage, workflow, run):
+    """The kinds the run's own pinned content.generate definition drafts."""
+    import json
+
+    if workflow.current_commit_sha == run.definition_commit_sha:
+        return content_draft.supported_kinds(workflow.definition)
+    raw = await storage.read_canonical_artifact(
+        repo_id=workflow.definition_repo_id,
+        commit_sha=run.definition_commit_sha,
+        path=workflow.definition_path,
+    )
+    return content_draft.supported_kinds(json.loads(raw))
 
 
 class ScheduledDraftHold(Exception):
@@ -434,7 +616,9 @@ class ScheduledDraftStop(ValueError):
     """The schedule cannot draft again until someone acts; the message says what to do."""
 
 
-async def scheduled_selection(*, database, storage, integrations, project_id, inputs):
+async def scheduled_selection(
+    *, database, storage, integrations, project_id, inputs, kinds=(ARTICLE,)
+):
     """Choose the next plan article for one weekly occurrence, as a manual start would.
 
     One draft waits for review at a time: while any article from this program waits for
@@ -447,7 +631,7 @@ async def scheduled_selection(*, database, storage, integrations, project_id, in
             "A weekly schedule drafts the next article in plan order. "
             "Clear the chosen article in this schedule to keep it running."
         )
-    sources = ContentDraftSources(database=database, storage=storage)
+    sources = ContentDraftSources(database=database, storage=storage, integrations=integrations)
     program_id = UUID(inputs["program_id"])
     try:
         program = await sources.programs.configured(project_id, program_id)
@@ -457,11 +641,15 @@ async def scheduled_selection(*, database, storage, integrations, project_id, in
         ) from exc
     if program.status != "active":
         raise ScheduledDraftHold()
-    discovery = await sources.discover(project_id=project_id, program_id=program_id)
+    discovery = await sources.discover(project_id=project_id, program_id=program_id, kinds=kinds)
     progress, upcoming = discovery["progress"], discovery["next"]
     if progress["awaiting_review"] or progress["drafting"]:
         raise ScheduledDraftHold()
     if not upcoming["available"]:
+        if upcoming["item_id"] is None and any(
+            item["passed_over"] == "refresh_waiting" for item in discovery["items"]
+        ):
+            raise ScheduledDraftHold()  # A waiting page comes due on its own.
         if upcoming["item_id"] is None:
             raise ScheduledDraftStop(
                 "Every planned article has a draft or is already covered. "
@@ -470,7 +658,7 @@ async def scheduled_selection(*, database, storage, integrations, project_id, in
         if next(item for item in discovery["items"] if item["id"] == upcoming["item_id"])["held"]:
             raise ScheduledDraftHold()  # A pending plan revision finishes on its own.
         raise ScheduledDraftStop(upcoming["reason"])
-    selected = await sources.choose(project_id=project_id, inputs=inputs)
+    selected = await sources.choose(project_id=project_id, inputs=inputs, kinds=kinds)
     if inputs.get("delivery") == "program":
         from tin_lite.content_delivery import ContentDelivery
 

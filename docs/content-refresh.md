@@ -1,5 +1,10 @@
 # Refreshing existing pages
 
+> Retired from discovery in `content.refresh` 1.1.0: `content.generate` 1.9.0 drafts the
+> refresh items the content plan schedules, with the same evidence, document, wait and applier
+> (see [one content.generate](one-content-generate.md)). Pinned runs and saved schedules keep
+> running as described below; both workflows share one six-week wait per page.
+
 `content.refresh` (1.0.0) rewrites the parts of one existing page that keep it from earning
 clicks, then changes exactly that text in the site's source after the founder approves. It runs
 on demand or weekly, one page a run, and the organic traffic system starts it before drafting
@@ -11,7 +16,10 @@ new pages.
    Console evidence, then chooses one page:
    - It considers pages the audit flagged with `search.low_ctr` or `search.near_page_one`, plus
      `search.decay` and `aeo.answer_structure` when the audit reports them.
-   - It picks the page with the most impressions at stake.
+   - It picks the page with the most impressions at stake. (content.plan's refresh candidates
+     and content.generate's refresh items rank by realistic upside instead: pages near the top
+     results first, pages beyond position 30 last. See
+     [one content.generate](one-content-generate.md).)
    - It skips a page whose refresh is still waiting for review, was approved but has not
      reached the site, sits in an open PR (or one Tin could not check), or went live less than
      six weeks ago, so each refresh has time to show whether it worked and no page is refreshed

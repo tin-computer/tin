@@ -51,19 +51,23 @@ def adapt_on_approval(settings, run):
     return adaptable(settings, run)
 
 
-async def delivery_cost(*, runtime, settings, run, actor, repository):
-    """The configured cost preview of adapting this page, or None where billing is off."""
+async def delivery_cost(*, runtime, settings, run, actor, repository, website_change=False):
+    """The configured cost preview of adapting this page, or None where billing is off.
+
+    `website_change` prices website.change, which adapts a content.generate answer page.
+    """
     from tin_lite.billing import BillingService
     from tin_lite.billing_contracts import BillingError
-    from tin_lite.content_repository_delivery import WORKFLOW_ID
+    from tin_lite.content_repository_delivery import WEBSITE_CHANGE_ID, WORKFLOW_ID
 
+    inputs = {"source_run_id": str(run.id), "expected_repository": repository}
     try:
         preview = await BillingService(database=runtime.database, settings=settings).quote(
             runtime=runtime,
             project_id=run.project_id,
             actor=actor,
-            workflow_id=WORKFLOW_ID,
-            inputs={"source_run_id": str(run.id), "expected_repository": repository},
+            workflow_id=WEBSITE_CHANGE_ID if website_change else WORKFLOW_ID,
+            inputs={"source": "content_draft", **inputs} if website_change else inputs,
             preview_only=True,
         )
     except (BillingError, LookupError, ValueError):
@@ -95,16 +99,24 @@ async def publish_preview(*, runtime, settings, run, actor):
         if connection and connection.status == "connected"
         else None
     )
-    if not repository or not adapt_on_approval(settings, run):
+    # A content.generate answer page always goes to the site through website.change.
+    answer = await delivery_service(runtime).plan_kind(run) == "answer"
+    if not repository or not (answer or adapt_on_approval(settings, run)):
         return {"adapt": False}
     from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
 
+    kind = "answer_page" if answer else page_type(run)
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
-        runtime=runtime, settings=settings, run=run, actor=actor, repository=repository
+        runtime=runtime,
+        settings=settings,
+        run=run,
+        actor=actor,
+        repository=repository,
+        website_change=answer,
     )
     route = await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
-        run
+        run, page_type=kind
     )
     sentence = publish_sentence(mode, route_missing=route is None)
     # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
@@ -123,7 +135,7 @@ async def publish_preview(*, runtime, settings, run, actor):
         # Before the first page of this type publishes, the coding agent asks the founder.
         page = await page_url_service(runtime, settings).view(run, None)
         host = urlsplit(page["url"]).hostname if page and page.get("url") else None
-        preview["ask_the_founder"] = ask_the_founder(page_type(run), host)
+        preview["ask_the_founder"] = ask_the_founder(kind, host)
     return preview
 
 

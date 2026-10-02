@@ -65,6 +65,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   with its automatic changes and approval-gated proposals.
 - [Content programs](content-program-implementation.md), [draft generation](content-generation-implementation.md),
   [review and revisions](content-review.md) and [repository-aware delivery](repository-aware-content-delivery.md).
+- [One content.generate](one-content-generate.md): typed plan items, and how articles, answer
+  pages and page refreshes are drafted, reviewed and delivered.
 - [website.change](website-change.md): approved changes to a founder's site (pages, and the
   technical fixes the latest audit found); its two modes, recorded approvals, protected paths
   and the change-row contract.

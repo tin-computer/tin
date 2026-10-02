@@ -4343,8 +4343,9 @@ def create_mcp_app(
                         "arguments": {"project_id": str(parsed_project_id)},
                     },
                     "instruction": "Choose a content program, then start content.generate "
-                    "with only program_id. Tin selects the next article in chronological plan "
-                    "order and prevents duplicate drafts. Do not ask the user to pick an article "
+                    "with only program_id. Tin selects the next item in chronological plan "
+                    "order (an article, an answer page or a page refresh) and prevents duplicate "
+                    "drafts. Do not ask the user to pick an article "
                     "by default. Only supply item_id when they explicitly choose another article; "
                     "rewrite=true also requires that explicit item_id. "
                     "Reuse request_id when retrying the same start. If your tool list is cached, "

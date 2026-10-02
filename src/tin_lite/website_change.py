@@ -80,6 +80,8 @@ REVISION = re.compile(r"[0-9a-f]{40}")
 SITE_PATH = re.compile(r"/[A-Za-z0-9._~!$&'()*+,;=:@%/{}-]{0,300}")
 # Tin's own folder for answer-page drafts. A site does not serve it; a page never lands there.
 TIN_DRAFT_FOLDERS = ("content/answers/",)
+# The founder's page type (content/page-routes.json) for each kind of approved page.
+SOURCE_PAGE_TYPES = {"answer_page": "answer_page", "public_article": "article"}
 
 
 class WebsiteChangeConflict(ValueError):
@@ -515,7 +517,7 @@ def publish_mode(
 async def select_source(*, database, storage, integrations, project_id, inputs) -> dict:
     """Pin the change, the approved page, the repository and the publish mode for one run."""
     from tin_lite.content_delivery import ContentDelivery, adapted, choice_key, chosen_mode
-    from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
+    from tin_lite.page_routes import PageRouteService, ask_the_founder
 
     source_kind = inputs.get("source", "content_draft")
     if source_kind not in IMPLEMENTED_SOURCES:
@@ -570,13 +572,16 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
         check_destination(system_delivery, binding)
     route = None
-    kind = page_type(run)
+    # The page's type comes from its source: content.answer_page's pages and content.generate
+    # answer pages are answer pages, public articles are articles, and planned articles keep
+    # their own destination.
+    kind = SOURCE_PAGE_TYPES.get(source["source_kind"])
     if kind is not None:
         # The route pinned at approval, else the one the founder saved since. Never a guess:
         # an answer page or public article without one asks the founder first.
         route = chosen.get("route") or await PageRouteService(
             database=database, storage=storage
-        ).route_for(run)
+        ).route_for(run, page_type=kind)
         if not route:
             raise RouteNotChosen(ask_the_founder(kind, None))
     change = page_change(source, route).as_dict()

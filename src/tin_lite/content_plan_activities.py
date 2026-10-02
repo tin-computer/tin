@@ -26,7 +26,16 @@ from tin_lite.content_plan import (
     render_plan,
     validate_change,
 )
-from tin_lite.content_plan_sources import context_files, positioning_files, research_sources
+from tin_lite.content_plan_sources import (
+    SITE_SOURCES,
+    competitor_rows,
+    competitor_watch,
+    context_files,
+    positioning_files,
+    published_pages,
+    research_sources,
+    site_signals,
+)
 from tin_lite.content_programs import ContentPrograms, decoded
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
@@ -40,6 +49,18 @@ from tin_lite.workflow_evidence import integration_inventory
 # second (the keyword review's measured pace) takes close to five minutes. The provider's
 # 90-second default stopped production plans before they finished.
 MODEL_TIMEOUT_SECONDS = 300
+
+
+def plan_kinds(research):
+    """The kinds this run's evidence supports: answers need an AI-visibility gap finding and
+    refreshes a page a refresh could fix. Articles are always possible."""
+    rows = research.get("rows", [])
+    kinds = {legacy.ARTICLE}
+    if any(row["data"].get("check_id") == editorial.ANSWER_CHECK for row in rows):
+        kinds.add(legacy.ANSWER)
+    if any(row["source_id"].startswith(editorial.REFRESH_SOURCE_PREFIX) for row in rows):
+        kinds.add(legacy.REFRESH)
+    return kinds
 
 
 class ContentPlanActivities:
@@ -69,6 +90,28 @@ class ContentPlanActivities:
             await self.db.start_effect(conn, execution_key=key, operation=KEY)
             await self.db.complete_effect(conn, execution_key=key, result=value)
         return value
+
+    async def typed_research(self, contract, project, revision):
+        """For a typed (v7) contract: research also lists the pages a refresh could fix, every
+        page Tin knows on the site (including the ones Tin published itself), and the newest Page
+        decisions and traffic snapshot, read once at `revision`."""
+        if not getattr(contract, "TYPED", False):
+            return {}
+        signals = await site_signals(
+            storage=self.storage,
+            project=project,
+            revision=revision,
+            today=datetime.now(UTC).date(),
+        )
+        return {
+            "typed": True,
+            "planned": {
+                path: set(row["checks"])
+                for path, row in (signals["page_decisions"].get("refresh") or {}).items()
+            },
+            "published": await published_pages(self.db, project),
+            "signals": signals,
+        }
 
     async def page_inventory(self, run, context, *, bind_sources=False):
         saved = await self.saved(run.id, "pages")
@@ -201,6 +244,9 @@ class ContentPlanActivities:
             if working_path in documents:
                 output_paths["working_plan"] = working_path
                 limits["working_plan"] = 240_000
+            if legacy.site_pages_path(str(run.id)) in documents:
+                output_paths[legacy.SITE_PAGES_FILE] = legacy.site_pages_path(str(run.id))
+                limits[legacy.SITE_PAGES_FILE] = legacy.SITE_PAGES_FILE_BYTES
             async with self.db.project_state_lock(conn, project.id):
                 revision = await publish_artifacts(
                     storage=self.storage,
@@ -362,7 +408,11 @@ class ContentPlanActivities:
                     ):
                         raise ValueError("A working plan already exists; it was left unchanged.")
                     research = await research_sources(
-                        database=self.db, storage=self.storage, project=project, inputs=run.input
+                        database=self.db,
+                        storage=self.storage,
+                        project=project,
+                        inputs=run.input,
+                        **await self.typed_research(contract, project, head),
                     )
                     plan = empty_plan(program_id, run.input, research["scope"])
                     selected = run.input.get("context_files", [])
@@ -407,6 +457,7 @@ class ContentPlanActivities:
                             storage=self.storage,
                             project=project,
                             inputs=configured.inputs,
+                            **await self.typed_research(contract, project, head),
                         )
                         if amendment
                         else {"sources": original_context["research"]["sources"]}
@@ -420,6 +471,17 @@ class ContentPlanActivities:
                 files = await context_files(
                     storage=self.storage, project=project, revision=head, paths=selected
                 )
+                watch = None
+                if getattr(contract, "TYPED", False) and research.get("rows") is not None:
+                    # Material competitor changes become comparison items (v7).
+                    watch = await competitor_watch(
+                        database=self.db, storage=self.storage, project=project
+                    )
+                    if watch:
+                        research = {
+                            **research,
+                            "rows": [*research["rows"], *competitor_rows(watch)],
+                        }
                 context = await self.save(
                     run_id,
                     "context",
@@ -443,6 +505,9 @@ class ContentPlanActivities:
                             }
                             if contract.POLICY.get("positioning_files") == "project-v1"
                             else {}
+                        ),
+                        **(
+                            {"competitor_watch": watch} if getattr(contract, "TYPED", False) else {}
                         ),
                         "editable": editable,
                         "instruction": amendment["instruction"]
@@ -482,15 +547,60 @@ class ContentPlanActivities:
                             {
                                 "data": data,
                                 "aliases": aliases,
-                                "schema": editorial.bound_schema(pages, aliases),
+                                "schema": editorial.bound_schema(
+                                    pages,
+                                    aliases,
+                                    schema=contract.MODEL_SCHEMA,
+                                    kinds=plan_kinds(context["research"]),
+                                ),
                             },
                         )
                     data, aliases = prepared["data"], prepared["aliases"]
                     proposed = await self.model(
                         run, data, contract=contract, schema=prepared["schema"]
                     )
-                    plan, quality = editorial.allocate(context, proposed, pages, aliases)
+                    plan, quality = editorial.allocate(
+                        context,
+                        proposed,
+                        pages,
+                        aliases,
+                        typed=getattr(contract, "TYPED", False),
+                    )
+                    if getattr(contract, "TYPED", False):
+                        plan, added = editorial.competitor_items(
+                            context, plan, pages, cap=contract.POLICY["competitor_items"]
+                        )
+                        quality["competitor_items"] = added
+                        quality["planned_items"] += len(added)
+                        quality["unused_capacity"] -= len(added)
+                        if "site_signals" in quality:
+                            # Page decisions' refresh rows become refresh items.
+                            plan, added = editorial.page_decision_items(
+                                context,
+                                plan,
+                                cap=contract.POLICY.get(
+                                    "max_page_decision_items", editorial.MAX_PAGE_DECISION_ITEMS
+                                ),
+                            )
+                            quality["site_signals"]["added"] = added
+                            quality["planned_items"] += len(added)
+                            quality["unused_capacity"] -= len(added)
+                        quality["empty_batches"] = sum(
+                            not b["items"]
+                            for b in plan["batches"]
+                            if b["id"] in context["editable"]
+                        )
                     quality["model_page_text_limit"] = data["model_page_text_limit"]
+                    site = (context["research"] or {}).get("site_pages")
+                    if site is not None:
+                        # v7: the whole site's page list, saved beside the evidence.
+                        quality["site_inventory"] = {
+                            "path": legacy.site_pages_path(run_id),
+                            "pages": len(site["pages"]),
+                            "omitted": site["omitted"],
+                            "by_source": site["by_source"],
+                            "shown_to_model": len(data["site_pages"]["pages"]),
+                        }
                 else:
                     proposed = await self.model(run, context, contract=contract)
                     proposed, normalized_destinations = normalize_model_destinations(
@@ -619,6 +729,22 @@ class ContentPlanActivities:
             }
             if mode == "initial":
                 documents[plan_path(program_id)] = canonical_json(plan)
+            if quality and quality.get("site_inventory"):
+                site = context["research"]["site_pages"]
+                documents[legacy.site_pages_path(run_id)] = canonical_json(
+                    {
+                        "run_id": run_id,
+                        "host": site["host"],
+                        "sources": SITE_SOURCES,
+                        "by_source": site["by_source"],
+                        "omitted": site["omitted"],
+                        "sitemap_capped": site["sitemap_capped"],
+                        "note": "Every page address Tin knows on the site, once per path, with the "
+                        "sources that list it. Addresses only: the plan read at most "
+                        f"{editorial.POLICY['max_pages']} of these pages.",
+                        "pages": site["pages"],
+                    }
+                )
             saved_documents = await self.save(
                 run_id, "artifacts", {path: content.decode() for path, content in documents.items()}
             )

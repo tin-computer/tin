@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from pydantic import Field
 
 from tin_lite import content_plan as legacy
+from tin_lite.content_plan_sources import MAX_SITE_PAGES, SITE_PAGES_BYTES
 from tin_lite.organic_audit import canonical_json, digest
 
 ROUTE_KEY = "content.plan.v2"
@@ -87,6 +88,8 @@ class Portfolio(legacy.Strict):
 
 
 MODEL_SCHEMA = Portfolio.model_json_schema()
+# Contracts v2 to v6 ask for this untyped portfolio; v7 replaces MODEL_SCHEMA below.
+PORTFOLIO_SCHEMA = MODEL_SCHEMA
 V2_POLICY, V2_INSTRUCTIONS = POLICY, INSTRUCTIONS
 POLICY = {**V2_POLICY, "version": "content-editorial-v3", "source_aliases": "readable-v1"}
 INSTRUCTIONS += """
@@ -159,6 +162,90 @@ POLICY = {**V5_POLICY, "version": "content-editorial-v6", "positioning_files": "
 INSTRUCTIONS = V5_INSTRUCTIONS.replace(POSITIONING_OWNER, POSITIONING_FROM_FILES)
 
 
+# v7 (content.plan 0.8.0): one list to write from. Every opportunity names its kind, so the
+# plan schedules answer pages for AI-visibility gaps and refreshes of existing pages beside
+# articles, and content.generate drafts whichever comes next.
+V6_POLICY, V6_INSTRUCTIONS = POLICY, INSTRUCTIONS
+# The audit's finding for buyer questions whose sampled AI answers did not cite the site.
+ANSWER_CHECK = "content.buyer_answer_coverage"
+# Research rows for pages a refresh could fix; Tin writes them, never the model.
+REFRESH_SOURCE_PREFIX = "refresh:"
+MAX_REFRESH_SOURCES = 10
+
+
+class TypedOpportunity(Opportunity):
+    kind: legacy.Kind
+
+
+class TypedPortfolio(legacy.Strict):
+    strategy: str = Field(min_length=1, max_length=3500)
+    gaps: list[str] = Field(max_length=12)
+    excluded: list[str] = Field(max_length=20)
+    opportunities: list[TypedOpportunity] = Field(max_length=81)
+
+
+# competitor.watch rows: a named competitor's material changes, from its newest report.
+COMPETITOR_SOURCE_PREFIX = "competitor:"
+MAX_COMPETITOR_ITEMS = 3
+COMPARISON_WORDS = frozenset(
+    {"vs", "versus", "alternative", "alternatives", "compare", "comparison", "comparisons"}
+)
+
+# The whole site's page list (content_plan_sources.site_pages): at most this many addresses
+# reach the model, fewer when its bounded input needs the room for page excerpts.
+MAX_MODEL_SITE_PAGES = 800
+# Page decisions' refresh rows become refresh items, at most this many a run.
+MAX_PAGE_DECISION_ITEMS = 5
+
+POLICY = {
+    **V6_POLICY,
+    "version": "content-editorial-v7",
+    "plan_kinds": "typed-v1",
+    "max_refresh_sources": MAX_REFRESH_SOURCES,
+    "competitor_items": MAX_COMPETITOR_ITEMS,
+    "refresh_order": "realistic-upside-v1",
+    "site_inventory": "full-v1",
+    "max_site_pages": MAX_SITE_PAGES,
+    "max_site_pages_bytes": SITE_PAGES_BYTES,
+    "max_model_site_pages": MAX_MODEL_SITE_PAGES,
+    "site_signals": "decisions-snapshot-v1",
+    "max_page_decision_items": MAX_PAGE_DECISION_ITEMS,
+}
+INSTRUCTIONS = (
+    V6_INSTRUCTIONS
+    + f"""
+Every opportunity has a kind; the three share the calendar's capacity, so weigh them against
+each other by evidence. article is the planned piece described above. answer is an AI-visibility
+gap: a buyer question from a cited {ANSWER_CHECK} audit finding, where the sampled AI answers
+did not cite the site. An answer is a new_page with an empty page_id; its title is that buyer
+question in the buyer's words, and its brief says what a direct answer must establish.
+refresh is an existing page from a cited refresh source: searchers see it but rarely click, it
+ranks just below the top results, or a page decision marked it for a refresh. A refresh is an
+update_page with the inspected page_id of exactly that page, and its brief names the searches
+the title, meta description, H1 and opening answer should meet. Never plan a refresh and an
+article update for the same page. Use answer and refresh only with those sources.
+Refresh sources come in order of realistic upside, and each says why in upside: pages near the
+top results or seen but rarely clicked first, then other pages, and pages beyond position 30
+last. Plan a far page only when no nearer one is left.
+site_pages lists every page address Tin knows on the site, by path, with the sources that list
+it. It is an address list, not page content: only the pages under pages were read. Never plan
+a new page for a topic a listed path already serves; plan an update of it when it was read, or
+name it in gaps when it was not. Tin leaves out a new page whose address, title or topic words
+match a listed page.
+site_signals holds the newest Page decisions and traffic snapshot when Tin could use them. Plan
+nothing for a page Page decisions merges, retires or keeps, and no new page on the topic of one
+it merges or retires; Tin leaves those out, and adds a refresh item itself for each page it
+marks for a refresh. Prefer topics near the pages that turn visitors into signups (converting).
+A page with real visits but few signups (weak_conversion) is a refresh candidate whose opening
+should lead the reader to the product's next step.
+Rows whose source_id starts with competitor: are material changes the newest competitor.watch
+report found at a named competitor. Tin adds comparison or refresh items for them itself, so do
+not plan another page about those competitors.
+"""
+)
+MODEL_SCHEMA = TypedPortfolio.model_json_schema()
+
+
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
 POSITIONING_DIRECTIVE = re.compile(
@@ -180,35 +267,27 @@ def without_positioning(text):
 
 
 def contract(definition):
-    """Never reinterpret a saved v1 program or accept an edited execution policy."""
-    current = SimpleNamespace(
-        POLICY=POLICY, INSTRUCTIONS=INSTRUCTIONS, MODEL_SCHEMA=MODEL_SCHEMA, ROUTE_KEY=ROUTE_KEY
-    )
-    v2 = SimpleNamespace(
-        POLICY=V2_POLICY,
-        INSTRUCTIONS=V2_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v3 = SimpleNamespace(
-        POLICY=V3_POLICY,
-        INSTRUCTIONS=V3_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v4 = SimpleNamespace(
-        POLICY=V4_POLICY,
-        INSTRUCTIONS=V4_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    v5 = SimpleNamespace(
-        POLICY=V5_POLICY,
-        INSTRUCTIONS=V5_INSTRUCTIONS,
-        MODEL_SCHEMA=MODEL_SCHEMA,
-        ROUTE_KEY=ROUTE_KEY,
-    )
-    for module in (legacy, v2, v3, v4, v5, current):
+    """Never reinterpret a saved v1 program or accept an edited execution policy.
+
+    `TYPED` says whether the contract's opportunities carry a kind (v7 and later).
+    """
+
+    def pinned(policy, instructions, schema, typed=False):
+        return SimpleNamespace(
+            POLICY=policy,
+            INSTRUCTIONS=instructions,
+            MODEL_SCHEMA=schema,
+            ROUTE_KEY=ROUTE_KEY,
+            TYPED=typed,
+        )
+
+    current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True)
+    v2 = pinned(V2_POLICY, V2_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v3 = pinned(V3_POLICY, V3_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
+    for module in (legacy, v2, v3, v4, v5, v6, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY
@@ -249,6 +328,13 @@ def clean_url(url, host):
 def page_candidates(context):
     host = context["research"]["scope"]["host"]
     candidates = [f"https://{host}/"]
+    # Pages a refresh could fix come first, so the bounded inventory reads them; only v7
+    # research has these rows.
+    candidates += [
+        row["data"]["url"]
+        for row in context["research"].get("rows", [])
+        if row["source_id"].startswith(REFRESH_SOURCE_PREFIX)
+    ]
     candidates += [
         item["destination"]
         for batch in context["plan"]["batches"]
@@ -343,6 +429,9 @@ def model_context(context, pages, *, readable_aliases=False):
     research.pop("sources", None)
     # Candidate titles aren't content. The inspected inventory is the authority for updates.
     research.pop("page_candidates", None)
+    # v7: the whole site's addresses travel separately, bounded below.
+    site = research.pop("site_pages", None)
+    signals = research.pop("site_signals", None)
     research["limitations"] = [
         "Keyword groups/exclusions are hypotheses; observations are not product verification.",
         "Only supplied excerpts were inspected; uncrawled/unavailable pages remain unknown.",
@@ -376,6 +465,11 @@ def model_context(context, pages, *, readable_aliases=False):
         "end_date": context["plan"]["end_date"],
         "capacity": len(editable) * context["capacity"],
     }
+    listed = site_rows(site) if site is not None else []
+    if site is not None:
+        data["site_pages"] = model_site_pages(site, listed, MAX_MODEL_SITE_PAGES)
+    if signals is not None:
+        data["site_signals"] = model_site_signals(signals)
     # Full observations (timestamps, hashes and original excerpts) stay in evidence.
     # Budget only the model's excerpts; never silently drop research rows or member files.
     original_pages = data["pages"]["pages"]
@@ -390,10 +484,14 @@ def model_context(context, pages, *, readable_aliases=False):
 
     low = POLICY["min_page_text_bytes"]
     high = context.get("page_text_limit", POLICY["page_text_bytes"])
-    if not excerpt(low):
-        raise ValueError(
-            "Planning sources exceed the bounded model input. Use smaller context files."
-        )
+    while not excerpt(low):
+        # The site's address list gives way before the planning sources do.
+        shown = len((data.get("site_pages") or {}).get("pages") or [])
+        if not shown:
+            raise ValueError(
+                "Planning sources exceed the bounded model input. Use smaller context files."
+            )
+        data["site_pages"] = model_site_pages(site, listed, shown // 2)
     while low < high:
         middle = (low + high + 1) // 2
         if excerpt(middle):
@@ -404,9 +502,218 @@ def model_context(context, pages, *, readable_aliases=False):
     return data, aliases
 
 
-def bound_schema(pages, aliases):
-    schema = deepcopy(MODEL_SCHEMA)
-    properties = schema["$defs"]["Opportunity"]["properties"]
+# How the model reads each source of a site page: one letter per source.
+SITE_SOURCE_CODES = {
+    "sitemap": "s",
+    "search_console": "g",
+    "crawl": "c",
+    "tin_published": "t",
+    "keywords": "k",
+}
+
+
+def site_rows(site):
+    """The site's pages, most impressions and most sources first: the order the model keeps."""
+    return sorted(
+        site.get("pages") or [],
+        key=lambda page: (-page.get("impressions", 0), -len(page["sources"]), page["path"]),
+    )
+
+
+def model_site_pages(site, listed, limit):
+    """The first `limit` of the site's pages, by path, as [path, source letters] pairs."""
+    shown = sorted(listed[: max(0, limit)], key=lambda page: page["path"])
+    return {
+        "sources": {code: name for name, code in SITE_SOURCE_CODES.items()},
+        "pages": [
+            [page["path"], "".join(SITE_SOURCE_CODES[name] for name in page["sources"])]
+            for page in shown
+        ],
+        "omitted": site.get("omitted", 0) + len(listed) - len(shown),
+    }
+
+
+# Words that say nothing about a page's topic, for matching a new page against the site's.
+TOPIC_STOPWORDS = frozenset(
+    "a an and are as at be best by can do does for from get guide how i in into is it its my "
+    "of on or our should the their this to use using what when where which who why with you "
+    "your".split()
+)
+TITLE_SUFFIX = re.compile(r"\s+[|·–—-]\s+[^|·–—-]{1,60}$")
+
+
+def topic_words(text):
+    """A text's topic words: lowercase, without filler words, plural s dropped."""
+    words = re.findall(r"[a-z0-9]+", (text or "").casefold())
+    return {
+        word[:-1] if len(word) > 3 and word.endswith("s") and not word.endswith("ss") else word
+        for word in words
+        if word not in TOPIC_STOPWORDS
+    }
+
+
+def plain_title(title):
+    """A title without its site name suffix (" | Example"), in lowercase words."""
+    return " ".join(re.findall(r"[a-z0-9]+", TITLE_SUFFIX.sub("", title or "").casefold()))
+
+
+def existing_page(opportunity, site, *, topics=True):
+    """The site page a proposed new page duplicates, and how it matched, or None.
+
+    `address`: the title's slug is the page's last path segment. `title`: the page's crawl title
+    is the proposed title. `topic` (articles only): the page's last path segment has at least
+    two topic words, all in the title, and the title adds at most two more, so
+    "How to audit AI visibility for a SaaS brand" matches /learn/ai-visibility-audit while
+    "AI visibility tools: choose tracking or an actionable audit" does not.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "-", opportunity["title"].casefold()).strip("-")
+    title = plain_title(opportunity["title"])
+    wanted = topic_words(opportunity["title"])
+    best = None
+    for page in site.get("pages") or []:
+        last = page["path"].rstrip("/").rsplit("/", 1)[-1].casefold()
+        if last and last == slug:
+            return page, "address"
+        if title and page.get("title") and plain_title(page["title"]) == title:
+            return page, "title"
+        words = topic_words(last.replace("-", " ").replace("_", " "))
+        if (
+            topics
+            and len(words) >= 2
+            and words <= wanted
+            and len(wanted - words) <= 2
+            and (best is None or len(words) > best[1])
+        ):
+            best = (page, len(words))
+    return (best[0], "topic") if best else None
+
+
+def dedupe_new_pages(opportunities, site, *, host, retained):
+    """Leave out proposed new pages the site already has (v7).
+
+    Only new items are checked: a retained item keeps its place. Answers match by address or
+    title only, since an answer page may answer a buyer question an existing page leaves open.
+    Returns the kept opportunities and one record per page left out.
+    """
+    kept, left_out = [], []
+    for opportunity in opportunities:
+        if opportunity["action"] != "new_page" or opportunity["id"] in retained:
+            kept.append(opportunity)
+            continue
+        found = existing_page(
+            opportunity, site, topics=opportunity.get("kind", legacy.ARTICLE) == legacy.ARTICLE
+        )
+        if found is None:
+            kept.append(opportunity)
+            continue
+        page, match = found
+        left_out.append(
+            {
+                "item_id": opportunity["id"],
+                "title": opportunity["title"],
+                "page": f"https://{host}{page['path']}",
+                "sources": page["sources"],
+                "match": match,
+            }
+        )
+    return kept, left_out
+
+
+def model_site_signals(signals):
+    """What the model reads of Page decisions and the traffic snapshot: bounded rows, or why a
+    file was not used."""
+    decisions, traffic = signals.get("page_decisions") or {}, signals.get("traffic") or {}
+    view = {}
+    if decisions.get("status") == "used":
+        view["page_decisions"] = {
+            "generated": decisions["generated"],
+            "refresh": [[p, r["reason"]] for p, r in list(decisions["refresh"].items())[:20]],
+            "rewrite": [[p, reason] for p, reason in list(decisions["rewrite"].items())[:20]],
+            "do_not_plan": [[p, r["decision"]] for p, r in list(decisions["cut"].items())[:40]]
+            + [[p, "keep"] for p in decisions["keep"][:60]],
+        }
+    else:
+        view["page_decisions"] = {"not_used": decisions.get("status")}
+    if traffic.get("status") == "used" and traffic.get("site_rate") is not None:
+        view["traffic"] = {
+            "generated": traffic["generated"],
+            "site_signup_rate": traffic["site_rate"],
+            "columns": ["path", "sessions", "signups", "activated"],
+            "converting": [
+                [p["path"], p["sessions"], p["signups"], p["activated"]]
+                for p in traffic["converting"]
+            ],
+            "weak_conversion": [
+                [p["path"], p["sessions"], p["signups"], p["activated"]] for p in traffic["weak"]
+            ],
+        }
+    else:
+        view["traffic"] = {"not_used": traffic.get("note") or traffic.get("status")}
+    return view
+
+
+def section_of(path):
+    """A site path's first segment, such as /blog for /blog/post; / for the home page."""
+    parts = (path or "/").split("/")
+    return "/" + parts[1] if len(parts) > 1 and parts[1] else "/"
+
+
+def page_path(url):
+    from tin_lite.content_refresh import url_key
+
+    return url_key(url)
+
+
+def decision_conflict(opportunity, destination, decisions):
+    """Why the newest Page decisions rule out this item, or None.
+
+    An item that changes a page (an update or a refresh) may not target a page Page decisions
+    merges, retires or keeps. A new article or answer page may not cover the topic of a page
+    it merges or retires (matched as existing_page matches, by address or topic words).
+    """
+    if (decisions or {}).get("status") != "used":
+        return None
+    cut, keep = decisions["cut"], set(decisions["keep"])
+    if destination:
+        path = page_path(destination)
+        if path in cut:
+            return f"Page decisions will {cut[path]['decision']} {path}"
+        if path in keep:
+            return f"Page decisions keeps {path} as it is"
+        return None
+    found = existing_page(
+        opportunity, {"pages": [{"path": path, "sources": []} for path in cut]}, topics=True
+    )
+    if found:
+        path = found[0]["path"]
+        return f"its topic is {path}, which Page decisions will {cut[path]['decision']}"
+    return None
+
+
+def near_converting(opportunity, destination, converting):
+    """The converting page this item sits next to, or None: an update in the same section, or
+    a new page whose title holds the page's last-segment topic words (two, or its only one)."""
+    wanted = topic_words(opportunity["title"])
+    for page in converting:
+        if destination:
+            section = section_of(page_path(destination))
+            if section != "/" and section == section_of(page["path"]):
+                return page["path"]
+            continue
+        last = page["path"].rstrip("/").rsplit("/", 1)[-1]
+        words = topic_words(last.replace("-", " ").replace("_", " "))
+        if words and len(words & wanted) >= min(2, len(words)):
+            return page["path"]
+    return None
+
+
+def bound_schema(pages, aliases, schema=PORTFOLIO_SCHEMA, kinds=None):
+    """The pinned contract's schema, bound to this run's pages, sources and (v7) kinds."""
+    schema = deepcopy(schema)
+    definitions = schema["$defs"]
+    properties = (definitions.get("TypedOpportunity") or definitions["Opportunity"])["properties"]
+    if "kind" in properties and kinds is not None:
+        properties["kind"]["enum"] = [kind for kind in legacy.KINDS if kind in kinds]
     properties["page_id"]["enum"] = [""] + [
         p["page_id"] for p in pages["pages"] if p["status"] == "inspected"
     ]
@@ -419,9 +726,140 @@ def bound_schema(pages, aliases):
     return schema
 
 
-def allocate(context, proposed, pages, aliases):
-    portfolio = Portfolio.model_validate(proposed).model_dump()
-    portfolio, consolidations = consolidate_updates(portfolio, pages, context)
+def shape_by_signals(opportunities, signals, observed, *, retained):
+    """Apply Page decisions and the traffic snapshot to the model's proposals (v7).
+
+    New items Page decisions rule out are left out (decision_conflict); a retained item keeps
+    its place. Items next to a page that converts visitors into signups (near_converting) then
+    move ahead of the rest, each group in the model's order. Returns the proposals and what was
+    done, with the note naming any file that was not used.
+    """
+    decisions = signals.get("page_decisions") or {}
+    converting = (signals.get("traffic") or {}).get("converting") or []
+    kept, left_out = [], []
+    for opportunity in opportunities:
+        page = observed.get(opportunity.get("page_id"))
+        destination = page["url"] if opportunity["action"] == "update_page" and page else ""
+        why = (
+            None
+            if opportunity["id"] in retained
+            else decision_conflict(opportunity, destination, decisions)
+        )
+        if why:
+            left_out.append(
+                {"item_id": opportunity["id"], "title": opportunity["title"], "reason": why}
+            )
+        else:
+            kept.append((opportunity, destination))
+    near = {}
+    for opportunity, destination in kept:
+        found = near_converting(opportunity, destination, converting)
+        if found:
+            near[opportunity["id"]] = found
+    ordered = [o for o, _ in kept if o["id"] in near] + [o for o, _ in kept if o["id"] not in near]
+    before = [o["id"] for o, _ in kept]
+    moved_up = [
+        {"item_id": o["id"], "near": near[o["id"]]}
+        for index, o in enumerate(ordered)
+        if o["id"] in near and index < before.index(o["id"])
+    ]
+    return ordered, {
+        "note": signals.get("note"),
+        "page_decisions": decisions.get("generated"),
+        "traffic": (signals.get("traffic") or {}).get("generated")
+        if (signals.get("traffic") or {}).get("site_rate") is not None
+        else None,
+        "left_out": left_out,
+        "moved_up": moved_up,
+        "refresh_candidates": [p["path"] for p in (signals.get("traffic") or {}).get("weak", [])],
+        "added": [],
+    }
+
+
+def page_decision_items(context, plan, *, cap=MAX_PAGE_DECISION_ITEMS):
+    """Refresh items for the pages the newest Page decisions marks for a refresh (v7).
+
+    One item per page no plan item already changes, in the file's order, at most `cap` a run,
+    in the earliest editable batch with room. Each cites its Page decisions row (and the page's
+    refresh row when there is one), carries `source: organic.content_efficacy` and the page,
+    and asks the draft to check its change against the decision's reason. Returns the plan and
+    the IDs added; no file, or one Tin could not use, adds nothing.
+    """
+    signals = (context["research"] or {}).get("site_signals") or {}
+    decisions = signals.get("page_decisions") or {}
+    if decisions.get("status") != "used" or not decisions["refresh"]:
+        return plan, []
+    from tin_lite.content_plan_sources import EFFICACY_PATH, EFFICACY_SOURCE_PREFIX
+
+    rows = {row["source_id"] for row in (context["research"] or {}).get("rows", [])}
+    refresh_rows = {
+        row["data"]["path"]: row["source_id"]
+        for row in (context["research"] or {}).get("rows", [])
+        if row["source_id"].startswith(REFRESH_SOURCE_PREFIX)
+    }
+    plan = deepcopy(plan)
+    items = [item for batch in plan["batches"] for item in batch["items"]]
+    targeted = {page_path(i["destination"]) for i in items if i["destination"]}
+    titles = {" ".join(i["title"].casefold().split()) for i in items}
+    editable = [b for b in plan["batches"] if b["id"] in context["editable"]]
+    added = []
+    for path, row in decisions["refresh"].items():
+        if len(added) >= cap:
+            break
+        source = EFFICACY_SOURCE_PREFIX + digest(path)[:20]
+        url = f"https://{plan['host']}{path}"
+        title = f"Refresh {path}"[:180]
+        if (
+            path in targeted
+            or source not in rows
+            or not clean_url(url, plan["host"])
+            or " ".join(title.casefold().split()) in titles
+        ):
+            continue
+        batch = next((b for b in editable if len(b["items"]) < context["capacity"]), None)
+        if batch is None:
+            break
+        reason = row["reason"] or "the page is due for a refresh"
+        item = {
+            "id": "page-decision-" + digest([path, plan["program_id"]])[:12],
+            "title": title,
+            "brief": (
+                f"Page decisions ({EFFICACY_PATH}, {decisions['generated']}) marked {path} for a "
+                f"refresh: {reason} Bring the title, meta description, H1 and opening answer in "
+                "line with the searches this page should win, and keep every fact it already "
+                "states."
+            )[:1800],
+            "intent": f"Searchers who land on {path} find what they searched for at once."[:500],
+            "action": "update_page",
+            "destination": url,
+            "source_ids": [source] + ([refresh_rows[path]] if path in refresh_rows else []),
+            "verification": [
+                f"Read {url} as it reads today before changing anything."[:500],
+                f"Check each change against the page decision: {reason}"[:500],
+            ],
+            "readiness": "needs_verification",
+            "kind": legacy.REFRESH,
+            "source": legacy.CONTENT_EFFICACY,
+            "evidence": url,
+        }
+        batch["items"].append(item)
+        items.append(item)
+        targeted.add(path)
+        titles.add(" ".join(title.casefold().split()))
+        added.append(item["id"])
+    plan = legacy.validate_change(context["plan"], plan, editable=set(context["editable"]))
+    return plan, added
+
+
+def allocate(context, proposed, pages, aliases, *, typed=False):
+    """Validate the portfolio and place it on the calendar.
+
+    `typed` is the pinned contract's TYPED: v7 opportunities name a kind, which the plan item
+    keeps (articles stay without one, as before kinds existed).
+    """
+    model = TypedPortfolio if typed else Portfolio
+    portfolio = model.model_validate(proposed).model_dump()
+    portfolio, consolidations = consolidate_updates(portfolio, pages, context, model=model)
     if any(not 0 < len(v) <= 900 for v in portfolio["gaps"] + portfolio["excluded"]):
         raise ValueError("Editorial evidence gaps must be bounded nonempty text.")
     plan = deepcopy(context["plan"])
@@ -432,7 +870,25 @@ def allocate(context, proposed, pages, aliases):
         raise ValueError("The editorial portfolio exceeds the selected batch capacity.")
     if len(opportunities) < slots and not portfolio["gaps"]:
         raise ValueError("An underfilled portfolio must explain its evidence shortfall.")
+    site = (context["research"] or {}).get("site_pages") if typed else None
+    already_on_site = []
+    if site is not None:
+        opportunities, already_on_site = dedupe_new_pages(
+            opportunities,
+            site,
+            host=plan["host"],
+            retained={i["id"] for b in context["plan"]["batches"] for i in b["items"]},
+        )
     observed = {p["page_id"]: p for p in pages["pages"] if p["status"] == "inspected"}
+    signals = (context["research"] or {}).get("site_signals") if typed else None
+    shaped = None
+    if signals is not None:
+        opportunities, shaped = shape_by_signals(
+            opportunities,
+            signals,
+            observed,
+            retained={i["id"] for b in context["plan"]["batches"] for i in b["items"]},
+        )
     destinations = {
         item["destination"].rstrip("/")
         for b in plan["batches"]
@@ -446,9 +902,18 @@ def allocate(context, proposed, pages, aliases):
         if b["id"] not in context["editable"]
         for item in b["items"]
     }
+    rows = {row["source_id"]: row for row in (context["research"] or {}).get("rows", [])}
+    retained = {i["id"]: i for b in context["plan"]["batches"] for i in b["items"]}
     items, decisions, positioning_removed = [], [], 0
     for opportunity in opportunities:
-        item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale"}}
+        item = {k: v for k, v in opportunity.items() if k not in {"page_id", "rationale", "kind"}}
+        kind = opportunity.get("kind", legacy.ARTICLE)
+        # A retained item Tin added from a report keeps where it came from.
+        provenance = {
+            key: retained[opportunity["id"]][key]
+            for key in ("source", "evidence")
+            if typed and retained.get(opportunity["id"], {}).get(key)
+        }
         if "positioning" in context:
             # Positioning comes from the project's files, so a brief never carries its own.
             brief, removed = without_positioning(item["brief"])
@@ -475,7 +940,14 @@ def allocate(context, proposed, pages, aliases):
             if opportunity["page_id"]:
                 raise ValueError("A new-page brief cannot target an existing page.")
             destination = ""
+        if kind == legacy.ANSWER:
+            check_answer(item, rows)
+        elif kind == legacy.REFRESH:
+            check_refresh(item, destination, rows)
         item.update(destination=destination, readiness="needs_verification")
+        if kind != legacy.ARTICLE:
+            item["kind"] = kind
+        item.update(provenance)
         items.append(item)
         decisions.append(
             {
@@ -525,6 +997,8 @@ def allocate(context, proposed, pages, aliases):
         "decisions": decisions,
         "consolidations": consolidations,
         **({"positioning_removed": positioning_removed} if "positioning" in context else {}),
+        **({"already_on_site": already_on_site} if site is not None else {}),
+        **({"site_signals": shaped} if shaped is not None else {}),
     }
     plan["strategy"] = portfolio["strategy"]
     if coverage["unused_capacity"]:
@@ -538,7 +1012,165 @@ def allocate(context, proposed, pages, aliases):
     ), coverage
 
 
-def consolidate_updates(portfolio, pages, context):
+def _words(text):
+    return set(re.findall(r"[a-z0-9]+", (text or "").casefold()))
+
+
+def _about(text, competitor):
+    """Whether text compares against this competitor: its name or host label, and a
+    comparison word (vs, alternative, compare)."""
+    words = _words(text)
+    names = [_words(competitor["name"]), {competitor["competitor"].split(".")[0]}]
+    return bool(words & COMPARISON_WORDS) and any(name and name <= words for name in names)
+
+
+def competitor_items(context, plan, pages, *, cap=MAX_COMPETITOR_ITEMS):
+    """Comparison items for the newest competitor.watch report's material changes (v7).
+
+    One item per competitor with backed changes, at most `cap` a run, in the earliest editable
+    batch with room: an article ("<name> alternative") when the site has no comparison page
+    for that competitor, else a refresh of that page. A competitor some plan item already
+    compares against, or whose comparison page an item already updates, adds nothing. Every
+    item cites the report's row, carries `source: competitor.watch` and the competitor page
+    that backs it, and asks the draft to check each claim against that page.
+    Returns the plan and the IDs added; no report adds nothing.
+    """
+    rows = [
+        row
+        for row in (context["research"] or {}).get("rows", [])
+        if row["source_id"].startswith(COMPETITOR_SOURCE_PREFIX)
+    ]
+    if not rows:
+        return plan, []
+    plan = deepcopy(plan)
+    items = [item for batch in plan["batches"] for item in batch["items"]]
+    # The site's own pages, by address (and crawl title): never by body text, which may only
+    # mention a competitor in passing.
+    site = (
+        [
+            (page.get("url"), page.get("title") or "")
+            for page in (context["research"] or {}).get("page_candidates", [])
+        ]
+        + [
+            (page.get("url"), "")
+            for page in pages.get("pages", [])
+            if page.get("status") == "inspected"
+        ]
+        + [
+            (f"https://{plan['host']}{page['path']}", page.get("title") or "")
+            for page in ((context["research"] or {}).get("site_pages") or {}).get("pages", [])
+        ]
+    )
+    site = [(url, title) for url, title in site if clean_url(url, plan["host"])]
+    editable = [b for b in plan["batches"] if b["id"] in context["editable"]]
+    added = []
+    for row in rows:
+        if len(added) >= cap:
+            break
+        competitor = row["data"]
+        url = competitor["changes"][0]["url"]
+        if any(
+            _about(" ".join([i["title"], i["intent"], i["destination"]]), competitor)
+            or (
+                i.get("source")
+                and urlsplit(i.get("evidence", "")).hostname == urlsplit(url).hostname
+            )
+            for i in items
+        ):
+            continue
+        page = next(
+            (
+                address
+                for address, title in site
+                if _about(urlsplit(address).path.replace("-", " ").replace("/", " "), competitor)
+                or _about(title or "", competitor)
+            ),
+            None,
+        )
+        if page and any(i["destination"].rstrip("/") == page.rstrip("/") for i in items):
+            continue
+        decisions = ((context["research"] or {}).get("site_signals") or {}).get("page_decisions")
+        if page and decision_conflict({"title": ""}, page, decisions):
+            continue
+        batch = next((b for b in editable if len(b["items"]) < context["capacity"]), None)
+        if batch is None:
+            break
+        name = competitor["name"]
+        seen = "; ".join(f"{c['change']} ({c['url']})" for c in competitor["changes"][:3])
+        identity = re.sub(r"[^a-z0-9]+", "-", competitor["competitor"].casefold()).strip("-")
+        item = {
+            "id": f"competitor-{identity}"[:48] + "-" + digest([row, plan["program_id"]])[:8],
+            "title": f"Refresh the {name} comparison page" if page else f"{name} alternative",
+            "brief": (
+                f"competitor.watch reported a material change at {name}: {seen}. "
+                + (
+                    "Bring this comparison page's title, meta description, H1 and opening "
+                    "answer in line with what changed."
+                    if page
+                    else f"Write a comparison page for buyers weighing {name} after this change."
+                )
+                + f" Compare like for like from {name}'s own page as it reads today, and present "
+                "the product the way the positioning files do."
+            )[:1800],
+            "intent": f"Buyers weighing {name} after its latest change compare alternatives."[:500],
+            "action": "update_page" if page else "new_page",
+            "destination": page or "",
+            "source_ids": [row["source_id"]],
+            "verification": [
+                f"Check every claim about {name} against {url} as it reads today, and cite it "
+                "beside the claim; leave out anything that page no longer supports."[:500],
+                "Take the product's own plans, prices and capabilities from the positioning "
+                "files and the site, never from the competitor report.",
+            ],
+            "readiness": "needs_verification",
+            **({"kind": legacy.REFRESH} if page else {}),
+            "source": legacy.COMPETITOR_WATCH,
+            "evidence": url,
+        }
+        batch["items"].append(item)
+        items.append(item)
+        added.append(item["id"])
+    plan = legacy.validate_change(context["plan"], plan, editable=set(context["editable"]))
+    return plan, added
+
+
+def check_answer(item, rows):
+    """An answer page answers a buyer question the audit found AI answers missing the site on."""
+    if item["action"] != "new_page":
+        raise ValueError("An answer page is a new page, not an update of an existing one.")
+    if not any(
+        (rows.get(source) or {}).get("data", {}).get("check_id") == ANSWER_CHECK
+        for source in item["source_ids"]
+    ):
+        raise ValueError(
+            "An answer page cites the audit finding whose buyer questions AI answers missed."
+        )
+
+
+def check_refresh(item, destination, rows):
+    """A refresh targets a page the audit or Page decisions marked, and cites that source."""
+    from tin_lite.content_refresh import url_key
+
+    if item["action"] != "update_page":
+        raise ValueError("A page refresh updates an existing page.")
+    wanted = url_key(destination)
+    source = next(
+        (
+            source_id
+            for source_id, row in rows.items()
+            if source_id.startswith(REFRESH_SOURCE_PREFIX) and row["data"]["path"] == wanted
+        ),
+        None,
+    )
+    if source is None:
+        raise ValueError(
+            "A page refresh targets a page the audit or Page decisions marked for a refresh."
+        )
+    if source not in item["source_ids"]:
+        item["source_ids"].append(source)
+
+
+def consolidate_updates(portfolio, pages, context, *, model=Portfolio):
     """One URL, one brief; preserve every proposed section/check or fail the size bound.
 
     This is not a semantic merge or a model repair call. Both original proposals remain
@@ -574,9 +1206,12 @@ def consolidate_updates(portfolio, pages, context):
             kept[field] += "\n\n" + opportunity[field]
         for field in ("source_ids", "verification"):
             kept[field] = list(dict.fromkeys(kept[field] + opportunity[field]))
+        if "kind" in kept and opportunity["kind"] != kept["kind"]:
+            # An article update rewrites the whole page, so it covers a refresh of it.
+            kept["kind"] = legacy.ARTICLE
         facts.append(
             {"kept_item_id": kept["id"], "merged_item_id": merged_id, "destination": page["url"]}
         )
     proposal["opportunities"] = result
     # No truncation, dropped claims/checks, or relaxation of the editable file contract.
-    return Portfolio.model_validate(proposal).model_dump(), facts
+    return model.model_validate(proposal).model_dump(), facts

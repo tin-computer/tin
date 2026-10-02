@@ -123,6 +123,30 @@ def no_draft(publication):
     return judgment.get("schema") == SCHEMA and judgment.get("outcome") in NO_DRAFT
 
 
+def covering_page(judgment, host=None):
+    """The page that already covers an `already_covered` brief, or None.
+
+    The judgment lists the pages it compared, closest first, and validation requires every one
+    to be inspected and at least one to be on the planned site; the first on the site (else the
+    first listed) is the covering page.
+    """
+    if not isinstance(judgment, dict) or judgment.get("outcome") != "already_covered":
+        return None
+    pages = [
+        page["url"]
+        for page in judgment.get("compared_pages") or []
+        if isinstance(page, dict) and page.get("status") == "inspected" and page.get("url")
+    ]
+    own = (host or "").removeprefix("www.").lower()
+    for url in pages:
+        try:
+            if own and page_identity(url)[0] == own:
+                return url
+        except ValueError:
+            continue
+    return pages[0] if pages else None
+
+
 async def saved(database, run):
     if str(run.workflow_id) != "00000000-0000-4000-8000-000000000031":
         return None

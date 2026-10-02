@@ -466,8 +466,9 @@ class OrganicSystemActivities:
                 return None, "content_plan_unavailable"
             from tin_lite.content_draft_sources import ContentDraftSources
 
+            # The system drafts its next article; saved schedules draft the other kinds.
             discovery = await ContentDraftSources(database=self.db, storage=self.storage).discover(
-                project_id=run.project_id, program_id=UUID(program_id)
+                project_id=run.project_id, program_id=UUID(program_id), kinds=("article",)
             )
             if not discovery["next"]["available"]:
                 return None, (

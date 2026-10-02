@@ -7285,33 +7285,44 @@ class Database:
         summary: str,
     ) -> None:
         async with conn.transaction():
+            # A content.generate run whose validated result drafts nothing (already covered,
+            # brief needs revision, coverage unknown) has nothing to review: it closes without
+            # one, and its row says so, so no reader takes it for a draft waiting in Decisions.
             projected = await conn.fetchval(
                 """
+                WITH no_draft AS (
+                  SELECT EXISTS (
+                    SELECT 1 FROM effect_receipts publication
+                    WHERE publication.execution_key
+                        = $1::uuid::text || ':procedure_canonical_commit'
+                      AND publication.operation = 'procedure_canonical_commit'
+                      AND publication.status = 'completed'
+                      AND publication.result->>'canonical_commit_sha' = $2
+                      AND publication.result->>'artifact_path' = $3
+                      AND publication.result->'content_editorial'->>'schema'
+                        = 'content-editorial-check.v1'
+                      AND publication.result->'content_editorial'->>'outcome'
+                        IN ('already_covered','needs_replanning','insufficient_evidence')
+                  ) AS found
+                )
                 UPDATE workflow_runs
                 SET status = 'succeeded', canonical_commit_sha = $2, artifact_path = $3,
                     artifact_ref = $4, retained_output = NULL, error_message = NULL,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_mode = 'steps', progress_step = 'complete',
                     progress_current = 3, progress_total = 3, progress_summary = $5,
-                    progress_updated_at = now(), heartbeat_at = now()
+                    progress_updated_at = now(), heartbeat_at = now(),
+                    review_required = review_required AND NOT (
+                      workflow_id = '00000000-0000-4000-8000-000000000031'
+                      AND review_requested_at IS NULL AND review_decision IS NULL
+                      AND (SELECT found FROM no_draft)
+                    )
                 WHERE id = $1 AND executor IN ('codex.procedure', 'workflow.code')
                   AND status NOT IN ('failed', 'stopped', 'superseded')
                   AND (NOT review_required OR review_decision = 'approved' OR (
                     workflow_id = '00000000-0000-4000-8000-000000000031'
                     AND review_requested_at IS NULL AND review_decision IS NULL
-                    AND EXISTS (
-                      SELECT 1 FROM effect_receipts publication
-                      WHERE publication.execution_key = workflow_runs.id::text
-                        || ':procedure_canonical_commit'
-                        AND publication.operation = 'procedure_canonical_commit'
-                        AND publication.status = 'completed'
-                        AND publication.result->>'canonical_commit_sha' = $2
-                        AND publication.result->>'artifact_path' = $3
-                        AND publication.result->'content_editorial'->>'schema'
-                          = 'content-editorial-check.v1'
-                        AND publication.result->'content_editorial'->>'outcome'
-                          IN ('already_covered','needs_replanning','insufficient_evidence')
-                    )
+                    AND (SELECT found FROM no_draft)
                   ))
                 RETURNING id
                 """,

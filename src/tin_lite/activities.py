@@ -355,6 +355,7 @@ class TinActivities:
                 start_idempotency_key=f"schedule:{payload['occurrence_id']}",
             )
         ):
+            from tin_lite import content_draft
             from tin_lite.code_schedules import pause_for_issue
             from tin_lite.content_draft_sources import (
                 ScheduledDraftHold,
@@ -369,6 +370,7 @@ class TinActivities:
                     integrations=self._integrations,
                     project_id=configured.project_id,
                     inputs=configured.inputs,
+                    kinds=content_draft.supported_kinds(workflow_definition.definition),
                 )
             except ScheduledDraftHold:
                 await self._db.advance_project_workflow_schedule(
@@ -2826,11 +2828,16 @@ class TinActivities:
             run = await self._require_run(run_id)
             if run.status.value not in {"pending", "running"}:
                 raise StaleGenerationError("The draft is no longer active")
+            from tin_lite.content_draft_sources import pinned_kinds
+
             context = await self._await_with_heartbeats(
-                ContentDraftSources(database=self._db, storage=self._storage).prepare(
+                ContentDraftSources(
+                    database=self._db, storage=self._storage, integrations=self._integrations
+                ).prepare(
                     run,
                     output_validator=procedure.output_validator,
                     positioning=content_draft.POSITIONING_MARKER in procedure.prompt,
+                    kinds=await pinned_kinds(self._storage, _definition, run),
                 ),
                 details={"stage": "content_draft_preparation"},
             )
@@ -4199,7 +4206,12 @@ class TinActivities:
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
         from tin_lite import content_draft
-        from tin_lite.content_editorial_judgment import LABELS, NO_DRAFT, validate_pair
+        from tin_lite.content_editorial_judgment import (
+            LABELS,
+            NO_DRAFT,
+            covering_page,
+            validate_pair,
+        )
 
         editorial = None
         if procedure.output_validator == content_draft.EDITORIAL_VALIDATOR:
@@ -4272,9 +4284,17 @@ class TinActivities:
                 if editorial:
                     result["content_editorial"] = editorial
                     if editorial["outcome"] in NO_DRAFT:
+                        # The page that already covers the brief, so the plan item and the
+                        # run both say where its reader is served today.
+                        covered = covering_page(
+                            editorial, procedure.content_draft_context.get("host")
+                        )
+                        if covered:
+                            result["covered_by"] = covered
                         result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}: "
-                            f"{procedure.content_draft_context['item']['title']}. "
+                            f"{LABELS[editorial['outcome']]}"
+                            + (f" by {covered}" if covered else "")
+                            + f": {procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
                 if analytics is not None and analytics_brief.summary(analytics):
@@ -4351,13 +4371,22 @@ class TinActivities:
             if delivery and delivery.get("approval_label")
             else ""
         )
+        summary = f"{workflow_definition.title} is ready for your review. {destination}".strip()
+        if str(run.workflow_id) == "00000000-0000-4000-8000-000000000031":
+            # An answer page or a page refresh says what its approval does.
+            from tin_lite import content_draft
+
+            prepared = await self._db.get_effect(content_draft.receipt_key(run_id))
+            kind = content_draft.context_kind(prepared.result if prepared else None)
+            if kind != content_draft.ARTICLE:
+                summary = content_draft.KIND_REVIEW[kind]
         required = await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=artifact_title,
-            summary=f"{workflow_definition.title} is ready for your review. {destination}".strip(),
+            summary=summary,
             explanation=" ".join(part for part in (lede, destination) if part),
         )
         if required:

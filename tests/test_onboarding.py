@@ -97,7 +97,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
     )
     assert all(
         item["level"] in {"required", "recommended"}
-        for item in rows["content.refresh"]["prerequisites"]
+        for item in rows["content.generate"]["prerequisites"]
     )
     assert rows["organic.keyword_plan"]["runnable"] is False
     assert rows["organic.traffic_system"]["runnable"] is False

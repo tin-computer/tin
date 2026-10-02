@@ -529,7 +529,14 @@ async def start_workflow_run(
             create_arguments["draft_selection"] = await ContentDraftSources(
                 database=runtime.database, storage=runtime.storage
             ).choose(
-                project_id=project_id, inputs=normalized_inputs, retry_of_run_id=retry_of_run_id
+                project_id=project_id,
+                inputs=normalized_inputs,
+                retry_of_run_id=retry_of_run_id,
+                # The organic traffic system's own draft is its next article; its delivery
+                # step adapts articles only. Saved schedules draft every kind they pin.
+                kinds=(content_plan.ARTICLE,)
+                if _organic_parent_run_id is not None
+                else content_draft.supported_kinds(workflow.definition),
             )
             if _organic_parent_run_id is not None:
                 from tin_lite.organic_content import draft_intent

@@ -150,6 +150,7 @@ async def test_registered_surface_and_all_annotations(fixture):
         "start_visibility_audit",
         "start_error_surface_research",
         "start_mention_backlinks",
+        "start_answer_page",
     ],
 )
 async def test_hidden_tools_cannot_be_called_by_name(fixture, name):
@@ -616,7 +617,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 43
+    assert len(entries) == 42
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
@@ -637,6 +638,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "website.change",
         "organic.technical_fix",
         "content.refresh",
+        "content.answer_page",
         "social.x_revise",
         "social.x_draft",
         "social.x_style",
