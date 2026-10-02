@@ -3686,6 +3686,39 @@ def create_mcp_app(
         return words, cost
 
     @server.tool()
+    async def discard_workflow_review(run_id: str) -> dict[str, Any]:
+        """Discard what a run has waiting in Decisions, only when the founder asked you to.
+
+        The proposal is declined: the run ends as declined, nothing it proposed is used,
+        published or applied, and its files stay readable in Files. Use it for a draft or
+        guide the founder turned down, or for an older proposal a newer one replaced. A
+        one-off project task is stopped instead. Discarding again returns the same result.
+        """
+        from tin_lite.proposal_decline import discard_review
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="discard_workflow_review"
+        )
+        try:
+            discarded = await discard_review(runtime=runtime(), run_id=run.id, actor=token.subject)
+        except LookupError as exc:
+            raise ToolError(f"not_found: {exc}") from exc
+        except project_task_control.ProjectTaskDeliveryError as exc:
+            raise ToolError(f"delivery_failed: {exc}") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        return {
+            "id": str(discarded.id),
+            "project_id": str(discarded.project_id),
+            "status": discarded.status.value,
+            "review_decision": discarded.review_decision,
+            **_founder_words(
+                relay="Discarded. Nothing from it was used, and its files stay in Files."
+            ),
+        }
+
+    @server.tool()
     async def approve_workflow_run(
         run_id: str,
         review_token: str | None = None,

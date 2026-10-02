@@ -3733,9 +3733,7 @@ class Database:
         assert row is not None
         return _run(row)
 
-    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
-        row = await self.pool.fetchrow(
-            """
+    _PENDING_DECISION = """
             SELECT COALESCE(decision.id, run.id) AS id,
                    run.id AS run_id,
                    run.project_id,
@@ -3745,13 +3743,23 @@ class Database:
             FROM workflow_runs AS run
             LEFT JOIN run_decisions AS decision
               ON decision.run_id = run.id AND decision.status = 'pending'
-            WHERE run.status = 'needs_input'
-              AND (decision.id = $1 OR (decision.id IS NULL AND run.id = $1))
+            WHERE run.status = 'needs_input' AND {match}
             ORDER BY decision.created_at DESC NULLS LAST
             LIMIT 1
-            """,
+            """
+
+    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            self._PENDING_DECISION.format(
+                match="(decision.id = $1 OR (decision.id IS NULL AND run.id = $1))"
+            ),
             decision_id,
         )
+        return dict(row) if row is not None else None
+
+    async def get_pending_decision_for_run(self, *, run_id: UUID) -> dict[str, Any] | None:
+        """The run's decision waiting in Decisions, the way get_pending_decision reads it."""
+        row = await self.pool.fetchrow(self._PENDING_DECISION.format(match="run.id = $1"), run_id)
         return dict(row) if row is not None else None
 
     async def apply_run_decision(

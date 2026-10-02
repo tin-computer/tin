@@ -287,7 +287,8 @@ phase, the question a task is waiting on, and (for `get_run`) proposed file path
 transcript; `send_project_task_message` answers a waiting question, resumes a paused or reviewing
 task with direction, or steers a running one; `approve_workflow_run` applies reviewed task changes.
 Both surfaces go through `project_task_control`, so answering in either one continues the run.
-Pause and stop remain web-only for now.
+Stop is shared there too: MCP `discard_workflow_review` stops a task waiting for approval, as the
+dashboard's Discard does. Pause remains web-only for now.
 
 `codex.procedure` is the separate reusable executor for registry workflows whose implementation is
 a pinned Codex procedure rather than a bespoke trusted activity. A Tin-owned source package under
