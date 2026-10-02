@@ -4116,7 +4116,12 @@ class TinActivities:
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
         from tin_lite import content_draft
-        from tin_lite.content_editorial_judgment import LABELS, NO_DRAFT, validate_pair
+        from tin_lite.content_editorial_judgment import (
+            LABELS,
+            NO_DRAFT,
+            covering_page,
+            validate_pair,
+        )
 
         editorial = None
         if procedure.output_validator == content_draft.EDITORIAL_VALIDATOR:
@@ -4189,9 +4194,17 @@ class TinActivities:
                 if editorial:
                     result["content_editorial"] = editorial
                     if editorial["outcome"] in NO_DRAFT:
+                        # The page that already covers the brief, so the plan item and the
+                        # run both say where its reader is served today.
+                        covered = covering_page(
+                            editorial, procedure.content_draft_context.get("host")
+                        )
+                        if covered:
+                            result["covered_by"] = covered
                         result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}: "
-                            f"{procedure.content_draft_context['item']['title']}. "
+                            f"{LABELS[editorial['outcome']]}"
+                            + (f" by {covered}" if covered else "")
+                            + f": {procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
                 if analytics is not None and analytics_brief.summary(analytics):

@@ -14,6 +14,9 @@ articles. Show the number of supported briefs, unused capacity, and evidence gap
 2. Inspect at most 60 same-host public HTML pages from the frozen audit/keyword candidates.
    Reuse the IP-pinned, redirect-bounded fetcher. Save bounded extracted text, timestamps and
    hashes as run evidence; failures are unavailable evidence, not proof a page does not exist.
+   From `content-editorial-v7`, the model also reads the whole site's page list (sitemap,
+   Search Console, crawl, pages Tin published, keyword ranking pages), saved as `pages.json`;
+   see [one content.generate](one-content-generate.md).
 3. One receipted model call develops a prioritized portfolio of distinct briefs. Supply all
    retained keywords, including fallible exclusions, selected files and page excerpts. Compact
    source aliases are resolved deterministically into original source IDs. An update must

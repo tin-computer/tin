@@ -613,6 +613,47 @@ def test_a_retired_workflow_keeps_its_contract_and_leaves_discovery(key):
     assert "content.generate" in organic["tin"]["workflows"]
 
 
+# The contract content.plan 0.7.0 (content-editorial-v6) pins on main: its policy, model
+# instructions and schema, hashed exactly as on origin/main.
+MAIN_V6_CONTRACT = "b26b544574af81ec8c04bf5dd99a003dc0f0b5715e03e05f42f3a8b489c738de"
+
+
+def test_versions_on_main_are_unchanged():
+    from tin_lite import content_plan_editorial as editorial
+
+    # content.plan 0.7.0: the v6 contract is byte for byte main's, and a definition pinned to it
+    # still resolves to the untyped planner, without the site's page list or the upside order.
+    v6 = {
+        "policy": editorial.V6_POLICY,
+        "instructions": editorial.V6_INSTRUCTIONS,
+        "schema": editorial.PORTFOLIO_SCHEMA,
+    }
+    assert hashlib.sha256(json.dumps(v6, sort_keys=True).encode()).hexdigest() == MAIN_V6_CONTRACT
+    pinned = editorial.contract(
+        {
+            **spec("content.plan").definition,
+            "content_policy": editorial.V6_POLICY,
+            "content_instructions": editorial.V6_INSTRUCTIONS,
+            "content_schema": editorial.PORTFOLIO_SCHEMA,
+        }
+    )
+    assert not pinned.TYPED
+    assert "site_inventory" not in pinned.POLICY and "refresh_order" not in pinned.POLICY
+    current = editorial.contract(spec("content.plan").definition)
+    assert current.POLICY["site_inventory"] == "full-v1"
+    assert current.POLICY["refresh_order"] == "realistic-upside-v1"
+    assert current.POLICY["site_signals"] == "decisions-snapshot-v1"
+    assert "site_signals" not in pinned.POLICY
+    # content.generate 1.8.0 drafts articles only; content.refresh 1.0.0's contract is pinned in
+    # RETIRED above. This follow-up changes only the versions #267 introduced.
+    assert content_draft.supported_kinds({"version": "1.8.0"}) == ("article",)
+    assert {key: spec(key).version_label for key in RELEASED} == RELEASED
+
+
+# The versions #267 introduced, none of them on main yet.
+RELEASED = {"content.generate": "1.9.0", "content.plan": "0.8.0", "content.refresh": "1.1.0"}
+
+
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(
     publication_db, monkeypatch
 ):

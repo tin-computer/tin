@@ -31,7 +31,9 @@ for (const theme of ["light", "dark"]) test(`packaged My system content card: ${
   const writes = [], errors = [];
   let planReads = 0;
   let liveRuns = [];
-  let programDrafts = {};
+  // An already-covered topic names the page that covers it (content.generate's no-draft result).
+  let programDrafts = {internal_item_0: {run_id: "covered-run", status: "succeeded", stage: "already_covered", has_output: false,
+    assessment: {outcome: "already_covered", rationale: "The SMS guide already answers this."}, covered_by: "https://www.clawmessenger.com/docs/sms"}};
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     const send = (value, type = "application/json") => {response.setHeader("Content-Type", type); response.end(type === "application/json" ? JSON.stringify(value) : value);};
@@ -106,6 +108,10 @@ for (const theme of ["light", "dark"]) test(`packaged My system content card: ${
     await page.locator(".system-card-identity").click();
     await page.locator('[data-item-field="title"]').waitFor({state: "attached"});
     await page.getByText("Article delivery · Drafts in Tin", {exact: true}).waitFor();
+    const covering = page.locator('.content-topic[data-topic-id="internal_item_0"] a[href="https://www.clawmessenger.com/docs/sms"]');
+    await covering.waitFor({state: "attached"});
+    assert.equal(await covering.textContent(), "/docs/sms");
+    assert.match(await page.locator('.content-topic[data-topic-id="internal_item_0"] .system-config-note').textContent(), /Already covered\. The SMS guide already answers this\. Covered by \/docs\/sms; the next draft moves on\./);
     await page.evaluate(() => document.fonts.ready);
     assert.equal(await page.locator("form form").count(), 0);
     assert.equal(await page.locator(".content-program-panel .content-batch-items fieldset").evaluate(node => getComputedStyle(node).borderTopWidth), "0px");

@@ -111,11 +111,23 @@ class ContentDraftSources:
                     and configured.status == "active"
                     and passed_over is None
                 )
+                covered = (
+                    {
+                        "page": prior.get("covered_by"),
+                        "reason": assessment.get("rationale"),
+                        "run_id": prior["run_id"],
+                    }
+                    if prior and prior["stage"] == "already_covered" and assessment and not changed
+                    else None
+                )
                 items.append(
                     {
                         **item,
                         "kind": kind,
                         "passed_over": passed_over,
+                        # Already covered: skipped, with the page that covers it and why, until
+                        # the brief changes or someone explicitly rechecks it.
+                        "covered": covered,
                         "batch_id": batch["id"],
                         "due_date": batch["due_date"],
                         "held": batch["id"] in held,
@@ -213,7 +225,8 @@ class ContentDraftSources:
             "Use item_id only when the user explicitly chooses another item; "
             "rewrite=true additionally requires that explicit item_id. Reuse the request ID for "
             "retries. Plan dates are editorial dates, "
-            "not automatic publication. Already-covered items are recorded separately from drafts. "
+            "not automatic publication. Already-covered items are recorded separately from drafts, "
+            "with the page that covers them (covered), and the next run moves past them. "
             "A no-draft run never starts another item. Missing coverage or a brief needing "
             "revision "
             "holds the next selection until the brief changes or the user explicitly rechecks it "

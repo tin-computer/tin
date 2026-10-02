@@ -65,8 +65,17 @@ def item_kind(item: dict) -> str:
 
 # How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
 KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+# How PLAN.md names the sources of the site's page list (v7).
+SITE_SOURCE_LABELS = {
+    "sitemap": "sitemap",
+    "search_console": "Search Console",
+    "crawl": "crawl",
+    "tin_published": "published by Tin",
+    "keywords": "keyword research",
+}
 # A workflow whose report Tin turned into this item itself, with the page that backs it.
 COMPETITOR_WATCH = "competitor.watch"
+CONTENT_EFFICACY = "organic.content_efficacy"
 OPTIONAL_FIELDS = ("kind", "source", "evidence")
 
 
@@ -83,9 +92,10 @@ class ContentItem(Strict):
     # Hidden from the JSON schema, so the pinned v1 model contract stays byte for byte, and
     # left out of the file when absent, so older plans and their brief digests are unchanged.
     kind: SkipJsonSchema[Kind | None] = None
-    # Set only on items Tin adds from another workflow's report (competitor.watch), with the
-    # public page that backs the item. Hidden and left out when absent, like kind.
-    source: SkipJsonSchema[Literal["competitor.watch"] | None] = None
+    # Set only on items Tin adds from another workflow's report (competitor.watch, or Page
+    # decisions from organic.content_efficacy), with the public page that backs the item.
+    # Hidden and left out when absent, like kind.
+    source: SkipJsonSchema[Literal["competitor.watch", "organic.content_efficacy"] | None] = None
     evidence: SkipJsonSchema[str | None] = Field(default=None, max_length=500)
 
     @model_serializer(mode="wrap")
@@ -223,6 +233,15 @@ def paths(run_id: str) -> dict[str, str]:
     }
 
 
+# A typed (v7) plan also saves the whole site's page list beside its evidence.
+SITE_PAGES_FILE = "pages.json"
+SITE_PAGES_FILE_BYTES = 250_000
+
+
+def site_pages_path(run_id: str) -> str:
+    return f"reports/content-plan/{UUID(run_id)}/{SITE_PAGES_FILE}"
+
+
 def empty_plan(program_id, inputs, scope) -> dict:
     start = date.fromisoformat(inputs["start_date"])
     end = end_date(start, inputs.get("duration", "6_months"))
@@ -352,6 +371,43 @@ def render_plan(
             "This is not proof that other pages do not exist or that product claims are true.",
             "",
         ]
+        inventory = editorial.get("site_inventory")
+        if inventory:
+            counted = ", ".join(
+                f"{label} {inventory['by_source'][key]}"
+                for key, label in SITE_SOURCE_LABELS.items()
+                if inventory["by_source"].get(key)
+            )
+            lines += [
+                f"The site's page list holds {inventory['pages']} pages ({counted}), saved in "
+                f"{markdown_text(inventory['path'])}"
+                + (
+                    f"; {inventory['omitted']} more were over its bound."
+                    if inventory["omitted"]
+                    else "."
+                ),
+                "",
+            ]
+        signals = editorial.get("site_signals")
+        if signals:
+            shaped = []
+            if signals.get("page_decisions"):
+                shaped.append(
+                    f"Page decisions of {signals['page_decisions']} "
+                    f"(refresh items added: {len(signals.get('added') or [])}; "
+                    f"proposals left out: {len(signals.get('left_out') or [])})"
+                )
+            if signals.get("traffic"):
+                shaped.append(
+                    f"the traffic snapshot of {signals['traffic']} "
+                    f"(topics moved up next to converting pages: "
+                    f"{len(signals.get('moved_up') or [])}; weakly converting pages offered "
+                    f"for a refresh: {len(signals.get('refresh_candidates') or [])})"
+                )
+            if shaped:
+                lines += ["Shaped by " + "; ".join(shaped) + ".", ""]
+            if signals.get("note"):
+                lines += [markdown_text(signals["note"]), ""]
         for heading, key in (
             ("Evidence needed for more work", "gaps"),
             ("Excluded opportunities", "excluded"),
@@ -359,6 +415,19 @@ def render_plan(
             if editorial[key]:
                 lines += [f"### {heading}", ""]
                 lines += [f"- {markdown_text(value)}" for value in editorial[key]] + [""]
+        if (signals or {}).get("left_out"):
+            lines += ["### Left out by Page decisions", ""]
+            lines += [
+                f"- {markdown_text(entry['title'])}: {markdown_text(entry['reason'])}."
+                for entry in signals["left_out"]
+            ] + [""]
+        if editorial.get("already_on_site"):
+            lines += ["### Already on the site", ""]
+            lines += [
+                f"- {markdown_text(entry['title'])}: left out, the site has "
+                f"{markdown_text(entry['page'])} ({entry['match']} match)."
+                for entry in editorial["already_on_site"]
+            ] + [""]
         decisions = {d["item_id"]: d for d in editorial["decisions"]}
         if editorial.get("consolidations"):
             lines += [

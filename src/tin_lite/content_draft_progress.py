@@ -1,6 +1,6 @@
 """Draft progress is a projection of ordinary runs and their trusted selection receipts."""
 
-from tin_lite.content_editorial_judgment import NO_DRAFT
+from tin_lite.content_editorial_judgment import NO_DRAFT, covering_page
 from tin_lite.content_programs import decoded
 from tin_lite.organic_audit import digest
 
@@ -31,6 +31,8 @@ async def history(executor, *, project_id, program_id):
                    delivery.error_message AS delivery_error,
                    COALESCE(published.result->'content_editorial',
                             persisted.result->'content_editorial') AS editorial,
+                   published.result->>'covered_by' AS covered_by,
+                   COALESCE(selected.result->>'host', prepared.result->>'host') AS host,
                    COALESCE(selected.result->'item', prepared.result->'item') AS item,
                    COALESCE(selected.result->'item'->>'id', prepared.result->'item'->>'id',
                             NULLIF(run.input->>'item_id', '')) AS item_id
@@ -108,6 +110,14 @@ async def history(executor, *, project_id, program_id):
                 or decoded(row["output_resolution"] or {}).get("state") in {"applied", "kept"}
             )
             and decoded(row["editorial"] or {}).get("outcome") in NO_DRAFT
+            else None,
+            # The page that already covers this brief: recorded by the run, or for a run
+            # saved before it recorded one, read from its judgment.
+            "covered_by": (
+                row["covered_by"] or covering_page(decoded(row["editorial"]), row["host"])
+            )
+            if row["status"] in SETTLED
+            and decoded(row["editorial"] or {}).get("outcome") == "already_covered"
             else None,
             "artifact_path": row["artifact_path"],
             "output_source": "canonical" if row["canonical_commit_sha"] else "retained",

@@ -16,7 +16,10 @@ new pages.
    Console evidence, then chooses one page:
    - It considers pages the audit flagged with `search.low_ctr` or `search.near_page_one`, plus
      `search.decay` and `aeo.answer_structure` when the audit reports them.
-   - It picks the page with the most impressions at stake.
+   - It picks the page with the most impressions at stake. (content.plan's refresh candidates
+     and content.generate's refresh items rank by realistic upside instead: pages near the top
+     results first, pages beyond position 30 last. See
+     [one content.generate](one-content-generate.md).)
    - It skips a page whose refresh is still waiting for review, was approved but has not
      reached the site, sits in an open PR (or one Tin could not check), or went live less than
      six weeks ago, so each refresh has time to show whether it worked and no page is refreshed
