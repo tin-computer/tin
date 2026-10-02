@@ -8,8 +8,8 @@ retirement whenever paid visits, protection, links or a safe redirect target are
 Nothing here edits the site or asks for an approval in this file. The decisions block at the
 end is read by the workflows that act on it:
 
-- merges (301) and retirements (noindex or 301) are URL changes with a stable ID each
-  (tin_lite.planned_url_changes), for website.change to turn into changes the founder approves;
+- merges (301) and retirements (noindex or 301) are URL changes; website.change (PR #266,
+  source `planned`) reads them and turns each into a change the founder approves;
 - refresh and rewrite rows wait for the content workflow. content.refresh 1.0.0 and the
   technical fix (site-fix-v5) are on main and do not read this file.
 
@@ -1170,9 +1170,9 @@ def report(block, inventory, notes, has_snapshot, posthog, previous):
             lines.append(text)
         lines += [
             "",
-            "Redirects and noindex changes are proposals: nothing here changes the site. Each "
-            "has a stable ID in the decisions block, and website.change asks you before it "
-            "makes one. A page to remove (404 or 410) is yours to delete.",
+            "Redirects and noindex changes are proposals: nothing here changes the site. "
+            "website.change reads them from the decisions block and asks you before it makes "
+            "one. A page to remove (404 or 410) is yours to delete.",
         ]
     else:
         lines.append("No merge or retirement passed its guards this week.")

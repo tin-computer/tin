@@ -131,7 +131,10 @@ async def test_ordinary_week_decides_every_page(monkeypatch):
         ("/compare/quickbooks-alternatives", "301", "website.change"),
         ("/offer/spring-sale", "noindex", "website.change"),
     }
-    assert "website.change asks you before it makes one" in content
+    assert "asks you before it makes one" in content
+    # website.change (PR #266, source `planned`) reads this block; its shape is the contract.
+    assert block(content)["schema"] == "content.efficacy/1" and block(content)["generated"]
+    assert all({"from", "to", "kind", "reason", "confirmed", "owner"} <= set(c) for c in changes)
     assert "approved" not in content.lower()  # no approval to hand-edit in this file
     assert [c["step"] for c in ctx.services.calls] == []  # a fresh snapshot needs no GSC reads
     assert "Tallyfox" in json.dumps(ctx.models.calls[0]["data"]["sources"])
