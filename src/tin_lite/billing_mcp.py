@@ -27,6 +27,9 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
         spent_this_month_usd is this project's. A billing admin's transactions cover the
         whole workspace wallet; each has a scope: project, other_project or workspace.
+        A billing admin's available_usd is what a new start can use, the figure the start
+        check uses: the balance less reserved_usd and set_aside_usd (estimates of runs
+        that are pending or running).
         """
         token = await caller()
         return await result(service().overview(UUID(project_id), token.subject))

@@ -493,6 +493,83 @@ async def test_preparation_drops_fixed_findings_and_names_files_the_diff_can_pro
         await execution._validate_batch_delivery(run, bad, prepared)
 
 
+SKIPPED_MEDIA = (
+    {"path": "public/opensource/hero.mp4", "size": 3_378_075, "reason": "video"},
+    {"path": "public/euphony/assets/main-LKI_ICf3.js", "size": 2_678_607, "reason": "built_asset"},
+)
+LARGE_SOURCE = {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"}
+
+
+async def test_a_snapshot_without_its_large_media_prepares_and_delivers(monkeypatch):
+    """Runs 43b99efd and 721f6a8d stopped here on tin-web's hero video and bundles."""
+    monkeypatch.setattr("tin_lite.technical_build_profile.ARCHIVE_MAX_BYTES", 2_000)
+    login = f"{BASE}/login"
+    repairs = [
+        repair("indexation.utility_pages_indexable", urls=[login], finding_id="oa_" + "3" * 20)
+    ]
+    # More source than the read bound allows: only the served text files are read.
+    repo = {"login.html": PAGE, "app/data.ts": "x" * 5_000, "package.json": NEXT_PACKAGE}
+    execution, selection, run = batch_execution(repairs=repairs, repo=repo, pages={login: PAGE})
+    execution.integrations.github_repository_bundle.return_value = SimpleNamespace(
+        archive=archive(repo), complete=True, skipped=SKIPPED_MEDIA, missing=()
+    )
+    prepared = await execution._resolve_batch(run, selection)
+    assert prepared["reason"] is None and "repository_missing" not in prepared
+    assert prepared["batch"]["strict_files"]["login.html"]["kinds"] == ["html_noindex"]
+    assert technical_fix.preparation_failed(prepared) is False
+
+    noindex = PAGE.replace("</head>", '<meta name="robots" content="noindex">\n</head>')
+    await execution._validate_batch_delivery(
+        run, patch(prepared, [{"path": "login.html", "content": noindex}], body=NOTE), prepared
+    )
+    # A fix can't write over a file Tin never read.
+    video = {"path": "public/opensource/hero.mp4", "content": "not a video\n"}
+    with pytest.raises(ValueError, match="hero.mp4 is a large media or built file"):
+        await execution._validate_batch_delivery(run, patch(prepared, [video], body=NOTE), prepared)
+
+
+async def test_a_large_source_file_ends_the_run_failed_and_names_the_file():
+    login = f"{BASE}/login"
+    repairs = [
+        repair("indexation.utility_pages_indexable", urls=[login], finding_id="oa_" + "3" * 20)
+    ]
+    execution, selection, run = batch_execution(
+        repairs=repairs, repo={"login.html": PAGE}, pages={login: PAGE}
+    )
+    execution.integrations.github_repository_bundle.return_value = SimpleNamespace(
+        archive=archive({"login.html": PAGE}),
+        complete=False,
+        skipped=SKIPPED_MEDIA,
+        missing=(LARGE_SOURCE,),
+    )
+    prepared = await execution._resolve_batch(run, selection)
+    assert prepared["reason"] == "repository_incomplete"
+    assert prepared["repository_missing"] == [LARGE_SOURCE]
+    execution.integrations.github_open_pull_requests.assert_not_awaited()
+    assert technical_fix.preparation_failed(prepared) is True
+    assert technical_fix.preparation_summary(prepared) == (
+        "Tin couldn't read every file in the repository: src/data/posts.json (2.4 MB, over "
+        "the 2 MB limit for files Tin reads). No change proposed."
+    )
+    text = rules.report(prepared, reason="repository_incomplete").decode()
+    assert "Files Tin couldn't read:" in text and "- src/data/posts.json (2.4 MB" in text
+    # Many unread files: the first few are named, with the true count of the rest.
+    many = [{**LARGE_SOURCE, "path": f"src/data/part-{index}.json"} for index in range(25)]
+    crowded = {
+        **prepared,
+        **technical_fix.missing_record(SimpleNamespace(complete=False, missing=many)),
+    }
+    assert crowded["repository_missing_count"] == 25
+    assert len(crowded["repository_missing"]) == technical_fix.MAX_NAMED_MISSING
+    assert technical_fix.preparation_summary(crowded).endswith("; and 22 more. No change proposed.")
+    assert "- and 5 more" in rules.report(crowded, reason="repository_incomplete").decode()
+    # Delivery refuses the same snapshot and says which file.
+    with pytest.raises(ValueError, match=r"src/data/posts\.json \(2\.4 MB"):
+        await execution._validate_batch_delivery(
+            run, patch(prepared, [{"path": "login.html", "content": PAGE}], body=NOTE), prepared
+        )
+
+
 async def test_nothing_left_to_fix_ends_without_a_pr():
     execution, selection, run = batch_execution(repairs=[], repo={})
     prepared = await execution._resolve_batch(run, selection)
@@ -659,6 +736,62 @@ async def test_the_preview_sorts_a_real_audit_and_takes_decisions():
     answered = await source.service.batch(**args, decisions=[f"{decision['id']}=allow"])
     assert "robots_allow_ai_search" in {r["kind"] for r in answered["plan"]["repairs"]}
     assert answered["decisions_needed"] == []
+
+
+async def test_a_v5_batch_that_cannot_read_the_repository_fails_with_the_file(
+    publication_db, monkeypatch
+):
+    source = batch_source()
+    source.selection["finding_id"] = next(
+        row["id"]
+        for row in source.inventory["findings"]
+        if row["check_id"] == "robots.sitemap_reference_missing"
+    )
+    f = await technical_fixture(publication_db, monkeypatch, source=source)
+    preview = await source.service.batch(
+        project_id=source.project.id,
+        audit_run_id=source.run.id,
+        audit_revision=source.run.canonical_commit_sha,
+        expected_repository="owner/site",
+        repository_serves_site=True,
+    )
+    monkeypatch.setattr(
+        "tin_lite.technical_fix_execution.TechnicalFixSources.batch",
+        AsyncMock(return_value=preview),
+    )
+    inputs = {
+        "audit_run_id": str(source.run.id),
+        "audit_revision": source.run.canonical_commit_sha,
+        "finding_ids": [],
+        "decisions": [],
+        "expected_repository": "owner/site",
+        "repository_serves_site": True,
+        "context": "",
+    }
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET input=$2::jsonb WHERE id=$1", f.run.id, json.dumps(inputs)
+    )
+    f.run = await f.db.get_run(f.run.id)
+    repo = {"public/robots.txt": ROBOTS, "login.html": PAGE, "package.json": NEXT_PACKAGE}
+    f.integrations.github_repository_bundle.return_value = SimpleNamespace(
+        archive=archive(repo), complete=False, skipped=SKIPPED_MEDIA, missing=(LARGE_SOURCE,)
+    )
+    site = {f"{BASE}/robots.txt": ROBOTS, f"{BASE}/sitemap.xml": SITEMAP}
+    f.execution.fetch_file = AsyncMock(side_effect=lambda url, **_: served(url, site[url]))
+    f.execution.fetch = AsyncMock(side_effect=lambda url, **_: served_page(url, PAGE))
+
+    assert await f.execution.prepare(f.run, policy=technical_fix.BATCH_POLICY) is True
+    run = await f.db.get_run(f.run.id)
+    assert run.status.value == "failed"
+    assert "src/data/posts.json (2.4 MB, over the 2 MB limit" in run.error_message
+    f.integrations.github_open_pull_requests.assert_not_awaited()
+    report = await f.storage.read_canonical_artifact(
+        repo_id=(await f.db.get_project(run.project_id)).state_repo_id,
+        commit_sha=run.canonical_commit_sha,
+        path=run.artifact_path,
+    )
+    assert "Tin couldn't read every file in the repository" in report.decode()
+    assert "- src/data/posts.json (2.4 MB" in report.decode()
 
 
 async def test_a_v5_batch_prepares_once_and_delivers_one_checked_pr(publication_db, monkeypatch):

@@ -162,15 +162,21 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
     f = billed
     await fund(f, 1000)
     run = await direct(f)
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "10.00"
+
+    async def held():
+        view = await f.billing.overview(f.project.id, ACTOR)
+        return view["reserved_usd"], view["set_aside_usd"], view["available_usd"]
+
+    # Admission reserves nothing; the rest of the $2 estimate is set aside while it runs.
+    assert await held() == ("0.00", "2.00", "8.00")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
     await operation(f, run, "one", 500_000_000)
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.50"
+    assert await held() == ("0.50", "1.50", "8.00")
     await asyncio.gather(*(observe(f, "one", 125_000_000) for _ in range(3)))
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.87"
+    assert await held() == ("0.13", "1.87", "8.00")
     await operation(f, run, "two", 500_000_000)
     await observe(f, "two", 125_000_000)
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.75"
+    assert await held() == ("0.25", "1.75", "8.00")
     await finish(f, run)
     assert await asyncio.gather(*(f.billing.settle(run.id) for _ in range(3))) == [250_000_000] * 3
     view = await f.billing.overview(f.project.id, ACTOR)
@@ -300,7 +306,13 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed, monkeypatch):
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 1
     await observe(f, str(winner.id), 200_000_000)
     await operation(f, loser, str(loser.id), 6_000_000_000)
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "3.80"
+    view = await f.billing.overview(f.project.id, ACTOR)
+    # The winner's remaining $4.80 estimate can only take the $3.80 that is left.
+    assert (view["reserved_usd"], view["set_aside_usd"], view["available_usd"]) == (
+        "6.20",
+        "3.80",
+        "0.00",
+    )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 2
 
 
@@ -464,12 +476,119 @@ async def test_admission_counts_unstarted_per_call_runs_at_their_estimates(bille
         await direct(f, "organic.keyword_plan", six)
     await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 5})
 
-    # The shared wallet: the unstarted $5 run holds its estimate against new starts,
-    # though nothing is reserved or shown as held.
+    # The shared wallet: the unstarted $5 run holds its estimate against new starts.
+    # Nothing is reserved, and the Billing page shows the start check's own figures.
     await limits(f, monthly_usd=100, revision=2)
     view = await f.billing.overview(f.project.id, ACTOR)
-    assert view["available_usd"] == "5.00" and view["reserved_usd"] == "0.00"
-    with pytest.raises(BillingError, match=r"Available credits: \$0\.00") as error:
+    assert view["available_usd"] == "0.00" and view["reserved_usd"] == "0.00"
+    assert view["set_aside_usd"] == "5.00"
+    with pytest.raises(BillingError, match=r"Available credits: \$0\.00 after \$5\.00") as error:
         await direct(f, "organic.keyword_plan", {**KEYWORDS, "max_cost_usd": 3})
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 2
+
+
+def plan(dollars):
+    return {**KEYWORDS, "max_cost_usd": dollars}
+
+
+async def committed(f, run, nanos):
+    await operation(f, run, f"{run.id}:call", nanos)
+    await observe(f, f"{run.id}:call", nanos)
+
+
+async def wallet_view(f):
+    view = await f.billing.overview(f.project.id, ACTOR)
+    return view["reserved_usd"], view["set_aside_usd"], view["available_usd"]
+
+
+@pytest.mark.parametrize("status", ["succeeded", "failed", "stopped", "superseded"])
+async def test_ended_run_awaiting_settlement_holds_only_what_it_committed(billed, status):
+    """A run that has ended buys nothing more; settlement just has not reached it yet."""
+    f = billed
+    await fund(f, 1000)
+    ended = await direct(f, "organic.keyword_plan", plan(9))
+    await committed(f, ended, 400_000_000)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status=$2, lease_active=false WHERE id=$1", ended.id, status
+    )
+    assert await wallet_view(f) == ("0.40", "0.00", "9.60")
+    await direct(f, "organic.keyword_plan", plan(9))  # The ended run's $8.60 is not held.
+    await f.billing.reconcile()
+    assert await f.billing.settle(ended.id) == 400_000_000
+
+
+async def test_run_waiting_on_its_founder_holds_only_what_it_committed(billed):
+    """Production, 2026-10-01: two project tasks waiting in review since 9/29 held $9.48
+    of the wallet against every new start, while the Billing page showed it available."""
+    f = billed
+    await fund(f, 1000)
+    await limits(f, monthly_usd=6, revision=1)
+    parked = await direct(f, "organic.keyword_plan", plan(5))
+    await committed(f, parked, 400_000_000)
+    await f.db.pool.execute(
+        """UPDATE workflow_runs SET status='needs_input', executor='project.task',
+           lease_active=true WHERE id=$1""",
+        parked.id,
+    )
+    # Settlement keeps the task's budget open for its next turn, as before.
+    await f.billing.reconcile()
+    status = "SELECT status FROM billing_run_budgets WHERE run_id=$1"
+    assert await f.db.pool.fetchval(status, parked.id) == "reserved"
+    # Its committed $0.40 still counts for the wallet and the month; its estimate does not.
+    assert await wallet_view(f) == ("0.40", "0.00", "9.60")
+    second = await direct(f, "organic.keyword_plan", plan(5))
+    with pytest.raises(BillingError, match=r"\(\$5\.40 already committed\)"):
+        await direct(f, "organic.keyword_plan", plan(2))
+    # Once the founder answers, the task runs again and its estimate is set aside again,
+    # and each of its paid calls is checked against the wallet as before.
+    await f.db.pool.execute("UPDATE workflow_runs SET status='running' WHERE id=$1", parked.id)
+    await f.db.pool.execute("UPDATE workflow_runs SET status='failed' WHERE id=$1", second.id)
+    assert await wallet_view(f) == ("0.40", "4.60", "5.00")
+    await operation(f, parked, "after-answer", 100_000_000)
+
+
+@pytest.mark.parametrize("status", ["pending", "running"])
+async def test_run_in_progress_still_holds_its_estimate(billed, status):
+    f = billed
+    await fund(f, 1000)
+    first = await direct(f, "organic.keyword_plan", plan(6))
+    await committed(f, first, 500_000_000)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status=$2, lease_active=$2='running' WHERE id=$1",
+        first.id,
+        status,
+    )
+    assert await wallet_view(f) == ("0.50", "5.50", "4.00")
+    with pytest.raises(BillingError, match=r"Available credits: \$4\.00 after \$5\.50") as error:
+        await direct(f, "organic.keyword_plan", plan(5))
+    assert error.value.code == "insufficient_funds"
+    await direct(f, "organic.keyword_plan", plan(4))
+
+
+async def test_start_check_and_billing_page_agree_on_held_and_available(billed):
+    import re
+
+    f = billed
+    await fund(f, 1000)
+    in_progress = await direct(f, "organic.keyword_plan", plan(3))
+    await committed(f, in_progress, 500_000_000)
+    parked = await direct(f, "organic.keyword_plan", plan(2))
+    await committed(f, parked, 200_000_000)
+    ended = await direct(f, "organic.keyword_plan", plan(2))
+    await committed(f, ended, 300_000_000)
+    await f.db.pool.execute(
+        "UPDATE workflow_runs SET status='needs_input', executor='project.task' WHERE id=$1",
+        parked.id,
+    )
+    await finish(f, ended)
+    view = await f.billing.overview(f.project.id, ACTOR)
+    with pytest.raises(BillingError) as error:
+        await direct(f, "organic.keyword_plan", plan(7))
+    available, set_aside = re.search(
+        r"Available credits: \$(\d+\.\d\d) after \$(\d+\.\d\d) set aside", str(error.value)
+    ).groups()
+    assert (view["available_usd"], view["set_aside_usd"]) == (available, set_aside)
+    assert (view["reserved_usd"], set_aside, available) == ("1.00", "2.50", "6.50")
+    await direct(f, "organic.keyword_plan", plan(6))
+    assert await wallet_view(f) == ("1.00", "8.50", "0.50")

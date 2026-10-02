@@ -125,9 +125,12 @@ subscription, key, or webhook was changed.
   unresolved expense is absorbed after the recorded 24-hour deadline. Charges round once to
   cents. Monthly limits count charges posted in that UTC month plus all unsettled reservations,
   including reservations carried from a prior month. At admission, an unsettled per-call run
-  that can still buy work counts at the larger of its admitted estimate and its committed
-  liability, for the monthly limit and for the credits a new start needs; a run awaiting
-  reconciliation counts at its committed liability.
+  that can buy work now (a pending or running run in its tree) counts at the larger of its
+  admitted estimate and its committed liability, for the monthly limit and for the credits a
+  new start needs. A run awaiting reconciliation, one that has ended but not settled, and one
+  waiting on its founder (needs_input, paused) count at their committed liability.
+  `BillingService.wallet_credits` computes held and available credits once; the start check
+  and `get_project_spending` (`available_usd`, `reserved_usd`, `set_aside_usd`) both read it.
 - A lost Temporal start acknowledgment retains the original run and reservation. Recovery uses
   the same workflow ID with duplicate reuse rejected. The browser retains opaque quote/request
   IDs across reloads after ambiguous starts; it stores no workflow inputs with them.

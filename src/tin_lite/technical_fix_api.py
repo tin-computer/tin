@@ -146,7 +146,10 @@ async def preflight(
             values = payload.model_dump()
             finding_id = values.pop("finding_id")
             return await preparation.batch(
-                project_id=project_id, finding_ids=[finding_id] if finding_id else [], **values
+                project_id=project_id,
+                finding_ids=[finding_id] if finding_id else [],
+                check_repository=True,
+                **values,
             )
         if not payload.finding_id:
             raise TechnicalFixError(
@@ -154,6 +157,7 @@ async def preflight(
             )
         return await preparation.preflight(
             project_id=project_id,
+            check_repository=True,
             **payload.model_dump(exclude={"decisions"}),
         )
     except TechnicalFixError as exc:

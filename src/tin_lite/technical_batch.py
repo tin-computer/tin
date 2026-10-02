@@ -46,6 +46,7 @@ from tin_lite.organic_audit_site import (
     schema_broken,
     url_key,
 )
+from tin_lite.repository_limits import describe_omission
 
 FRAMEWORK_NOTE = site_rules.FRAMEWORK_NOTE
 
@@ -542,6 +543,13 @@ REASONS = {
     "already_resolved": "The live site no longer shows these problems. No change proposed.",
     "site_unreadable": "Tin couldn't read the live site for these findings. No change proposed.",
     "unsupported_source": "Tin couldn't read the repository. No change proposed.",
+    "repository_incomplete": (
+        "Tin couldn't read every file in the repository, so it can't check a fix against it. "
+        "No change proposed."
+    ),
+    "plan_too_large": (
+        "The repair plan is too large to hand to Codex in one run. No change proposed."
+    ),
     "incomplete_pr_evidence": "Open-PR evidence is incomplete. No change proposed.",
     "no_safe_patch": "Codex could not prepare a safe change. The findings remain unresolved.",
 }
@@ -563,11 +571,26 @@ LEFT_OUT = (
 )
 
 
+def missing_lines(prepared: dict) -> list[str]:
+    """The report's list of files Tin couldn't read, if any (both repair report formats)."""
+    missing = prepared.get("repository_missing") or []
+    if not missing:
+        return []
+    more = (prepared.get("repository_missing_count") or len(missing)) - len(missing)
+    return [
+        "Files Tin couldn't read:",
+        "",
+        *(f"- {describe_omission(item)}" for item in missing),
+        *([f"- and {more} more"] if more > 0 else []),
+        "",
+    ]
+
+
 def report(prepared: dict, *, reason: str | None = None, pull_request=None) -> bytes:
     batch = prepared["batch"]
     lines = ["# Technical fix", "", "## Result", ""]
     if reason:
-        lines += [REASONS[reason], ""]
+        lines += [REASONS[reason], "", *missing_lines(prepared)]
     else:
         count = len(batch["repairs"])
         lines += [

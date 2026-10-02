@@ -654,6 +654,11 @@ def _source_path(path: str) -> bool:
     return path.endswith(SOURCE_SUFFIXES) and not SKIPPED_PARTS.intersection(parts)
 
 
+def searched(path: str, size: int) -> bool:
+    """Whether plan_patch searches a repository file for the page's text."""
+    return _source_path(path) and size <= MAX_SOURCE_BYTES
+
+
 def plan_patch(files: dict[str, bytes], items: list[dict[str, str]]) -> dict[str, str]:
     """The changed source files for approved replacements, or ValueError saying why not.
 

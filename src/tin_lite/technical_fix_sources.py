@@ -12,6 +12,8 @@ import re
 from dataclasses import asdict
 from uuid import UUID
 
+import httpx
+
 from tin_lite.integrations import IntegrationError
 from tin_lite.organic_audit import (
     ARTIFACT_LIMITS,
@@ -26,6 +28,7 @@ from tin_lite.organic_audit import (
     technical_findings,
 )
 from tin_lite.organic_audit_scope import audit_hosts
+from tin_lite.repository_limits import describe_omissions
 from tin_lite.technical_metadata_rules import SUPPORTED_CHECKS
 
 MAX_AFFECTED_PAGES = 5
@@ -404,7 +407,9 @@ class TechnicalFixSources:
         finding_id: str,
         expected_repository: str,
         repository_serves_site: bool,
+        check_repository: bool = False,
     ):
+        """`check_repository` adds `repository_warnings` from one read of the bound tree."""
         if not re.fullmatch(r"[0-9a-f]{40}", audit_revision) or not re.fullmatch(
             r"oa_[0-9a-f]{20}", finding_id
         ):
@@ -458,7 +463,7 @@ class TechnicalFixSources:
             )
         except IntegrationError as exc:
             raise TechnicalFixError("github_binding_failed", str(exc)) from exc
-        return {
+        result = {
             "source": source["source"],
             "target": source["target"],
             "selection": selection,
@@ -472,6 +477,32 @@ class TechnicalFixSources:
                 "A run must pin its own binding and verify the affected routes before editing.",
             ],
         }
+        if check_repository:
+            result["repository_warnings"] = await self.repository_warnings(project_id, binding)
+        return result
+
+    async def repository_warnings(self, project_id, binding):
+        """Files that would stop a run because Tin can't read them, from one tree read.
+
+        Large images, video, fonts and built bundles are left out without stopping a run, so
+        they never appear here. A check that can't run says so rather than failing the preview.
+        """
+        try:
+            missing = await self.integrations.github_repository_missing_files(
+                project_id=project_id, binding=binding
+            )
+        except (IntegrationError, httpx.HTTPError) as exc:
+            reason = str(exc) if isinstance(exc, IntegrationError) else "GitHub didn't answer"
+            return [
+                f"Tin couldn't check the repository's files before the run: {reason.rstrip('.')}."
+            ]
+        if not missing:
+            return []
+        return [
+            "A run will stop because Tin can't read every file in the repository: "
+            f"{describe_omissions(missing)}. Files over 2 MB are left out unless they are "
+            "images, video, audio, fonts, archives, PDFs or built assets."
+        ]
 
     async def batch(
         self,
@@ -484,11 +515,13 @@ class TechnicalFixSources:
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         bind: bool = True,
+        check_repository: bool = False,
     ):
         """site-fix-v5's preview: every finding of one audit, sorted into repairs, judgment
         calls, copy and manual steps. `decisions` are `finding_id=choice` answers.
 
-        `bind` False previews without touching GitHub (the plan alone)."""
+        `bind` False previews without touching GitHub (the plan alone). `check_repository`
+        adds `repository_warnings` from one read of the bound tree."""
         from tin_lite import technical_repair_plan as repair_plan
 
         if not re.fullmatch(r"[0-9a-f]{40}", audit_revision):
@@ -556,10 +589,13 @@ class TechnicalFixSources:
             )
         except IntegrationError as exc:
             raise TechnicalFixError("github_binding_failed", str(exc)) from exc
-        return {
+        result = {
             **result,
             "repository_binding": asdict(binding),
             "repository_mapping": "member_asserted_not_verified",
             "live_verification": "not_performed",
             "execution_available": bool(planned["repairs"]),
         }
+        if check_repository:
+            result["repository_warnings"] = await self.repository_warnings(project_id, binding)
+        return result

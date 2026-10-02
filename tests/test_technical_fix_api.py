@@ -118,6 +118,43 @@ async def test_members_read_the_same_verified_source_and_preview_over_http_and_m
     assert first.kwargs == {"project_id": f.project.id, "expected_repository": "owner/site"}
 
 
+async def test_preflight_warns_about_files_a_run_would_stop_on(surface_fixture):
+    f = surface_fixture
+    f.token.subject = "member"
+    args = arguments(f)
+    body = {k: v for k, v in args.items() if k != "project_id"}
+    response = await f.client.post(f.root + "/preflight", json=body)
+    assert response.json()["repository_warnings"] == []
+
+    f.integrations.github_repository_missing_files.return_value = (
+        {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},
+    )
+    response = await f.client.post(f.root + "/preflight", json=body)
+    [warning] = response.json()["repository_warnings"]
+    assert warning.startswith(
+        "A run will stop because Tin can't read every file in the repository: "
+        "src/data/posts.json (2.4 MB, over the 2 MB limit for files Tin reads)."
+    )
+    result = await f.server.call_tool("preflight_technical_fix", args)
+    assert result.structured_content["repository_warnings"] == [warning]
+    assert warning in result.structured_content["relay"]
+    call = f.integrations.github_repository_missing_files.await_args.kwargs
+    assert call["binding"].repository == "owner/site"
+
+    # A check that can't run says so; the preview itself still answers.
+    from tin_lite.integrations import IntegrationUpstreamError
+
+    f.integrations.github_repository_missing_files.side_effect = IntegrationUpstreamError(
+        "GitHub repository tree is unavailable or too large"
+    )
+    response = await f.client.post(f.root + "/preflight", json=body)
+    assert response.status_code == 200
+    assert response.json()["repository_warnings"] == [
+        "Tin couldn't check the repository's files before the run: GitHub repository tree "
+        "is unavailable or too large."
+    ]
+
+
 @pytest.mark.parametrize("surface_fixture", ["content"], indirect=True)
 async def test_content_only_audit_is_visible_and_rejected_consistently(surface_fixture):
     f = surface_fixture

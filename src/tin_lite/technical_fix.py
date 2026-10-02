@@ -21,6 +21,7 @@ from tin_lite import technical_batch as batch_rules
 from tin_lite import technical_repair_plan as repair_plan
 from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit import in_scope_url, public_site
+from tin_lite.repository_limits import describe_omissions
 from tin_lite.technical_metadata_rules import (
     DESCRIPTION_CHECK,
     SUPPORTED_CHECKS,
@@ -449,6 +450,51 @@ def validate_manifest(manifest, prepared):
         )
 
 
+# Preparation outcomes where Tin couldn't do the job, so the run ends failed rather than
+# succeeded with "no change". Under site-fix-v5 an unreadable snapshot is unsupported_source.
+FAILED_REASONS = frozenset({"repository_incomplete"})
+BATCH_FAILED_REASONS = FAILED_REASONS | {"unsupported_source", "plan_too_large"}
+# A failed run's reason names at most this many of the files Tin couldn't read.
+MAX_NAMED_MISSING = 20
+
+
+def preparation_failed(prepared):
+    """Whether a run that stopped in preparation failed, rather than found nothing to change."""
+    failed = BATCH_FAILED_REASONS if prepared.get("batch") else FAILED_REASONS
+    return prepared.get("reason") in failed
+
+
+def preparation_summary(prepared):
+    """The run's one-line outcome; for a failed run, its error message."""
+    reason = prepared.get("reason")
+    if not preparation_failed(prepared):
+        return "Technical finding checked. No change proposed."
+    if reason == "repository_incomplete":
+        named = describe_omissions(
+            prepared.get("repository_missing") or [],
+            limit=3,
+            total=prepared.get("repository_missing_count"),
+        )
+        return (
+            "Tin couldn't read every file in the repository"
+            + (f": {named}" if named else "")
+            + ". No change proposed."
+        )[:900]
+    return batch_rules.REASONS[reason]
+
+
+def missing_record(bundle):
+    """What a snapshot left out that a fix could need, for the preparation receipt: the
+    first MAX_NAMED_MISSING files and how many there are. Empty when it is complete."""
+    if getattr(bundle, "complete", True):
+        return {}
+    missing = [dict(item) for item in getattr(bundle, "missing", ())]
+    return {
+        "repository_missing": missing[:MAX_NAMED_MISSING],
+        "repository_missing_count": len(missing),
+    }
+
+
 def report(prepared, *, reason=None, pull_request=None):
     if prepared.get("batch"):
         return batch_rules.report(prepared, reason=reason, pull_request=pull_request)
@@ -456,6 +502,9 @@ def report(prepared, *, reason=None, pull_request=None):
     labels = {
         "already_resolved": f"The selected pages now have a {metadata}. No change proposed.",
         "unsupported_source": "No supported source/build profile matched. No change proposed.",
+        "repository_incomplete": (
+            "Tin couldn't read every file in the repository. No change proposed."
+        ),
         "open_pr_overlap": "An existing PR touches the matched source. No duplicate proposed.",
         "incomplete_pr_evidence": "Open-PR evidence is incomplete. No change proposed.",
         "no_safe_patch": "Codex could not prepare a safe patch. The finding remains unresolved.",
@@ -468,6 +517,8 @@ def report(prepared, *, reason=None, pull_request=None):
         labels[reason] if reason else f"A {metadata}-only pull request is ready for review.",
         "",
     ]
+    if reason:
+        lines.extend(batch_rules.missing_lines(prepared))
     if pull_request:
         lines.extend(
             [

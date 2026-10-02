@@ -55,6 +55,10 @@ new pages.
      file changed.
    - If a text is not in the source verbatim (a title built from a template, for example) or
      appears in several places, delivery stops and says which text and why. It never guesses.
+   - Tin searches source files up to 512 KB. Images, video, fonts and built bundles over 2 MB
+     are left out of the snapshot and don't matter here. Any other file Tin couldn't read (a
+     source or data file over 2 MB, a link, a submodule) stops delivery, and the reason names
+     it, because the page's text could live there.
    - Several changed files land as one commit, so a failure never leaves main half changed.
    - A retry after a failed delivery reads the current head when the failed attempt opened no
      pull request or commit; an attempt that did, or may have, replays.

@@ -26,7 +26,8 @@ async def test_existing_funded_legacy_wallet_can_start_style_capture(billed):
     assert run.executor == "style.capture"
     overview = await f.billing.overview(f.project.id, ACTOR)
     assert overview["enabled"] and overview["run_billing_enabled"] and overview["is_admin"]
-    assert overview["available_usd"] == "10.00"
+    # The $10 welcome credit; the running capture's $2 estimate is set aside from it.
+    assert (overview["set_aside_usd"], overview["available_usd"]) == ("2.00", "8.00")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 1
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_project_policies") == 1
     await f.billing.enroll_test(f.project.workspace_id, ACTOR)
