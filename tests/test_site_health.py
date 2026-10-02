@@ -139,7 +139,7 @@ async def test_improver_accepts_only_changed_existing_files_within_budget() -> N
     assert router.timeouts == [MODEL_TIMEOUT_SECONDS] and MODEL_TIMEOUT_SECONDS > 90
     request = router.calls[0][1]
     assert request.output_schema is not None
-    assert request.max_output_tokens == 16_000
+    assert request.max_output_tokens == 32_000
     assert "<main></main>" in request.messages[0].content
 
     router.parsed = proposal(path="package-lock.json")

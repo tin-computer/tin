@@ -75,6 +75,11 @@ MAX_STYLESHEETS = 3
 MAX_PAGE_TEXT_CHARS = 6_000
 MAX_MEMORY_CHARS = 8_000
 MAX_REPAIR_ROUNDS = 2
+# Each call's output cap (it was 24,000). A runaway guard, not an expected length: reasoning
+# counts against it, and billing charges the tokens a call used. Four calls at every bound
+# (about 45,000 input and 32,000 output tokens each on GPT-6 Sol) cost about $1.73, inside the
+# $2 native ceiling.
+MAX_OUTPUT_TOKENS = 32_000
 FACE_BOX = (140, 200, 372, 360)  # x0, y0, x1, y1: where the renderer expects the face
 
 _HEX_COLOR = re.compile(r"#(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b")
@@ -644,7 +649,7 @@ class CharacterDesigner:
             ModelRequest(
                 system=SYSTEM_PROMPT,
                 messages=(ModelMessage(role=MessageRole.USER, content=payload),),
-                max_output_tokens=24_000,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
                 reasoning_effort=ReasoningEffort.MEDIUM,
                 output_schema=DESIGN_SCHEMA,
                 output_schema_name="character_design",
@@ -674,7 +679,7 @@ class CharacterDesigner:
                             ),
                         ),
                     ),
-                    max_output_tokens=24_000,
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
                     reasoning_effort=ReasoningEffort.MEDIUM,
                     output_schema=REFINE_SCHEMA,
                     output_schema_name="character_repair",
@@ -701,7 +706,7 @@ class CharacterDesigner:
                             ),
                         ),
                     ),
-                    max_output_tokens=24_000,
+                    max_output_tokens=MAX_OUTPUT_TOKENS,
                     reasoning_effort=ReasoningEffort.MEDIUM,
                     output_schema=REFINE_SCHEMA,
                     output_schema_name="character_refine",

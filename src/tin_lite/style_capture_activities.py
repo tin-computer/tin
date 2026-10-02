@@ -20,8 +20,8 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
-# The provider's own wait for the style model, just inside the step's 180-second budget. Without
-# it the client stops at its 90-second default, before a 6,000-token guide can finish.
+# The provider's own wait for the style model, just inside the step's 180-second budget. The
+# client's old 90-second default stopped guides before they finished.
 MODEL_TIMEOUT_SECONDS = 165
 
 
@@ -71,8 +71,11 @@ class StyleCaptureActivities:
                         path=f"workflows/{style.KEY}.json",
                     )
                 )
-                if definition.get("model_route") != style.route_definition() or (
-                    definition.get("style_policy") != style.POLICY
+                policy = style.POLICIES.get((definition.get("style_policy") or {}).get("version"))
+                if (
+                    definition.get("model_route") != style.route_definition()
+                    or policy is None
+                    or definition.get("style_policy") != policy
                 ):
                     raise ValueError("This worker does not serve the selected style contract.")
                 async with conn.transaction():
@@ -96,6 +99,7 @@ class StyleCaptureActivities:
                             "existing_guide": guide,
                             "instructions": definition["style_instructions"],
                             "schema": definition["style_schema"],
+                            "max_output_tokens": policy["max_output_tokens"],
                         },
                     )
             await self.progress(run.id, "read", 1, "Selected writing samples are ready")
@@ -149,7 +153,10 @@ class StyleCaptureActivities:
                                 ),
                                 output_schema=context["schema"],
                                 output_schema_name="writing_style",
-                                max_output_tokens=style.POLICY["max_output_tokens"],
+                                # Contexts saved before version 2 were pinned to 6,000.
+                                max_output_tokens=context.get(
+                                    "max_output_tokens", style.POLICY_V1["max_output_tokens"]
+                                ),
                             ),
                             timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )

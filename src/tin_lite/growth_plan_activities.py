@@ -30,7 +30,8 @@ from tin_lite.publication import OutputCheckpoint, OutputConflictError, Publicat
 from tin_lite.usage_capture import external_usage_scope
 
 MAX_MEMORY_BYTES = 12_000
-# A plan step may write 16,000 tokens; the client's 90-second default cut long ones short.
+# A plan step's wait. The client's old 90-second default cut long steps short; its default is
+# now 600 seconds, and this explicit wait stays inside the plan activity's budget.
 MODEL_TIMEOUT_SECONDS = 225
 UNUSABLE = "The plan's model results were unusable. Nothing was saved; try again."
 WEB_READER = (

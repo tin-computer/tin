@@ -979,7 +979,7 @@ BUILTIN_WORKFLOWS = (
             "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.2.0",
+        version_label="1.3.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1023,7 +1023,7 @@ BUILTIN_WORKFLOWS = (
         title="Revise X writing",
         description="Revise an X draft and remember clear writing preferences from feedback.",
         executor=x_feedback.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
         agent_only=True,
@@ -1053,7 +1053,7 @@ BUILTIN_WORKFLOWS = (
             "before future X drafts use it."
         ),
         executor=x_style.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1188,7 +1188,7 @@ BUILTIN_WORKFLOWS = (
             "write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.8.0",
+        version_label="0.9.0",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",

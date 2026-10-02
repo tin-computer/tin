@@ -312,7 +312,9 @@ class XStyleActivities:
                                 ),
                                 output_schema=x_style.MODEL_SCHEMA,
                                 output_schema_name="x_writing_style",
-                                max_output_tokens=x_style.POLICY["max_output_tokens"],
+                                max_output_tokens=x_style.CONTRACTS[
+                                    context.get("policy_version", 1)
+                                ][0]["max_output_tokens"],
                             ),
                             timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
