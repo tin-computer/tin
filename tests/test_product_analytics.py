@@ -524,7 +524,7 @@ async def test_package_uses_shared_qualification_and_diagnostic_fails_normal_cas
     )
     assert checked["cost"]["basis"] == "unmeasured"
     assert checked["cost"]["expected_range_usd"] is None
-    assert checked["cost"]["configured_ceiling_usd"] == "5"
+    assert checked["cost"]["configured_ceiling_usd"] == "10"
     assert checked["safety"]["status"] == "review_required"
     # API below is deliberately asserted through its public existing contract.
     case = next(c for c in contract.cases if c.id == "ordinary_web")

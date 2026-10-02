@@ -12,7 +12,7 @@ from test_service_billing import admit
 from test_studio import _studio_settings
 
 from tin_lite.billing_contracts import receipt_charge
-from tin_lite.codex_api import DIAGRAM_CONTRACT, api_enabled
+from tin_lite.codex_api import PROCEDURE_CONTRACT_V5, api_enabled
 from tin_lite.codex_api_pricing import api_terms
 from tin_lite.studio import StudioError, StudioService
 from tin_lite.studio_billing import CARD, billing_event
@@ -89,7 +89,7 @@ def test_studio_terms_pin_both_kinds_without_repricing_codex():
         },
     }
     terms = api_terms(definition)
-    assert terms["codex_contract"] == DIAGRAM_CONTRACT
+    assert terms["codex_contract"] == PROCEDURE_CONTRACT_V5
     assert terms["operations"] == ["codex_api", "tool"]
     assert terms["studio_pricing"] == CARD
     assert "service_pricing" not in terms

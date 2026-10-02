@@ -16,7 +16,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite.activities import TinActivities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
-from tin_lite.codex_api import PROCEDURE_CONTRACT, attempt_key
+from tin_lite.codex_api import PROCEDURE_CONTRACT_V5, attempt_key
 from tin_lite.codex_api_relay import CodexAPIRelay, router
 from tin_lite.domain import SideEffectConflictError
 from tin_lite.e2b_runtime import SandboxProcedureResult
@@ -75,7 +75,7 @@ async def test_design_api_pins_and_charges_supplier_once(billed, monkeypatch):
     monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda *a: None)
     await activities.create_design_sandbox(str(run.id))
     receipt = await f.db.get_effect(f"{run.id}:sandbox_create")
-    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT_V5
     assert receipt.result["context"]["output"]["path"] == "DESIGN.md"
     assert sandboxes.create.call_args.kwargs["profile"].isolated
     # Configuration changes cannot downgrade an admitted run or change its image.
@@ -120,7 +120,7 @@ async def test_design_api_pins_and_charges_supplier_once(billed, monkeypatch):
             assert not hasattr(run_input, "broker_grant")
             assert run_input.proxy_url == "http://proxy.test:8888"
             assert run_input.no_proxy == "tin.test"
-            assert run_input.isolated and run_input.api_contract == PROCEDURE_CONTRACT
+            assert run_input.isolated and run_input.api_contract == PROCEDURE_CONTRACT_V5
             assert run_input.project_revision == "a" * 40
             assert (await post(client, run, grant=run_input.api_grant)).status_code == 200
             assert (await post(client, run, grant=run_input.api_grant)).status_code == 409
@@ -210,4 +210,4 @@ async def test_design_early_failure_does_not_fall_back_to_oauth(billed, monkeypa
     await activities.create_design_sandbox(str(run.id))
     assert sandboxes.create.call_args.kwargs["profile"].isolated
     receipt = await f.db.get_effect(f"{run.id}:sandbox_create")
-    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT_V5

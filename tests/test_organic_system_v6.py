@@ -153,7 +153,7 @@ def test_the_v6_ceiling_still_covers_its_children():
     )["maximum_nanos"]
     assert v6 == v5
     # Two website.change children (the technical step and the delivery) fit inside it.
-    assert v6 >= 2 * api_terms(website)["maximum_nanos"]
+    assert v6 >= 2 * api_terms(website, child=True)["maximum_nanos"]
 
 
 async def test_v6_budget_admits_website_change_for_its_writer_steps_only(billed):

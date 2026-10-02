@@ -21,9 +21,12 @@ from tin_lite.codex_api import (
     DIAGRAM_CONTRACT,
     PROCEDURE_CONTRACT,
     PROCEDURE_CONTRACT_V2,
+    PROCEDURE_CONTRACT_V5,
     USAGE,
+    attempt_failure,
     attempt_key,
     execution_profile,
+    record_attempt_failure,
     select_contract,
 )
 from tin_lite.codex_api_pricing import RATE_CARD, api_terms, price_response
@@ -49,8 +52,8 @@ async def test_profile_selection_is_scoped_and_old_oauth_stays_oauth(publication
             procedure=SimpleNamespace(sandbox=sandbox),
             settings=settings,
         )
-    # Unpinned API runs of every supported profile, isolated included, use v3.
-    assert selected == PROCEDURE_CONTRACT
+    # Unpinned API runs of every supported profile, isolated included, use v5.
+    assert selected == PROCEDURE_CONTRACT_V5
     effective = execution_profile(sandbox, selected)
     assert effective.timeout_seconds == 1200
     assert effective.profile == (
@@ -101,7 +104,7 @@ async def test_default_activity_pins_effective_image_without_changing_definition
     await activities.create_codex_procedure_sandbox(str(run.id))
     assert create.call_args.kwargs["profile"].isolated
     receipt = await publication_db.get_effect(f"{run.id}:procedure_sandbox_create")
-    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT_V5
     assert receipt.result["sandbox_profile"] == "isolated"
     activities._settings.codex_api_projects = set()
     await activities.create_codex_procedure_sandbox(str(run.id))
@@ -138,7 +141,7 @@ async def test_procedure_preflight_failure_does_not_fall_back_to_oauth(publicati
     assert create.call_args.kwargs["profile"].isolated
     receipt = await publication_db.get_effect(f"{run.id}:procedure_sandbox_create")
     assert receipt.status == "completed"
-    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT
+    assert receipt.result["codex_auth"] == PROCEDURE_CONTRACT_V5
 
 
 async def test_unmarked_procedure_create_receipt_keeps_oauth(publication_db):
@@ -433,6 +436,25 @@ async def test_relay_rejections_are_logged_without_request_content(publication_d
         message = record.getMessage()
         assert f"run={run.id}" in message and "status=413" in message
         assert "private-prompt" not in message
+        # The cause also reaches Postgres: the attempt receipt and the run's failure text.
+        attempt = await publication_db.get_effect(attempt_key(run.id))
+        rejection = attempt.result["relay_rejection"]
+        assert {k: rejection[k] for k in ("status", "reason", "operation")} == {
+            "status": 413,
+            "reason": "context_bound",
+            "operation": "responses",
+        }
+        assert "private-prompt" not in json.dumps(attempt.result)
+        # A later refusal is a consequence; the first cause is kept.
+        assert (await post(client, run, grant="g" * 43)).status_code == 403
+        assert (await post(client, run, {**BODY, "model": "other"})).status_code == 400
+        attempt = await publication_db.get_effect(attempt_key(run.id))
+        assert attempt.result["relay_rejection"]["reason"] == "context_bound"
+        async with publication_db.pool.acquire() as conn:
+            await record_attempt_failure(conn, attempt_key(run.id), RuntimeError("exited"))
+        attempt = await publication_db.get_effect(attempt_key(run.id))
+        assert attempt.result["relay_rejection"]["reason"] == "context_bound"
+        assert "(context_bound, HTTP 413)" in str(attempt_failure(attempt.result))
     finally:
         await client.aclose()
         await relay.close()
@@ -441,7 +463,9 @@ async def test_relay_rejections_are_logged_without_request_content(publication_d
 async def test_multiple_searches_compaction_and_retry_settle_once(billed, monkeypatch):
     f = billed
     monkeypatch.setattr(
-        f.billing, "terms", lambda definition, project_id, inputs=None: api_terms({"procedure": {}})
+        f.billing,
+        "terms",
+        lambda definition, project_id, inputs=None: api_terms({"procedure": {}}, before_v5=True),
     )
     run, relay, client, sent = await paid_relay(f, contract=PROCEDURE_CONTRACT)
 
@@ -516,7 +540,10 @@ async def test_multiple_searches_compaction_and_retry_settle_once(billed, monkey
 
 async def test_existing_v2_credit_quote_keeps_its_contract(billed, monkeypatch):
     f = billed
-    terms = {**api_terms({"procedure": {}}), "codex_contract": PROCEDURE_CONTRACT_V2}
+    terms = {
+        **api_terms({"procedure": {}}, before_v5=True),
+        "codex_contract": PROCEDURE_CONTRACT_V2,
+    }
     monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None: terms)
     run, relay, client, sent = await paid_relay(f, contract=PROCEDURE_CONTRACT_V2)
     try:
@@ -557,9 +584,11 @@ def test_remote_compaction_is_not_priced_from_invented_supplier_fields():
     assert price_response(RATE_CARD, {**record, "service_tier": "priority"}) is None
     assert price_response(RATE_CARD, {**record, "response_object": None}) is None
     isolated = api_terms({"procedure": {"sandbox": {"profile": "isolated"}}})
-    assert isolated["codex_contract"] == PROCEDURE_CONTRACT
-    assert isolated["request_maximum_input_bytes"] == PROCEDURE_CONTRACT["max_request_bytes"]
-    assert api_terms({"procedure": {}})["codex_contract"] == PROCEDURE_CONTRACT
+    assert isolated["codex_contract"] == PROCEDURE_CONTRACT_V5
+    assert isolated["request_maximum_input_bytes"] == PROCEDURE_CONTRACT_V5["max_request_bytes"]
+    assert api_terms({"procedure": {}})["codex_contract"] == PROCEDURE_CONTRACT_V5
+    # A still-valid quote issued before v5 is rebuilt with its v3 contract.
+    assert api_terms({"procedure": {}}, before_v5=True)["codex_contract"] == PROCEDURE_CONTRACT
 
 
 def test_diagram_images_have_separate_bytes_not_larger_text_or_spending_limits():
@@ -592,12 +621,23 @@ def test_diagram_images_have_separate_bytes_not_larger_text_or_spending_limits()
             b" " * (DIAGRAM_CONTRACT["max_request_bytes"] + 1), "responses", DIAGRAM_CONTRACT
         )
     assert caught.value.status_code == 413
-    normal = api_terms({"procedure": {}})
-    diagram = api_terms({"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}})
-    assert diagram["codex_contract"] == DIAGRAM_CONTRACT
-    assert diagram["maximum_nanos"] == normal["maximum_nanos"]
-    assert diagram["request_maximum_nanos"] == normal["request_maximum_nanos"]
+    for before_v5 in (True, False):
+        normal = api_terms({"procedure": {}}, before_v5=before_v5)
+        diagram = api_terms(
+            {"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}},
+            before_v5=before_v5,
+        )
+        assert diagram["maximum_nanos"] == normal["maximum_nanos"]
+        assert diagram["request_maximum_nanos"] == normal["request_maximum_nanos"]
+    assert diagram["codex_contract"] == normal["codex_contract"] == PROCEDURE_CONTRACT_V5
+    historical = api_terms(
+        {"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}}, before_v5=True
+    )
+    assert historical["codex_contract"] == DIAGRAM_CONTRACT
     assert DIAGRAM_CONTRACT["max_observed_tokens"] == PROCEDURE_CONTRACT["max_observed_tokens"]
+    # v5 carries a diagram's images in any request, under the same 8 MiB bound.
+    assert "max_tool_calls" not in request_body(raw, "responses", PROCEDURE_CONTRACT_V5)
+    assert PROCEDURE_CONTRACT_V5["max_request_bytes"] == DIAGRAM_CONTRACT["max_request_bytes"]
 
 
 async def test_diagram_image_allowance_is_pinned_before_paid_intent(publication_db):
@@ -614,8 +654,10 @@ async def test_diagram_image_allowance_is_pinned_before_paid_intent(publication_
                 ),
                 settings=settings,
             )
-        assert contract == DIAGRAM_CONTRACT
-        await upgrade_attempt(publication_db, run, contract)
+        # New diagram runs pin v5, whose every request may carry 8 MiB.
+        assert contract == PROCEDURE_CONTRACT_V5
+        # A run already pinned to the v3 diagram contract keeps its separate text bound.
+        await upgrade_attempt(publication_db, run, DIAGRAM_CONTRACT)
         image_body = {
             **BODY,
             "input": [
@@ -641,7 +683,9 @@ async def test_diagram_image_allowance_is_pinned_before_paid_intent(publication_
 
 async def test_diagram_images_use_quoted_tokens_and_settle_once(billed, monkeypatch):
     f = billed
-    terms = api_terms({"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}})
+    terms = api_terms(
+        {"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}}, before_v5=True
+    )
     monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None: terms)
     run, relay, client, sent = await paid_relay(f, contract=DIAGRAM_CONTRACT)
     try:

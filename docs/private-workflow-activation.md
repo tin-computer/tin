@@ -67,7 +67,7 @@ See [code workflows](code-workflows.md) and the linked extension contracts.
 
 - Explicit `codex.procedure`, `custom.<lowercase_name>` key and `on_demand` scheduling only.
 - Required `isolated` / `fenced` profile; existing controller/worker separation, trusted usage
-  observations and retry checkpoint rules apply. Timeout is bounded at 3,600 seconds.
+  observations and retry checkpoint rules apply. Timeout is bounded at 7,200 seconds.
 - One bounded UTF-8 project artifact, or a bounded unmerged GitHub PR with repository verification.
   GitHub capabilities must match the declared workspace/result and use the connected-project
   gateway. Existing PR overlap checks and result validation remain in force.

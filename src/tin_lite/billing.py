@@ -378,14 +378,16 @@ class BillingService:
             )
         return {"revision": policy.expected_revision + 1}
 
-    def terms(self, definition, project_id, inputs=None, *, session_budget=True):
+    def terms(self, definition, project_id, inputs=None, *, session_budget=True, before_v5=False):
         return configured_terms(
-            self._terms(definition, project_id, inputs, session_budget=session_budget),
+            self._terms(
+                definition, project_id, inputs, session_budget=session_budget, before_v5=before_v5
+            ),
             definition,
             inputs,
         )
 
-    def _terms(self, definition, project_id, inputs=None, *, session_budget=True):
+    def _terms(self, definition, project_id, inputs=None, *, session_budget=True, before_v5=False):
         from tin_lite.codex_api import supports_api_definition
         from tin_lite.free_workflows import onboarding_is_free
         from tin_lite.service_pricing import service_terms
@@ -451,7 +453,7 @@ class BillingService:
         if supports_api_definition(definition) and codex_api_enabled(self.settings, project_id):
             from tin_lite.codex_api_pricing import api_terms
 
-            return api_terms(definition, session_budget=session_budget)
+            return api_terms(definition, session_budget=session_budget, before_v5=before_v5)
         return test_terms(definition)
 
     async def quote(
@@ -658,7 +660,7 @@ class BillingService:
                 from tin_lite.codex_api_pricing import api_terms
 
                 if parent_terms.get("codex_api_children"):
-                    terms = api_terms(definition)
+                    terms = api_terms(definition, child=True)
                 else:
                     terms = test_terms(definition)
             else:
@@ -710,8 +712,23 @@ class BillingService:
             # A still-valid pre-session quote keeps its original runtime and funding.
             if quoted_terms and session_funded(terms) and not session_funded(quoted_terms):
                 terms = self.terms(
-                    definition, run["project_id"], object_value(run["input"]), session_budget=False
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=False,
+                    before_v5=True,
                 )
+            # A still-valid quote issued before v5 keeps its v3/v4 contract and $5 ceiling.
+            elif quoted_terms and quoted_terms.get("kind") == "codex_api" and quoted_terms != terms:
+                previous = self.terms(
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=session_funded(quoted_terms),
+                    before_v5=True,
+                )
+                if quoted_terms == previous:
+                    terms = previous
             # A still-valid quote issued before isolated procedures joined v3 keeps v1.
             from tin_lite.codex_api_pricing import isolated_v1_terms, issued_before_isolated_v3
 
@@ -723,6 +740,7 @@ class BillingService:
                             run["project_id"],
                             object_value(run["input"]),
                             session_budget=False,
+                            before_v5=True,
                         )
                     ),
                     definition,

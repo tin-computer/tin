@@ -20,7 +20,10 @@ from tin_lite.billing_contracts import BillingError, final_charge
 from tin_lite.codex_api import (
     ATTEMPT,
     CONTRACT,
+    PROCEDURE_CONTRACT,
+    PROCEDURE_CONTRACT_V5,
     SESSION_CONTRACT,
+    SESSION_CONTRACT_V4,
     USAGE,
     attempt_key,
     select_contract,
@@ -99,21 +102,30 @@ async def paid_relay(
     await fund(f)
     f.settings.codex_api_projects = {f.project.id}
     q = await quote(f)
-    if contract != SESSION_CONTRACT and q["terms"].get("codex_contract") == SESSION_CONTRACT:
-        # These fixtures model already-issued v1/v3 quotes. Keep their old funding
-        # and execution pins rather than quietly upgrading the tests to v4.
-        terms = api_terms(f.workflow.definition)
+    historical = (CONTRACT, PROCEDURE_CONTRACT, SESSION_CONTRACT_V4)
+    if contract in historical and q["terms"].get("codex_contract") != contract:
+        # These fixtures model already-issued v1/v3/v4 quotes. Keep their old funding,
+        # $5 ceiling and execution pins rather than quietly upgrading the tests to v5.
+        terms = api_terms(
+            f.workflow.definition, session_budget=contract == SESSION_CONTRACT_V4, before_v5=True
+        )
         q["terms"] = configured_terms(
             isolated_v1_terms(terms) if contract == CONTRACT else terms,
             f.workflow.definition,
             {"brief": "Explain the public docs"},
         )
         await f.db.pool.execute(
-            "UPDATE billing_quotes SET terms=$2::jsonb WHERE id=$1",
+            "UPDATE billing_quotes SET terms=$2::jsonb, maximum_nanos=$3 WHERE id=$1",
             UUID(q["id"]),
             json.dumps(q["terms"]),
+            q["terms"]["maximum_nanos"],
         )
-    assert q["maximum_usd"] == "5.00" and q["terms"]["execution_fee_nanos"] == 0
+    assert q["terms"].get("codex_contract", CONTRACT) == contract
+    # v5 admissions carry the $10 default; quotes issued before it keep $5.
+    assert q["terms"]["maximum_nanos"] == (
+        10_000_000_000 if contract in (SESSION_CONTRACT, PROCEDURE_CONTRACT_V5) else 5_000_000_000
+    )
+    assert q["terms"]["execution_fee_nanos"] == 0
     run = await start(f, q)
     await f.db.pool.execute(
         """UPDATE workflow_runs SET status='running', lease_active=true,
@@ -122,6 +134,7 @@ async def paid_relay(
     )
     run = await f.db.get_run(run.id)
     record = {
+        "run_id": str(run.id),
         "outcome": "running",
         "contract": contract,
         "pricing": RATE_CARD,
@@ -289,6 +302,10 @@ async def test_budget_context_and_compaction_bounds_before_dispatch(billed, capl
             if r.name == "tin_lite.codex_api_relay"
         ]
         assert reasons == ["request_too_large", "operation_not_allowed", "contract_mismatch"]
+        # The first contract rejection is the attempt's recorded cause, not only a log line.
+        attempt = await f.db.get_effect(attempt_key(run.id))
+        assert attempt.result["relay_rejection"]["status"] == 422
+        assert attempt.result["relay_rejection"]["reason"] == "request_too_large"
         await f.db.pool.execute(
             "UPDATE billing_run_budgets SET committed_nanos=$2 WHERE run_id=$1",
             run.id,

@@ -478,8 +478,8 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     assert preview["adapt"] is True and preview["mode"] == "github_pr"
-    assert preview["cost"]["estimated_usd"] == "5.00"
-    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · up to $5"
+    assert preview["cost"]["estimated_usd"] == "10.00"
+    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · up to $10"
     await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))

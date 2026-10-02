@@ -303,10 +303,44 @@ spending limit" and four manual starts for the $10 monthly limit. New hosted pro
 with $25 per run, $100 a month and $50 per scheduled run (`HOSTED_DEFAULT_PER_RUN_NANOS`,
 `HOSTED_DEFAULT_MONTHLY_NANOS` and `HOSTED_DEFAULT_SCHEDULE_MAX_NANOS` in `billing.py`). The
 largest built-in maximum, an organic traffic system at about $22, fits the per-run and
-scheduled-run limits, and up to ten weekly $5 articles a month fit the monthly limit, so the
+scheduled-run limits, and every weekly article a month (each a $10 Codex session) fits the monthly limit, so the
 Start here handoff warns about neither.
 
 Only projects without a policy get these limits. No migration rewrites saved policies: a project
 created earlier keeps $10, $10 and $10 until an admin raises them with
 `set_project_spending_limits` or in Billing. Credits still bound every paid step, and the
 welcome credit stays $10.
+
+## Codex procedure limits as runaway guards — October 2, 2026
+
+Over the 30 days before this change, two Codex sessions (a code map and an email shortlist)
+stopped at exactly $5; the code map's p90 was $4.30 and every other Codex workflow's p90 was at
+most $2.30. Older contracts stopped runs at 64 requests, 2M observed tokens or a 128,000-token
+context. New admissions now pin [contract v5](codex-api-pilot.md#contract-v5-a-bounded-context-and-10-sessions-october-2-2026):
+
+| Limit | Before | Now |
+| --- | --- | --- |
+| Default ceiling of a root Codex run (`content.generate`, code map, email shortlist and others without their own) | $5 | $10 |
+| Ceiling of a Codex child inside a parent budget | $5 | $5, unchanged |
+| `content-refresh.v1` ceiling | $2.50 | $2.50, unchanged |
+| Session context | 1,050,000 tokens, compaction at 922,000 | 256,000 tokens, compaction at 200,000 |
+| Per-request funded and included Codex work | v1/v3: 8-64 requests, 0.1-2M tokens, 4,096-8,192 output, 128,000 context | 256 requests, 8M tokens, 128,000 output, 256,000 context |
+| Per-request reservation | $0.41 (v3) | $1.93 |
+| Maximum declared procedure sandbox time | 3,600 s | 7,200 s |
+| Design and task sandbox time (`TIN_LITE_SANDBOX_TIMEOUT` default) | 900 s | 1,800 s |
+
+Funding is unchanged. Ordinary root procedures are sessions; Studio, diagrams/video, design,
+tasks and parent children reserve per request; both Start here workflows and their approved
+setup children stay included, Tin-funded and bounded by v5's request and token stops, with no
+customer reservation. Parent pools (for example the traffic system's) are unchanged and were
+composed from $5 children, so children keep $5. A procedure that does not declare a timeout
+still gets 900 s: that default is written into built-in definitions, and raising it would
+change pinned catalog contracts without a version. Runs and quotes admitted before
+the change keep their pinned contract and $5.
+
+A $10 session maximum is also its configured estimate. Admission refuses a run only when the
+estimate exceeds the per-run limit, so a $10 run fits a $10 per-run limit. It does count $10
+against the monthly limit while it runs. New hosted projects get $100 a month (above), so a
+weekly `content.generate` fits; a project still on the old $10 monthly limit can admit one a
+month until an admin raises it.
+

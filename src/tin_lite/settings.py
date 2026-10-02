@@ -235,7 +235,7 @@ class Settings(BaseSettings):
     proxy_grant_dir: Path | None = Field(default=None, alias="TIN_LITE_PROXY_GRANT_DIR")
 
     egress_allow_hosts_raw: str = Field(default="", alias="TIN_LITE_EGRESS_ALLOW_HOSTS")
-    sandbox_timeout_seconds: int = Field(default=900, alias="TIN_LITE_SANDBOX_TIMEOUT")
+    sandbox_timeout_seconds: int = Field(default=1800, alias="TIN_LITE_SANDBOX_TIMEOUT")
 
     @model_validator(mode="after")
     def secure_forward_proxy(self) -> Settings:
@@ -245,8 +245,8 @@ class Settings(BaseSettings):
             validate_proxy_url(self.forward_proxy_url.get_secret_value())
             if self.proxy_grant_dir is None or not self.proxy_grant_dir.is_absolute():
                 raise ValueError("TIN_LITE_PROXY_GRANT_DIR must be an absolute directory path")
-            if not 1 <= self.sandbox_timeout_seconds <= 3600:
-                raise ValueError("proxied sandboxes require a timeout between 1 and 3600 seconds")
+            if not 1 <= self.sandbox_timeout_seconds <= 7200:
+                raise ValueError("proxied sandboxes require a timeout between 1 and 7200 seconds")
         return self
 
     @field_validator("app_url", "legacy_public_url")
