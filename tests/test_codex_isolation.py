@@ -240,6 +240,17 @@ def test_a_no_change_outcome_needs_no_pull_request_title():
     assert bridge._pull_request_text(result, {}) == ("", "")
 
 
+def test_a_task_that_pauses_without_a_question_asks_a_plain_one():
+    # Two tasks failed on 2026-10-02 with "Codex requested input without a question".
+    bridge = load_sandbox_module("task_app_server")
+    paused = {"outcome": "needs_input", "summary": "s", "message": "m", "question": ""}
+    assert bridge._task_result(paused)["question"] == "How should I continue?"
+    asked = {**paused, "question": "Which repository?"}
+    assert bridge._task_result(asked)["question"] == "Which repository?"
+    with pytest.raises(RuntimeError, match="invalid task outcome"):
+        bridge._task_result({"outcome": "done"})
+
+
 def test_controller_bypasses_proxy_only_for_local_worker_and_existing_hosts():
     bridge = load_sandbox_module("procedure_app_server")
     assert bridge._loopback_proxy_bypass({"NO_PROXY": "broker.test,127.0.0.1"}) == {

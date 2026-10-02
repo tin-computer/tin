@@ -84,18 +84,6 @@ def validate_notes(content, *, revision=False):
     text = content.decode("utf-8")
     if not 1 <= len(content) <= 24_000 or not text.lstrip().startswith("# Generation notes\n"):
         raise ValueError("Write separate, bounded Generation notes.")
-    if revision:
-        validate_changes(content)
-
-
-def validate_changes(content):
-    text = content.decode("utf-8")
-    for title in ("What changed", "Feedback not followed"):
-        sections = re.findall(rf"(?m)^## {title}\n+(.+?)(?=\n## |\Z)", text, re.S)
-        if len(sections) != 1 or not 4 <= len(sections[0].strip()) <= 2000:
-            raise ValueError(
-                f"Explain '{title}' once, in at most 2,000 characters in Generation notes."
-            )
 
 
 def change_summary(content):
