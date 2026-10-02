@@ -3555,6 +3555,8 @@ def create_mcp_app(
         one separately metered generation of the SAME piece, not the next roadmap item.
         Feedback may name or describe project files for the procedure to inspect; no file
         selection is required. reference_files optionally pins exact supplied file contents.
+        For X, an X writing guide accepts reference_files (up to eight text project files,
+        such as writing samples or notes to learn the voice from); an X post does not.
         Return its run/review link. Article and initial-guide approval remain separate;
         X post publication still requires an exact preview and explicit confirmation.
         """
