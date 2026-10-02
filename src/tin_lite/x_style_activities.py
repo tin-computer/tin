@@ -13,7 +13,12 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import x_style
-from tin_lite.integrations import IntegrationAuthorizationError, IntegrationNotConfiguredError
+from tin_lite.billing_contracts import BillingError
+from tin_lite.integrations import (
+    IntegrationAuthorizationError,
+    IntegrationError,
+    IntegrationNotConfiguredError,
+)
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.project_files import credential_findings
@@ -344,10 +349,16 @@ class XStyleActivities:
                         "request_id": result.request_id,
                     },
                 )
-            except Exception:
+            except Exception as exc:
+                # Tin's own refusals say what stopped the guide; anything else stays generic.
+                reason = (
+                    f"{str(exc).rstrip('.')}. "
+                    if isinstance(exc, (ValueError, IntegrationError, BillingError))
+                    else ""
+                )
                 raise ApplicationError(
-                    "X voice extraction could not be confirmed; no replacement was purchased. "
-                    "The current guide is unchanged.",
+                    f"X voice extraction could not be confirmed. {reason}No replacement was "
+                    "purchased. The current guide is unchanged.",
                     non_retryable=True,
                 ) from None
 
