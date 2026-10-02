@@ -67,7 +67,7 @@ Tin ships 39 built-in workflows. Every workflow also takes a `project_id`; requi
 |---|---|---|---|
 | Revise X writing (agent only)<br>`social.x_revise` | Revise an X draft and remember clear writing preferences from feedback. | **`source_run_id`**, **`post_id`**, **`feedback`**, **`review_token`**, **`snapshot`** | — |
 | Draft for X<br>`social.x_draft` | Describe a product update. Tin sets up your voice if needed, then writes a draft. | **`direction`**, `post_count`, `notes`, `evidence_paths`, `plan_path`, `asset_paths`, `supplied_samples`, `source_path`, `preferences` | — |
-| Learn my X writing style (human review)<br>`social.x_style` | Learn from up to 50 of your own public X posts, favoring recent writing, or use samples you supply. Review the proposed guide before future X drafts use it. | `sample_source`, `supplied_samples`, `source_path`, `account_id`, `preferences`, `direction` | — |
+| Learn my X writing style (human review)<br>`social.x_style` | Learn your voice from your own public X posts and replies, up to 50 spread across your history, together with any writing you supply. Review the proposed guide before future X drafts use it. | `sample_source`, `supplied_samples`, `source_path`, `account_id`, `preferences`, `direction` | — |
 | Publish an approved X post (agent only)<br>`social.x_publish` | Publish the exact post and media confirmed through Tin's X preview. | **`approval_id`** | — |
 
 ## General

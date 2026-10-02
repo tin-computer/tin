@@ -63,16 +63,23 @@ Publishing still requires previewing and confirming an individual post.
 
 ## Run the individual steps
 
-Run `social.x_style` when you want Tin to learn from your own public X account. It aims
-for 50 usable posts, with more weight on recent writing and some examples from earlier
-months. It excludes reposts, quotes, duplicate text and thin replies, and limits bursts
-from one day. A sparse account produces a smaller sample with its limits stated in
-the guide. You can instead supply writing samples, a Markdown file in Files, or explicit
-preferences without connecting X. In the expanded setup panel, choose **Connected X account**
-or **My samples**. Writing preferences can refine either source; they do not replace
-connected-account sampling. The browser hides account IDs and offers a Markdown file
-picker for saved samples. MCP can set `sample_source` explicitly, or omit it to infer
-the source from supplied inputs.
+Run `social.x_style` when you want Tin to learn your voice. From a connected public account it
+reads your own posts newest first, up to 150 over three pages, with no date window. Replies
+count without their leading @handles, and a quote post counts for your own commentary; only
+reposts, duplicates and link-only posts are left out, and a long post is trimmed rather than
+dropped. Every usable post is used, up to 50 samples and 24 KB; when there are more, the
+sample spreads across your history. A sparse account produces a smaller sample with its
+limits stated in the guide.
+
+You can also supply writing samples or a Markdown file in Files. With **Auto** (`sample_source`
+omitted or `auto`), Tin learns from your connected public account and what you supply
+together, each taking up to half of the sample, so short posts and longer writing inform one
+guide. Without a connected public account, Auto uses what you supplied. Choose **Connected X
+account** or **My samples** to use only one source. Writing preferences can refine either
+source; they do not replace sampling. The browser hides account IDs and offers a Markdown
+file picker for saved samples. Runs pinned to version 1.0.0 keep its earlier sampling: three
+date windows over the past year, without replies or quotes, and supplied samples instead of
+the account when both were given.
 
 The proposed guide waits for review. Approval saves
 `.agents/skills/x-writing-style/SKILL.md`; you can edit it like any other file. A concurrent
