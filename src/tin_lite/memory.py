@@ -86,16 +86,20 @@ def newest_sources(
 ) -> list[MemorySource]:
     """The newest sources that fit one gardener call together, oldest first like `sources`.
 
-    Sources arrive oldest first. An older one that no longer fits is left for a later
-    index to forget, instead of failing the whole run; only when not even one fits does
-    gardening stop.
+    Sources arrive oldest first. Keeping stops at the first source that no longer fits, so
+    an older source is never kept while a newer one is left out; the older ones are left
+    for a later index to forget instead of failing the whole run. A single source larger
+    than the whole budget can never fit, so it is skipped rather than blocking the rest.
+    Only when not even one fits does gardening stop.
     """
     kept: list[MemorySource] = []
     total = 0
     for source in reversed(sources):
         size = len(source.content.encode())
-        if total + size > budget:
+        if size > budget:
             continue
+        if total + size > budget:
+            break
         kept.append(source)
         total += size
     if not kept:

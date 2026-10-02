@@ -38,6 +38,8 @@ class FakeDatabase:
         self._locks: dict[str, asyncio.Lock] = {}
         self.projection_writes = 0
         self.events: list[str] = []
+        self.details: dict[str, dict] = {}
+        self.sources: list[WorkflowRun] = [source]
 
     @asynccontextmanager
     async def effect_lock(
@@ -78,7 +80,7 @@ class FakeDatabase:
     async def list_memory_source_runs(self, **values) -> list[WorkflowRun]:
         assert values["project_id"] == self.project.id
         assert values["exclude_run_id"] == self.run.id
-        return [self.source]
+        return self.sources
 
     async def get_effect(self, execution_key: str, conn=None):
         return self.receipts.get(execution_key)
@@ -101,6 +103,7 @@ class FakeDatabase:
 
     async def add_activity(self, *, event_type: str, **values) -> None:
         self.events.append(event_type)
+        self.details[event_type] = values.get("details")
 
 
 class FakeStorage:
@@ -204,6 +207,44 @@ async def test_project_memory_duplicate_execution_creates_one_commit_and_project
     assert database.project.memory_index_path == MEMORY_INDEX_PATH
     assert database.events == ["memory_gardened", "project_memory_updated"]
     assert heartbeats == [{"stage": "memory_gardener"}]
+
+
+@pytest.mark.asyncio
+async def test_project_memory_records_the_sources_left_for_a_later_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An older source too large for one gardener call is left out, and the run says so.
+    project, run, source = memory_fixture()
+    older = replace(
+        source,
+        id=uuid4(),
+        artifact_path="docs/old-design.md",
+        artifact_ref="code.storage://projects/test@old/docs/old-design.md",
+    )
+    database = FakeDatabase(project=project, run=run, source=source)
+    database.sources = [older, source]  # Oldest first, as Postgres returns them.
+    storage = FakeStorage(b"")
+    read = storage.read_canonical_artifact
+
+    async def reading(*, path: str, **values) -> bytes:
+        return b"x" * 800_000 if path == "docs/old-design.md" else await read(path=path, **values)
+
+    storage.read_canonical_artifact = reading  # type: ignore[method-assign]
+    gardener = FakeGardener(source.artifact_ref)
+    monkeypatch.setattr("tin_lite.activities.activity.heartbeat", lambda details: None)
+    activities = TinActivities(
+        database=database,  # type: ignore[arg-type]
+        storage=storage,  # type: ignore[arg-type]
+        sandboxes=SimpleNamespace(),
+        settings=SimpleNamespace(),
+        memory_gardener=gardener,  # type: ignore[arg-type]
+    )
+    await activities.garden_project_memory(str(run.id))
+    assert database.details["memory_gardened"] == {
+        "source_count": 1,
+        "dropped_source_count": 1,
+        "changed": True,
+    }
 
 
 @pytest.mark.asyncio
@@ -318,5 +359,8 @@ def test_memory_sources_keep_the_newest_that_fit_one_gardener_call() -> None:
     # d711b841 failed outright at 200,000 bytes; older sources now drop out instead.
     assert newest_sources([oldest, too_large, middle, newest]) == [middle, newest]
     assert newest_sources([middle, newest]) == [middle, newest]
+    # An older source is never kept while a newer one that didn't fit is left out.
+    small, large = source("small", 50_000), source("large", 500_000)
+    assert newest_sources([small, large, newest]) == [newest]
     with pytest.raises(ValueError, match="memory sources exceed 700000 bytes"):
         newest_sources([too_large])
