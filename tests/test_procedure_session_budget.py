@@ -13,9 +13,15 @@ from test_billing import finish, fund, quote, start
 from test_codex_api import BODY, post
 from test_codex_api_billing import facts, paid_relay
 from test_codex_isolation import load_sandbox_module, observation
+from test_private_workflows import ACTOR
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite.billing_contracts import BillingError, final_charge
+from tin_lite.billing_contracts import (
+    NANOS_PER_DOLLAR,
+    BillingError,
+    ProjectSpendingPolicy,
+    final_charge,
+)
 from tin_lite.codex_api import (
     CONTRACT,
     PROCEDURE_CONTRACT,
@@ -262,6 +268,74 @@ async def test_concurrent_admission_cannot_reuse_the_same_session_funds(billed):
     assert sum(isinstance(value, BillingError) for value in outcomes) == 1
     assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 2 * MAXIMUM
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 2
+
+
+async def limits(f, *, per_run_usd, monthly_usd):
+    await f.billing.update_policy(
+        f.project.id,
+        ACTOR,
+        ProjectSpendingPolicy(
+            per_run_nanos=per_run_usd * NANOS_PER_DOLLAR,
+            monthly_nanos=monthly_usd * NANOS_PER_DOLLAR,
+            expected_revision=1,
+        ),
+    )
+
+
+def spend(f, monkeypatch, *, month=0, wallet=0):
+    """Model earlier spending: this month's exposure and credits already used."""
+    usage, credits = f.billing.month_usage, f.billing.wallet_credits
+
+    async def month_usage(conn, project_id):
+        return {"exposure": (await usage(conn, project_id))["exposure"] + month}
+
+    async def wallet_credits(conn, account):
+        held = await credits(conn, account)
+        return {**held, "available": held["available"] - wallet}
+
+    monkeypatch.setattr(f.billing, "month_usage", month_usage)
+    monkeypatch.setattr(f.billing, "wallet_credits", wallet_credits)
+
+
+@pytest.mark.parametrize(
+    ("per_run", "monthly", "cents", "month", "wallet", "ceiling"),
+    [
+        # The old hosted defaults after any spend this month: the earlier $5, not a refusal.
+        (10, 10, 10000, 400_000_000, 0, BEFORE_V5_MAXIMUM),
+        # The new defaults with ample credit: the $10 runaway guard.
+        (25, 100, 10000, 0, 0, MAXIMUM),
+        # A $10 welcome credit after its first $0.40 charge.
+        (50, 500, 1000, 0, 400_000_000, BEFORE_V5_MAXIMUM),
+    ],
+)
+async def test_a_session_ceiling_is_ten_dollars_only_where_the_project_can_cover_it(
+    billed, monkeypatch, per_run, monthly, cents, month, wallet, ceiling
+):
+    f = billed
+    f.settings.codex_api_projects = {f.project.id}
+    await limits(f, per_run_usd=per_run, monthly_usd=monthly)
+    await fund(f, cents=cents)
+    spend(f, monkeypatch, month=month, wallet=wallet)
+    q = await quote(f)
+    # The preview shows what admission pins.
+    assert q["terms"]["maximum_nanos"] == ceiling
+    assert q["terms"]["estimate"]["amount_nanos"] == ceiling
+    run = await start(f, q)
+    budget = await f.db.pool.fetchrow(
+        "SELECT maximum_nanos FROM billing_run_budgets WHERE run_id=$1", run.id
+    )
+    assert budget["maximum_nanos"] == ceiling
+
+
+async def test_a_project_that_cannot_cover_five_dollars_is_refused_as_before(billed, monkeypatch):
+    f = billed
+    f.settings.codex_api_projects = {f.project.id}
+    await fund(f, cents=1000)
+    spend(f, monkeypatch, wallet=7 * NANOS_PER_DOLLAR)
+    q = await quote(f)
+    assert q["terms"]["maximum_nanos"] == BEFORE_V5_MAXIMUM
+    with pytest.raises(BillingError, match=r"estimated at up to \$5\.00"):
+        await start(f, q)
 
 
 @pytest.mark.parametrize("whole_run", [False, True])

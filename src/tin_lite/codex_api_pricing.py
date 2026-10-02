@@ -90,6 +90,15 @@ CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
 PROCEDURE_MAXIMUMS = {"content-refresh.v1": 2_500_000_000}
 
 
+def default_maximum(room=None):
+    """A root run's default ceiling: $10 when the project's limits and wallet can cover it,
+    otherwise the earlier $5, so a project or wallet without $10 of room keeps its old
+    behaviour (and its old refusals). `room` is None where nothing is admitted (estimates)."""
+    if room is not None and room < DEFAULT_MAXIMUM:
+        return BEFORE_V5_MAXIMUM
+    return DEFAULT_MAXIMUM
+
+
 def request_maximum(contract):
     """One request's customer liability: the whole context as cache writes, a maximum
     response and one search call. Tin absorbs any supplier excess and stops further calls."""
@@ -100,10 +109,11 @@ def request_maximum(contract):
     )
 
 
-def api_terms(definition, *, session_budget=False, before_v5=False, child=False):
+def api_terms(definition, *, session_budget=False, before_v5=False, child=False, room=None):
     """Terms a new admission pins. `before_v5` rebuilds the terms (v3/v4 contract, $5
     default) that quotes issued before v5 carry, only to honor such a quote while valid.
-    `child` is a run funded inside its parent's budget; it keeps the $5 child ceiling."""
+    `child` is a run funded inside its parent's budget; it keeps the $5 child ceiling.
+    `room` is what a root run may still spend (`default_maximum`)."""
     validator = definition.get("procedure", {}).get("output", {}).get("validator")
     terms = {
         "rate_card": RATE_CARD["id"],
@@ -115,7 +125,7 @@ def api_terms(definition, *, session_budget=False, before_v5=False, child=False)
         "codex_auth": MODE,
         "maximum_nanos": PROCEDURE_MAXIMUMS.get(
             validator,
-            BEFORE_V5_MAXIMUM if before_v5 else CHILD_MAXIMUM if child else DEFAULT_MAXIMUM,
+            BEFORE_V5_MAXIMUM if before_v5 else CHILD_MAXIMUM if child else default_maximum(room),
         ),
         "request_maximum_nanos": REQUEST_MAXIMUM,
         "request_maximum_input_bytes": REQUEST_INPUT_ENVELOPE,

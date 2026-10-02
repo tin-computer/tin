@@ -896,7 +896,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
     await fund(f)
     original = f.billing.terms
 
-    def small_parent(definition, project_id, inputs=None):
+    def small_parent(definition, project_id, inputs=None, **_):
         terms = original(definition, project_id, inputs)
         return {**terms, "maximum_nanos": 2_000_000_000} if terms["kind"] == "parent" else terms
 

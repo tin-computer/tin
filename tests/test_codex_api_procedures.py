@@ -465,7 +465,9 @@ async def test_multiple_searches_compaction_and_retry_settle_once(billed, monkey
     monkeypatch.setattr(
         f.billing,
         "terms",
-        lambda definition, project_id, inputs=None: api_terms({"procedure": {}}, before_v5=True),
+        lambda definition, project_id, inputs=None, **_: api_terms(
+            {"procedure": {}}, before_v5=True
+        ),
     )
     run, relay, client, sent = await paid_relay(f, contract=PROCEDURE_CONTRACT)
 
@@ -544,7 +546,7 @@ async def test_existing_v2_credit_quote_keeps_its_contract(billed, monkeypatch):
         **api_terms({"procedure": {}}, before_v5=True),
         "codex_contract": PROCEDURE_CONTRACT_V2,
     }
-    monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None: terms)
+    monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None, **_: terms)
     run, relay, client, sent = await paid_relay(f, contract=PROCEDURE_CONTRACT_V2)
     try:
         async with f.db.pool.acquire() as conn:
@@ -686,7 +688,7 @@ async def test_diagram_images_use_quoted_tokens_and_settle_once(billed, monkeypa
     terms = api_terms(
         {"procedure": {"output": {"validator": "tin-diagram.reviewed.v1"}}}, before_v5=True
     )
-    monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None: terms)
+    monkeypatch.setattr(f.billing, "terms", lambda definition, project_id, inputs=None, **_: terms)
     run, relay, client, sent = await paid_relay(f, contract=DIAGRAM_CONTRACT)
     try:
         body = {
