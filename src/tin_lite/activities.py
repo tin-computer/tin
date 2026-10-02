@@ -108,6 +108,7 @@ from tin_lite.procedures import (
     validate_procedure_pull_request,
 )
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
+from tin_lite.redaction import scrub_secrets
 from tin_lite.rollouts import RolloutCapture
 from tin_lite.scan import ScanReporter, ScanSource, validate_scan_report
 from tin_lite.schedules import ScheduledWorkflowSkip, WorkflowSchedule, next_run_after
@@ -605,7 +606,7 @@ class TinActivities:
                     design = design_api.procedure(creation["timeout_seconds"])
                     creation["context"] = (
                         (existing.result or {}).get("context") if existing else None
-                    ) or design.sandbox_context(inputs=run.input or {})
+                    ) or design.sandbox_context(inputs=run.input or {}, run_id=run.id)
                 await self._db.save_effect_progress(
                     conn, execution_key=execution_key, result=creation
                 )
@@ -3587,6 +3588,7 @@ class TinActivities:
                                 workspace=workspace_context,
                                 identity=identity_context,
                                 payment_card=payment_card,
+                                run_id=run.id,
                             ),
                             output_path=checkpoint_path,
                             output_max_bytes=procedure.output_max_bytes,
@@ -5693,23 +5695,6 @@ class TinActivities:
     def _require_active_lease(run) -> None:
         if not run.lease_active:
             raise StaleGenerationError("run generation does not own the active lease")
-
-
-_SECRET_IN_TEXT = re.compile(
-    r"(?i)(bearer\s+|(?:api[_-]?key|token|secret|password|authorization)=)[^\s&\"']+"
-    r"|\b(?:sk|rk|re|ghp|gho|ghu|pat|xoxb|xoxp)_[A-Za-z0-9_-]{8,}\b"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
-)
-
-
-def scrub_secrets(text: str) -> str:
-    """Mask credentials an exception text may carry (headers, query strings, key prefixes, JWTs)."""
-
-    def mask(match: re.Match[str]) -> str:
-        lead = match.group(1) or ""
-        return f"{lead}[redacted]"
-
-    return _SECRET_IN_TEXT.sub(mask, text)
 
 
 def _safe_failure(exc: BaseException) -> str:

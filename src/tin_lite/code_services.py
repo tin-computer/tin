@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 import re
 from dataclasses import asdict
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from tin_lite.integrations import (
     POSTHOG_PROVIDER,
     STRIPE_PROVIDER,
     IntegrationError,
+    IntegrationProviderError,
     IntegrationRequirement,
     ServiceCallRefused,
     ServiceResponseTooLarge,
@@ -27,6 +29,9 @@ from tin_lite.project_connections import (
     request_api,
     request_contract,
 )
+from tin_lite.provider_errors import explain
+
+logger = logging.getLogger(__name__)
 
 OPERATION = "code_service_call_v1"
 # Adding an adapter operation is an explicit reviewed mapping, never getattr on author input.
@@ -81,18 +86,34 @@ ARGUMENT_CHECKS = {
 }
 # Tin's own wait for any one provider call; managed Google reads stop a few seconds sooner.
 CALL_SECONDS = 25
+# Tin's sentence plus the provider's own message (itself cut to 1,500 characters).
+MESSAGE_LIMIT = 2000
 
 
 class CodeServiceError(ValueError):
-    """Fixed safe errors; never supplier exceptions, bodies, URLs or authentication.
+    """Tin's message for a failed service call; never supplier exceptions, URLs or credentials.
+
+    When the provider answered and refused, the message ends with what it said ("PostHog said:
+    validation_error/invalid_input: ..."), and `provider_error` holds the same as a dict:
+    status, error type and code, and its message, cut and redacted (provider_errors.py).
+    `code` names Tin's refusal kind, such as `query_error` or `rate_limited`.
 
     Authored code receives the message as a ValueError from the call, unless `fatal`: the run
     itself lost its authority, so it stops without handing anything back.
     """
 
-    def __init__(self, message, *, fatal=False):
+    def __init__(self, message, *, fatal=False, code=None, provider_error=None):
         super().__init__(message)
         self.fatal = fatal
+        self.code = code
+        self.provider_error = provider_error
+
+    def diagnostic(self):
+        """What a procedure's `call_service` tool error carries, as JSON."""
+        value = {"code": self.code or "service_error", "message": str(self)}
+        if self.provider_error:
+            value["provider_error"] = self.provider_error
+        return value
 
 
 SPENDING_STOPPED = (
@@ -105,7 +126,8 @@ def _too_large(service):
     return CodeServiceError(
         f"The service response exceeded this binding's max_response_bytes "
         f"({service.max_response_bytes}); request less data, for example a smaller "
-        "row_limit or the next start_row page."
+        "row_limit or the next start_row page.",
+        code="response_too_large",
     )
 
 
@@ -244,7 +266,11 @@ class CodeServices:
                     if record.get("error") == "response_too_large":
                         raise _too_large(service)
                     if record.get("error"):
-                        raise CodeServiceError(record.get("message") or "The provider refused it.")
+                        raise CodeServiceError(
+                            record.get("message") or "The provider refused it.",
+                            code=record["error"],
+                            provider_error=record.get("provider_error"),
+                        )
                     return record["response"]
                 raise CodeServiceError(
                     "A service request has an unconfirmed result; "
@@ -366,11 +392,20 @@ class CodeServices:
                         execution_key=key,
                         result={**record, "error": "spending_stopped", "message": SPENDING_STOPPED},
                     )
-                raise CodeServiceError(SPENDING_STOPPED) from None
-            except ServiceCallRefused as exc:
+                raise CodeServiceError(SPENDING_STOPPED, code="spending_stopped") from None
+            except (ServiceCallRefused, IntegrationProviderError) as exc:
                 # The provider answered and refused (rate limit, missing permission, revoked
-                # key): settle the step with Tin's own message so a new step may try again.
-                refused = {**record, "error": exc.code, "message": str(exc)[:500]}
+                # key, a query it could not run): settle the step so a new step may try again.
+                # Every gateway operation that reaches a provider error status is a read.
+                # Keep what the provider said: without it an author debugs blind.
+                detail = exc.provider_error
+                refused = {
+                    **record,
+                    "error": exc.code if isinstance(exc, ServiceCallRefused) else "provider_error",
+                    "message": explain(str(exc), detail)[:MESSAGE_LIMIT],
+                }
+                if detail is not None:
+                    refused["provider_error"] = detail.to_dict()
                 async with conn.transaction():
                     await self.db.complete_effect(conn, execution_key=key, result=refused)
                     if usage_key:
@@ -380,7 +415,24 @@ class CodeServices:
                     # A rejected credential needs attention whatever body the API sent with it.
                     if isinstance(exc, InvalidAPIResponse) and exc.status in {401, 403}:
                         await self._authentication_failed(conn, run, connection, secret_revision)
-                raise CodeServiceError(refused["message"]) from None
+                logger.info(
+                    "service call refused",
+                    extra={
+                        "run_id": str(run.id),
+                        "service": service.name,
+                        "step": step,
+                        "provider": service.provider_key,
+                        "error_code": refused["error"],
+                        "provider_status": detail.status if detail else None,
+                        "provider_error_type": detail.type if detail else None,
+                        "provider_error_code": detail.code if detail else None,
+                    },
+                )
+                raise CodeServiceError(
+                    refused["message"],
+                    code=refused["error"],
+                    provider_error=refused.get("provider_error"),
+                ) from None
             except (
                 IntegrationError,
                 httpx.HTTPError,

@@ -341,6 +341,18 @@ class TestIdentityPolicy:
         return {"create": self.create, "reuse": self.reuse}
 
 
+RUN_ID_ENV = "TIN_RUN_ID"
+
+
+def run_context_instruction(run_id: str) -> str:
+    """The brief's run line: the same ID code workflows read as ctx["run_id"]."""
+    return (
+        f"\n\nRUN CONTEXT:\nThis run's Tin run ID is {run_id}. Use it wherever the procedure "
+        "asks for this run's ID, such as a report, a receipt or a file name; never invent one. "
+        f"Commands can also read it from the {RUN_ID_ENV} environment variable."
+    )
+
+
 @dataclass(frozen=True)
 class CodexProcedureSpec:
     prompt_path: str
@@ -477,6 +489,7 @@ class PinnedCodexProcedure:
         workspace: dict[str, Any] | None = None,
         identity: dict[str, str] | None = None,
         payment_card: dict[str, str] | None = None,
+        run_id: UUID | str | None = None,
     ) -> dict[str, Any]:
         output: dict[str, Any] = {
             "kind": self.result_kind,
@@ -525,6 +538,11 @@ class PinnedCodexProcedure:
             "sandbox": self.sandbox.definition(),
             "inputs": {key: value for key, value in inputs.items() if key != "project_id"},
         }
+        if run_id is not None:
+            # Code workflows read ctx["run_id"]; a procedure gets the same ID in its brief and,
+            # through the sandbox, as TIN_RUN_ID for its commands.
+            context["run"] = {"id": str(UUID(str(run_id)))}
+            context["prompt"] += run_context_instruction(context["run"]["id"])
         if self.services:
             context["services"] = [asdict(service) for service in self.services]
             context["prompt"] += (
@@ -1568,14 +1586,28 @@ def _owned_section_span(lines: list[str], *, section: OutputSection) -> tuple[in
     return start, end
 
 
+def memory_section_text(text: str, heading: str) -> str | None:
+    """The owned `heading` section of the memory index, bounded as its writer bounds it.
+
+    The section runs from its heading line (exact, or followed by the writer's parenthetical,
+    such as `### Code map (verified 2026-09-04, ...)`) to the next `##`/`###` heading, inside
+    `## Product`. None when the section is missing, misplaced or declared twice.
+    """
+    section = OutputSection(parent=MEMORY_SECTION_PARENT, heading=heading, max_bytes=0)
+    lines = text.splitlines()
+    try:
+        span = _owned_section_span(lines, section=section)
+    except ValueError:
+        return None
+    if span is None:
+        return None
+    start, end = span
+    return "\n".join(lines[start:end]).rstrip() + "\n"
+
+
 def memory_section_present(text: str, heading: str) -> bool:
     """Whether the memory index text holds one well-formed `heading` under the product parent."""
-    section = OutputSection(parent=MEMORY_SECTION_PARENT, heading=heading, max_bytes=0)
-    try:
-        span = _owned_section_span(text.splitlines(), section=section)
-    except ValueError:
-        return False
-    return span is not None
+    return memory_section_text(text, heading) is not None
 
 
 def _content_lines(lines: list[str]) -> list[str]:

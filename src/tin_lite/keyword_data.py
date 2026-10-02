@@ -113,9 +113,12 @@ def request_for(kind: str, *, market: str, value, tag: str) -> dict:
 class DataForSEOTaskError(DataForSEOError):
     """DataForSEO answered and refused the request or its task: a known outcome."""
 
-    def __init__(self, status_code: int) -> None:
+    def __init__(self, status_code: int, status_message: str | None = None) -> None:
         super().__init__(f"DataForSEO returned status {status_code}.")
         self.status_code = status_code
+        # DataForSEO's own explanation ("Invalid Field: 'location_code'."); the service
+        # gateway redacts and shows it to the run, never to logs or founders.
+        self.status_message = status_message if isinstance(status_message, str) else None
 
 
 class KeywordData:
@@ -199,7 +202,7 @@ class KeywordData:
             if payload.get("status_code") != 20000:
                 if settle_errors and type(payload.get("status_code")) is int:
                     await observe_tool(observation, {"cost": payload.get("cost", 0)})
-                    raise DataForSEOTaskError(payload["status_code"])
+                    raise DataForSEOTaskError(payload["status_code"], payload.get("status_message"))
                 raise DataForSEOError("Keyword provider response was not successful.")
             tasks = payload.get("tasks")
             if not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], dict):
@@ -209,7 +212,7 @@ class KeywordData:
             # 20100 is DataForSEO's "No Search Results": a completed, charged, empty lookup.
             if task.get("status_code") not in {20000, 20100}:
                 if settle_errors and type(task.get("status_code")) is int:
-                    raise DataForSEOTaskError(task["status_code"])
+                    raise DataForSEOTaskError(task["status_code"], task.get("status_message"))
                 raise DataForSEOError("Keyword task did not return a completed result.")
             data = task.get("data")
             if not isinstance(data, dict) or any(

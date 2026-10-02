@@ -221,7 +221,9 @@ async def test_seed_proposal_overlaps_lookups_that_do_not_need_seeds():
     # that needs seeds was.
     assert set(at_finish) == {"target", "competitors"}
     ledger = list(db.effects[activities.key(str(RUN_ID), "budget")].result)
-    assert ledger[:5] == ["review", "triage", "seeds", "target", "competitors"]
+    # v7 holds back one reservation per screening batch, then buys seeds and lookups.
+    screening = [f"triage:{index}" for index in range(6)]
+    assert ledger[:10] == ["review", *screening, "seeds", "target", "competitors"]
 
 
 @pytest.mark.asyncio

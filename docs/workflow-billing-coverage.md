@@ -186,6 +186,14 @@ runs keep theirs. From list prices checked September 29, 2026:
   costs about $0.95, even with the model calls at their bounds. The measured $0.73 covered the
   audit too, so a typical keyword run costs less than that; $2 is roughly three times it.
 
+Keyword policy v7 (`keyword_plan_v7.py`, October 1, 2026) screens in batches of 50 and asks a
+batch cut off at its output cap once more with twice the cap. Each screening request is bounded
+to 80,000 bytes, so at the pinned standard-band rates ($0.125 per million input tokens at the
+cache-write rate, $0.50 per million output tokens) the largest call costs $0.0185; first
+attempts and retries each reserve $0.02. Six batches and six retries ($0.24) replace v6's
+single $0.10 screening reservation, so a full run reserves at most $1.79, still under the $2
+floor. Seeds, review, lookups and samples keep v6's reservations.
+
 Audit policy v10 makes at most 28 searched and 44 unsearched calls plus one crawl (v9 made 52
 unsearched: it could interpret twelve questions per panel attempt, where v10 keeps eight). With
 every input at its 60,000-byte cap (one token per byte, plus 16,384 tokens of results per

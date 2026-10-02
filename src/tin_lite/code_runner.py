@@ -37,7 +37,15 @@ other failure keeps the generic status. Must match e2b_runtime.SERVICE_ERROR_EXI
 
 
 class ServiceError(ValueError):
-    """A service error Tin handed to authored code, as the documented ValueError."""
+    """A service error Tin handed to authored code, as the documented ValueError.
+
+    `code` names Tin's refusal kind (for example `query_error`); `provider_error` is what the
+    provider said when it refused: {provider, status, type, code, message}, redacted.
+    """
+
+    def __init__(self, message, code=None, provider_error=None):
+        super().__init__(message)
+        self.code, self.provider_error = code, provider_error
 
 
 class ServiceErrorEscaped(Exception):
@@ -69,10 +77,16 @@ class Models:
         if response.get("error"):
             if request.get("kind") == "file":
                 if response["error"] == "file_not_found":
-                    raise FileNotFoundError(request["path"])
+                    section = request.get("section")
+                    raise FileNotFoundError(
+                        f"{request['path']} {section}" if section else request["path"]
+                    )
                 raise ValueError(response["error"].replace("_", " "))
-            error = ServiceError if request.get("kind") == "service" else ValueError
-            raise error(response["error"])
+            if request.get("kind") == "service":
+                raise ServiceError(
+                    response["error"], response.get("code"), response.get("provider_error")
+                )
+            raise ValueError(response["error"])
         return response["result"]
 
 
@@ -89,6 +103,21 @@ class Files(Models):
 
     def glob(self, pattern):
         return self._call({"kind": "file", "operation": "glob", "path": pattern})
+
+    def read_section(self, heading):
+        """One owned section of project memory, such as "### Code map", from wiki/INDEX.md.
+
+        Found where its workflow wrote it, even when the whole index is over the read limit.
+        """
+        encoded = self._call(
+            {
+                "kind": "file",
+                "operation": "read_section",
+                "path": "wiki/INDEX.md",
+                "section": heading,
+            }
+        )
+        return base64.b64decode(encoded, validate=True).decode("utf-8")
 
 
 class Context(dict):

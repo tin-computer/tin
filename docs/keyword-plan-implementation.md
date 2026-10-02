@@ -135,6 +135,32 @@ rates). A full run reserves at most $1.65. Arithmetic and sources are in
 [workflow billing coverage](workflow-billing-coverage.md#ceilings-sized-to-measured-cost--september-29-2026).
 A provider charge above its reservation still stops research rather than overspending.
 
+## Policy v7: screening in batches — October 1, 2026
+
+Production run a59cded8 (v6) screened about 300 candidates in one call capped at 5,000 output
+tokens. GPT-6 Luna counts reasoning against that cap: the call reasoned for 4,221 tokens,
+stopped mid-JSON, and the run failed after buying $0.42 of research. New definitions pin
+`keyword-plan-v7` (catalog `organic.keyword_plan` 0.7.0). It keeps v6's research, seeds,
+review, instructions and schemas and changes only screening:
+
+- At most 50 candidates per call (`triage:0`, `triage:1`, ...), three batches at a time. Each
+  batch labels its own `k1..k50` slots; Tin concatenates the labelled rows back in candidate
+  order, which is exactly what one call over all candidates returns.
+- A batch is cut off when the provider reports `incomplete` for `max_output_tokens`, or when its
+  JSON does not parse and it used its whole allowance. It is asked once more
+  (`triage:N:retry`) with 16,000 tokens instead of 8,000, under its own reservation. GPT-6 Luna
+  allows 128,000 output tokens per response.
+- If the retry is cut off too, or would pass the run's spending limit, the run fails with
+  `output_truncated` and names the batch. No further batch starts; completed batches keep
+  their receipts.
+- The research (sources, seeds, competitors, candidates and coverage) is saved as its own
+  record before screening. Every lookup already had a completed receipt, so a repeated
+  activity never bought one twice, but a retry of a failed run used to buy them all again
+  because only a finished collection was reused. A retry of the same job now reuses the saved
+  research and screens again.
+- Runs pinned to v2-v6 keep one screening call with their 5,000-token cap and fail as before;
+  their failure now says the call stopped at its output limit when that is what happened.
+
 ## Concurrent lookups — September 29, 2026
 
 Research buys the same calls as before, but no longer one at a time. Policies, seed counts,

@@ -82,6 +82,11 @@ The [package guide](../workflow_packages/README.md#codex-procedure-example) has 
 example. Procedure packages can produce a project artifact or an unmerged GitHub PR.
 They don't acquire the interactive conversation and controls of a one-off `project.task`.
 
+A procedure knows its own run, as code does through `ctx["run_id"]`. Tin adds a `RUN CONTEXT`
+line naming the run ID to the end of the brief, and sets `TIN_RUN_ID` for the procedure's
+commands. Ask for it wherever the output names its run, such as a report heading, a receipt
+or a file name; don't let the model invent one.
+
 Public procedures can also [propose and adopt a reviewed document pair](reviewed-project-documents.md)
 and optionally inspect a read-only connected repository. These are explicit output/workspace
 contracts; ordinary reviewable artifacts keep their existing behavior.

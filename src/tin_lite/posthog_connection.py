@@ -46,6 +46,8 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
 )
+from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import detail as provider_error_detail
 
 # The region-agnostic authorization server fronts US and EU Cloud; the token response names
 # the region. API reads and refreshes then go to that region's fixed host only.
@@ -512,19 +514,21 @@ assert {op.capability for op in OPERATIONS.values()} == set(POSTHOG_CAPABILITIES
 
 
 class PostHogUnauthorized(ServiceCallRefused):
-    def __init__(self) -> None:
+    def __init__(self, provider_error: ProviderErrorDetail | None = None) -> None:
         super().__init__(
             "PostHog no longer accepts Tin's access. Reconnect PostHog in Integrations.",
             code="reauthorization_required",
+            provider_error=provider_error,
         )
 
 
 class PostHogPermissionDenied(ServiceCallRefused):
-    def __init__(self) -> None:
+    def __init__(self, provider_error: ProviderErrorDetail | None = None) -> None:
         super().__init__(
             "PostHog refused this read for the selected project. Reconnect PostHog and approve "
             "read access to that project, or choose a project the account can read.",
             code="permission_denied",
+            provider_error=provider_error,
         )
 
 
@@ -538,18 +542,9 @@ def _retry_after(value: str | None) -> int | None:
     return None
 
 
-def _detail(payload: Any) -> str | None:
-    if not isinstance(payload, dict):
-        return None
-    for key in ("detail", "error_description", "error"):
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            cleaned = "".join(c if c.isprintable() else " " for c in value)
-            return " ".join(cleaned.split())[:300]
-    return None
-
-
-def rate_limited(*, budget: bool, retry_after: int | None) -> IntegrationRateLimitedError:
+def rate_limited(
+    *, budget: bool, retry_after: int | None, provider_error: ProviderErrorDetail | None = None
+) -> IntegrationRateLimitedError:
     """PostHog's 429: the hourly query budget (`api_queries_budget_exceeded`) or a rate limit.
 
     Retryable under a new step; `retry_after` carries PostHog's Retry-After seconds.
@@ -564,13 +559,14 @@ def rate_limited(*, budget: bool, retry_after: int | None) -> IntegrationRateLim
         + " in a new step.",
         reason="api_queries_budget_exceeded" if budget else "rate_limited",
         retry_after=retry_after,
+        provider_error=provider_error,
     )
 
 
-def query_rejected(detail: str | None) -> ServiceCallRefused:
-    """A 400 from /query: PostHog's own diagnostic, cleaned and cut to 300 characters."""
+def query_rejected(provider_error: ProviderErrorDetail | None) -> ServiceCallRefused:
+    """A 400 from /query; PostHog's own diagnostic (a HogQL error) travels as provider_error."""
     return ServiceCallRefused(
-        "PostHog rejected the query" + (f": {detail}" if detail else "."), code="query_error"
+        "PostHog rejected the query (HTTP 400).", code="query_error", provider_error=provider_error
     )
 
 
@@ -619,22 +615,23 @@ class PostHogReader:
                 if not isinstance(payload, dict):
                     raise IntegrationUpstreamError("PostHog returned an invalid response")
                 return payload, request_id
-            if status == 401:
-                raise PostHogUnauthorized()
-            if status == 403:
-                raise PostHogPermissionDenied()
             try:
                 error = await read_bounded_json(
                     response, maximum=MAX_ERROR_BYTES, provider="PostHog"
                 )
             except IntegrationError:
                 error = None
-        detail = _detail(error)
+        detail = provider_error_detail("PostHog", status, error, secrets=(self._token,))
+        if status == 401:
+            raise PostHogUnauthorized(detail)
+        if status == 403:
+            raise PostHogPermissionDenied(detail)
         if status == 429:
             code = error.get("code") if isinstance(error, dict) else None
             raise rate_limited(
                 budget=code == "api_queries_budget_exceeded",
                 retry_after=_retry_after(response.headers.get("retry-after")),
+                provider_error=detail,
             )
         if status == 400 and QUERY_PATH.fullmatch(path):
             raise query_rejected(detail)
@@ -643,9 +640,12 @@ class PostHogReader:
                 "PostHog could not find the selected project. Choose the project again in "
                 "Integrations.",
                 code="project_unavailable",
+                provider_error=detail,
             )
         raise ServiceCallRefused(
-            f"PostHog could not complete the read (HTTP {status}).", code="provider_error"
+            f"PostHog could not complete the read (HTTP {status}).",
+            code="provider_error",
+            provider_error=detail,
         )
 
 
