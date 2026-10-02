@@ -19,7 +19,7 @@ from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import BUILTIN_WORKFLOWS, BuiltinWorkflow, sync_builtin_workflows
 from tin_lite.domain import Workflow, WorkflowStatus
-from tin_lite.mcp_server import create_mcp_app
+from tin_lite.mcp_server import _short_workflow_view, create_mcp_app
 from tin_lite.private_workflows import authoring_guide, validate_private_definition
 from tin_lite.run_service import WorkflowExecutorUnavailableError, start_workflow_run
 from tin_lite.system_wiki import SystemWikiRef
@@ -824,6 +824,22 @@ async def test_list_workflows_and_get_workflow_expose_prerequisites_and_readines
     assert one["readiness"]["state"] == "blocked" and one["prerequisites"][0]["level"] == "required"
 
 
+def test_short_view_leaves_out_required_inputs_tin_fills():
+    # The technical fix requires repository_serves_site, but Tin fills its default, so the
+    # caller need not. It left discovery, but its pinned definition still has the shape.
+    fix = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.technical_fix")
+    workflow = SimpleNamespace(
+        id=fix.id,
+        key=fix.key,
+        title=fix.title,
+        description=fix.description,
+        definition=fix.definition,
+    )
+    view = _short_workflow_view(workflow, {"state": "ready", "unmet": []})
+    assert "audit_run_id" in view["required_inputs"]
+    assert "repository_serves_site" not in view["required_inputs"]
+
+
 async def test_short_listing_names_only_what_an_agent_needs_to_choose(publication_db, monkeypatch):
     f = await project_fixture(publication_db)
     for builtin in BUILTIN_WORKFLOWS:
@@ -864,11 +880,8 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
     assert deep_dive["schedule_modes"] == next(
         row["schedule_modes"] for row in full_rows if row["key"] == "product.deep_dive"
     )
-    # The technical fix requires repository_serves_site, but Tin fills its default, so the
-    # caller need not. (visibility.audit, the earlier example, left discovery.)
-    fix_inputs = by_key["organic.technical_fix"]["required_inputs"]
-    assert "audit_run_id" in fix_inputs and "repository_serves_site" not in fix_inputs
-    assert "visibility.audit" not in by_key
+    # Workflows hidden from discovery are not listed; their saved configurations still run.
+    assert "visibility.audit" not in by_key and "organic.technical_fix" not in by_key
     descriptions = [row["description"] for row in short_rows]
     assert all("\n" not in text and len(text) <= 160 for text in descriptions)
     assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))
