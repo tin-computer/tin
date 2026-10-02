@@ -147,9 +147,11 @@ def validate_code_definition(definition) -> CodeSpec:
         or not all(isinstance(mode, str) for mode in modes)
         or "on_demand" not in modes
         or len(modes) != len(set(modes))
-        or set(modes) - {"on_demand", "daily", "weekly"}
+        or set(modes) - {"on_demand", "daily", "weekly", "monthly"}
     ):
-        raise ValueError("code schedules require on_demand and optional daily/weekly modes")
+        raise ValueError(
+            "code schedules require on_demand and optional daily, weekly or monthly modes"
+        )
     validate_package_input_schema(definition.get("input_schema", {}))
     code = definition.get("code")
     if (

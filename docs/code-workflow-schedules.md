@@ -3,8 +3,8 @@
 Slice D extends the existing saved project configuration and Temporal Schedule contract to
 eligible `workflow.code` packages. It adds no executor, scheduler, version picker, credential
 mode, or approval step. Private Codex procedures remain manual. Existing definitions with
-`schedule_modes: [on_demand]` retain that contract; authors explicitly add `daily` and/or
-`weekly` to a new package revision when appropriate.
+`schedule_modes: [on_demand]` retain that contract; authors explicitly add `daily`, `weekly`
+and/or `monthly` to a new package revision when appropriate.
 
 ## Author, connect, save, run
 
@@ -31,6 +31,18 @@ mode, or approval step. Private Codex procedures remain manual. Existing definit
      "end_at": "2026-12-01T00:00:00Z"
    }
    ```
+
+   A monthly schedule names a `day_of_month` from 1 to 28, so it never skips a short month,
+   and optionally the `months` it runs in (1-12; `[1, 4, 7, 10]` is quarterly):
+
+   ```json
+   {"cadence": "monthly", "day_of_month": 15, "months": [1, 4, 7, 10],
+    "local_time": "09:00", "timezone": "Europe/Berlin"}
+   ```
+
+   Like every cadence it follows Temporal's calendar across DST changes, so a local time the
+   clock skips that day (for example 02:30 on a spring-forward Sunday) does not run that month.
+   Daily and weekly schedules keep their stored shape; only a monthly one carries the two keys.
 
 5. Saving a schedule over MCP also runs the configuration once right away: `create_project_workflow`
    returns `first_run` with that run's id, or why it could not start (the schedule is saved either

@@ -198,7 +198,7 @@ async def test_community_check_does_not_apply_private_only_policies(tmp_path):
     package = stage(tmp_path)
     path = package / "workflow.json"
     manifest = json.loads(path.read_bytes())
-    manifest["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly"]
+    manifest["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly", "monthly"]
     manifest["definition"]["human_review"] = {"eligible": True, "summary": "Review report"}
     path.write_text(json.dumps(manifest))
     assert [(package.key, error) for package, error in await validate_all(tmp_path)] == [

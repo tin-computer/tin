@@ -705,7 +705,7 @@ def authoring_guide(*, settings, project_id):
             "max_timeout_seconds": 3600,
             "schedule_modes": {
                 "codex.procedure": ["on_demand"],
-                "workflow.code": ["on_demand", "daily", "weekly"],
+                "workflow.code": ["on_demand", "daily", "weekly", "monthly"],
             },
         },
         "capabilities": {

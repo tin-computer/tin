@@ -452,3 +452,65 @@ def test_next_run_matches_temporal_across_dst(timezone, local_time, after, expec
         cursor = next_run_after(schedule, cursor)
         projected.append(cursor.isoformat())
     assert projected == expected
+
+
+@pytest.mark.parametrize(
+    ("timezone", "local_time", "day", "months", "after", "expected"),
+    [
+        # A monthly run at a missing local time is skipped for that month: New York has no
+        # 02:30 on 14 March 2027, so the next March 14 run is in 2028.
+        (
+            "America/New_York",
+            "02:30",
+            14,
+            [3],
+            "2027-02-01T00:00:00+00:00",
+            ["2028-03-14T06:30:00+00:00"],
+        ),
+        # Both copies of New York's repeated 01:30 fire, as for a daily schedule.
+        (
+            "America/New_York",
+            "01:30",
+            7,
+            [11],
+            "2027-10-01T00:00:00+00:00",
+            [
+                "2027-11-07T05:30:00+00:00",
+                "2027-11-07T06:30:00+00:00",
+                "2028-11-07T06:30:00+00:00",
+            ],
+        ),
+        # Sydney repeats 02:00-02:59 on 4 April 2027; 02:30 fires once, at AEST.
+        (
+            "Australia/Sydney",
+            "02:30",
+            4,
+            [4],
+            "2027-03-01T00:00:00+00:00",
+            ["2027-04-03T16:30:00+00:00", "2028-04-03T16:30:00+00:00"],
+        ),
+        # Quarterly: the 15th of January, April, July and October.
+        (
+            "Asia/Kolkata",
+            "23:45",
+            15,
+            [1, 4, 7, 10],
+            "2027-01-16T00:00:00+00:00",
+            ["2027-04-15T18:15:00+00:00", "2027-07-15T18:15:00+00:00"],
+        ),
+    ],
+)
+def test_monthly_next_run_matches_temporal(timezone, local_time, day, months, after, expected):
+    schedule = WorkflowSchedule(
+        cadence="monthly",
+        day_of_month=day,
+        months=months,
+        local_time=local_time,
+        timezone=timezone,
+    )
+    cursor = datetime.fromisoformat(after)
+    projected = []
+    for _ in expected:
+        cursor = next_run_after(schedule, cursor)
+        projected.append(cursor.isoformat())
+    assert projected == expected

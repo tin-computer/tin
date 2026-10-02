@@ -3170,7 +3170,10 @@ html[data-theme="dark"] .markdown-logo::before {
 .system-config-form.is-manual .schedule-timed,
 .system-config-form:not(.is-weekly) .schedule-weekday,
 .workflow-ledger-schedule-form.is-manual .schedule-timed,
-.workflow-ledger-schedule-form:not(.is-weekly) .schedule-weekday {
+.workflow-ledger-schedule-form:not(.is-weekly) .schedule-weekday,
+.workflow-config-form:not(.is-monthly) .schedule-monthly,
+.system-config-form:not(.is-monthly) .schedule-monthly,
+.workflow-ledger-schedule-form:not(.is-monthly) .schedule-monthly {
   display: none;
 }
 
@@ -4104,6 +4107,17 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .content-program-card .tin-select-menu {
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+}
+
+/* Room for a quarter's four month names on one line. */
+.schedule-monthly .tin-select {
+  width: min(220px, 100%);
+}
+
+/* 28 days of the month: scroll inside the menu rather than past the card. */
+.schedule-monthly .tin-select-menu {
   max-height: min(280px, 50vh);
   overflow-y: auto;
 }
@@ -7389,6 +7403,13 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   .tin-segment {
     min-width: 0;
     flex: 1;
+  }
+
+  /* Four cadences: each label keeps one line, sized to its text. */
+  .schedule-mode .tin-segment {
+    flex: 1 1 auto;
+    padding: 0 8px;
+    white-space: nowrap;
   }
 
   .workflow-config-actions {
