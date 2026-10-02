@@ -887,8 +887,8 @@ async def test_write_only_api_never_echoes_values_in_validation_or_metadata(bill
     [
         lambda d: d["integration_requirements"][0].update(required=False),
         lambda d: d["integration_requirements"][0].update(capabilities=["gmail.messages.send"]),
-        lambda d: d["code"]["services"]["crm"].update(max_calls=9),
-        lambda d: d["code"]["services"]["crm"].update(max_response_bytes=64001),
+        lambda d: d["code"]["services"]["crm"].update(max_calls=33),
+        lambda d: d["code"]["services"]["crm"].update(max_response_bytes=1_000_001),
         lambda d: d["code"]["services"]["crm"].update(provider_key="custom.api.other"),
         lambda d: d["code"]["services"]["crm"].update(secret=SECRET),
     ],

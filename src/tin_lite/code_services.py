@@ -85,7 +85,7 @@ ARGUMENT_CHECKS = {
     **{provider: managed_services.check_arguments for provider in managed_services.DEFINITIONS},
 }
 # Tin's own wait for any one provider call; managed Google reads stop a few seconds sooner.
-CALL_SECONDS = 25
+CALL_SECONDS = 60
 # Tin's sentence plus the provider's own message (itself cut to 1,500 characters).
 MESSAGE_LIMIT = 2000
 

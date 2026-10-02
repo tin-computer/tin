@@ -91,7 +91,8 @@ async def execute_codex_slice(payload: dict[str, str], *, cancellable: bool = Fa
         await workflow.execute_activity(
             "execute_code_workflow",
             run_id,
-            start_to_close_timeout=timedelta(minutes=4),
+            # Above a package's 900-second window plus sandbox setup and result storage.
+            start_to_close_timeout=timedelta(minutes=20),
             heartbeat_timeout=timedelta(seconds=20),
             retry_policy=RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(seconds=10)),
             **options,

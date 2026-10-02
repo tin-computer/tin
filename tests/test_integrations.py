@@ -542,6 +542,11 @@ async def test_search_console_bound_clamps_trims_and_points_to_the_next_page() -
         assert 200 < len(page["rows"]) < sent[-1]["rowLimit"]
         assert page["next_start_row"] == len(page["rows"])
 
+        # The largest binding still asks Google for no more than the rows it can return,
+        # and never past Search Console's own 25,000-row maximum.
+        await read(dimensions=("query", "page"), row_limit=25_000, max_response_bytes=1_000_000)
+        assert sent[-1]["rowLimit"] == 1_000_000 // GSC_MIN_ROW_BYTES < 25_000
+
         following = await read(
             dimensions=("query", "page"),
             row_limit=25_000,

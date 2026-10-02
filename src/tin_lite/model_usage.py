@@ -39,17 +39,32 @@ class _CallScope:
     run_id: UUID
     step: str
     conn: asyncpg.Connection
+    input_tokens: int | None = None
 
 
 _scope: ContextVar[_CallScope | None] = ContextVar("native_model_usage_scope", default=None)
 
 
 @contextmanager
-def model_usage_scope(*, run_id: UUID | str, step: str, conn: asyncpg.Connection) -> Iterator[None]:
-    """Set only by trusted activities, never by a client request or uploaded package."""
+def model_usage_scope(
+    *,
+    run_id: UUID | str,
+    step: str,
+    conn: asyncpg.Connection,
+    input_tokens: int | None = None,
+) -> Iterator[None]:
+    """Set only by trusted activities, never by a client request or uploaded package.
+
+    `input_tokens` replaces the default one-token-per-byte input reservation with the
+    caller's own bound, which its pinned run terms must cover (code_models does this).
+    """
     if not step or len(step) > 200:
         raise ValueError("model step must be a bounded stable identifier")
-    token = _scope.set(_CallScope(run_id=UUID(str(run_id)), step=step, conn=conn))
+    if input_tokens is not None and (type(input_tokens) is not int or input_tokens < 1):
+        raise ValueError("model input token bound must be a positive integer")
+    token = _scope.set(
+        _CallScope(run_id=UUID(str(run_id)), step=step, conn=conn, input_tokens=input_tokens)
+    )
     try:
         yield
     finally:
@@ -114,7 +129,11 @@ class ModelUsageRecorder:
                 # Tin absorbs any supplier overage; a customer charge cannot exceed its cap.
                 from tin_lite.service_pricing import model_maximum
 
-                input_bound = len(json.dumps(asdict(request), ensure_ascii=False).encode()) + 4096
+                input_bound = (
+                    scope.input_tokens
+                    if scope.input_tokens is not None
+                    else len(json.dumps(asdict(request), ensure_ascii=False).encode()) + 4096
+                )
                 await self.db.billing.begin_operation(
                     conn,
                     run_id=run.id,

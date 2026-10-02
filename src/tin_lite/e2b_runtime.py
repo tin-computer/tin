@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
 SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""
+CODE_BRIDGE_MAX_BYTES = 4_000_000
+"""code_runner.MAX_RPC: the largest code bridge request Tin reads from the sandbox."""
 
 
 def _being_deleted(exc: SandboxException) -> bool:
@@ -271,7 +273,9 @@ class E2BRuntime:
                 "deny_out": lambda context: [context.all_traffic],
             }
         if code_only:
-            if profile is None or not profile.isolated or not 1 <= timeout <= 60:
+            from tin_lite.workflow_code import MAX_TIMEOUT_SECONDS
+
+            if profile is None or not profile.isolated or not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
                 raise ValueError("code execution requires a bounded isolated profile")
             network = {"deny_out": lambda context: [context.all_traffic]}
         metadata = {"execution_key": execution_key, "run_id": run_id, "template": template}
@@ -325,7 +329,7 @@ class E2BRuntime:
                     raw = await sandbox.files.read(
                         "/root/tin-code/request.json", format="bytes", user="root"
                     )
-                    if len(raw) > 128_000:
+                    if len(raw) > CODE_BRIDGE_MAX_BYTES:
                         raise CodeModelError("invalid_model_request")
                     try:
                         response = {"result": await model_call(json.loads(raw))}

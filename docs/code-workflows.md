@@ -49,8 +49,9 @@ The definition selects `executor: workflow.code` and a `code` object with:
 - `runtime: python3.12.8-stdlib-v1`;
 - `entrypoint`: a declared package-relative `.py` file exporting `run(ctx, inputs)`;
 - `files`: 1–32 explicitly declared UTF-8 files, at most 64,000 bytes each and 256,000 bytes total;
-- `timeout_seconds`: 1–60 seconds;
-- `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 64,000. The file
+- `timeout_seconds`: 1–900 seconds, the package's wall-clock window (it also bounds each
+  model call's wait);
+- `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 1,000,000. The file
   name may carry `{date}` and `{slug}` once each, so repeated runs keep separate, readable files.
 
 `run` may be synchronous or asynchronous and returns exactly `{ "path": "…", "content": "…" }`.

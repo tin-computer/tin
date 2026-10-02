@@ -139,14 +139,15 @@ async def test_a_code_workflow_finds_what_product_code_map_wrote(billed, monkeyp
 
 
 async def test_a_large_index_still_yields_its_code_map(billed, monkeypatch):
-    # The index may grow to 100,000 bytes; a whole-file read stops at 64,000, a section does not.
+    # The index may grow to 100,000 bytes, past the old 64,000-byte read limit; the whole file
+    # now fits one read, and a section still comes back alone.
     intro = f"# Test memory\n\n{PADDING}\n"
     index = written_by_the_code_map(CODE_MAP, FEATURE_MAP, intro=intro)
     assert 64_000 < len(index) <= 100_000
     results = await run_reads(
         billed, monkeypatch, {MEMORY_INDEX_PATH: index}, [WHOLE, SECTION, OLD_PATH]
     )
-    assert results == ["file_too_large_or_not_regular", CODE_MAP, CODE_MAP]
+    assert results == [index.decode(), CODE_MAP, CODE_MAP]
 
 
 async def test_old_layouts_keep_working(billed, monkeypatch):
