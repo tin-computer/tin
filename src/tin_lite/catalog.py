@@ -75,13 +75,13 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v7 import (
+from tin_lite.keyword_plan_v8 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
@@ -1226,7 +1226,7 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.7.0",
+        version_label="0.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=ModelRoute(

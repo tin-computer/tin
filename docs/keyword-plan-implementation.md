@@ -161,6 +161,29 @@ review, instructions and schemas and changes only screening:
 - Runs pinned to v2-v6 keep one screening call with their 5,000-token cap and fail as before;
   their failure now says the call stopped at its output limit when that is what happened.
 
+## Policy v8: screening caps as runaway guards — October 2, 2026
+
+v7 is deployed, so it stays as it is. Its caps were sized like expected answer lengths, but a
+cap only stops a run: billing charges the tokens a call actually used. In runs a59cded8 and
+de1a4d3e the screening call stopped at exactly 5,000 output tokens after 3,500-4,200 tokens of
+reasoning. New definitions pin `keyword-plan-v8` (catalog `organic.keyword_plan` 0.8.0). It is
+v7 with larger screening caps and nothing else:
+
+- Batches stay at 50 candidates. First attempts get 32,000 output tokens and the one retry
+  64,000, more than six times the largest screening output seen in production and still half
+  of GPT-6 Luna's 128,000. Reasoning effort is left to the model, as before.
+- Reservations follow the caps: $0.03 per first attempt and $0.045 per retry (worst cases
+  $0.0265 and $0.0425 at standard-band rates). A full run reserves at most $2.00, exactly the
+  $2 floor, so the floor, the catalog's default and the organic system's keyword limit are
+  unchanged. Arithmetic is in
+  [workflow billing coverage](workflow-billing-coverage.md#ceilings-sized-to-measured-cost--september-29-2026).
+- Seeds (2,000 tokens) and review (24,000 tokens) keep their caps: raising either to 32,000
+  would lift the worst case above the $2 floor.
+- Screening now waits up to 600 seconds per call (it was 240), for every policy: waiting
+  longer never changes a request. `keyword_collect` may run for 60 minutes (it was 25), enough
+  for two rounds of three batches that each need a retry at the full wait.
+- Runs pinned to v2-v7 send exactly the requests they did.
+
 ## Concurrent lookups — September 29, 2026
 
 Research buys the same calls as before, but no longer one at a time. Policies, seed counts,
