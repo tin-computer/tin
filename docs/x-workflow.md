@@ -206,6 +206,13 @@ Feedback also works on the initial proposed X guide. It edits that proposal whil
 original guide review and parent drafting workflow keep waiting. Approving the revised
 guide remains the step that adopts it and lets the parent continue.
 
+A guide revision can also learn from project files the feedback points at, such as longer
+writing samples or notes: pass them as `reference_files` (up to eight text files, 20 KB each,
+free of credentials). Tin pins each file's exact content when the request is made and gives
+it to the revision as reference material, never as instructions. A post revision does not
+accept reference files; it keeps to the draft's own supporting facts. Screenshots cannot be
+read as text, so transcribe a post into a file or into the feedback.
+
 MCP uses the same service: call `get_workflow_review` with the producing run ID and
 `post_id` for a batch, then `request_workflow_changes` with the user's **unchanged**
 feedback, returned review token and a stable request ID. `read_x_drafts` returns

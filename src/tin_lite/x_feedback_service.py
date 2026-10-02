@@ -1,9 +1,11 @@
 """The same file-based X feedback boundary for the dashboard and MCP."""
 
+import hashlib
 import json
 from uuid import UUID
 
 from tin_lite import x_feedback, x_style
+from tin_lite.project_files import credential_findings, safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict
 from tin_lite.x_posts import MAX_DRAFT_BYTES, digest, validate_draft
 
@@ -165,9 +167,17 @@ class XFeedback:
         trigger_client=None,
         trigger_source="manual",
         oauth_client_id=None,
+        reference_files=(),
     ):
         if not isinstance(feedback, str) or not feedback.strip() or len(feedback) > 8000:
             raise ValueError("Describe the changes in 1–8,000 characters.")
+        paths = list(reference_files)
+        if (
+            len(paths) > x_feedback.MAX_REFERENCE_FILES
+            or len(set(paths)) != len(paths)
+            or any(not isinstance(p, str) or not safe_project_file_path(p) for p in paths)
+        ):
+            raise ValueError("Choose up to eight different project files.")
         run = await self.source(run_id, actor)
         start_key = f"x-feedback:{UUID(str(request_id))}"
         existing = await self.db.get_run_by_start_key(
@@ -181,6 +191,8 @@ class XFeedback:
                 or existing.input["feedback"] != feedback
                 or existing.input["review_token"] != token
                 or (post_id and existing.input["post_id"] != post_id)
+                or [r["path"] for r in json.loads(existing.input.get("references") or "[]")]
+                != paths
             ):
                 raise ReviewConflict("This request ID belongs to different feedback.")
             return existing
@@ -189,9 +201,11 @@ class XFeedback:
             raise ReviewConflict(
                 "The draft changed or is already being revised. Read it again first."
             )
-        snapshot, current_token, _ = await self.snapshot(run, post_id)
+        snapshot, current_token, packet = await self.snapshot(run, post_id)
         if token != current_token:
             raise ReviewConflict("The draft changed. Read it again first.")
+        references = await self.references(run, snapshot, packet, feedback, paths)
+        pinned = [{k: r[k] for k in ("path", "revision", "bytes", "sha256")} for r in references]
         workflow = await self.db.get_workflow(x_feedback.WORKFLOW_ID)
         if workflow is None:
             raise ValueError("X feedback is not installed yet.")
@@ -211,12 +225,73 @@ class XFeedback:
                 "feedback": feedback,
                 "review_token": token,
                 "snapshot": json.dumps(snapshot),
+                **({"references": json.dumps(pinned)} if pinned else {}),
             },
             trigger_client=trigger_client,
             trigger_source=trigger_source,
             started_by_oauth_client_id=oauth_client_id,
             _x_feedback=True,
         )
+
+    async def references(self, run, snapshot, packet, feedback, paths):
+        """Pin the project files a guide revision learns from: text, credential-free, bounded.
+
+        Posts keep to their own supporting facts, so only a writing guide accepts them.
+        """
+        if not paths:
+            return []
+        if snapshot["kind"] != "guide":
+            raise ValueError(
+                "X revisions use the draft's existing supporting facts. Put factual "
+                "corrections in feedback."
+            )
+        project = await self.db.get_project(run.project_id)
+        references = []
+        for path in paths:
+            try:
+                raw = await self.storage.read_bounded_project_file(
+                    repo_id=project.state_repo_id,
+                    commit_sha=snapshot["revision"],
+                    path=path,
+                    max_bytes=x_feedback.MAX_REFERENCE_BYTES,
+                )
+            except ValueError:
+                raise ValueError(f"{path} is larger than 20 KB; choose a shorter file.") from None
+            if raw is None:
+                raise ValueError(f"{path} is not in the project's files.")
+            try:
+                text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise ValueError(
+                    f"{path} is not a text file. Transcribe an image or screenshot into "
+                    "a file or the feedback."
+                ) from None
+            if credential_findings(text):
+                raise ValueError(f"Remove credentials from {path} before using it.")
+            references.append(
+                {
+                    "path": path,
+                    "revision": snapshot["revision"],
+                    "bytes": len(raw),
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                    "text": text,
+                }
+            )
+        model_input = x_feedback.model_packet(
+            kind=snapshot["kind"],
+            post=packet["post"],
+            guide=packet["guide"],
+            feedback=feedback,
+            references=references,
+        )
+        if (
+            len(json.dumps(model_input, ensure_ascii=False).encode())
+            > x_feedback.POLICY["max_input_bytes"]
+        ):
+            raise ValueError(
+                "These reference files make the revision too large. Use fewer or shorter files."
+            )
+        return references
 
     async def approve(self, *, run_id, actor, token):
         from uuid import NAMESPACE_URL, uuid5
