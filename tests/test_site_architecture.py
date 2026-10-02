@@ -8,13 +8,15 @@ import re
 import pytest
 from loop_workflow_fakes import context, definition, gsc, load
 
-from tin_lite import planned_url_changes as planned
 from tin_lite.community import REPOSITORY_ROOT
 from tin_lite.organic_audit_summary import PAGE_COLUMNS
 from tin_lite.workflow_code import validate_code_definition, validate_code_result
 from tin_lite.workflow_qualification import Qualification, assess_output
 
 KEY = "organic.site_architecture"
+# website.change (PR #266, source `planned`) reads the redirects block at this path; its shape
+# is the contract, checked by redirects() below.
+ARCHITECTURE_PATH = "reports/organic/site-architecture/SITE_ARCHITECTURE.md"
 SITE = "northpine.example"
 LAST = dt.date(2026, 9, 26)
 AUDIT = "11111111-1111-4111-8111-111111111111"
@@ -42,6 +44,25 @@ PAGES = [
     page("/integrations/quickbooks", 2, 150),
     page(f"/invite/{'a' * 32}", 1, 5),
 ]
+
+
+def redirects(content):
+    """The plan's redirects.json block, as website.change reads it: permanent moves only."""
+    found = re.search(
+        r"<!-- redirects\.json:start -->\s*```json\s*(\{.*?\})\s*```\s*"
+        r"<!-- redirects\.json:end -->",
+        content,
+        re.S,
+    )
+    if not found:
+        return []
+    block = json.loads(found.group(1))
+    assert block["schema"] == "site_architecture.redirects/1"
+    assert dt.date.fromisoformat(block["generated"]) and block["plan_id"]
+    for row in block["redirects"]:
+        assert set(row) == {"old", "new", "status", "reason"} and row["status"] == 301
+        assert row["old"].startswith("/") and row["new"].startswith("/")
+    return block["redirects"]
 
 
 def baseline_rows():
@@ -199,7 +220,7 @@ URL_CHANGE = {
 
 def test_it_reads_live_data_only_and_writes_the_path_the_technical_fix_reads():
     spec = validate_code_definition(definition(KEY))
-    assert spec.output_path == planned.ARCHITECTURE_PATH
+    assert spec.output_path == ARCHITECTURE_PATH
     assert {r["provider_key"] for r in definition(KEY)["integration_requirements"]} == {
         "analytics.gsc"
     }
@@ -207,16 +228,14 @@ def test_it_reads_live_data_only_and_writes_the_path_the_technical_fix_reads():
     assert definition(KEY)["code"]["services"]["gsc"]["max_calls"] <= 8
 
 
-async def test_a_url_change_plan_hands_its_redirects_to_the_technical_fix(monkeypatch):
+async def test_a_url_change_plan_writes_its_redirects_for_website_change(monkeypatch):
     content, ctx = await plan(monkeypatch, URL_CHANGE)
     assert "Status: stopped" not in content
-    changes = planned.read_changes({planned.ARCHITECTURE_PATH: content}, dt.date(2026, 9, 29))
-    assert {(c["from"], c["to"]) for c in changes} == {
+    assert {(r["old"], r["new"]) for r in redirects(content)} == {
         ("/features", "/product"),
         ("/features/reports", "/product/reports"),
         ("/old-reports", "/product/reports"),  # the chain goes straight to its final target
     }
-    assert all(c["source"] == "organic.site_architecture" for c in changes)
     # Clicked pages the new routes do not cover become questions, never invented redirects.
     assert "- /features/invoicing: 80 clicks in 12 months; redirect, 404 or 410?" in content
     assert "/blog/late-fees" in content and "/invite/" not in content
@@ -284,7 +303,7 @@ async def test_redirects_never_point_unrelated_pages_home_and_loops_are_refused(
     content, _ = await plan(monkeypatch, inputs)
     assert "Not a redirect: /features/reports would redirect to the home page" in content
     assert "loops back to itself" in content
-    assert planned.read_changes({planned.ARCHITECTURE_PATH: content}, dt.date(2026, 9, 29)) == []
+    assert redirects(content) == []
 
 
 async def test_a_truncated_page_read_stays_unknown(monkeypatch):
@@ -305,7 +324,7 @@ async def test_without_a_trigger_it_stops_with_the_unknowns(monkeypatch):
 
 async def test_follow_up_needs_the_change_date(monkeypatch):
     first, _ = await plan(monkeypatch, URL_CHANGE)
-    files = {**FILES, planned.ARCHITECTURE_PATH: first}
+    files = {**FILES, ARCHITECTURE_PATH: first}
     content, ctx = await plan(monkeypatch, {"mode": "follow_up"}, files=files)
     assert "Status: stopped" in content and "applied_on" in content
     assert "Search Console before and after" not in content
@@ -313,7 +332,7 @@ async def test_follow_up_needs_the_change_date(monkeypatch):
 
 async def test_follow_up_compares_old_plus_new_with_the_lowest_baseline_week(monkeypatch):
     first, _ = await plan(monkeypatch, URL_CHANGE)
-    files = {**FILES, planned.ARCHITECTURE_PATH: first}
+    files = {**FILES, ARCHITECTURE_PATH: first}
     after = gsc(
         [
             {

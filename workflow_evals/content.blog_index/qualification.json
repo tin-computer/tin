@@ -9,7 +9,7 @@
     "At most four Search Console reads."
   ],
   "effects": [
-    "Opens one unmerged pull request of at most five files, or none, and writes the receipt at reports/blog-index/{run_id}/RESULT.md. No post, build setting, merge or deploy."
+    "Writes one plan at reports/blog-index/{run_id}/PLAN.md, with a blog-index-patch/1 block of at most five files or none. The repository is read-only: no pull request, post, build setting, merge or deploy. website.change applies the patch only after the founder approves it."
   ],
   "cases": [
     {
@@ -18,17 +18,17 @@
       "inputs": {"mode": "auto"},
       "expected_status": "succeeded",
       "expect": {
-        "contains": ["patch", "/blog/{slug}", "hidden until 2026-09-30", "/rss.xml", "## Numbers"],
-        "excludes": ["ItemList", "lastmod = now()"]
+        "contains": ["<!-- blog-index-patch.json:start -->", "blog-index-patch/1", "/blog/{slug}", "hidden until 2026-09-30", "/rss.xml", "## Numbers"],
+        "excludes": ["ItemList", "lastmod = now()", "\"path\": \"package.json\"", "pull request opened"]
       }
     },
     {
       "id": "no_article_route",
-      "description": "The repository has no post route and no route is saved: no files change, and the receipt carries the founder question.",
+      "description": "The repository has no post route and no route is saved: the plan has no files, and it carries the founder question.",
       "inputs": {"mode": "auto"},
       "expected_status": "succeeded",
       "expect": {
-        "contains": ["no_change", "no_article_route", "Where on your site should articles go?", "save_page_route"],
+        "contains": ["no_change", "no_article_route", "<!-- blog-index-patch.json:start -->", "Where on your site should articles go?", "save_page_route"],
         "excludes": ["/answers/"]
       }
     },
@@ -44,11 +44,11 @@
     },
     {
       "id": "check_only",
-      "description": "A renderable index missing one post: check mode names one next fix and changes nothing.",
+      "description": "A renderable index missing one post: check mode names one next fix and plans no files.",
       "inputs": {"mode": "check"},
       "expected_status": "succeeded",
       "expect": {
-        "contains": ["no_change", "check_only"],
+        "contains": ["no_change", "check_only", "<!-- blog-index-patch.json:end -->"],
         "excludes": ["```diff"]
       }
     }
@@ -56,7 +56,11 @@
   "rubric": [
     {
       "id": "source_and_reach",
-      "question": "Does the index read the traced source with its exclusions, and does preview HTML put every eligible post, including a new synthetic one, within two clicks?"
+      "question": "Does the planned index read the traced source with its exclusions, and does preview HTML in the scratch copy put every eligible post, including a new synthetic one, within two clicks?"
+    },
+    {
+      "id": "patch",
+      "question": "Does the patch name the commit it read, hold at most five files with their full text, leave the repository snapshot unchanged, and avoid package.json, lockfiles and build, CI or deploy settings?"
     },
     {
       "id": "route",
