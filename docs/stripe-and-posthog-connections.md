@@ -217,13 +217,37 @@ and eight calls read about 690; a customer record is roughly 250 bytes.
 ## Errors
 
 A package sees each failure as a `ValueError` from `ctx.services.call` (code) or a tool error
-from `call_service` (procedures), carrying Tin's own message, never a provider body.
+from `call_service` (procedures). The message starts with Tin's own sentence. When the provider
+answered and refused, Tin adds what the provider said, never its whole body:
+
+```text
+PostHog rejected the query (HTTP 400). PostHog said: validation_error/invalid_input:
+Illegal type DateTime64(6, 'UTC') of first argument of aggregate function windowFunnel ...
+```
+
+The same facts arrive as a structure. In code, the `ValueError` has `code` (Tin's refusal
+code, below) and `provider_error`; a procedure's tool error is JSON with `code`, `message`
+and `provider_error`:
+
+```json
+{"provider": "PostHog", "status": 400, "type": "validation_error",
+ "code": "invalid_input", "message": "Illegal type DateTime64(6, 'UTC') ..."}
+```
+
+`provider_error` keeps the HTTP status, the provider's error type and code, and its message.
+Tin redacts the message before anyone sees it: the credential the call used, token and key
+shapes (bearer values, JWTs, `sk-`/`rk_` keys, `token=` assignments) and the person part of
+email addresses (`[redacted]@example.com`; the domain stays). It flattens line breaks and cuts
+the message to 1,500 characters. The step's receipt records the same message and
+`provider_error`, so a replayed step returns them unchanged. Failures that are not the
+provider's answer (a timeout, a response Tin cannot read, a crash inside Tin) keep Tin's
+generic message.
 
 | Kind | Message starts with | What it means |
 | --- | --- | --- |
 | Contract | `The service request differs from its declared contract: <reason>.` | Unknown operation or argument, a value out of range, a capability the binding does not declare, or a HogQL rule. Nothing is sent. Fix the package. |
 | Too large | `The service response exceeded this binding's max_response_bytes` | One record is larger than the bound. The step is settled; later steps may run. |
-| Refused | see below | The provider answered and refused. The step is settled with Tin's message; a **new** step may try again later. |
+| Refused | see below | The provider answered and refused. The step is settled with Tin's message and what the provider said; a **new** step may try again later. |
 | Uncertain | `Service response unavailable or invalid` | The outcome is unknown (for example a timeout). Later calls in the run then fail with `An earlier service request is unresolved`; it is never retried automatically. |
 
 Refusal codes, recorded on the call receipt:
@@ -238,7 +262,7 @@ Refusal codes, recorded on the call receipt:
 | PostHog | `reauthorization_required` | PostHog no longer accepts Tin's tokens; the founder reconnects. |
 | PostHog | `permission_denied` | The grant cannot read the selected project. |
 | PostHog | `rate_limited` | The hourly query budget (`api_queries_budget_exceeded`) or a rate limit; the message includes PostHog's `Retry-After` seconds when given. |
-| PostHog | `query_error` | "PostHog rejected the query: …" with PostHog's diagnostic, cut to 300 characters. |
+| PostHog | `query_error` | "PostHog rejected the query (HTTP 400)." followed by PostHog's diagnostic, such as a HogQL error. |
 | PostHog | `query_incomplete` | PostHog did not finish within one call; narrow the query. |
 | PostHog | `project_unavailable` | The selected project no longer exists for this grant; choose it again. |
 | PostHog | `provider_error` | Any other status. |

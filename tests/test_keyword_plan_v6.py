@@ -93,12 +93,14 @@ def test_v6_reservations_cover_list_prices_and_token_bounds():
 def test_v6_worst_run_fits_its_floor_and_the_catalog_defaults():
     assert worst_run(v6.POLICY) == Decimal("1.65") <= Decimal(v6.POLICY["minimum_ceiling_usd"])
     keyword = SPECS["organic.keyword_plan"]
-    assert keyword.definition["keyword_policy"] == v6.POLICY and keyword.version_label == "0.6.0"
+    # v7 (batched screening) succeeded v6 as the pinned default and keeps its $2 floor.
+    assert keyword.definition["keyword_policy"]["minimum_ceiling_usd"] == "2"
+    assert keyword.version_label == "0.7.0"
     limit = keyword.input_schema["properties"]["max_cost_usd"]
     assert limit["minimum"] == limit["default"] == 2
     system = organic_system.INPUT_SCHEMA["properties"]["keyword_max_cost_usd"]
     assert system["minimum"] == system["default"] == 2
-    assert SPECS["organic.traffic_system"].version_label == "0.5.0"
+    assert SPECS["organic.traffic_system"].version_label == "0.6.0"
 
 
 @pytest.mark.asyncio

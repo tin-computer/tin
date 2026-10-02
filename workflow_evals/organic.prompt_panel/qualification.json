@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use a fictional Loopwell project (brand guide and Feature map), a stubbed Search Console and stubbed model answers; tests/test_prompt_panel.py supplies them offline. They are not live evidence.",
+    "The keyword plan is not read: its keywords.json is larger than the 64 KB a code workflow can read, so the families come from Search Console alone."
+  ],
+  "cost_drivers": [
+    "One Search Console read and one gpt-6-luna call of up to 32,000 input bytes and 4,096 output tokens; a second call only when check_panel lists failures. Unmeasured until qualification."
+  ],
+  "effects": [
+    "Replaces reports/research/prompt-panel/PROMPT_PANEL.md when every check passes; the organic audit asks the newest such panel for its site. Never runs prompts against an AI assistant; no send, post, spend, PR or provider change."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Loopwell: a brand guide naming the category and Search Console queries dominated by an adjacent category. The core family must lead.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "<!-- prompts.json:start -->",
+          "\"schema\": \"tin.prompt_panel/1\"",
+          "\"role\": \"core\"",
+          "\"weight\": 0.4,",
+          "Status: ready"
+        ],
+        "excludes": ["Status: stopped", "\"status\": \"draft\""]
+      }
+    },
+    {
+      "id": "no_positioning",
+      "description": "No brand guide, Feature map or onboarding plan: the run stops and names the files instead of guessing the category.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Status: stopped", "brand/BRAND.md"],
+        "excludes": ["<!-- prompts.json:start -->"]
+      }
+    },
+    {
+      "id": "forcing_clause_must_fail",
+      "description": "The first answer has a discovery prompt that reads \"which project management tool is best for early-stage startups\": the check must catch it and the published panel must not contain it.",
+      "inputs": {"target": "loopwell.example"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["check_panel passed."],
+        "excludes": ["which project management tool is best for early-stage startups"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "category",
+      "question": "Is F1 the category the positioning says the product sells in, in the buyers' own words, and does it weigh 0.40?"
+    },
+    {
+      "id": "prompts",
+      "question": "Do the prompts read like what people type into an assistant: short, varied, close to real queries, open and plural, with no invented budgets or team sizes?"
+    },
+    {
+      "id": "boundaries",
+      "question": "Does the product appear only in the branded prompts, and is every competitor mention flagged?"
+    }
+  ]
+}

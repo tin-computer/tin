@@ -255,7 +255,10 @@ def test_visibility_workflow_exposes_one_editable_target_with_a_project_default(
     workflow = next(item for item in BUILTIN_WORKFLOWS if item.id == VISIBILITY_AUDIT_WORKFLOW_ID)
     schema = workflow.definition["input_schema"]
 
-    assert workflow.version_label == "1.2.0"
+    assert workflow.version_label == "1.3.0"
+    # Folded into the organic audit's buyer questions: saved schedules keep running, new
+    # setups and discovery no longer offer it.
+    assert workflow.definition["public_discovery"] is False
     assert schema["required"] == ["project_id", "target"]
     assert schema["properties"]["target"] == {
         "type": "string",

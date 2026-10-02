@@ -1,10 +1,19 @@
 # Technical repair from an organic audit
 
+> **New technical fixes go through website.change** (Emre, 10/1: the audit finds; website.change
+> plans, fixes and publishes). A website.change run with `source: audit` applies site-fix-v5's
+> rules below to the latest audit, records each fixable finding as a change row the founder
+> approves or declines once, and publishes approved rows. See
+> [website.change, phase 2](website-change.md#phase-2-technical-changes-from-the-latest-audit).
+> `organic.technical_fix` 0.6.1 stays registered, hidden from discovery (`public_discovery:
+> false`), for pinned runs, saved schedules and the traffic system's current recipe; its
+> behaviour below is unchanged.
+
 `organic.technical_fix` reads an organic audit's findings, checks them on the live site
 again, and proposes an unmerged GitHub PR that fixes every one it can. It does not merge
-or deploy the repair. The current policy is `site-fix-v5` (catalog 0.6.0); older runs
-and saved configurations retain their pinned policy (`missing-html-title-v1` through
-`html-metadata-v3`, which repair one finding per run).
+or deploy the repair. The current policy is `site-fix-v5` (catalog 0.6.1, the same contract as
+0.6.0); older runs and saved configurations retain their pinned policy (`missing-html-title-v1`
+through `html-metadata-v3`, which repair one finding per run).
 
 ## site-fix-v5: everything the audit found
 

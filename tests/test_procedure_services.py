@@ -457,6 +457,9 @@ async def test_activity_issues_service_grant_and_publishes_synthetic_report_once
     async def synthetic_compute(*, run, run_input, **_):
         computes.append(run_input)
         assert run_input.isolated
+        # The procedure knows its own run, as code workflows do through ctx["run_id"].
+        assert run_input.context["run"] == {"id": str(run.id)}
+        assert f"Tin run ID is {run.id}." in run_input.context["prompt"]
         assert run_input.run_tools_url == "https://localhost/internal/run-tools/mcp"
         grant = await f.db.authorize_run_tool_grant(token=run_input.run_tools_grant)
         assert grant.provider_key == SERVICE_PROVIDER and grant.connection_id is None

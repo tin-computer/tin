@@ -22,6 +22,7 @@ from tin_lite import analytics, project_task_control
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
+from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
@@ -116,6 +117,7 @@ from tin_lite.schedules import WorkflowSchedule, next_run_after
 from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
 from tin_lite.website_change_api import router as website_change_router
+from tin_lite.website_change_api import settings_router as protected_paths_router
 from tin_lite.workflow_inputs import client_input_schema, normalize_workflow_inputs
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
@@ -150,6 +152,7 @@ router.include_router(organic_system_router)
 router.include_router(project_connections_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
+router.include_router(protected_paths_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)
@@ -917,6 +920,18 @@ class WorkflowRevisionRequest(BaseModel):
     request_id: UUID
     review_token: str = Field(min_length=64, max_length=64)
     billing_quote_id: UUID | None = None
+
+
+class ProposalRevisionRequest(BaseModel):
+    """A coding agent's revision of a brand or style proposal that waits in Decisions."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    review_token: str = Field(min_length=64, max_length=64)
+    request_id: UUID
+    files: list[ProposalFile] = Field(min_length=1, max_length=2)
+    note: str = Field(default="", max_length=500)
+    client: Literal["claude_code", "codex", "api"] | None = None
 
 
 class WorkflowReviewApproval(BaseModel):
@@ -2855,24 +2870,21 @@ async def apply_decision(
             detail="Use Request changes to revise the draft. Approval does not apply feedback.",
         )
     if payload.action == "decline":
-        from tin_lite.proposal_decline import decline_proposal
+        from tin_lite.proposal_decline import discard_review
 
-        if decision["kind"] != "review":
-            raise HTTPException(
-                status_code=409,
-                detail="Only a decision with something to approve can be discarded.",
-            )
-        if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
-            return await stop_project_task(decision["run_id"], request, user)
         try:
-            declined = await decline_proposal(
-                database=database, run_id=decision["run_id"], actor=user.clerk_user_id
+            discarded = await discard_review(
+                runtime=request.app.state.runtime,
+                run_id=decision["run_id"],
+                actor=user.clerk_user_id,
             )
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="decision not found") from exc
+        except project_task_control.ProjectTaskDeliveryError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return RunView.model_validate(declined)
+        return RunView.model_validate(discarded)
     if decision["workflow_name"] == PROJECT_TASK_WORKFLOW_NAME:
         result = await approve_project_task(decision["run_id"], request, user)
     else:
@@ -4059,26 +4071,17 @@ async def stop_project_task(
     request: Request,
     user: AuthContext = AUTHENTICATED_USER,
 ) -> RunView:
-    run = await _project_task_from_postgres(run_id, request, user)
-    if run.status == RunStatus.STOPPED:
-        return RunView.model_validate(run)
+    await _project_task_from_postgres(run_id, request, user)
     try:
-        run = await request.app.state.runtime.database.request_task_control(
-            run_id=run_id, control="stop"
+        run = await project_task_control.stop_project_task(
+            runtime=request.app.state.runtime, run_id=run_id, clerk_user_id=user.clerk_user_id
         )
-        delivered = await request.app.state.runtime.sandboxes.control_task(
-            run_id=str(run_id), control={"type": "stop"}
-        )
-        handle = request.app.state.runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
-        await handle.signal("stop")
-        if not delivered and run.sandbox_id is not None:
-            await request.app.state.runtime.sandboxes.kill(run.sandbox_id)
-    except RuntimeError as exc:
+    except LookupError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+    except project_task_control.ProjectTaskConflictError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="task stop was not accepted"
-        ) from exc
+    except project_task_control.ProjectTaskDeliveryError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
     return RunView.model_validate(run)
 
 
@@ -4121,6 +4124,49 @@ async def workflow_review(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/api/workflows/runs/{run_id}/proposal-revisions", status_code=201)
+async def revise_capture_proposal(
+    run_id: UUID,
+    payload: ProposalRevisionRequest,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    """Replace a waiting brand or style proposal's files; the founder still decides."""
+    from tin_lite.capture_revisions import (
+        CaptureRevisions,
+        RevisionInvalid,
+        RevisionRefused,
+        review_view,
+    )
+    from tin_lite.workflow_review_store import ReviewConflict
+
+    runtime = request.app.state.runtime
+    try:
+        result = await CaptureRevisions(database=runtime.database, storage=runtime.storage).revise(
+            run_id=run_id,
+            actor=user.clerk_user_id,
+            review_token=payload.review_token,
+            request_id=payload.request_id,
+            files=[item.model_dump() for item in payload.files],
+            note=payload.note,
+            source="api",
+            client=payload.client,
+        )
+        view = await review_view(runtime.database, runtime.storage, run_id, user.clerk_user_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RevisionInvalid as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except (RevisionRefused, ReviewConflict) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        **result,
+        "review_token": view["review_token"],
+        "proposal_revisions": view.get("proposal_revisions"),
+        "review_url": view["review_url"],
+    }
 
 
 @router.post(
@@ -4225,16 +4271,20 @@ async def approve_run(
     if payload is not None and payload.delivery is not None:
         # Record the pick before the approval so a refused pick never approves blindly.
         await _choose_content_delivery(run, payload, request, user)
+    from tin_lite.capture_revisions import STYLE_KEY, binds_style_approval
     from tin_lite.reviewed_documents import document_spec
 
+    runtime = request.app.state.runtime
     if (
         run.executor == "social.x_style"
         or run.workflow_id in SUPPORTED_IDS
         or (
             run.executor == "codex.procedure"
-            and await document_spec(
-                request.app.state.runtime.database, request.app.state.runtime.storage, run
-            )
+            and await document_spec(runtime.database, runtime.storage, run)
+        )
+        or (
+            run.executor == STYLE_KEY
+            and await binds_style_approval(runtime.database, runtime.storage, run)
         )
     ):
         try:

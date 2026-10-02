@@ -3,6 +3,14 @@
 import hashlib
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
+from tin_lite.capture_revisions import (
+    EDITED,
+    STALE,
+    latest_revision,
+    revised_checkpoint,
+    revisions,
+    summary,
+)
 from tin_lite.domain import RunStatus
 from tin_lite.procedure_documents import resolve_run_path, validate_document
 from tin_lite.procedures import validate_codex_procedure_definition
@@ -64,12 +72,17 @@ class ReviewedDocuments:
         checkpoint = OutputCheckpoint.load(receipt.result["checkpoint"], run=run)
         pair = spec.documents.resolve(run.id, run.created_at)
         primary = resolve_run_path(spec.output_path_template, run.id, run.created_at)
+        # A pair the founder's agent revised is reviewed at its latest revision commit.
+        revised = await latest_revision(self.db, run.id) if spec.documents.agent_revision else None
+        saved = revised["revision"] if revised else receipt.result.get("canonical_commit_sha")
         if (
             [p.artifact_path for p in checkpoint.files] != [primary, pair.companion_path]
             or run.artifact_path != primary
-            or receipt.result.get("canonical_commit_sha") != run.canonical_commit_sha
+            or saved != run.canonical_commit_sha
         ):
             raise ReviewConflict("The saved pair does not match the reviewed contract.")
+        if revised:
+            checkpoint = revised_checkpoint(checkpoint, revised, run)
         files = []
         for item, destination, maximum in zip(
             checkpoint.files,
@@ -102,7 +115,7 @@ class ReviewedDocuments:
                     else "updated",
                 }
             )
-        return {
+        result = {
             "run_id": str(run.id),
             "path": primary,
             "revision": run.canonical_commit_sha,
@@ -110,8 +123,11 @@ class ReviewedDocuments:
             "checkpoint": checkpoint.to_dict(),
             "files": files,
         }
+        if revised:  # Unrevised pairs keep the exact shape older approvals recorded.
+            result["proposal_revision"] = revised["number"]
+        return result
 
-    async def check_current(self, project, artifact):
+    async def check_current(self, project, artifact, *, revisable=False):
         repo = await self.storage.get_repo(project.state_repo_id)
         revision = await self.storage.head_sha(repo, project.canonical_branch)
         for item in artifact["files"]:
@@ -131,16 +147,19 @@ class ReviewedDocuments:
             )
             if proposal is None or hashlib.sha256(proposal[1]).hexdigest() != item["sha256"]:
                 raise ReviewConflict(
-                    "A proposed document was edited. Use Files or start a new capture."
+                    EDITED
+                    if revisable
+                    else "A proposed document was edited. Use Files or start a new capture."
                 )
 
     async def view(self, run_id, actor):
         run, spec, project = await self.source(run_id, actor)
         artifact = await self.artifact(run, spec, project)
         conflict = None
+        revisable = spec.documents.agent_revision
         if run.review_decision is None:
             try:
-                await self.check_current(project, artifact)
+                await self.check_current(project, artifact, revisable=revisable)
             except (ReviewConflict, OutputConflictError) as exc:
                 conflict = str(exc)
         result = {
@@ -164,6 +183,8 @@ class ReviewedDocuments:
             "conflict": conflict,
             "review_url": f"/document/{run.id}?project={run.project_id}&return=decisions",
         }
+        if revisable:
+            result["proposal_revisions"] = summary(await revisions(self.db, run.id), actor)
         if spec.output_validator == "brand-design-capture.v1":
             from tin_lite.brand_contract import tokens
 
@@ -188,8 +209,12 @@ class ReviewedDocuments:
         artifact = await self.artifact(run, spec, project)
         expected = digest({"run": str(run.id), "artifact": artifact})
         if token != expected:
-            raise ReviewConflict("Read both documents before approving this exact pair.")
-        await self.check_current(project, artifact)
+            raise ReviewConflict(
+                STALE
+                if token is not None and "proposal_revision" in artifact
+                else "Read both documents before approving this exact pair."
+            )
+        await self.check_current(project, artifact, revisable=spec.documents.agent_revision)
         command = {
             "id": uuid4(),
             "project_id": run.project_id,

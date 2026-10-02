@@ -83,11 +83,46 @@ def _edit_file(settings: Any, run: Any) -> dict[str, Any]:
     }
 
 
-def revise(settings: Any, run: Any) -> dict[str, Any]:
-    """The route that changes this run's document, or why none exists yet."""
+def revise(settings: Any, run: Any, proposal: Any = None) -> dict[str, Any]:
+    """The route that changes this run's document, or why none exists yet.
+
+    `proposal` is the run's capture revision contract (capture_revisions.contract), when the
+    caller has read it: a 1.2.0 brand or style proposal waiting in Decisions.
+    """
     project, path = str(run.project_id), run.artifact_path
     executor = getattr(run, "executor", None)
     pending = review_pending(run)
+    if pending and proposal is not None:
+        return {
+            "direct_edit": False,
+            "reason": (
+                "Approval applies the exact version the founder reads in Decisions, so the "
+                "proposal changes only through Tin's checked revision route."
+            ),
+            "before": [
+                {
+                    "tool": "get_workflow_review",
+                    "arguments": {"run_id": str(run.id)},
+                    "use": "Read `review_token` and the proposal files in `documents`.",
+                }
+            ],
+            "tool": "revise_capture_proposal",
+            "arguments": {
+                "run_id": str(run.id),
+                "review_token": "<review_token from get_workflow_review>",
+                "request_id": NEW_REQUEST,
+                "files": [
+                    {"path": item, "content": "<the complete revised text>"}
+                    for item in proposal.paths
+                ],
+            },
+            "keeps_review": True,
+            "metered": False,
+            "after": (
+                "The run keeps waiting in Decisions with the revised text. The founder approves "
+                "or discards it there; give them `review_url`."
+            ),
+        }
     if pending and executor in ONBOARDING_EXECUTORS:
         return {
             "direct_edit": False,
@@ -188,11 +223,11 @@ def revise(settings: Any, run: Any) -> dict[str, Any]:
     return route
 
 
-def document_handoff(settings: Any, run: Any) -> dict[str, Any]:
+def document_handoff(settings: Any, run: Any, proposal: Any = None) -> dict[str, Any]:
     """Fields added to a run's result link: the review link, the review state and the route."""
     return {
         "review_url": document_url(settings, run),
         "review_pending": review_pending(run),
         "review_decision": getattr(run, "review_decision", None),
-        "revise": revise(settings, run),
+        "revise": revise(settings, run, proposal),
     }

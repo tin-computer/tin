@@ -563,6 +563,27 @@ async def test_each_finding_gets_its_own_live_state_after_merge():
     assert [r["state"] for r in view["findings"]] == ["fixed", "still_broken", "next_audit"]
 
 
+async def test_a_read_right_after_the_merge_sees_it():
+    # Sheepdogs: checked at 00:47, merged at 00:48:57, read again inside ten minutes. Until the
+    # merge every read asks GitHub; only reading the live site waits ten minutes.
+    now = datetime(2026, 10, 2, 0, 50, tzinfo=UTC)
+    merged_at = "2026-10-02T00:48:57+00:00"
+    state = AsyncMock(return_value={"merged": True, "merged_at": merged_at, "state": "closed"})
+    live = LiveRecheck(database=None, integrations=SimpleNamespace(github_pull_request_state=state))
+    unmerged = {
+        "pull_request": {"repository": "owner/site", "number": 1},
+        "checked_at": (now - timedelta(minutes=3)).isoformat(),
+    }
+    assert live._due(unmerged, now)
+    prepared = {"target": {"url": f"{BASE}/", "host": HOST}, "batch": {"repairs": []}}
+    record = await live._check(SimpleNamespace(project_id=uuid4()), prepared, unmerged, now)
+    assert record["merged"] and record["merged_at"] == merged_at
+    state.assert_awaited_once()
+    # Once merged, the live site is read at most every ten minutes.
+    assert not live._due(record, now + timedelta(minutes=9))
+    assert live._due(record, now + timedelta(minutes=10))
+
+
 # --- The traffic system --------------------------------------------------------------------
 
 

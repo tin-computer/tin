@@ -76,10 +76,15 @@ class WorkflowReviews:
         candidate = await self.db.get_run(run_id)
         if await supports(self.db, candidate):
             return await XFeedback(self.runtime, self.settings).view(run_id, actor, post_id)
+        from tin_lite.capture_revisions import STYLE_KEY, StyleProposalReview
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)
         if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if run.executor == STYLE_KEY and run.review_required:
+                return await StyleProposalReview(database=self.db, storage=self.storage).view(
+                    run_id, actor
+                )
             if await document_spec(self.db, self.storage, run):
                 return await ReviewedDocuments(database=self.db, storage=self.storage).view(
                     run_id, actor
@@ -159,17 +164,14 @@ class WorkflowReviews:
 
         candidate = await self.db.get_run(run_id)
         if await supports(self.db, candidate):
-            if reference_files:
-                raise ValueError(
-                    "X revisions use the draft's existing supporting facts. Put factual "
-                    "corrections in feedback."
-                )
+            # A writing guide may learn from reference files; a post keeps to its own facts.
             return await XFeedback(self.runtime, self.settings).request_changes(
                 run_id=run_id,
                 actor=actor,
                 feedback=feedback,
                 request_id=request_id,
                 token=token,
+                reference_files=reference_files,
                 post_id=post_id,
                 billing_quote_id=billing_quote_id,
                 trigger_client=trigger_client,
@@ -371,10 +373,15 @@ class WorkflowReviews:
                 run_id=run_id, actor=actor, token=token
             )
 
+        from tin_lite.capture_revisions import STYLE_KEY, StyleProposalReview
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)
         if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if run.executor == STYLE_KEY:
+                return await StyleProposalReview(database=self.db, storage=self.storage).approve(
+                    run_id=run_id, actor=actor, token=token
+                )
             if await document_spec(self.db, self.storage, run):
                 return await ReviewedDocuments(database=self.db, storage=self.storage).approve(
                     run_id=run_id,

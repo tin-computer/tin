@@ -71,12 +71,25 @@ contract is needed, and carried-forward documents remain byte-for-byte unchanged
 The run publishes two proposals under `brand/proposals/{run_folder}/`, a folder named by the
 run's UTC date and the start of its identifier (`brand/proposals/2026-09-28-1a2b3c4d/`), bounded
 to 48,000 and 64,000 bytes respectively. Runs pinned to 1.0.x keep their run-ID folder. The existing reader links the companion, shows palette swatches
-and describes each destination as new or carried forward unchanged. “Use documents” applies
+and describes each destination as new or carried forward unchanged. “Approve” applies
 the exact reviewed pair. The [reviewed-document harness](reviewed-project-documents.md)
-provides atomic adoption, destination conflict checks and retry recovery. Editing either
-proposal or destination during review requires a new decision; neither file is partially applied.
-In Decisions the pair is approved with “Approve guide”, or turned down with “Discard”: the run
+provides atomic adoption, destination conflict checks and retry recovery. Editing a
+destination during review requires a new decision; neither file is partially applied.
+In Decisions the pair is approved with “Approve”, or turned down with “Discard” (MCP
+`discard_workflow_review`): the run
 ends as declined, the proposals stay readable in Files, and the current files are unchanged.
+
+There is no “request changes” button (Emre, 10/1). From 1.2.0 the founder's coding agent
+revises a waiting pair instead: `get_workflow_review` for the `review_token` and the proposal
+paths, then MCP `revise_capture_proposal` (or `POST /api/workflows/runs/{id}/proposal-revisions`)
+with the complete text of one or both files. Tin accepts it only while the run waits, only for
+that run's two proposal files, and only if the pair passes the capture's own validators. It
+commits the new text over the proposals, records who sent it, and the run keeps waiting with
+its review pointing at that commit. Decisions shows how many times, by whom and when the pair
+was revised. Approval binds the SHA-256 of both files the founder read; a revision after they
+opened the card refuses that approval and shows the new version. Direct edits to a waiting
+proposal through Files or `commit_project_changes` are refused with a pointer to the tool.
+Runs pinned to 1.1.0 keep their rules: an edited proposal still needs a new run.
 
 MCP discovery includes preparation metadata and `get_brand_guide(project_id)`, which checks
 current files without a model call. Incomplete starts return that preparation path.

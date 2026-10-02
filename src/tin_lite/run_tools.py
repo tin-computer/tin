@@ -12,10 +12,12 @@ from mcp.server import MCPServer
 from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
+from mcp.server.mcpserver.exceptions import ToolError
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from tin_lite.code_services import CodeServiceError
 from tin_lite.domain import (
     STUDIO_PROVIDER,
     STUDIO_VOICE_CAPABILITY,
@@ -94,14 +96,22 @@ def create_run_tools_app(
     async def service_request(payload: dict) -> dict:
         access_token = get_access_token()
         if access_token is None:
-            raise PermissionError("active run-tool grant required")
+            raise ToolError("forbidden: active run-tool grant required")
         services = runtime()
-        return await ProcedureServices(
-            database=services.database,
-            storage=services.storage,
-            integrations=services.integrations,
-            settings=settings,
-        ).call(token=access_token.token, payload=payload)
+        try:
+            return await ProcedureServices(
+                database=services.database,
+                storage=services.storage,
+                integrations=services.integrations,
+                settings=settings,
+            ).call(token=access_token.token, payload=payload)
+        except CodeServiceError as exc:
+            # The gateway's own message, with what the provider said when it refused. Code
+            # workflows get the same text from ctx.services.call. Anything else stays masked
+            # as the SDK's bare "Error executing tool" crash.
+            raise ToolError(json.dumps(exc.diagnostic(), ensure_ascii=False)) from exc
+        except PermissionError as exc:
+            raise ToolError(f"forbidden: {exc}") from exc
 
     @server.tool()
     async def request_service(

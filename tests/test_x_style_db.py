@@ -15,6 +15,7 @@ from test_procedure_publication import publication_db as publication_db
 from tin_lite import x_style
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import CodeStorage
+from tin_lite.integrations import IntegrationAuthorizationError
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
 from tin_lite.output_resolution import OutputResolutionService
 from tin_lite.project_files import ProjectFileService
@@ -38,13 +39,17 @@ RESULT = {
 }
 
 
-async def fixture(db, *, source_path=False):
+async def fixture(db, *, source_path=False, version=2):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
     )
     builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == x_style.KEY)
     definition = builtin.definition
+    if version == 1:
+        # A run pinned to the 1.0.0 definition.
+        policy, instructions = x_style.CONTRACTS[1]
+        definition = {**definition, "x_style_policy": policy, "x_style_instructions": instructions}
     revision = "d" * 40
     await db.upsert_registry_workflow(
         workflow_id=builtin.id,
@@ -111,8 +116,15 @@ async def fixture(db, *, source_path=False):
             )
         )
     )
+    # X isn't connected here: Auto uses the supplied writing alone.
+    disconnected = AsyncMock(
+        side_effect=IntegrationAuthorizationError("Connect or reconnect X in this project")
+    )
     f.activities = XStyleActivities(
-        database=db, storage=f.storage, router=f.router, x_connection=SimpleNamespace()
+        database=db,
+        storage=f.storage,
+        router=f.router,
+        x_connection=SimpleNamespace(connection=disconnected),
     )
     return f
 
@@ -249,3 +261,18 @@ async def test_x_style_uncertain_model_not_rebought(publication_db):
             await f.activities.extract(str(run.id))
     assert f.router.generate.await_count == 1
     assert f.storage.repo.writes == 0
+
+
+@pytest.mark.parametrize("version", [1, 2])
+async def test_a_run_keeps_the_sampling_of_the_version_it_was_pinned_to(publication_db, version):
+    f = await fixture(publication_db, version=version)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    context = await f.db.get_effect(f"{run.id}:x_style_context")
+    assert context.result["policy_version"] == version
+    await f.activities.extract(str(run.id))
+    request = f.router.generate.await_args.args[1]
+    assert request.system == x_style.CONTRACTS[version][1]
+    samples = json.loads(request.messages[0].content)["samples"]
+    assert len(samples) == 2
+    assert all(("kind" in item) == (version == 2) for item in samples)

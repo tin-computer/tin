@@ -8,10 +8,10 @@ the founder's delivery setting commits to main, Tin then merges the pull request
 only one that adds nothing except the approved page, once GitHub reports it clean.
 
 website.change (website_change.py) adapts pages with this same machinery: source pinning,
-the exact-copy proof, the saved patch, recovery and merging once GitHub reports the pull
-request clean. Its runs keep their pinned source under the same receipt key, and their own
-policy decides whether Tin merges (see publish_after_pull_request). content.deliver's own
-rules are unchanged.
+the exact-copy proof, the saved patch, recovery and the merge loop. Its runs keep their pinned
+source under the same receipt key, and their own policy decides whether Tin merges (see
+publish_after_pull_request): website.change merges once the repository's required checks
+pass. content.deliver's own rules are unchanged.
 """
 
 import asyncio
@@ -49,6 +49,13 @@ MERGE_OPERATION = "content_repository_delivery_merge_v1"
 # delivery activity allows five minutes; this leaves room for the merge call itself.
 MERGE_WAIT_SECONDS = 210
 MERGE_POLL_SECONDS = 15
+# GitHub's mergeable_state values that let Tin merge. `clean`: every check passed.
+# `has_hooks`: the same, with pre-receive hooks. content.deliver merges only on these.
+MERGE_READY = frozenset({"clean", "has_hooks"})
+# website.change merges once the checks the repository requires pass (Emre, 10/1). GitHub
+# reports `unstable` for a pull request that can merge while a check the repository does not
+# require fails or is still running; a failing required check reports `blocked` instead.
+REQUIRED_CHECKS_READY = MERGE_READY | {"unstable"}
 # GitHub's mergeable_state values that no amount of waiting fixes, in the founder's words.
 MERGE_STOPS = {
     "dirty": "It conflicts with the default branch.",
@@ -65,9 +72,40 @@ def merge_key(run_id):
     return f"content-delivery:{UUID(str(run_id))}:merge"
 
 
+# A website.change run whose changes come from the latest audit (website_change_audit) rather
+# than an approved page. Its source receipt sits under the same key; nothing else is shared.
+AUDIT_SOURCE = "audit"
+# Sources a website.change run repairs the site from with site-fix-v5's machinery: the audit's
+# findings, and the URL changes other workflows planned.
+REPAIR_SOURCES = frozenset({AUDIT_SOURCE, "planned"})
+# A website.change run that applies the blog index plan's files as they are, without Codex.
+BLOG_INDEX_SOURCE = "blog_index"
+
+
+def _website_source(run):
+    if getattr(run, "workflow_id", None) != WEBSITE_CHANGE_ID:
+        return None
+    return (getattr(run, "input", None) or {}).get("source")
+
+
+def repairs_site(run):
+    """Whether this is a website.change run that repairs the site from change rows (the
+    audit's findings or planned URL changes) with site-fix-v5's preparation."""
+    return _website_source(run) in REPAIR_SOURCES
+
+
+def applies_plan(run):
+    """Whether this is a website.change run that applies the blog index plan's files."""
+    return _website_source(run) == BLOG_INDEX_SOURCE
+
+
 def adapts(run):
     """Whether this run adapts an approved page to the site: content.deliver or website.change."""
-    return getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
+    return (
+        getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
+        and not repairs_site(run)
+        and not applies_plan(run)
+    )
 
 
 def status_projection(run, source, publication, recovery, merge=None):
@@ -726,8 +764,10 @@ async def publish_after_pull_request(
     main, is merged: when its patch passes `merge_rule`, the page is a file it adds rather
     than one it rewrites, its branch still holds exactly that patch, and GitHub calls it
     clean (no conflicts, no failing or pending checks, no required review) within a few
-    minutes. Otherwise the PR stays open and the receipt says why. The outcome is recorded
-    once; retries reuse it.
+    minutes. A website.change run merges once the repository's required checks pass, so a
+    failing optional check does not hold it (REQUIRED_CHECKS_READY), and its receipt names
+    the state that allowed the merge. Otherwise the PR stays open and the receipt says why.
+    The outcome is recorded once; retries reuse it.
     """
     source = await saved_source(database, run.id)
     # A website.change run always records its outcome: merged, or open and why.
@@ -796,11 +836,13 @@ async def publish_after_pull_request(
                         run=run,
                         source=source,
                         manifest=manifest,
-                        page=proof["article_path"],
+                        new_paths=(proof["article_path"],),
                         number=number,
                         branch=published.get("pull_request_branch"),
                         sleep=sleep,
                         clock=clock,
+                        ready=REQUIRED_CHECKS_READY if website else MERGE_READY,
+                        record_state=website,
                     ),
                 }
             prefix = "website_change" if website else "content_delivery"
@@ -844,11 +886,92 @@ async def publish_after_pull_request(
 
 
 async def _merge_when_clean(
-    *, integrations, run, source, manifest, page, number, branch, sleep, clock
+    *,
+    integrations,
+    run,
+    source,
+    manifest,
+    new_paths,
+    number,
+    branch,
+    sleep,
+    clock,
+    ready=MERGE_READY,
+    record_state=False,
 ):
+    """Merge once GitHub reports one of the `ready` states, or say why the PR stays open.
+
+    Each of `new_paths` must be a file the pull request adds (a page), never one it rewrites.
+
+    `dirty`, `behind` and `draft` stop at once. `blocked` and `unknown` never merge; Tin
+    waits for them to change until the deadline. With `record_state`, the merge receipt
+    names the state that allowed the merge.
+
+    `unstable` counts only where the base branch requires status checks (Emre, 10/1): with
+    none, or none Tin can read, nothing says which checks matter, so Tin waits for every
+    check to pass (`clean`). The receipt records which rule applied (`checks_rule`).
+    """
     binding = binding_from(source)
-    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
+    rule = {}
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
+    if "unstable" in ready:
+        required = await required_checks(integrations, run, binding)
+        if required:
+            rule = {"checks_rule": "required_checks", "required_checks": required}
+            reason = "Its required checks had not passed after a few minutes, so Tin left it open."
+        else:
+            ready = MERGE_READY
+            rule = {"checks_rule": "all_checks", "required_checks": []}
+            reason = (
+                "Your repository requires no status checks, so Tin waits for every check to "
+                "pass. They had not all passed after a few minutes, so Tin left it open."
+            )
+    result = await _merge_loop(
+        integrations=integrations,
+        run=run,
+        binding=binding,
+        manifest=manifest,
+        new_paths=new_paths,
+        number=number,
+        branch=branch,
+        sleep=sleep,
+        clock=clock,
+        ready=ready,
+        record_state=record_state,
+        reason=reason,
+    )
+    return {**result, **rule}
+
+
+async def required_checks(integrations, run, binding):
+    """The status checks the base branch requires; none when GitHub can't say."""
+    try:
+        found = await integrations.github_required_status_checks(
+            project_id=run.project_id,
+            repository=binding.repository,
+            branch=binding.default_branch,
+        )
+    except Exception:
+        return []
+    return list(found.get("contexts") or []) if found.get("readable") else []
+
+
+async def _merge_loop(
+    *,
+    integrations,
+    run,
+    binding,
+    manifest,
+    new_paths,
+    number,
+    branch,
+    sleep,
+    clock,
+    ready,
+    record_state,
+    reason,
+):
+    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
     while True:
         state = await integrations.github_pull_request_merge_state(
             project_id=run.project_id, repository=binding.repository, number=number
@@ -873,10 +996,7 @@ async def _merge_when_clean(
         stop = MERGE_STOPS.get(state.get("mergeable_state"))
         if stop:
             return {"status": "left_open", "reason": stop}
-        if state.get("mergeable") is True and state.get("mergeable_state") in {
-            "clean",
-            "has_hooks",
-        }:
+        if state.get("mergeable") is True and state.get("mergeable_state") in ready:
             from tin_lite.integrations import IntegrationAuthorizationError
 
             try:
@@ -890,7 +1010,7 @@ async def _merge_when_clean(
                     files=tuple(GitHubFileChange(**item) for item in manifest["files"]),
                     expected_binding=binding,
                     commit_title=f"{manifest['title']} (#{number})"[:200],
-                    new_paths=(page,),
+                    new_paths=tuple(new_paths),
                 )
             except IntegrationAuthorizationError as exc:
                 # A changed branch or connection is final; the PR stays for the founder.
@@ -905,6 +1025,7 @@ async def _merge_when_clean(
                     "url": merged.get("url"),
                     "merged_at": clock().isoformat(),
                     "merged_by": "tin",
+                    **({"mergeable_state": state["mergeable_state"]} if record_state else {}),
                 }
             return {"status": "left_open", "reason": merged.get("reason") or reason}
         if state.get("mergeable_state") == "blocked":

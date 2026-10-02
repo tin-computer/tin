@@ -75,18 +75,19 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v7 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v7 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v7 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
 from tin_lite.organic_audit_ai import AI_CONTRACT, AI_SCHEMAS
+from tin_lite.procedure_documents import AGENT_REVISION
 from tin_lite.procedures import (
     BROWSER_SANDBOX_PROFILE,
     CODE_MAP_SECTION,
@@ -466,6 +467,9 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+            # 1.2.0: the founder's coding agent can revise the waiting proposal, and approval
+            # binds its exact content. Runs pinned to 1.1.0 lack this and keep their rules.
+            definition["proposal_revision"] = AGENT_REVISION
         if self.key == x_draft.KEY:
             definition["x_draft_policy"] = dict(x_draft.POLICY)
         if self.key == x_feedback.KEY:
@@ -533,9 +537,16 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key in {"content.public_article", SITE_HEALTH_WORKFLOW_NAME}:
-            # Site health is folded into the technical fix: saved configurations and schedules
-            # keep running at their pinned revision, but new setups use the technical fix.
+        if self.key in {
+            "content.public_article",
+            SITE_HEALTH_WORKFLOW_NAME,
+            VISIBILITY_AUDIT_WORKFLOW_NAME,
+            technical_fix.KEY,
+        }:
+            # Site health is folded into the technical fix, and the technical fix into
+            # website.change (its audit source): saved configurations and schedules keep
+            # running at their pinned revision, but new setups use the newer workflow.
+            # The AI visibility audit is folded into the organic audit's buyer questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -577,14 +588,16 @@ BUILTIN_WORKFLOWS = (
         title="Run the organic traffic system",
         description=(
             "Audit your website and research buyer searches, then save an editable content "
-            "plan and draft its next article for review. With GitHub connected, adapt the "
-            "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
-            "Then draft the next planned article each week, one review at a time. "
-            "Before new articles, refresh one existing page now and again each week. "
-            "Optionally propose one technical fix. Never merges, publishes or sends outreach."
+            "plan and draft its next article for review. With GitHub connected, website.change "
+            "puts the approved article on the site: Tin merges its PR once your required checks "
+            "pass when you approved it with commit to main, and otherwise leaves the PR for "
+            "you; without GitHub its Markdown stays in Tin. Then draft the next planned "
+            "article each week, one review at a time. Before new articles, refresh one "
+            "existing page now and again each week. Optionally fix what the audit found "
+            "through website.change; each fix waits for your approval. Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.5.0",
+        version_label="0.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -671,14 +684,18 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WEBSITE_CHANGE_ID,
         key=website_change.KEY,
         title="Change the website",
-        description="Make one approved change to your website repository. Today that is an "
-        "approved article, answer page or public article, adapted to the site's own format at "
-        "the route you chose, with its copy unchanged. A change you approved with commit to main "
-        "publishes: Tin merges its pull request once GitHub reports it clean. Anything else, "
-        "and any change to a protected page such as /sign-in, opens a pull request for you to "
-        "merge.",
+        description="Put approved changes on your website repository: an approved article, "
+        "answer page or public article, adapted to the site's own format at the route you "
+        "chose with its copy unchanged; the technical fixes the latest audit found; the "
+        "redirects and noindex changes your page decisions and site plan made; or the blog "
+        "index plan. Each fix, planned change or plan is a change you approve or decline once "
+        "in Tin. What you approved publishes: Tin merges the pull request once your "
+        "repository's required checks pass, then checks the live site. Anything else, and any "
+        "change to a protected page such as /sign-in or one you added to the project's "
+        "protected pages, opens a pull request for you to merge. Deleting a page stays with "
+        "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.0.0",
+        version_label="1.2.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -693,13 +710,19 @@ BUILTIN_WORKFLOWS = (
                     "enum": list(website_change.IMPLEMENTED_SOURCES),
                     "default": "content_draft",
                     "title": "Change source",
-                    "description": "Where the change comes from: an approved page for now.",
+                    "description": "content_draft: one approved page (source_run_id). audit: "
+                    "the technical fixes the latest organic audit found. planned: the "
+                    "redirects and noindex changes page decisions and the site architecture "
+                    "plan made. blog_index: the newest content.blog_index plan. Preview the "
+                    "last three with preflight_website_change.",
                 },
                 "source_run_id": {
                     "type": "string",
-                    "format": "uuid",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
                     "title": "Approved page run",
-                    "description": "An approved planned article, answer page or public article.",
+                    "description": "For content_draft: an approved planned article, answer "
+                    "page or public article.",
                 },
                 "expected_repository": {
                     "type": "string",
@@ -708,12 +731,41 @@ BUILTIN_WORKFLOWS = (
                     "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
                     "title": "Website repository",
                 },
+                "repository_serves_site": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "This repository serves the audited website",
+                    "description": "For audit and planned: the member confirms the repository "
+                    "builds the audited site.",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "title": "Only these findings",
+                    "description": "For audit or planned: leave empty for every change.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["finding_ids"][
+                        "maxItems"
+                    ],
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "decisions": {
+                    "type": "array",
+                    "title": "Decisions",
+                    "description": "For audit: answers to preflight_website_change's "
+                    "decisions_needed, each written finding_id=choice.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}=.{1,500}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["decisions"][
+                        "maxItems"
+                    ],
+                    "default": [],
+                },
                 "protected_paths": {
                     "type": "array",
                     "title": "Protected paths",
-                    "description": "Site paths whose changes always wait for the founder's "
-                    "merge, on top of /sign-in, /sign-up and /auth-complete, such as pages "
-                    "another app shares.",
+                    "description": "More site paths whose changes always wait for the "
+                    "founder's merge, for this run only, on top of /sign-in, /sign-up, "
+                    "/auth-complete and the project's protected pages (set_protected_paths).",
                     "items": {"type": "string", "pattern": website_change.PROTECTED_PATH_PATTERN},
                     "maxItems": website_change.MAX_PROTECTED_PATHS,
                     "uniqueItems": True,
@@ -736,7 +788,7 @@ BUILTIN_WORKFLOWS = (
                     "changing the approved copy, the route or a protected path.",
                 },
             },
-            "required": ["project_id", "source_run_id", "expected_repository"],
+            "required": ["project_id", "expected_repository"],
         },
         integration_requirements=(
             IntegrationRequirement(
@@ -756,9 +808,11 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="website/changes/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # content.deliver's caps: a 300 KB public article, its listing and a route.
-                max_files=5,
-                max_bytes=400_000,
+                # site-fix-v5's file cap for an audit run; a page keeps content.deliver's five
+                # files and 400 KB (website_change.check_patch).
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
+                site_repair_policy=technical_fix.BATCH_POLICY,
+                allow_no_change=True,
             ),
         ),
     ),
@@ -921,11 +975,11 @@ BUILTIN_WORKFLOWS = (
         title="Capture writing style",
         description=(
             "Use your coding agent to select writing samples, or add samples here. "
-            "Review the proposed voice guide in Decisions; once you approve it, future "
-            "content uses it. Nothing is published."
+            "Review the proposed voice guide in Decisions; your coding agent can revise it "
+            "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.1.0",
+        version_label="1.2.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
@@ -969,7 +1023,7 @@ BUILTIN_WORKFLOWS = (
         title="Revise X writing",
         description="Revise an X draft and remember clear writing preferences from feedback.",
         executor=x_feedback.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
         agent_only=True,
@@ -994,11 +1048,12 @@ BUILTIN_WORKFLOWS = (
         key=x_style.KEY,
         title="Learn my X writing style",
         description=(
-            "Learn from up to 50 of your own public X posts, favoring recent writing, "
-            "or use samples you supply. Review the proposed guide before future X drafts use it."
+            "Learn your voice from your own public X posts and replies, up to 50 spread across "
+            "your history, together with any writing you supply. Review the proposed guide "
+            "before future X drafts use it."
         ),
         executor=x_style.KEY,
-        version_label="1.0.0",
+        version_label="1.1.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
         system=X_SYSTEM,
         schedule_modes=("on_demand",),
@@ -1014,8 +1069,8 @@ BUILTIN_WORKFLOWS = (
                     "default": "auto",
                     "title": "Learn from",
                     "description": (
-                        "Use the connected account, supplied samples/preferences, "
-                        "or infer from the supplied inputs."
+                        "Auto learns from your connected public account and any samples or "
+                        "file you supply, together. Choose one to use only that source."
                     ),
                 },
                 "supplied_samples": {
@@ -1023,7 +1078,7 @@ BUILTIN_WORKFLOWS = (
                     "maxLength": 32000,
                     "default": "",
                     "title": "Your writing samples",
-                    "description": "Optional; otherwise samples your connected public X account.",
+                    "description": "Optional; Auto uses it with your connected public X account.",
                     "x-tin-ui": {"control": "textarea", "order": 10},
                 },
                 "source_path": {
@@ -1072,7 +1127,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
-        public_mcp=PublicMCPExposure("start_technical_fix", destructive=True, open_world=True),
+        # Hidden (public_discovery: false): the public plugin no longer starts it either.
         title="Fix what the audit found",
         description=(
             "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
@@ -1082,7 +1137,7 @@ BUILTIN_WORKFLOWS = (
             "the content workflows, and steps outside the repository are listed. Tin checks "
             "each finding on the live site after you deploy. Never merges or deploys."
         ),
-        version_label="0.6.0",
+        version_label="0.6.1",
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -1171,7 +1226,7 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=ModelRoute(
@@ -1277,11 +1332,12 @@ BUILTIN_WORKFLOWS = (
             "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
             "Search Console queries, check up to 100 public pages by default, chosen by "
             "search impressions and URL section, and see whether AI answers mention, cite, "
-            "or recommend your business. Get prioritized findings with evidence and fixes. "
-            "No GitHub required."
+            "or recommend your business, in the ChatGPT and Gemini apps, Google AI Mode and "
+            "AI Overviews, and the Claude and Perplexity API models. Get prioritized findings "
+            "with evidence and fixes. No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.8.0",
+        version_label="0.9.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -1474,14 +1530,17 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=VISIBILITY_AUDIT_WORKFLOW_ID,
         key=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        public_mcp=PublicMCPExposure("start_visibility_audit", destructive=True, open_world=True),
+        # Hidden from discovery, so it has no ChatGPT plugin tool either; saved
+        # configurations keep running.
         title="Audit AI visibility",
         description=(
-            "Measure whether Luna finds and recommends a chosen target across five target-blind "
-            "buyer questions, then publish AI_VISIBILITY.md."
+            "Retired: the organic audit measures AI visibility on the buyer prompt panel's "
+            "questions. Saved schedules keep running: measure whether Luna finds and recommends "
+            "a chosen target across five target-blind buyer questions, then publish "
+            "AI_VISIBILITY.md."
         ),
         executor=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         input_schema={
             "type": "object",

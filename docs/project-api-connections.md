@@ -105,6 +105,14 @@ still call the service. A body that is not JSON is settled the same way, as an
 `invalid_response` error naming the HTTP status, with the body withheld; a 401 or 403 still
 marks the connection for attention.
 
+A registered operation (Search Console, Gmail, Calendar, Stripe, PostHog, the managed services)
+that the provider answers with an error status is settled the same way, and its message
+carries what the provider said: HTTP status, error type and code, and the provider's message,
+redacted and cut to 1,500 characters. Code reads them from the `ValueError`'s `code` and
+`provider_error`; a procedure's `call_service` and `request_service` errors are JSON with
+`code`, `message` and `provider_error`. See
+[errors](stripe-and-posthog-connections.md#errors) for the format and the redaction rules.
+
 GET requires `http.read`. POST/PUT/PATCH/DELETE require `http.write` **and** that exact method
 on the connection. Where supported, configuring `Idempotency-Key` or `X-Idempotency-Key`
 sends a stable Tin-derived operation ID. This does not promise universal exactly-once writes.

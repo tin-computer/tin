@@ -10,6 +10,7 @@ from contextlib import ExitStack, asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from e2b import (
     AsyncCommandHandle,
@@ -23,7 +24,7 @@ from e2b import (
     TimeoutException,
 )
 
-from tin_lite.procedures import SandboxProfile
+from tin_lite.procedures import RUN_ID_ENV, SandboxProfile
 from tin_lite.proxy_grants import proxy_grant
 from tin_lite.rollouts import (
     RolloutCapture,
@@ -338,8 +339,13 @@ class E2BRuntime:
                         if exc.fatal:
                             raise
                         # Settled refusals and uncertain results are the package's to handle;
-                        # the gateway already blocks any step that must not be retried.
+                        # the gateway already blocks any step that must not be retried. The
+                        # provider's own (redacted) words ride along as `provider_error`.
                         forwarded, response = exc, {"error": str(exc)}
+                        if exc.code:
+                            response["code"] = exc.code
+                        if exc.provider_error:
+                            response["provider_error"] = exc.provider_error
                     except CodeProjectFileError as exc:
                         if exc.code == "file_access_revoked":
                             raise
@@ -558,6 +564,10 @@ class E2BRuntime:
             api_key=self._api_key,
         )
         envs = self._run_env(sandbox_id=sandbox_id, run_input=run_input)
+        run_context = run_input.context.get("run")
+        if isinstance(run_context, dict) and run_context.get("id"):
+            # The same ID the brief names; the controller hands it to the agent's commands.
+            envs[RUN_ID_ENV] = str(UUID(str(run_context["id"])))
         context = json.dumps(run_input.context, separators=(",", ":")).encode()
         # The context goes to a file in the sandbox: Linux caps one environment string at
         # 128 KiB (MAX_ARG_STRLEN), which a procedure package plus tin_state exceeds. The

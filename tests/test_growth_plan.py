@@ -263,6 +263,7 @@ class FakeModel:
                     "answer": "Delivered by Organic traffic system: one article each Monday.",
                 }
             ],
+            "channels": [],
         }
 
     def _repair(self, step, user, schema):
@@ -336,6 +337,38 @@ async def test_plan_says_what_arrives_first_and_never_promises_publication():
     # The mailbox is requested only when the selected work needs it.
     needed = {i for item in block_of(text) for i in item["integrations"]}
     assert ("workspace.google" in connections) == ("workspace.google" in needed)
+
+
+class ChannelModel(FakeModel):
+    def _view(self, step, user, schema):
+        return {
+            **super()._view(step, user, schema),
+            "channels": [
+                {"platform": "linkedin", "why": "clinic managers read it at work."},
+                {"platform": "x", "why": "health-tech founders trade notes there"},
+                {"platform": "linkedin", "why": "named twice"},
+                {"platform": "reddit", "why": "practice owners ask for software there"},
+                {"platform": "instagram", "why": "a fourth is never shown"},
+            ],
+        }
+
+
+async def test_plan_suggests_social_channels_and_says_what_tin_does_on_each_today():
+    quiet = (await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, FakeModel()))["plan"]
+    assert "Social channels" not in quiet
+    text = (await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, ChannelModel()))["plan"]
+    line = next(x for x in text.splitlines() if x.startswith("Social channels"))
+    assert line == (
+        "Social channels that likely fit your buyers: LinkedIn (clinic managers read it at work); "
+        "X (health-tech founders trade notes there); Reddit (practice owners ask for software "
+        "there)."
+    )
+    # Code, not the model, says what Tin does on each: X today, LinkedIn drafts, the rest not yet.
+    assert "ask your agent to run Draft for X when you're ready" in text
+    assert "Tin can draft LinkedIn posts from an article or a weekly social plan" in text
+    pieces = text.split("## Missing pieces\n", 1)[1].split("\n\n", 1)[0]
+    assert "- Tin doesn't prepare Reddit posts yet." in pieces
+    assert not re.search(r"(?i)coming soon", text)
 
 
 def test_workflow_inputs_are_held_to_the_input_schema():
@@ -929,11 +962,18 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
         ]["title"]
         for item in PUBLIC_WORKFLOWS
     }
-    assert (
-        titles
-        == {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
-        | public
-    )
+    # Workflows hidden from the organic system and discovery stay registered for saved
+    # configurations, but the plan never names them.
+    hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
+    hidden.add("visibility.audit")
+    assert titles == {
+        key: title
+        for key, title in (
+            {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
+            | public
+        ).items()
+        if key not in hidden
+    }
     assert set(plan.PROGRAMS["workflow_scope"]) == set(titles)
     assert {system["id"] for system in plan.RUBRIC["systems"]} == {row["id"] for row in programs}
     known = {param["id"] for param in plan.RUBRIC["params"]}
@@ -1499,3 +1539,10 @@ async def test_failure_before_anything_was_written_does_not_send_the_founder_to_
     db.receipts[key] = EffectReceipt(key, plan.KEY, "started", None)
     await activities.failure(str(run.id))
     assert "Check Files for a saved result" in db.failures[-1]
+
+
+def test_onboarding_offers_no_social_channel():
+    # Which social channel a founder uses is decided after onboarding, by the founder, not
+    # chosen as a setup first run for them.
+    offered = {key for row in plan.PROGRAMS["programs"] for key in row["tin"]["workflows"]}
+    assert not {key for key in offered if key.startswith("social.")}

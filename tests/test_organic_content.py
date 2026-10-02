@@ -48,7 +48,7 @@ async def system_fixture(
     definitions = {w.key: w.definition for w in BUILTIN_WORKFLOWS}
     definitions["content.generate"] = f.workflow.definition
     resources = {}
-    for key in (organic_system.KEY, "content.deliver"):
+    for key in (organic_system.KEY, "content.deliver", "website.change"):
         spec = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
         definition, files = spec.definition_and_resource_files()
         definitions[key] = definition
@@ -105,8 +105,14 @@ async def system_fixture(
         f"traffic:{f.parent.id}:prepare",
         {
             "definition_revision": "e" * 40,
-            "policy": policy or organic_system.POLICY,
-            "definitions": {step: definitions[key] for step, key in organic_system.STEPS.items()},
+            # These cases pin v5, whose delivery step is content.deliver.
+            "policy": policy or organic_system.REFRESH_POLICY,
+            "definitions": {
+                step: definitions[key]
+                for step, key in organic_system.policy_steps(
+                    policy or organic_system.REFRESH_POLICY
+                ).items()
+            },
             "input_sha256": digest(inputs),
             "content_delivery": intent,
         },
@@ -223,13 +229,27 @@ async def test_repository_switch_cannot_redirect_approved_system_article(
     f.runtime.integrations.github_create_pull_request.assert_not_awaited()
 
 
-async def test_no_copy_assessment_never_creates_delivery(publication_db, monkeypatch):
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        ("already_covered", "already_covered"),
+        # A judgment that the evidence is too thin, or the brief needs revision, is also a
+        # result: the system run doesn't fail because the draft step chose no article.
+        ("insufficient_evidence", "editorial_attention_required"),
+        ("needs_replanning", "editorial_attention_required"),
+    ],
+)
+async def test_no_copy_assessment_never_creates_delivery(
+    publication_db, monkeypatch, outcome, reason
+):
     f = await system_fixture(publication_db, monkeypatch)
     result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "draft"})
-    run = await save(f, await f.db.get_run(UUID(result["run_id"])), assessment=True)
+    run = await save(
+        f, await f.db.get_run(UUID(result["run_id"])), assessment=True, outcome=outcome
+    )
     assert await f.delivery.status(run) is None
     result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "delivery"})
-    assert result == {"status": "skipped", "reason": "already_covered"}
+    assert result == {"status": "skipped", "reason": reason}
 
 
 async def test_stop_fences_delivery_and_preserves_waiting_draft(publication_db, monkeypatch):

@@ -56,6 +56,15 @@ class ModelProviderError(RuntimeError):
         self.observation = observation
 
 
+class ModelOutputTruncated(ModelProviderError):
+    """The response stopped at its output-token cap, so its structured output is incomplete.
+
+    Raised when the provider says so (an OpenAI response `incomplete` for
+    `max_output_tokens`) or when structured output does not parse and the response used its
+    whole output allowance (or did not report its usage).
+    """
+
+
 class ModelCapabilityError(ValueError):
     """A route cannot satisfy the workflow's declared model contract."""
 
@@ -275,6 +284,7 @@ class OpenAIModelProvider:
         usage = getattr(response, "usage", None)
         output_details = getattr(usage, "output_tokens_details", None)
         input_details = getattr(usage, "input_tokens_details", None)
+        incomplete = getattr(getattr(response, "incomplete_details", None), "reason", None)
         return _result(
             provider=self.name,
             model=str(getattr(response, "model", model)),
@@ -282,6 +292,8 @@ class OpenAIModelProvider:
             request_id=_optional_string(getattr(response, "id", None)),
             service_tier=_optional_string(getattr(response, "service_tier", None)),
             request=request,
+            truncated=getattr(response, "status", None) == "incomplete"
+            and incomplete == "max_output_tokens",
             usage=ModelUsage(
                 input_tokens=_optional_int(getattr(usage, "input_tokens", None)),
                 output_tokens=_optional_int(getattr(usage, "output_tokens", None)),
@@ -596,6 +608,8 @@ def model_failure_reason(exc: BaseException) -> str:
             return "provider_connection"
         if isinstance(seen, LookupError | ModelCapabilityError):
             return "route_unavailable"
+        if isinstance(seen, ModelOutputTruncated):
+            return "output_truncated"
         if isinstance(seen, ModelProviderError) and seen.observation is not None:
             return "invalid_result"
         if isinstance(seen, ValueError):
@@ -624,6 +638,7 @@ def _result(
     request: ModelRequest,
     usage: ModelUsage,
     service_tier: str | None = None,
+    truncated: bool = False,
 ) -> ModelResult:
     observation = ModelObservation(
         provider=provider,
@@ -632,6 +647,10 @@ def _result(
         usage=usage,
         service_tier=service_tier,
     )
+    if truncated:
+        raise ModelOutputTruncated(
+            f"{provider.value} model stopped at its output-token cap", observation=observation
+        )
     if not text:
         raise ModelProviderError(
             f"{provider.value} model returned no text", observation=observation
@@ -640,8 +659,20 @@ def _result(
     if request.output_schema is not None:
         try:
             parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            # Strict structured output only fails to parse when it was cut off.
+            if usage.output_tokens is None or usage.output_tokens >= request.max_output_tokens:
+                raise ModelOutputTruncated(
+                    f"{provider.value} model output stopped before its JSON was complete",
+                    observation=observation,
+                ) from exc
+            raise ModelProviderError(
+                f"{provider.value} model returned invalid structured output",
+                observation=observation,
+            ) from exc
+        try:
             jsonschema.validate(parsed, request.output_schema)
-        except (json.JSONDecodeError, jsonschema.ValidationError) as exc:
+        except jsonschema.ValidationError as exc:
             raise ModelProviderError(
                 f"{provider.value} model returned invalid structured output",
                 observation=observation,

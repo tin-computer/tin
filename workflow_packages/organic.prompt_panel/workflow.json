@@ -1,0 +1,117 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.prompt_panel",
+    "title": "Choose the buyer questions AI visibility is measured on",
+    "description": "Write 36 buyer prompts in the words people type into an assistant: four intent families of eight, led by the category your product sells in, plus four that name your product. Code picks the families from your positioning and your own Search Console searches, leaving out searches for your name and comparison searches, and sets their weights; one model call writes the prompts, and code checks every rule before publishing. The organic audit asks the newest panel on its next run, so AI visibility is measured on the same questions every time. No review step: a panel that fails the checks is not published.",
+    "version": "1.0.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": [
+      "on_demand"
+    ],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "brand/BRAND.md",
+        "producer": "brand.capture",
+        "reason": "The brand guide names the product and its positioning, which name the lead family."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map says what the product does, for the adjacent families and the branded fact checks."
+      },
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit names the site's host, which the panel must match for the audit to ask it."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "target": {
+          "type": "string",
+          "maxLength": 253,
+          "default": "",
+          "title": "Website domain",
+          "description": "Leave empty to use the organic audit's host."
+        },
+        "seed_keywords": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "title": "Extra seed phrases (optional)"
+        },
+        "competitor_names": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "title": "Competitors to include (optional)"
+        }
+      },
+      "required": [
+        "project_id"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": [
+          "search_analytics.read"
+        ],
+        "required": true
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "panel_check.py"
+      ],
+      "timeout_seconds": 60,
+      "model_routes": {
+        "prompts": {
+          "provider": "openai",
+          "model": "gpt-6-luna",
+          "max_calls": 2,
+          "max_input_bytes": 32000,
+          "max_output_tokens": 4096
+        }
+      },
+      "services": {
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 1,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "reports/research/prompt-panel/PROMPT_PANEL.md",
+        "media_type": "text/markdown",
+        "max_bytes": 64000
+      }
+    }
+  }
+}

@@ -77,8 +77,8 @@ Your agent asks what Tin should take on as a quick multiple choice; your own wor
   {"id": "ai-visibility", "name": "AI visibility", "suggested": true,
    "summary": "Tin measures where AI answers name you and drafts the pages that earn a mention.",
    "outlook": {"week": "a first read of five buyer questions and one answer page draft.", "month": "likely two published answer pages and a second read.", "quarter": "likely the first mentions in AI answers if the pages are published."},
-   "workflows": [{"key": "visibility.audit", "mode": "weekly", "weekdays": ["monday"], "local_time": "09:00", "inputs": {"target": "this project"}},
-                 {"key": "visibility.audit", "mode": "once", "inputs": {"target": "this project"}},
+   "workflows": [{"key": "project.weekly_brief", "mode": "weekly", "weekdays": ["monday"], "local_time": "09:00", "inputs": {"focus": "Which buyers ask assistants about us?"}},
+                 {"key": "project.weekly_brief", "mode": "once", "inputs": {"focus": "Which buyers ask assistants about us?"}},
                  {"key": "organic.audit", "mode": "once", "inputs": {"site_url": "https://example.com", "market": "US"}},
                  {"key": "outreach.email_shortlist", "mode": "weekly", "weekdays": ["tuesday"], "local_time": "09:00", "inputs": {"objective": "warm prospects"}}],
    "integrations": ["workspace.google"]},
@@ -100,8 +100,8 @@ def test_plan_parsers_read_the_pick_and_the_machine_block() -> None:
     actions = picked_actions(block, ["ai-visibility", "outreach"])
     # The shortlist appears in two systems with the same schedule; it is set up once.
     assert [(a["system"], a["key"], a["mode"]) for a in actions] == [
-        ("ai-visibility", "visibility.audit", "weekly"),
-        ("ai-visibility", "visibility.audit", "once"),
+        ("ai-visibility", "project.weekly_brief", "weekly"),
+        ("ai-visibility", "project.weekly_brief", "once"),
         ("ai-visibility", "organic.audit", "once"),
         ("ai-visibility", "outreach.email_shortlist", "weekly"),
     ]
@@ -279,7 +279,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
             {
                 "system": "ai-visibility",
                 "system_name": "AI visibility",
-                "key": "visibility.audit",
+                "key": "project.weekly_brief",
                 "mode": "weekly",
                 "weekdays": ["monday"],
                 "local_time": "09:00",
@@ -299,7 +299,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
             {
                 "system": "ai-visibility",
                 "system_name": "AI visibility",
-                "key": "visibility.audit",
+                "key": "project.weekly_brief",
                 "mode": "once",
                 "status": "started",
                 "run_id": "r",
@@ -325,7 +325,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
         ],
     }
     titles = {
-        "visibility.audit": "Audit AI visibility",
+        "project.weekly_brief": "Create a weekly project brief",
         "content.answer_page": "Draft an answer page",
     }
     message = founder_message(setup, titles=titles)
@@ -336,14 +336,16 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
     assert "2 roles on your calendar, America/Los_Angeles time." in message
     assert "Tin measures where AI answers name you." not in message
     assert (
-        "- Monday at 09:00: Audit AI visibility. Lands in Files, reports/AI_VISIBILITY.md."
-        in message
+        "- Monday at 09:00: Create a weekly project brief. Lands in Files, and the chat." in message
     )
     assert (
         "- Tuesday at 09:00: Draft an answer page. Lands in Decisions, as a draft; your yes opens "
         "a pull request in example/site." in message
     )
-    assert "Already under way: audit ai visibility (first result in about ten minutes)." in message
+    assert (
+        "Already under way: create a weekly project brief (first result in on its scheduled day)."
+        in message
+    )
     assert (
         "In a week: a first read. In a month: two pages. In three months: first mentions."
         not in message
@@ -366,7 +368,7 @@ def test_report_opens_with_the_handshake_and_names_what_runs() -> None:
     words = founder_words(setup, titles=titles)
     assert words["quote"].startswith("Setup is partial for Example")
     assert words["quote"].endswith(
-        "Already under way: audit ai visibility (first result in about ten minutes)."
+        "Already under way: create a weekly project brief (first result in on its scheduled day)."
     )
     assert "In a week" not in words["quote"] and "Two pages" not in words["quote"]
     assert [item.split(":")[0] for item in words["relay"]] == [
@@ -406,7 +408,7 @@ def test_report_names_the_first_run_date_in_the_founder_timezone() -> None:
         "links": ui_links("https://lite.tin.computer", uuid4()),
         "actions": [
             {
-                "key": "visibility.audit",
+                "key": "project.weekly_brief",
                 "mode": "weekly",
                 "weekdays": ["monday"],
                 "local_time": "09:00",
@@ -416,9 +418,9 @@ def test_report_names_the_first_run_date_in_the_founder_timezone() -> None:
         ],
     }
 
-    text = render_report(setup, titles={"visibility.audit": "Audit AI visibility"})
+    text = render_report(setup, titles={"project.weekly_brief": "Create a weekly project brief"})
 
-    assert "- **Audit AI visibility**, Monday at 09:00; next on 2026-09-28." in text
+    assert "- **Create a weekly project brief**, Monday at 09:00; next on 2026-09-28." in text
 
 
 def test_report_survives_a_timezone_that_does_not_resolve() -> None:
@@ -428,19 +430,22 @@ def test_report_survives_a_timezone_that_does_not_resolve() -> None:
         "timezone": "Eastern Standard Time",
         "links": ui_links("https://lite.tin.computer", uuid4()),
         "actions": [
-            {"key": "visibility.audit", "mode": "once", "status": "started", "run_id": "r"}
+            {"key": "project.weekly_brief", "mode": "once", "status": "started", "run_id": "r"}
         ],
     }
-    titles = {"visibility.audit": "Audit AI visibility", "organic.audit": "Organic audit"}
+    titles = {
+        "project.weekly_brief": "Create a weekly project brief",
+        "organic.audit": "Organic audit",
+    }
 
     text = render_report(setup, titles=titles)
 
-    assert "- **Audit AI visibility**, once, running now" in text
+    assert "- **Create a weekly project brief**, once, running now" in text
 
     # A scheduled date falls back to UTC; a stored value that does not parse prints as stored.
     setup["actions"] = [
         {
-            "key": "visibility.audit",
+            "key": "project.weekly_brief",
             "mode": "weekly",
             "weekdays": ["monday"],
             "local_time": "09:00",
@@ -459,7 +464,7 @@ def test_report_survives_a_timezone_that_does_not_resolve() -> None:
 
     text = render_report(setup, titles=titles)
 
-    assert "- **Audit AI visibility**, Monday at 09:00; next on 2026-09-27." in text
+    assert "- **Create a weekly project brief**, Monday at 09:00; next on 2026-09-27." in text
     assert "- **Organic audit**, Monday at 09:00; next on 2026-09-28." in text
 
 
@@ -529,7 +534,7 @@ async def parent_fixture(db, monkeypatch, plan=PLAN):
     )
     for workflow_key in (
         "growth.onboarding_plan",
-        "visibility.audit",
+        "project.weekly_brief",
         "site.health_improve",
         "organic.audit",
         "outreach.email_shortlist",
@@ -652,8 +657,8 @@ async def test_parent_plans_holds_then_sets_up_the_picks(publication_db, monkeyp
     # Both ticked systems are set up; the shortlist they share is set up once.
     assert receipt.result["systems"] == ["ai-visibility", "outreach"]
     assert set(outcomes) == {
-        ("ai-visibility", "visibility.audit", "weekly"),
-        ("ai-visibility", "visibility.audit", "once"),
+        ("ai-visibility", "project.weekly_brief", "weekly"),
+        ("ai-visibility", "project.weekly_brief", "once"),
         ("ai-visibility", "organic.audit", "once"),
         ("ai-visibility", "outreach.email_shortlist", "weekly"),
     }
@@ -667,16 +672,16 @@ async def test_parent_plans_holds_then_sets_up_the_picks(publication_db, monkeyp
     assert receipt.result["details"]["names"] == ["AI visibility", "Outreach desk"]
     assert receipt.result["business"] and receipt.result["delivery"] is None
     assert receipt.result["control"] == "review_in_tin"
-    assert outcomes[("ai-visibility", "visibility.audit", "weekly")]["status"] == "scheduled"
+    assert outcomes[("ai-visibility", "project.weekly_brief", "weekly")]["status"] == "scheduled"
     assert f.schedules.created and f.schedules.created[0][1:] == ("weekly", "America/Los_Angeles")
-    assert outcomes[("ai-visibility", "visibility.audit", "once")]["status"] == "started"
+    assert outcomes[("ai-visibility", "project.weekly_brief", "once")]["status"] == "started"
     # organic.audit is blocked on the operator's DataForSEO settings in this fixture.
     assert outcomes[("ai-visibility", "organic.audit", "once")]["status"] == "blocked"
     assert outcomes[("ai-visibility", "organic.audit", "once")]["unblock"] == "tin_operator"
     # The weekly schedule also starts its first occurrence now, so two children dispatch.
     assert len(started) == 2
     assert all(set(row) == {"run_id", "executor", "temporal_workflow_id"} for row in started)
-    assert outcomes[("ai-visibility", "visibility.audit", "weekly")]["run_id"]
+    assert outcomes[("ai-visibility", "project.weekly_brief", "weekly")]["run_id"]
     saved = await f.db.pool.fetch("SELECT name, status FROM project_workflows")
     assert len(saved) == 1 and saved[0]["status"] == "active"
     # Plain names: no "onboarding option" suffix.
@@ -779,7 +784,7 @@ async def test_setup_uses_approved_snapshot_after_project_head_changes(publicati
         AsyncMock(
             return_value={
                 "run_id": str(uuid4()),
-                "executor": "visibility.audit",
+                "executor": "project.weekly_brief",
                 "temporal_workflow_id": "child",
             }
         ),

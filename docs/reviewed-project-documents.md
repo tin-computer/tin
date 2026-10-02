@@ -44,6 +44,10 @@ The normal artifact reader links the companion. Approval through HTTP, Decisions
 supply the token from `GET /api/workflows/runs/{id}/review` / `get_workflow_review`. The token
 binds the immutable proposal pair and the original contents (or absence) of both destinations.
 Editing a proposal invalidates approval; start another run or use Files for a manual edit.
+A pair that declares `"agent_revision": "capture-revision.v1"` (only the brand capture pair,
+from 1.2.0) also accepts a revision from the founder's coding agent through
+`revise_capture_proposal`; see [brand capture](brand-capture.md#review-and-consumption). The
+review then binds the revision commit and the revised files' digests.
 
 The existing approval activity applies the exact pair in one expected-head commit. An edit
 to either destination blocks the whole application, including edits after approval. Unrelated
@@ -55,7 +59,7 @@ receipt is required before the run can succeed.
 The proposal revision stays the run artifact. Adoption records its own revision in an
 existing effect receipt and a product Activity event. No process or sandbox must survive
 review. A conflict leaves the proposals readable and the active destinations untouched.
-There is no automatic merge or proposal rebinding.
+There is no automatic merge, and only a declared agent revision rebinds a proposal.
 
 ![Synthetic example in the normal document reader](images/reviewed-documents.png)
 

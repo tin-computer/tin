@@ -400,7 +400,12 @@ class XConnection:
                     raise
                 if status >= 400:
                     raise IntegrationUpstreamError(f"X refused this request (HTTP {status})")
-                if not isinstance(value, dict) or value.get("errors"):
+                # X reports a referenced post it can't return (deleted or protected) as a
+                # partial error beside the data it did return. A read keeps that data; a write,
+                # or errors with no data, is still incomplete.
+                if not isinstance(value, dict) or (
+                    value.get("errors") and (method != "GET" or "data" not in value)
+                ):
                     if ambiguous_write:
                         raise IntegrationDeliveryUnknownError(
                             "X returned an incomplete result; check before retrying"

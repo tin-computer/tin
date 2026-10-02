@@ -1,4 +1,5 @@
-"""HTTP reads and decisions for website change rows; MCP shares the same service calls."""
+"""HTTP reads and decisions for website change rows, and the project's protected pages;
+MCP shares the same service calls."""
 
 from typing import Literal
 from uuid import UUID
@@ -10,6 +11,7 @@ from tin_lite import website_change
 from tin_lite.auth import AuthContext, require_user
 
 router = APIRouter(prefix="/api/projects/{project_id}/website-changes")
+settings_router = APIRouter(prefix="/api/projects/{project_id}/protected-paths")
 USER = Depends(require_user)
 
 
@@ -39,6 +41,16 @@ async def list_changes(
 ):
     database = await _authorized(request, project_id, user)
     return await website_change.list_changes(database, project_id=project_id, status=status)
+
+
+@router.get("/questions")
+async def judgment_calls(project_id: UUID, request: Request, user: AuthContext = USER):
+    """The judgment calls the latest previews left open, for the Decisions page. The coding
+    agent answers them with the next run, asking the founder when unsure."""
+    from tin_lite import website_change_audit
+
+    database = await _authorized(request, project_id, user)
+    return {"questions": await website_change_audit.judgment_calls(database, project_id)}
 
 
 @router.get("/{change_id}")
@@ -90,3 +102,87 @@ async def decline_change(
 ):
     """Decline one change row. Tin never makes it, and later runs do not propose it again."""
     return await _decide(project_id, change_id, "decline", payload, request, user)
+
+
+class TechnicalPreflight(BaseModel):
+    """What to preview: the latest audit's fixes, the planned URL changes, or the blog index."""
+
+    model_config = ConfigDict(extra="forbid")
+    source: Literal["audit", "planned", "blog_index"] = "audit"
+    expected_repository: str = Field(min_length=3, max_length=140)
+    repository_serves_site: bool
+    finding_ids: list[str] = Field(default_factory=list, max_length=30)
+    decisions: list[str] = Field(default_factory=list, max_length=30)
+    protected_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/preflight")
+async def preflight_changes(
+    project_id: UUID, payload: TechnicalPreflight, request: Request, user: AuthContext = USER
+):
+    """Record a source's change rows and preview the next run.
+
+    Starts nothing: no run, compute, branch or pull request.
+    """
+    from tin_lite import website_change_audit
+    from tin_lite.integrations import IntegrationError
+    from tin_lite.technical_fix_sources import TechnicalFixError
+
+    database = await _authorized(request, project_id, user)
+    runtime = request.app.state.runtime
+    inputs = payload.model_dump()
+    try:
+        return await website_change_audit.preview(
+            database=database,
+            storage=runtime.storage,
+            integrations=getattr(runtime, "integrations", None),
+            project_id=project_id,
+            source=inputs.pop("source"),
+            inputs=inputs,
+        )
+    except TechnicalFixError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except (ValueError, IntegrationError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class ProtectedPaths(BaseModel):
+    """The project's protected pages, saved over the revision the caller read."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    expected_revision: int = Field(ge=0)
+    paths: list[str] = Field(max_length=website_change.MAX_PROTECTED_PATHS * 2)
+
+
+@settings_router.get("")
+async def read_protected_paths(project_id: UUID, request: Request, user: AuthContext = USER):
+    """The pages whose changes always wait for the founder's merge, and who changed them."""
+    try:
+        return await website_change.read_protected_paths(
+            request.app.state.runtime.database, project_id=project_id, actor=user.clerk_user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+
+
+@settings_router.put("")
+async def save_protected_paths(
+    project_id: UUID, payload: ProtectedPaths, request: Request, user: AuthContext = USER
+):
+    """Replace the project's protected pages. /sign-in, /sign-up and /auth-complete stay."""
+    try:
+        return await website_change.save_protected_paths(
+            request.app.state.runtime.database,
+            project_id=project_id,
+            actor=user.clerk_user_id,
+            paths=payload.paths,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    except website_change.WebsiteChangeConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
