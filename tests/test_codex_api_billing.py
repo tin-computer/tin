@@ -97,7 +97,13 @@ def test_unknown_or_inconsistent_usage_never_becomes_zero(change):
 
 
 async def paid_relay(
-    f, *, missing_usage=False, provider_usage=None, response_status="completed", contract=CONTRACT
+    f,
+    *,
+    missing_usage=False,
+    provider_usage=None,
+    response_status="completed",
+    contract=CONTRACT,
+    response_error=None,
 ):
     await fund(f)
     f.settings.codex_api_projects = {f.project.id}
@@ -168,6 +174,7 @@ async def paid_relay(
             200,
             content=result_event(
                 status=response_status,
+                **({"error": response_error} if response_error else {}),
                 usage=None
                 if missing_usage
                 else {
@@ -363,6 +370,39 @@ async def test_verified_supplier_usage_is_charged_even_when_generation_fails(
         )
         assert await f.billing.settle(run.id) == 20_000_000
         assert len(sent) == 1
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+@pytest.mark.parametrize(
+    ("error", "reason", "message"),
+    [
+        ("rate_limit_exceeded", "rate_limited", "OpenAI rate-limited this run's model calls."),
+        ("server_error", "upstream_failed", "OpenAI failed one of this run's model requests."),
+    ],
+)
+async def test_a_response_openai_fails_inside_its_stream_names_the_cause(
+    billed, error, reason, message
+):
+    # 2026-10-01: three sessions ended "Codex usage limit reached" with a failed response
+    # inside a 200 stream, and nothing on the attempt said why.
+    from tin_lite.codex_api import attempt_failure
+
+    f = billed
+    run, relay, client, _ = await paid_relay(
+        f,
+        response_status="failed",
+        contract=SESSION_CONTRACT,
+        response_error={"code": error, "message": "private provider text"},
+    )
+    try:
+        assert (await post(client, run)).status_code == 200
+        attempt = await f.db.get_effect(attempt_key(run.id))
+        rejection = attempt.result["relay_rejection"]
+        assert rejection["reason"] == reason and rejection["upstream_status"] == 200
+        assert "private provider text" not in json.dumps(attempt.result)
+        assert message in str(attempt_failure({**attempt.result, "outcome": "failed"}))
     finally:
         await client.aclose()
         await relay.close()

@@ -610,6 +610,15 @@ class CodexAPIRelay:
                                         request_id=upstream.headers.get("x-request-id"),
                                     )
                                     observed = True
+                                    if response.get("status") == "failed":
+                                        # OpenAI can fail a response inside a 200 stream; name
+                                        # the cause by code only, never the provider's text.
+                                        await self.note_rejection(
+                                            run_id,
+                                            grant,
+                                            **failed_response_cause(response),
+                                            operation=operation,
+                                        )
                             if evidence is not None:
                                 original_index = message.get("output_index")
                                 if type(original_index) is int:
@@ -648,6 +657,14 @@ class CodexAPIRelay:
             headers={"Cache-Control": "no-store"},
             background=BackgroundTask(upstream.aclose),
         )
+
+
+def failed_response_cause(response):
+    """A failed streamed response's cause: OpenAI's rate limit, or a generic upstream failure."""
+    error = response.get("error")
+    if isinstance(error, dict) and error.get("code") == "rate_limit_exceeded":
+        return {"status": 429, "reason": "rate_limited", "upstream_status": 200}
+    return {"status": 502, "reason": "upstream_failed", "upstream_status": 200}
 
 
 @router.post("/internal/codex-api/{run_id}/v1/{operation:path}", include_in_schema=False)

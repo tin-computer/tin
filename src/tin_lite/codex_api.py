@@ -48,6 +48,13 @@ REJECTION_STATUS_REASONS = {
 }
 
 
+# Plain causes for rejections a founder should read as such; others name the code.
+REJECTION_MESSAGES = {
+    "rate_limited": "OpenAI rate-limited this run's model calls.",
+    "upstream_failed": "OpenAI failed one of this run's model requests.",
+}
+
+
 def is_rejection_reason(value):
     return isinstance(value, str) and _REJECTION_REASON.fullmatch(value) is not None
 
@@ -97,9 +104,10 @@ def attempt_failure(record):
     rejection = record.get("relay_rejection")
     if isinstance(rejection, dict) and is_rejection_reason(rejection.get("reason")):
         # Allowlisted code and HTTP status only, so the run's failure names its cause.
-        reason += (
-            f" The model relay rejected a request ({rejection['reason']}, "
-            f"HTTP {int(rejection.get('status') or 0)})."
+        reason += " " + REJECTION_MESSAGES.get(
+            rejection["reason"],
+            f"The model relay rejected a request ({rejection['reason']}, "
+            f"HTTP {int(rejection.get('status') or 0)}).",
         )
     return CodexAttemptStopped(reason + " The paid attempt will not be repeated automatically.")
 
