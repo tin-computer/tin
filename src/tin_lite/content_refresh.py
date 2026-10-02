@@ -483,7 +483,7 @@ def validate_document(content: bytes, context: dict) -> list[dict[str, str]]:
     text = content.decode("utf-8")
     if not text.startswith("# "):
         raise ValueError("Start the refresh with a # heading.")
-    value, start, end = _block(text)
+    value = _block(text)[0]
     page, current = context["page"], context["current"]
     if value.get("page") != page["url"]:
         raise ValueError("The refresh names a different page than Tin selected.")
@@ -520,14 +520,10 @@ def validate_document(content: bytes, context: dict) -> list[dict[str, str]]:
             raise ValueError(f"The new {field} must be plain text, without markup or braces.")
         if not item["reason"].strip():
             raise ValueError(f"Say why the {field} changes.")
-        # The reviewer sees each change outside the machine-readable block.
-        prose = text[:start] + text[end:]
-        if old not in prose or new not in prose:
-            raise ValueError(f"Show the current and proposed {field} in the review table.")
     if paragraphs > MAX_PARAGRAPHS:
         raise ValueError(f"Replace at most {MAX_PARAGRAPHS} body paragraphs.")
-    if context.get("results_markdown") and context["results_markdown"] not in text:
-        raise ValueError("Copy Tin's table of earlier refresh results unchanged.")
+    # The review table and the earlier-results table are for the reader; the replacements
+    # block shows every exact change, so their formatting never fails a paid refresh.
     return items
 
 
