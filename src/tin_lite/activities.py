@@ -2804,6 +2804,8 @@ class TinActivities:
             run = await self._require_run(run_id)
             if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                 return False
+            if content_repository_delivery.repairs_site(run):
+                return await self._prepare_website_repairs(run)
             await content_repository_delivery.saved_source(self._db, run_id)
             await self._db.mark_run_running(run_id)
             await self._db.project_run_progress(
@@ -2868,6 +2870,40 @@ class TinActivities:
                 total=3,
                 step="prepare_patch",
                 summary="Preparing a bounded metadata-only change.",
+            )
+        return handled
+
+    async def _prepare_website_repairs(self, run) -> bool:
+        """A website.change run with the audit's changes: site-fix-v5's preparation of the
+        rows it pinned. True when nothing is left to change; it then reports and ends."""
+        from tin_lite import website_change_audit
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=0,
+            total=3,
+            step="verify_source",
+            summary="Checking the audit's changes on the live site and the repository.",
+        )
+        handled = await self._await_with_heartbeats(
+            website_change_audit.prepare(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "technical_verification"},
+        )
+        if not handled:
+            await self._db.project_run_progress(
+                run_id=run.id,
+                mode="steps",
+                current=1,
+                total=3,
+                step="prepare_patch",
+                summary="Preparing one pull request for the audit's changes.",
             )
         return handled
 
@@ -3127,9 +3163,13 @@ class TinActivities:
             api_attempt = await self._db.get_effect(attempt_key(run_id), conn=conn)
 
             repository_delivery = content_repository_delivery.adapts(run)
+            # A website.change run with the audit's changes is a repair, not a page delivery.
+            technical_run = bool(procedure.repair_policy) or (
+                content_repository_delivery.repairs_site(run)
+            )
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
-                or procedure.repair_policy
+                or technical_run
                 or repository_delivery
             ):
                 if run.ephemeral_branch != f"procedures/{run.id}/{run.generation}":
@@ -3208,7 +3248,7 @@ class TinActivities:
                         "sandbox_killed": False,
                         **(
                             {"ephemeral_commit_sha": recovered_revision}
-                            if procedure.repair_policy or repository_delivery
+                            if technical_run or repository_delivery
                             else {}
                         ),
                         **(
@@ -3420,7 +3460,8 @@ class TinActivities:
                             self._db, run_id
                         )
                         expected_binding = content_repository_delivery.binding_from(content_source)
-                    if procedure.repair_policy:
+                    website_repairs = content_repository_delivery.repairs_site(run)
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite.technical_fix_execution import binding_from, prepared_result
 
                         technical = await prepared_result(self._db, run_id)
@@ -3445,6 +3486,13 @@ class TinActivities:
                     }
                     if technical is not None:
                         workspace_context["technical_fix"] = technical
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        # The rows, publish mode and protected paths beside the plan.
+                        workspace_context["website_change"] = website_change_audit.workspace(
+                            await content_repository_delivery.saved_source(self._db, run_id)
+                        )
                     if content_source is not None:
                         # website.change reads its change row, route and protected paths too.
                         workspace_context[
@@ -3782,9 +3830,12 @@ class TinActivities:
                     raise RuntimeError("procedure result has no checkpoint path")
                 from tin_lite import content_repository_delivery
 
-                immutable_checkpoint = bool(
-                    procedure.repair_policy
-                ) or content_repository_delivery.adapts(run)
+                website_repairs = content_repository_delivery.repairs_site(run)
+                immutable_checkpoint = (
+                    bool(procedure.repair_policy)
+                    or website_repairs
+                    or content_repository_delivery.adapts(run)
+                )
                 checkpoint = (
                     b""
                     if immutable_checkpoint
@@ -3817,7 +3868,7 @@ class TinActivities:
                         source = await content_repository_delivery.saved_source(self._db, run_id)
                         copy_proof = content_repository_delivery.validate_patch(manifest, source)
                         expected_binding = content_repository_delivery.binding_from(source)
-                    if procedure.repair_policy:
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite import technical_fix
                         from tin_lite.technical_fix_execution import (
                             TechnicalFixExecution,
@@ -3870,7 +3921,16 @@ class TinActivities:
                             ),
                         )
                     artifact_path = procedure_receipt_path(spec=procedure, run_id=run_id)
-                    if technical is not None:
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        receipt = website_change_audit.report(
+                            technical,
+                            await content_repository_delivery.saved_source(self._db, run_id),
+                            reason="no_safe_patch" if no_change else None,
+                            pull_request=pull_request,
+                        )
+                    elif technical is not None:
                         receipt = technical_fix.report(
                             technical,
                             reason="no_safe_patch" if no_change else None,
@@ -3932,6 +3992,8 @@ class TinActivities:
                                 "outcome": "no_change" if no_change else "pull_request",
                                 "summary": "No safe patch proposed; finding remains unresolved."
                                 if no_change
+                                else "The pull request for the audit's changes is open."
+                                if website_repairs
                                 else "Verified title-only PR ready for review.",
                                 "message": receipt.decode(),
                             }
@@ -4438,6 +4500,22 @@ class TinActivities:
         from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
+        if content_repository_delivery.repairs_site(run):
+            if run.status == RunStatus.SUCCEEDED:
+                from tin_lite import website_change_audit
+
+                # Tin merges the audit's approved changes once the required checks pass,
+                # then checks the live site; anything else stays open for the founder.
+                await self._await_with_heartbeats(
+                    website_change_audit.publish(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "website_change_merge"},
+                )
+            return
         if content_repository_delivery.adapts(run):
             if run.status == RunStatus.SUCCEEDED:
                 # The procedure already opened its PR. When the page's approval asked to

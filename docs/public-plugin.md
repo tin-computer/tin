@@ -82,9 +82,9 @@ metadata: a stable public tool name and effect hints. This metadata is not seria
 Input schemas come from `client_input_schema(entry.definition)`; the project is bound
 outside workflow inputs by the shared run service. The public tool inventory combines
 `BUILTIN_WORKFLOWS` and `PUBLIC_WORKFLOWS`:
-28 native workflows plus 16 reviewed published packages, for 44 named starts. Workflows hidden
-from discovery (`visibility.audit`, `organic.error_surface`, `organic.mention_backlinks`) have
-no start tool; their saved configurations keep running in Tin.
+27 native workflows plus 16 reviewed published packages, for 43 named starts. Workflows hidden
+from discovery (`visibility.audit`, `organic.technical_fix`, `organic.error_surface`,
+`organic.mention_backlinks`) have no start tool; their saved configurations keep running in Tin.
 Package schemas are read through the same safe manifest decoder used by catalog
 publication. No package code runs during discovery, and unregistered folders,
 `example.*` packages and private `custom.*` workflows are not exposed.
@@ -131,9 +131,9 @@ falls outside the reviewed public contract, exclude it explicitly from public ex
 before release; never silently move a saved configuration to a newer revision.
 
 Style capture takes an existing, explicitly user-selected sample packet in project Files.
-For technical repair, use `list_technical_fix_sources`, `get_technical_fix_source` and
-`preflight_technical_fix` to inspect the exact audit, selected findings and any judgment calls; the
-ordinary run service still verifies the selection before execution.
+organic.technical_fix is hidden (Emre, 10/1: technical fixes go through website.change, which
+this plugin does not expose), so the plugin has no tool that starts, stops or lists technical
+fixes. `preflight_technical_fix` stays as a read-only preview for older clients.
 
 There is no generic `start_workflow` escape hatch, client-selected
 executor or dynamic schema-discovery/execution pair.

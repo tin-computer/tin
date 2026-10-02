@@ -66,6 +66,10 @@ async def fixture(db, monkeypatch):
     f.website = await db.get_workflow(spec.id)
     f.content_deliver = await db.get_workflow(delivery.WORKFLOW_ID)
     monkeypatch.setattr(delivery.asyncio, "sleep", AsyncMock())
+    # The site's main branch requires a build check, unless a test says otherwise.
+    f.runtime.integrations.github_required_status_checks = AsyncMock(
+        return_value={"readable": True, "contexts": ["build"]}
+    )
     return f
 
 
@@ -214,8 +218,8 @@ def test_a_change_row_is_defined_once_for_every_source():
     assert row.as_dict()["paths"] == ["/a", "/b"]
     assert set(website_change.SOURCES) == {
         "content_draft",
+        "audit",
         "planned_url_change",
-        "technical_fix",
         "blog_index",
     }
     for bad, match in (
@@ -724,3 +728,273 @@ async def test_http_and_mcp_approve_or_decline_one_change_row(publication_db, mo
                 "request_id": str(uuid4()),
             },
         )
+
+
+# The project's protected pages: a setting in Postgres, on top of defaults no one can remove.
+
+
+async def save_protected(f, paths, revision, request_id=None, actor=ACTOR):
+    return await website_change.save_protected_paths(
+        f.db,
+        project_id=f.project.id,
+        actor=actor,
+        paths=paths,
+        expected_revision=revision,
+        request_id=request_id or uuid4(),
+    )
+
+
+async def test_the_project_setting_adds_protected_paths_and_keeps_the_defaults(
+    publication_db, monkeypatch
+):
+    f = await fixture(publication_db, monkeypatch)
+    defaults = ["/sign-in", "/sign-up", "/auth-complete"]
+    unset = await website_change.read_protected_paths(f.db, project_id=f.project.id, actor=ACTOR)
+    assert (unset["revision"], unset["paths"], unset["history"]) == (0, [], [])
+    assert unset["defaults"] == unset["effective"] == defaults
+    # Paths only, normalized: a URL keeps its path; query, fragment, trailing and repeated
+    # slashes go; repeats and pages the defaults already cover are dropped.
+    saved = await save_protected(
+        f,
+        [
+            "https://example.com/partners/?ref=x#top",
+            " /app// ",
+            "/partners",
+            "/sign-in",
+            "/sign-up/sso",
+        ],
+        0,
+    )
+    assert saved["revision"] == 1 and saved["paths"] == ["/partners", "/app"]
+    assert saved["effective"] == [*defaults, "/partners", "/app"]
+    # Saving an empty list keeps the defaults: they cannot be removed.
+    cleared = await save_protected(f, [], 1)
+    assert cleared["paths"] == [] and cleared["effective"] == defaults
+    for bad, match in (
+        (["/"], "whole site"),
+        (["partners"], "not a site path"),
+        (["/blog/{slug}"], "not a site path"),
+        (["/a/../b"], "not a site path"),
+        ([""], "site path"),
+        ([f"/p{n}" for n in range(website_change.MAX_PROTECTED_PATHS + 1)], "at most 20"),
+        ("/partners", "List the protected pages"),
+    ):
+        with pytest.raises(ValueError, match=match):
+            await save_protected(f, bad, 2)
+    # Someone else saved in between: the stale revision is refused, nothing is written.
+    with pytest.raises(WebsiteChangeConflict, match="changed since you read them"):
+        await save_protected(f, ["/partners"], 1)
+    request = uuid4()
+    first = await save_protected(f, ["/partners"], 2, request)
+    assert await save_protected(f, ["/partners"], 2, request) == first  # a retry
+    with pytest.raises(WebsiteChangeConflict, match="request ID"):
+        await save_protected(f, ["/app"], 3, request)
+    with pytest.raises(LookupError):
+        await save_protected(f, ["/x"], 3, actor="user_stranger")
+    # The run's own input adds to the setting; neither removes a default.
+    assert website_change.protected_paths(["/partners"], ["/beta", "/partners"]) == [
+        *defaults,
+        "/partners",
+        "/beta",
+    ]
+    # HTTP and MCP read and save the same setting.
+    base = f"/api/projects/{f.project.id}/protected-paths"
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        read = await client.get(base)
+        assert read.status_code == 200 and read.json()["paths"] == ["/partners"]
+        put = await client.put(
+            base,
+            json={"request_id": str(uuid4()), "expected_revision": 3, "paths": ["/docs/"]},
+        )
+        assert put.status_code == 200 and put.json()["effective"] == [*defaults, "/docs"]
+        stale = await client.put(
+            base, json={"request_id": str(uuid4()), "expected_revision": 3, "paths": []}
+        )
+        assert stale.status_code == 409
+        invalid = await client.put(
+            base, json={"request_id": str(uuid4()), "expected_revision": 4, "paths": ["/"]}
+        )
+        assert invalid.status_code == 422 and "whole site" in invalid.text
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f, "user_stranger")), base_url="https://tin.test"
+    ) as client:
+        assert (await client.get(base)).status_code == 404
+        denied = await client.put(
+            base, json={"request_id": str(uuid4()), "expected_revision": 4, "paths": []}
+        )
+        assert denied.status_code == 404
+    server = mcp(f, monkeypatch)
+    shown = structured(
+        await server.call_tool("get_protected_paths", {"project_id": str(f.project.id)})
+    )
+    assert shown["revision"] == 4 and shown["paths"] == ["/docs"]
+    set_by_mcp = structured(
+        await server.call_tool(
+            "set_protected_paths",
+            {
+                "project_id": str(f.project.id),
+                "paths": ["/docs", "/partners"],
+                "expected_revision": 4,
+                "request_id": str(uuid4()),
+            },
+        )
+    )
+    assert set_by_mcp["effective"] == [*defaults, "/docs", "/partners"]
+    assert any("always wait for your merge" in item for item in set_by_mcp["relay"])
+    with pytest.raises(ToolError, match="conflict"):
+        await server.call_tool(
+            "set_protected_paths",
+            {
+                "project_id": str(f.project.id),
+                "paths": [],
+                "expected_revision": 4,
+                "request_id": str(uuid4()),
+            },
+        )
+
+
+async def test_protected_path_changes_are_audited(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    teammate = "user_teammate"
+    await f.db.record_tin_user(teammate)
+    await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id=teammate)
+    await save_protected(f, ["/partners"], 0)
+    await save_protected(f, ["/partners", "/app"], 1, actor=teammate)
+    await save_protected(f, ["/app"], 2)
+    setting = await website_change.read_protected_paths(f.db, project_id=f.project.id, actor=ACTOR)
+    # Every change is kept: who made it, when, and what the list became, newest first.
+    assert [
+        (item["revision"], item["changed_by"], item["paths"]) for item in setting["history"]
+    ] == [
+        (3, ACTOR, ["/app"]),
+        (2, teammate, ["/partners", "/app"]),
+        (1, ACTOR, ["/partners"]),
+    ]
+    assert all(item["changed_at"] for item in setting["history"])
+    assert (setting["revision"], setting["changed_by"]) == (3, ACTOR)
+    assert setting["changed_at"] == setting["history"][0]["changed_at"]
+    # Postgres keeps the history: a saved revision cannot be rewritten.
+    with pytest.raises(Exception, match="is history"):
+        await f.db.pool.execute(
+            "UPDATE project_protected_paths SET paths='[]'::jsonb, "
+            "changed_by_clerk_user_id='user_someone' WHERE project_id=$1 AND revision=1",
+            f.project.id,
+        )
+
+
+async def test_protected_paths_from_the_setting_force_a_pull_request(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    # The founder protects /blog in the project's settings: an approved page under it waits.
+    await save_protected(f, ["/blog"], 0)
+    page = await approved_for_main(f)
+    run = await start(f, page)
+    source = await delivery.saved_source(f.db, run.id)
+    assert source["change"]["approval"]["by"] == ACTOR
+    assert source["protected_paths"] == ["/sign-in", "/sign-up", "/auth-complete", "/blog"]
+    assert source["protected_paths_revision"] == 1
+    assert source["publish"]["mode"] == "pull_request"
+    assert "It touches /blog, a protected page" in source["publish"]["reason"]
+    integrations = mergeable(f)
+    merge = await merge_outcome(f, await made(f, run))
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open" and "/blog" in merge["reason"]
+    # A page the founder protects after the run started still holds the merge.
+    await save_protected(f, [], 1)
+    other = await approved_for_main(f)
+    run = await start(f, other)
+    assert (await delivery.saved_source(f.db, run.id))["publish"]["mode"] == "direct"
+    run = await made(f, run)
+    await save_protected(f, ["/blog"], 2)
+    integrations = mergeable(f)
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert merge["reason"] == "It touches /blog, a protected page, so it waits for your review."
+
+
+# Merge once the repository's required checks pass (Emre, 10/1).
+
+
+async def test_an_unstable_pull_request_merges_when_pre_approved(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    page = await approved_for_main(f)
+    run = await made(f, await start(f, page))
+    integrations = mergeable(f)
+    # A check the repository does not require failed: GitHub says unstable, not clean.
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_awaited_once()
+    assert merge["status"] == "merged" and merge["merged_by"] == "tin"
+    # The receipt names the state that allowed the merge, and the rule that applied.
+    assert merge["mergeable_state"] == "unstable"
+    assert merge["checks_rule"] == "required_checks" and merge["required_checks"] == ["build"]
+    integrations.github_required_status_checks.assert_awaited_with(
+        project_id=f.project.id, repository="owner/site", branch="main"
+    )
+    other = await approved_for_main(f)
+    run = await made(f, await start(f, other))
+    integrations = mergeable(f)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["mergeable_state"] == "clean"
+
+
+@pytest.mark.parametrize("required", ["none", "unreadable"])
+async def test_without_required_checks_an_unstable_pull_request_waits_for_every_check(
+    publication_db, monkeypatch, required
+):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    integrations = f.runtime.integrations
+    if required == "none":
+        integrations.github_required_status_checks.return_value = {
+            "readable": True,
+            "contexts": [],
+        }
+    else:
+        integrations.github_required_status_checks.side_effect = RuntimeError("403")
+    run = await made(f, await start(f, await approved_for_main(f)))
+    mergeable(f)
+    # Nothing says which checks matter, so a failing or running check holds the merge.
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open" and merge["checks_rule"] == "all_checks"
+    assert merge["reason"].startswith("Your repository requires no status checks")
+    # Once every check passes, Tin merges under the same rule.
+    run = await made(f, await start(f, await approved_for_main(f)))
+    mergeable(f)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["checks_rule"] == "all_checks"
+    assert merge["mergeable_state"] == "clean"
+
+
+NEVER_MERGE = {
+    "dirty": "It conflicts with the default branch.",
+    "blocked": "GitHub needs a review or a required check before it can merge, "
+    "so Tin left it open.",
+    "behind": "Your repository requires it to be up to date with the default branch first.",
+    "draft": "It is a draft pull request.",
+    "unknown": "Its required checks had not passed after a few minutes, so Tin left it open.",
+}
+
+
+@pytest.mark.parametrize("verdict", list(NEVER_MERGE))
+async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkeypatch, verdict):
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    page = await approved_for_main(f)
+    run = await made(f, await start(f, page))
+    integrations = mergeable(f)
+    integrations.github_pull_request_merge_state.return_value = clean(
+        mergeable=verdict not in {"dirty", "unknown"}, mergeable_state=verdict
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open" and "mergeable_state" not in merge
+    assert merge["reason"] == NEVER_MERGE[verdict]

@@ -555,6 +555,11 @@ LEFT_OUT = (
     ("manual", "Manual steps"),
     ("no_change", "No change needed"),
     ("ineligible", "Not eligible"),
+    # website.change only: rows the founder declined, rows already in a pull request, and
+    # rows left for a pull request while this run publishes the approved ones.
+    ("declined", "Declined in Tin"),
+    ("in_pull_request", "Already in a website.change pull request"),
+    ("waiting", "Waiting for your approval, for the next pull request"),
 )
 
 

@@ -1354,6 +1354,133 @@ def create_mcp_app(
         )
 
     @server.tool()
+    async def preflight_website_change(
+        project_id: str,
+        expected_repository: str,
+        repository_serves_site: StrictBool,
+        finding_ids: list[str] | None = None,
+        decisions: list[str] | None = None,
+        protected_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Preview website.change's technical fixes from the latest audit. No run, paid
+        compute, branch or pull request is created; each fixable finding is recorded as a
+        change row (list_website_changes) so the founder can approve or decline it once.
+
+        plan.repairs is what the next run makes, decisions_needed the judgment calls, and
+        plan.left_out the rest (copy, manual steps, declined rows, rows already in a pull
+        request, rows waiting for approval). Answer each decisions_needed item yourself from
+        the codebase and what you know about the product, following ask; ask the founder only
+        the ones you're unsure of, and pass the answers as decisions (["finding_id=choice"]).
+        changes shows each row's status and whether it touches a protected page. next_run
+        says whether the next run publishes (Tin merges once the required checks pass, for
+        approved rows) or opens a pull request for the founder. Start website.change with
+        source "audit" and the same arguments.
+        """
+        from tin_lite import website_change_audit
+        from tin_lite.technical_fix_sources import TechnicalFixError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preflight_website_change")
+        try:
+            preview = await website_change_audit.plan_changes(
+                database=runtime().database,
+                storage=runtime().storage,
+                integrations=runtime().integrations,
+                project_id=project,
+                inputs={
+                    "expected_repository": expected_repository,
+                    "repository_serves_site": repository_serves_site,
+                    "finding_ids": finding_ids or [],
+                    "decisions": decisions or [],
+                    "protected_paths": protected_paths or [],
+                },
+            )
+        except TechnicalFixError as exc:
+            raise ToolError(f"{exc.code}: {exc}") from exc
+        except (LookupError, ValueError) as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        summary, nxt = preview["summary"], preview["next_run"]
+        relay = [
+            f"The latest audit has {summary['fixable']} findings Tin can fix on the site; "
+            "each is a change you can approve or decline once in Tin."
+        ]
+        if nxt["change_ids"]:
+            relay.append(f"The next run makes {len(nxt['change_ids'])} of them. {nxt['reason']}")
+        else:
+            relay.append(website_change_audit.nothing_to_run(preview))
+        if summary.get("decisions_needed"):
+            relay.append(
+                f"{summary['decisions_needed']} more depend on a judgment call; answer them "
+                "before starting."
+            )
+        return {**preview, **_founder_words(relay=relay)}
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_protected_paths(project_id: str) -> dict[str, Any]:
+        """Read the project's protected pages: site paths whose changes always wait for the
+        founder's merge, even when approved.
+
+        `defaults` (/sign-in, /sign-up, /auth-complete) are always protected and cannot be
+        removed. `paths` are the pages the founder added; `effective` is both. `revision` is
+        what set_protected_paths needs, and `history` shows who changed the list and when.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="get_protected_paths")
+        try:
+            return await website_change.read_protected_paths(
+                runtime().database, project_id=project, actor=token.subject
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+
+    @server.tool()
+    async def set_protected_paths(
+        project_id: str, paths: list[str], expected_revision: int, request_id: str
+    ) -> dict[str, Any]:
+        """Replace the project's protected pages, after the founder names them.
+
+        A protected page, and every page under it, always opens a pull request for the
+        founder to merge, even when the change was approved: use it for pages another app
+        shares, such as /partners or /app. Pass site paths such as /partners (a full URL is
+        reduced to its path); [] keeps only the defaults, which cannot be removed. Pass the
+        revision from get_protected_paths. Reuse request_id when retrying.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="set_protected_paths")
+        try:
+            saved = await website_change.save_protected_paths(
+                runtime().database,
+                project_id=project,
+                actor=token.subject,
+                paths=paths,
+                expected_revision=expected_revision,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        pages = ", ".join(saved["effective"])
+        return {
+            **saved,
+            **_founder_words(
+                relay=[
+                    f"Saved. Changes to these pages always wait for your merge: {pages}, and "
+                    "every page under them."
+                ]
+            ),
+        }
+
+    @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
@@ -4160,6 +4287,7 @@ def create_mcp_app(
             and workflow.key == "website.change"
             and workflow.project_id is None
         ):
+            from tin_lite import website_change
             from tin_lite.content_repository_delivery import discover
             from tin_lite.page_routes import PageRouteService, ask_the_founder
 
@@ -4173,10 +4301,14 @@ def create_mcp_app(
                 routes = {}
             # One question at a time: answer pages first, then articles.
             unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            protected = await website_change.project_protected_paths(
+                runtime().database.pool, project_id=parsed_project_id
+            )
             draft_preparation = {
                 "preparation": {
                     **await discover(runtime().database, parsed_project_id),
                     "page_routes": routes,
+                    "protected_paths": protected["effective"],
                     **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
                     "instruction": "Choose an approved article, answer page or public article "
                     "by title from preparation.articles, and confirm the website repository "
@@ -4185,10 +4317,15 @@ def create_mcp_app(
                     "flow. An answer page or public article needs a chosen route first: when "
                     "preparation.page_routes has none for its type, ask the founder as "
                     "ask_the_founder describes and call save_page_route. A page approved in "
-                    "Tin by a named reviewer publishes (Tin merges the PR once GitHub reports "
-                    "it clean); otherwise, and for protected pages such as /sign-in, the PR "
-                    "waits for the founder. Add protected_paths for pages another app shares. "
-                    "Never approve a draft just to publish it.",
+                    "Tin by a named reviewer, with commit to main, publishes (Tin merges the "
+                    "PR once the repository's required checks pass); otherwise, and for the "
+                    "pages in preparation.protected_paths, the PR waits for the founder. To "
+                    "protect more pages, such as ones another app shares, ask the founder and "
+                    "call set_protected_paths. Never approve a draft just to publish it. For "
+                    "the technical fixes the latest audit found, call preflight_website_change "
+                    "first, then start website.change with source audit, "
+                    "repository_serves_site and the answered decisions; fixes the founder "
+                    "approved (approve_website_change) publish, the rest open a PR.",
                 }
             }
         if (

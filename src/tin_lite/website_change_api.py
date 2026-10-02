@@ -1,4 +1,5 @@
-"""HTTP reads and decisions for website change rows; MCP shares the same service calls."""
+"""HTTP reads and decisions for website change rows, and the project's protected pages;
+MCP shares the same service calls."""
 
 from typing import Literal
 from uuid import UUID
@@ -10,6 +11,7 @@ from tin_lite import website_change
 from tin_lite.auth import AuthContext, require_user
 
 router = APIRouter(prefix="/api/projects/{project_id}/website-changes")
+settings_router = APIRouter(prefix="/api/projects/{project_id}/protected-paths")
 USER = Depends(require_user)
 
 
@@ -90,3 +92,83 @@ async def decline_change(
 ):
     """Decline one change row. Tin never makes it, and later runs do not propose it again."""
     return await _decide(project_id, change_id, "decline", payload, request, user)
+
+
+class TechnicalPreflight(BaseModel):
+    """The technical fixes to preview from the latest audit (website.change, source audit)."""
+
+    model_config = ConfigDict(extra="forbid")
+    expected_repository: str = Field(min_length=3, max_length=140)
+    repository_serves_site: bool
+    finding_ids: list[str] = Field(default_factory=list, max_length=30)
+    decisions: list[str] = Field(default_factory=list, max_length=30)
+    protected_paths: list[str] = Field(default_factory=list, max_length=20)
+
+
+@router.post("/preflight")
+async def preflight_changes(
+    project_id: UUID, payload: TechnicalPreflight, request: Request, user: AuthContext = USER
+):
+    """Record the latest audit's fixable findings as change rows and preview the next run.
+
+    Starts nothing: no run, compute, branch or pull request.
+    """
+    from tin_lite import website_change_audit
+    from tin_lite.technical_fix_sources import TechnicalFixError
+
+    database = await _authorized(request, project_id, user)
+    runtime = request.app.state.runtime
+    try:
+        return await website_change_audit.plan_changes(
+            database=database,
+            storage=runtime.storage,
+            integrations=getattr(runtime, "integrations", None),
+            project_id=project_id,
+            inputs=payload.model_dump(),
+        )
+    except TechnicalFixError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+class ProtectedPaths(BaseModel):
+    """The project's protected pages, saved over the revision the caller read."""
+
+    model_config = ConfigDict(extra="forbid")
+    request_id: UUID
+    expected_revision: int = Field(ge=0)
+    paths: list[str] = Field(max_length=website_change.MAX_PROTECTED_PATHS * 2)
+
+
+@settings_router.get("")
+async def read_protected_paths(project_id: UUID, request: Request, user: AuthContext = USER):
+    """The pages whose changes always wait for the founder's merge, and who changed them."""
+    try:
+        return await website_change.read_protected_paths(
+            request.app.state.runtime.database, project_id=project_id, actor=user.clerk_user_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+
+
+@settings_router.put("")
+async def save_protected_paths(
+    project_id: UUID, payload: ProtectedPaths, request: Request, user: AuthContext = USER
+):
+    """Replace the project's protected pages. /sign-in, /sign-up and /auth-complete stay."""
+    try:
+        return await website_change.save_protected_paths(
+            request.app.state.runtime.database,
+            project_id=project_id,
+            actor=user.clerk_user_id,
+            paths=payload.paths,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="project not found") from exc
+    except website_change.WebsiteChangeConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

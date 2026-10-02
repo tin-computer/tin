@@ -247,6 +247,19 @@ class TechnicalFixExecution:
             return True
         return False
 
+    async def prepare_selection(self, run, select, *, finish=None):
+        """site-fix-v5 preparation from a plan: `select` returns the run's selection (a
+        TechnicalFixSources.batch result with the run's input digest), receipted once.
+
+        organic.technical_fix selects from its own inputs; website.change passes the plan it
+        pinned at admission and its own `finish`, which reports a run with nothing to change.
+        """
+        selection = await self.once(run.id, "binding", select)
+        if selection["input_sha256"] != digest(run.input):
+            raise ValueError("Technical repair inputs changed after preparation.")
+        prepared = await self.once(run.id, "prepare", lambda: self._resolve_batch(run, selection))
+        return await (finish or self._finish_preparation)(run, prepared)
+
     # --- served-file reads ---------------------------------------------------------------
 
     async def _read(self, run, key, url, target, kind):
@@ -303,11 +316,7 @@ class TechnicalFixExecution:
             )
             return {**result, "input_sha256": digest(run.input)}
 
-        selection = await self.once(run.id, "binding", select)
-        if selection["input_sha256"] != digest(run.input):
-            raise ValueError("Technical repair inputs changed after preparation.")
-        prepared = await self.once(run.id, "prepare", lambda: self._resolve_batch(run, selection))
-        return await self._finish_preparation(run, prepared)
+        return await self.prepare_selection(run, select)
 
     async def _resolve_batch(self, run, selection):
         """Re-read the live site, drop what's already fixed, and name the files the diff
