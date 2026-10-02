@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -53,6 +54,7 @@ from tin_lite.integrations import (
     parse_integration_requirements,
     registered_integrations,
 )
+from tin_lite.repository_limits import snapshot_reader
 
 PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 RUN_ID = UUID("00000000-0000-4000-8000-0000000000bb")
@@ -1676,6 +1678,41 @@ def bundle_args(key: str = "run-9:procedure-repository") -> dict:
     return {"project_id": PROJECT_ID, "run_id": RUN_ID, "execution_key": key}
 
 
+async def test_only_two_repository_snapshots_are_built_at_once(monkeypatch):
+    # Snapshots are built on the switchboard's small disk; a third waits for a slot, and each
+    # archive stays in its temporary file rather than in memory.
+    files = {"README.md": b"# Site\n"}
+    github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        inside, peak, release = 0, 0, asyncio.Event()
+        download = service._github_tarball
+
+        async def slow(*args, **kwargs):
+            nonlocal inside, peak
+            inside += 1
+            peak = max(peak, inside)
+            try:
+                await release.wait()
+                return await download(*args, **kwargs)
+            finally:
+                inside -= 1
+
+        monkeypatch.setattr(service, "_github_tarball", slow)
+        runs = [
+            asyncio.create_task(service.github_repository_bundle(**bundle_args(f"run-{n}:repo")))
+            for n in range(3)
+        ]
+        await asyncio.sleep(0.1)
+        assert inside == 2
+        release.set()
+        bundles = await asyncio.gather(*runs)
+    assert peak == 2
+    for bundle in bundles:
+        assert not isinstance(bundle.archive, bytes)
+        with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
+            assert archive.extractfile("README.md").read() == files["README.md"]
+
+
 @pytest.mark.asyncio
 async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -1754,7 +1791,7 @@ async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path
     assert bundle.head_sha == head_sha
     assert bundle.file_count == 2
     assert bundle.complete is False  # The excluded symlink prevents a complete build proof.
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == [".github/workflows/ci.yml", "src/index.html"]
         assert archive.extractfile("src/index.html").read() == files["src/index.html"]
     # One tarball download; the signed codeload URL never receives the installation token.
@@ -2964,7 +3001,7 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
             bundle = await service.github_repository_bundle(**bundle_args())
             assert bundle.file_count == file_count and bundle.complete
             assert not github.paths("/git/blobs/")
-            with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+            with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
                 members = archive.getmembers()
                 assert len(members) == file_count
                 assert sum(member.size for member in members) == file_count * file_bytes
@@ -2985,7 +3022,7 @@ async def test_repository_bundle_reads_export_ignored_and_rewritten_files_by_blo
     github = RepositoryGitHub(tree, tarball, blobs=blobs)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert {name: archive.extractfile(name).read() for name in archive.getnames()} == files
     assert len(github.paths("/git/blobs/")) == 2
 
@@ -3049,7 +3086,7 @@ async def test_repository_bundle_ignores_members_outside_the_pinned_tree(monkeyp
     github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], tarball)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == ["README.md"]
 
 
@@ -3112,7 +3149,7 @@ async def test_repository_bundle_leaves_out_large_media_and_stays_complete(monke
         "public/scan-mocks/seaweedindex.com.png": "image",
         "public/opensource/hero.mp4": "video",
     }
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == ["app/page.tsx", "public/robots.txt"]
     # The read's own receipt says exactly what was left out, and why.
     summary = receipt.response_summary

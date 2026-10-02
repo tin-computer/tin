@@ -8,7 +8,6 @@ one pull request, in any framework, with judgment calls answered through MCP
 
 import asyncio
 import hashlib
-import io
 import ipaddress
 import socket
 import tarfile
@@ -21,7 +20,7 @@ from tin_lite import technical_batch as batch_rules
 from tin_lite import technical_repair_plan as repair_plan
 from tin_lite import technical_site_rules as site_rules
 from tin_lite.organic_audit import in_scope_url, public_site
-from tin_lite.repository_limits import describe_omissions
+from tin_lite.repository_limits import describe_omissions, snapshot_reader
 from tin_lite.technical_metadata_rules import (
     DESCRIPTION_CHECK,
     SUPPORTED_CHECKS,
@@ -388,7 +387,7 @@ async def fetch_site_file(url, *, host, kind, client=None, resolver=None):
 def matched_sources(archive, pages):
     """No guessed framework routes: require one exact source per still-broken page."""
     candidates = {}
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
+    with tarfile.open(fileobj=snapshot_reader(archive), mode="r:gz") as source:
         # Only the static-HTML verification profile is proven in v1. A framework
         # build cannot be replaced with our title parser, even if an HTML file matches.
         if any(

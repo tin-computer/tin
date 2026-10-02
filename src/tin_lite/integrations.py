@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -45,6 +46,7 @@ from tin_lite.repository_limits import (
     REPOSITORY_FILE_MAX_BYTES,
     REPOSITORY_MAX_BYTES,
     REPOSITORY_MAX_FILES,
+    REPOSITORY_SNAPSHOTS_AT_ONCE,
     skippable_large_file,
 )
 from tin_lite.settings import Settings
@@ -355,7 +357,9 @@ class GitHubRepositoryBundle:
     repository: str
     default_branch: str
     head_sha: str
-    archive: bytes
+    # The compressed tar.gz: an open temporary file (read it with
+    # repository_limits.snapshot_reader), or bytes.
+    archive: Any
     file_count: int
     complete: bool = True
     skipped: tuple[dict[str, Any], ...] = ()
@@ -600,6 +604,8 @@ class IntegrationService:
         self._settings = settings
         self._client = client or httpx.AsyncClient(timeout=30.0)
         self._owns_client = client is None
+        # Snapshots are built on the switchboard's small disk: only a few at a time.
+        self._snapshot_gate = asyncio.Semaphore(REPOSITORY_SNAPSHOTS_AT_ONCE)
         self._google_ads = google_ads
         self._cipher = (
             CredentialCipher(settings.integration_credential_key.get_secret_value())
@@ -2447,18 +2453,23 @@ class IntegrationService:
         # against its blob hash in the pinned tree, so the archive is exactly head_sha.
         # Verified bytes wait in a temporary file, not in memory: only the final
         # compressed archive and one file at a time are ever held in RAM.
-        with tempfile.TemporaryFile() as spool:
-            with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
-                await self._github_tarball(repository_path, head_sha, headers, download)
-                located = await to_thread.run_sync(_verified_tarball_blobs, download, wanted, spool)
-            missing = [item for path, item in wanted.items() if path not in located]
-            if len(missing) > REPOSITORY_BLOB_FALLBACKS:
-                raise IntegrationUpstreamError("GitHub repository tarball is missing pinned files")
-            for item in missing:
-                # export-ignore drops a path from the tarball and export-subst rewrites it.
-                content = await self._github_blob_content(repository_path, headers, item)
-                located[item["path"]] = _spool(spool, content)
-            archive = await to_thread.run_sync(_repository_archive, blobs, spool, located)
+        async with self._snapshot_gate:
+            with tempfile.TemporaryFile() as spool:
+                with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
+                    await self._github_tarball(repository_path, head_sha, headers, download)
+                    located = await to_thread.run_sync(
+                        _verified_tarball_blobs, download, wanted, spool
+                    )
+                missing = [item for path, item in wanted.items() if path not in located]
+                if len(missing) > REPOSITORY_BLOB_FALLBACKS:
+                    raise IntegrationUpstreamError(
+                        "GitHub repository tarball is missing pinned files"
+                    )
+                for item in missing:
+                    # export-ignore drops a path from the tarball and export-subst rewrites it.
+                    content = await self._github_blob_content(repository_path, headers, item)
+                    located[item["path"]] = _spool(spool, content)
+                archive = await to_thread.run_sync(_repository_archive, blobs, spool, located)
         return GitHubRepositoryBundle(
             repository=repository,
             default_branch=default_branch,
@@ -5805,9 +5816,11 @@ def _repository_tree_entries(
 
 def _repository_archive(
     blobs: list[dict[str, Any]], spool: Any, located: dict[str, tuple[int, int]]
-) -> bytes:
-    """The snapshot as a deterministic tar.gz, read from the spool one file at a time."""
-    with tempfile.TemporaryFile() as output:
+) -> Any:
+    """The snapshot as a deterministic tar.gz in an open temporary file, read from the spool
+    one file at a time. The file stays on disk, out of memory, until the bundle is dropped."""
+    output = tempfile.TemporaryFile()
+    try:
         # Level 6 (gzip's own default) packs a large snapshot faster than tarfile's 9.
         with tarfile.open(
             fileobj=output, mode="w:gz", format=tarfile.PAX_FORMAT, compresslevel=6
@@ -5825,8 +5838,11 @@ def _repository_archive(
                 info.uid = info.gid = 0
                 info.uname = info.gname = ""
                 archive.addfile(info, io.BytesIO(content))
-        output.seek(0)
-        return output.read()
+    except BaseException:
+        output.close()
+        raise
+    output.seek(0)
+    return output
 
 
 def _safe_github_ref(value: str) -> bool:

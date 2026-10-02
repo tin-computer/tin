@@ -3372,7 +3372,7 @@ class TinActivities:
                 )
                 if public_host not in {"127.0.0.1", "localhost"} and proxy_url is None:
                     raise RuntimeError("TIN_LITE_PROXY_URL is required outside local development")
-                workspace_archive: bytes | None = None
+                workspace_archive: Any = None
                 workspace_evidence: bytes | None = None
                 workspace_context: dict[str, str | int] | None = None
                 run_tools_url: str | None = None

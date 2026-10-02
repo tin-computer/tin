@@ -1,5 +1,6 @@
 """Repository snapshot bounds shared by definition validation and the gateway."""
 
+import io
 from pathlib import PurePosixPath
 
 # Every repository workspace uses these bounds; definitions no longer pin their own. They
@@ -9,15 +10,27 @@ REPOSITORY_MAX_FILES = 100_000
 # Kept in a temporary file while the snapshot is built; only the compressed result is held
 # in memory, then written to the sandbox (/home/user), where it is unpacked and committed.
 # The byte bounds are set by the switchboard VM (an e2-small: about 1 GB of free RAM and
-# under 5 GB of free disk), not by the sandbox: each run in flight holds up to the download,
-# the snapshot and its compressed copy on disk, and the compressed copy in memory.
+# under 5 GB of free disk), not by the sandbox: each snapshot being built holds up to the
+# download, the snapshot and its compressed copy on disk, never in memory, and at most
+# REPOSITORY_SNAPSHOTS_AT_ONCE are built at the same time.
 REPOSITORY_MAX_BYTES = 250_000_000
+REPOSITORY_SNAPSHOTS_AT_ONCE = 2
 # The compressed tarball also carries files the snapshot filters out (over 10 MB, links).
 # It is streamed to a temporary file, never held in memory.
 REPOSITORY_DOWNLOAD_MAX_BYTES = 1_000_000_000
 # Paths the tarball omits or rewrites (export-ignore, export-subst) are read one by one,
 # one GitHub API call each.
 REPOSITORY_BLOB_FALLBACKS = 500
+
+
+def snapshot_reader(archive):
+    """A snapshot archive, bytes or its temporary file, positioned at its start for reading."""
+    if isinstance(archive, (bytes, bytearray, memoryview)):
+        return io.BytesIO(archive)
+    archive.seek(0)
+    return archive
+
+
 # A snapshot leaves out every file larger than this.
 REPOSITORY_FILE_MAX_BYTES = 10_000_000
 FILE_LIMIT_TEXT = f"{REPOSITORY_FILE_MAX_BYTES // 1_000_000} MB"

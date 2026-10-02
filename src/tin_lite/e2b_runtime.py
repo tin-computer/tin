@@ -154,7 +154,8 @@ class SandboxProcedureInput(SandboxRunInput):
     output_max_bytes: int
     run_tools_url: str | None = None
     run_tools_grant: str | None = None
-    workspace_archive: bytes | None = None
+    # The repository snapshot: its temporary file, or bytes.
+    workspace_archive: Any = None
     workspace_evidence: bytes | None = None
     browser: bool = False
     studio: bool = False
@@ -684,9 +685,13 @@ class E2BRuntime:
                         raise RuntimeError("isolated sandbox lacks the Codex API protocol")
             await sandbox.files.write(CONTEXT_PATH, context)
             if run_input.workspace_archive is not None:
+                archive = run_input.workspace_archive
+                if not isinstance(archive, bytes):
+                    # The snapshot's temporary file streams to the sandbox in chunks instead
+                    # of being read into memory (snapshots reach hundreds of MB).
+                    archive.seek(0)
                 await sandbox.files.write(
-                    "/home/user/.tin-lite/procedure-workspace.tar.gz",
-                    run_input.workspace_archive,
+                    "/home/user/.tin-lite/procedure-workspace.tar.gz", archive
                 )
                 envs["TIN_PROCEDURE_WORKSPACE_ARCHIVE"] = (
                     "/home/user/.tin-lite/procedure-workspace.tar.gz"
