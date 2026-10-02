@@ -8,7 +8,7 @@
     "Up to three Search Console reads and one gpt-6-luna call of up to 20,000 input bytes and 2,048 output tokens; a stop report makes no model call. Unmeasured until qualification."
   ],
   "effects": [
-    "Replaces reports/organic/site-architecture/SITE_ARCHITECTURE.md. website.change will ask about each row in its redirects.json block; nothing here edits a page, redirect or PR."
+    "Replaces reports/organic/site-architecture/SITE_ARCHITECTURE.md. website.change (source planned) reads its redirects.json block and asks about each row; nothing here edits a page, redirect or PR."
   ],
   "cases": [
     {

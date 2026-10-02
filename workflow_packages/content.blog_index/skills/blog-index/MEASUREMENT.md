@@ -29,6 +29,6 @@ From `/home/user/state/analytics/traffic-snapshot.json` (schema `tin.traffic_sna
 for 14 days), add each post's 28-day landing sessions and first-touch signups when it is
 listed; otherwise say not listed.
 
-The receipt's Numbers section gives: posts in the source, eligible, future-hidden, within two
+The plan's Numbers section gives: posts in the source, eligible, future-hidden, within two
 clicks (or unknown), and a table of up to 30 posts by 28-day impressions with clicks and
 impressions for both windows, the change, 90-day clicks and 28-day sessions.
