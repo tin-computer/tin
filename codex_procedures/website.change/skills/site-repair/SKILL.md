@@ -16,6 +16,11 @@ the founder approves or declines in Tin (`website_change.change_ids`). Each entr
   search agents to allow, sitemap URLs to remove or add).
 - `redirects`: for a merge, each URL to redirect and where it goes.
 
+Entries whose `check_id` is `planned.redirect` or `planned.noindex` come from page decisions
+or the site architecture plan, not the audit. Write a planned redirect exactly like a merge,
+in the framework's or host's redirect config, and a planned noindex in the page's own
+metadata. Never delete a page or its route, whatever the plan says.
+
 `technical_fix.batch.strict_files` names files the site serves byte for byte (robots.txt,
 sitemaps, static pages). Tin checks them from the diff: change only what their findings call
 for and preserve every other byte, including whitespace and the final newline. On a served

@@ -4810,6 +4810,66 @@ p.page-url-line[hidden],
   color: var(--accent-deep);
 }
 
+/* A proposed website change: the pages and files it touches, as quiet code chips. */
+.website-change-paths,
+.website-change-files,
+.judgment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.website-change-paths code,
+.website-change-files code {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.website-change-files li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.website-change-files li span {
+  flex: none;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.decision-detail-body p.website-change-protected {
+  color: var(--bermellon-text);
+}
+
+/* A judgment call: its options, with Tin's suggestion marked. */
+.judgment-options li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--card-hairline);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.judgment-options li.is-suggested {
+  border-color: var(--accent-deep);
+}
+
+.judgment-suggested {
+  margin-left: auto;
+  color: var(--accent-deep);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .side-stack {
   display: flex;
   flex-direction: column;

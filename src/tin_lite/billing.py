@@ -378,6 +378,7 @@ class BillingService:
                         "organic-traffic-v3",
                         "organic-traffic-v4",
                         "organic-traffic-v5",
+                        "organic-traffic-v6",
                     }
                 ):
                     raise BillingError(
@@ -863,7 +864,13 @@ class BillingService:
                 and str(run["definition_commit_sha"]) == prepared.result["definition_revision"]
             )
         if parent["executor"] == "organic.traffic_system":
-            from tin_lite.organic_system import REFRESH_KEY, STEPS, refreshes_pages
+            from tin_lite.organic_system import (
+                REFRESH_KEY,
+                STEPS,
+                policy_steps,
+                refreshes_pages,
+                writes_with_website_change,
+            )
 
             if definition["key"] == REFRESH_KEY:
                 # The v5 recipe's first page refresh, pinned at preparation like its steps.
@@ -875,6 +882,27 @@ class BillingService:
                     and refreshes_pages(prepared.result.get("policy"))
                     and prepared.result["definitions"].get("refresh") == definition
                 )
+            prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+            policy = (prepared.result or {}).get("policy") if prepared else None
+            if writes_with_website_change(policy):
+                # v6: website.change is both the technical and the delivery step, so its step
+                # comes from the start key and it must be the definition pinned for that step.
+                # content.deliver and organic.technical_fix are not v6 children.
+                steps = policy_steps(policy)
+                pinned = prepared.status == "completed" and prepared.result.get("definitions", {})
+                if definition["key"] == steps["delivery"]:
+                    step = key.removeprefix(f"system:{parent_id}:")
+                    return bool(
+                        step in {"technical", "delivery"}
+                        and pinned
+                        and pinned.get(step) == definition
+                    )
+                step = next(
+                    (s for s, workflow in steps.items() if workflow == definition["key"]), None
+                )
+                if step == "draft" and (not pinned or pinned.get(step) != definition):
+                    return False
+                return step is not None and key == f"system:{parent_id}:{step}"
             step = next((s for s, workflow in STEPS.items() if workflow == definition["key"]), None)
             if step in {"draft", "delivery"}:
                 from tin_lite.organic_system import drafts_articles

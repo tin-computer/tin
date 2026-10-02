@@ -40,6 +40,16 @@ recipe. Old revisions retain their original children and resources.
 
 ### `organic.traffic_system`
 
+**v6 (0.6.0): both writer steps go through website.change** (Emre, 10/1). The technical step
+starts website.change `source: audit` instead of organic.technical_fix, and the delivery step
+starts website.change for the approved draft (its page source) instead of content.deliver:
+Tin merges the PR once the required checks pass (every check when none are required) when
+the approval picked commit to main, and a pull request pick or a protected page leaves the
+PR for the founder. `content_delivery: draft_only` still keeps the Markdown in Tin. Runs pinned
+to `organic-traffic-v5` keep their children, receipts and report word for word; a test pins
+v5's policy digest. The spending ceiling is v5's: both website.change children have the same
+$5 procedure ceiling as the workflows they replace.
+
 Manual-only. Inputs: HTTPS site origin, English-language buyer market, explicit buyer
 context, content start date, duration (default six months), and keyword spending ceiling
 (default $9). Optional technical repair requires both an exact `owner/repository` and
@@ -52,11 +62,12 @@ children. It pins all child definitions from the parent's atomic registry revisi
 Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
-2. After the audit, if requested, propose one technical fix. Under `site-fix-v5` that PR
-   covers every fixable finding of the audit; earlier policies take one finding. The step
-   still starts `organic.technical_fix` at the parent's pinned definition. New technical
-   fixes go through website.change (`source: audit`); the recipe rewrite should start that
-   instead ([website.change](website-change.md#what-comes-next)).
+2. After the audit, if requested, propose one technical fix. Under `organic-traffic-v6`
+   (0.6.0, the default for new runs) the step starts website.change with the latest audit's
+   fixes (`source: audit`) and the system's repository; it passes no judgment-call answers,
+   so the rows wait for the founder and the run opens a pull request. A recipe pinned to v5
+   or earlier still starts `organic.technical_fix` (under `site-fix-v5` one PR for every
+   fixable finding; earlier policies take one finding).
 3. After both research runs succeed, create one manual `content.plan` configuration in
    My system, using these exact research run IDs, then run it.
 4. Publish `reports/organic-system/{run_id}/RESULT.md`, linking the exact child artifacts

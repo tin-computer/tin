@@ -6,8 +6,9 @@ trusted context first:
 - An approved page (no `source`, or `content_draft`): run the site-change skill. It makes
   exactly one change, the change row in `workspace.website_change`. This is adaptation, not
   writing or rewriting. The rest of this prompt is about that case.
-- `audit`: run the site-repair skill instead. It fixes the audit findings in
-  `workspace.technical_fix` (site-fix-v5's plan) in one bounded pull request. Return
+- `audit` or `planned`: run the site-repair skill instead. It makes the changes in
+  `workspace.technical_fix` (site-fix-v5's plan: the audit's findings, or the redirects and
+  noindex changes page decisions and the site plan made) in one bounded pull request. Return
   outcome `patch` with reason `""`, or outcome `no_change` with reason `no_safe_patch` and
   no files. Never write marketing copy, and never touch a path in
   `workspace.website_change.protected_paths`.

@@ -98,7 +98,7 @@ def test_v6_worst_run_fits_its_floor_and_the_catalog_defaults():
     assert limit["minimum"] == limit["default"] == 2
     system = organic_system.INPUT_SCHEMA["properties"]["keyword_max_cost_usd"]
     assert system["minimum"] == system["default"] == 2
-    assert SPECS["organic.traffic_system"].version_label == "0.5.0"
+    assert SPECS["organic.traffic_system"].version_label == "0.6.0"
 
 
 @pytest.mark.asyncio
