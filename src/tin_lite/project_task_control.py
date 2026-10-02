@@ -255,6 +255,28 @@ async def send_project_task_message(
     )
 
 
+async def stop_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> WorkflowRun:
+    """Stop the task; a stopped task stays stopped. Its saved work stays readable in Files."""
+    run = await load_project_task(runtime=runtime, run_id=run_id, clerk_user_id=clerk_user_id)
+    if run.status is RunStatus.STOPPED:
+        return run
+    try:
+        run = await runtime.database.request_task_control(run_id=run_id, control="stop")
+    except RuntimeError as exc:
+        raise ProjectTaskConflictError(str(exc)) from exc
+    try:
+        delivered = await runtime.sandboxes.control_task(
+            run_id=str(run_id), control={"type": "stop"}
+        )
+        handle = runtime.temporal.get_workflow_handle(run.temporal_workflow_id)
+        await handle.signal("stop")
+        if not delivered and run.sandbox_id is not None:
+            await runtime.sandboxes.kill(run.sandbox_id)
+    except Exception as exc:
+        raise ProjectTaskDeliveryError("task stop was not accepted") from exc
+    return run
+
+
 async def approve_project_task(*, runtime, run_id: UUID, clerk_user_id: str) -> WorkflowRun:
     """Apply the reviewed changes; idempotent once approval is under way or done."""
     run = await load_project_task(runtime=runtime, run_id=run_id, clerk_user_id=clerk_user_id)

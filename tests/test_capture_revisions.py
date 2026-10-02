@@ -319,6 +319,26 @@ async def test_a_revision_in_progress_never_deadlocks_with_discard(publication_d
     assert head(f, STYLE_PATH) == b"My current guide\n"
 
 
+async def test_mcp_discards_a_waiting_guide_as_the_dashboard_does(publication_db, monkeypatch):
+    f = await waiting_style(publication_db, existing=b"My current guide\n")
+    # Another project's run and a run that doesn't exist read the same.
+    stranger = mcp(f, monkeypatch, actor="user_stranger")
+    with pytest.raises(ToolError) as hidden:
+        await stranger.call_tool("discard_workflow_review", {"run_id": str(f.run.id)})
+    with pytest.raises(ToolError) as missing:
+        await stranger.call_tool("discard_workflow_review", {"run_id": str(uuid4())})
+    assert str(hidden.value) == str(missing.value)
+    server = mcp(f, monkeypatch)
+    first = structured(await server.call_tool("discard_workflow_review", {"run_id": str(f.run.id)}))
+    assert (first["status"], first["review_decision"]) == ("stopped", "declined")
+    assert first["relay"] == ["Discarded. Nothing from it was used, and its files stay in Files."]
+    # Nothing it proposed is used; the proposal stays readable in Files.
+    assert head(f, STYLE_PATH) == b"My current guide\n"
+    assert head(f, f.run.artifact_path) is not None
+    again = structured(await server.call_tool("discard_workflow_review", {"run_id": str(f.run.id)}))
+    assert again == first
+
+
 async def test_guides_pinned_to_1_1_keep_their_rules(publication_db):
     f = await waiting_style(publication_db, revisable=False)
     assert await contract(f.db, f.storage, f.run) is None
