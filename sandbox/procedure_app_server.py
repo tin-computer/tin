@@ -412,6 +412,20 @@ def _result_instruction(output: dict[str, Any], output_kind: str, output_path: o
     )
 
 
+def _pull_request_text(result, output):
+    """The pull request's title and body. A no_change outcome opens no pull request, so it
+    needs no title of its own: its summary and message stand in."""
+    title, body = result.get("title"), result.get("body")
+    if (output.get("repair_policy") or output.get("allow_no_change")) and result.get(
+        "outcome"
+    ) == "no_change":
+        if not isinstance(title, str) or not title.strip():
+            title = result.get("summary")
+        if not isinstance(body, str) or not body.strip():
+            body = result.get("message")
+    return title, body
+
+
 def _content_draft_instruction(context):
     draft = context.get("content_draft")
     if draft is None:
@@ -837,8 +851,7 @@ def execute() -> int:
             raise RuntimeError("Codex procedure result has no summary")
         if not isinstance(message, str) or not message.strip():
             raise RuntimeError("Codex procedure result has no message")
-        title = result.get("title")
-        body = result.get("body")
+        title, body = _pull_request_text(result, context.get("output", {}))
         if output_kind == "github.pull_request" and (
             not isinstance(title, str)
             or not title.strip()
