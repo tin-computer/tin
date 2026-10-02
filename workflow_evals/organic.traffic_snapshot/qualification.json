@@ -3,7 +3,8 @@
   "assumptions": [
     "Cases use synthetic Search Console and PostHog responses for northpine.example, served by step ID; tests/test_traffic_snapshot.py supplies them offline. They are not live evidence.",
     "The ordinary case has a full year of daily Search Console rows, complete page and query reads, and complete PostHog landing, referrer, signup and reading reads.",
-    "The readout sits in the same file as the data, under readout.markdown, because a code workflow writes one artifact."
+    "The readout sits in the same file as the data, under readout.markdown, because a code workflow writes one artifact.",
+    "PostHog is optional. Every case here runs with it connected; the search-only run without it is covered offline in tests/test_traffic_snapshot.py, since a case cannot set a connection's state."
   ],
   "cost_drivers": [
     "No model calls and no Tin credits. At most four Search Console and four PostHog reads, each capped at 64000 bytes; provider quotas and latency are unmeasured."

@@ -176,9 +176,9 @@ INPUTS = {
 }
 
 
-async def snapshot(monkeypatch, inputs=INPUTS, files=None, **overrides):
+async def snapshot(monkeypatch, inputs=INPUTS, files=None, connections=None, **overrides):
     module = load(KEY, monkeypatch)
-    ctx = context(files=files, services=providers(**overrides))
+    ctx = context(files=files, services=providers(**overrides), connections=connections)
     result = await module.run(ctx, dict(inputs))
     spec = validate_code_definition(definition(KEY))
     validate_code_result(json.dumps(result).encode(), spec)
@@ -197,6 +197,11 @@ def test_manifest_fits_the_code_contract_and_the_eight_call_limit():
     spec = validate_code_definition(definition(KEY))
     assert spec.output_path == "analytics/traffic-snapshot.json"
     assert spec.model_routes == ()  # numbers only, no model
+    # Search Console is required; PostHog is optional, so a site without it still runs.
+    required = {
+        r["provider_key"]: r["required"] for r in definition(KEY)["integration_requirements"]
+    }
+    assert required == {"analytics.gsc": True, "analytics.posthog": False}
     services = definition(KEY)["code"]["services"]
     assert {name: b["max_calls"] for name, b in services.items()} == {"gsc": 4, "posthog": 4}
     assert sum(binding["max_calls"] for binding in services.values()) <= 8
@@ -464,6 +469,49 @@ async def test_unusable_posthog_rows_leave_visits_unmeasured(monkeypatch):
     assert any(c["step"] == "P1" and c["outcome"] == "incomplete" for c in data["calls"])
     assert "Channel rows are unknown this week." in readout(data)
     assert "Landing pages are unknown this week." in readout(data)
+
+
+@pytest.mark.parametrize("state", ["not_connected", "needs_attention"])
+async def test_without_posthog_the_snapshot_is_search_only(monkeypatch, state):
+    data, ctx = await snapshot(monkeypatch, connections={"posthog": state})
+    # Only Search Console is read, and a missing optional connection is not a partial run.
+    assert [c["step"] for c in ctx.services.calls] == ["G1", "G2", "G3", "G4"]
+    assert [c["step"] for c in data["calls"]] == ["G1", "G2", "G3", "G4"]
+    assert data["status"] == "complete" and data["status_reasons"] == []
+    assert data["definitions"]["sources"] == {"search_console": "connected", "posthog": state}
+    totals = data["totals"]
+    assert totals["search"]["current"][:2] == [280, 2800]
+    assert totals["visits"]["current"]["sessions"] is None  # unknown, never zero
+    assert totals["signups"]["current"] is None and totals["reading"]["reads"] is None
+    home = by_page(data)[f"{SITE}/"]
+    assert home["search"]["branded_clicks"] == 120
+    assert home["visits"]["current"]["sessions"] is None
+    assert home["signups"]["first_touch"] == [None, None]
+    text = readout(data)
+    assert text.startswith("# Search this week")
+    assert "PostHog is not read." in text and "## Search" in text
+    for heading in ("## Where people came from", "## Content", "## Landing pages", "## Paid"):
+        assert heading not in text
+    assert "signed up" not in text and "Signups are unknown" not in text
+    if state == "not_connected":
+        assert "PostHog is not connected, so this readout covers search only" in text
+    else:
+        assert "PostHog needs attention in Integrations" in text
+
+
+async def test_without_posthog_a_falling_page_still_routes_to_content_refresh(monkeypatch):
+    current = gsc([page("/", 150, 1500, 2.0), page("/blog/invoice-template", 30, 1200)])
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"}, G2=current)
+    text = readout(data)
+    assert "**Refresh a falling page.** Evidence: /blog/invoice-template: 30" in text
+    assert "Measure AI visibility again" not in text  # AI referrals come from PostHog
+
+
+async def test_without_posthog_no_search_data_keeps_the_previous_snapshot(monkeypatch):
+    failed = ValueError("Search Console refused the read")
+    overrides = {step: failed for step in ("G1", "G2", "G3", "G4")}
+    with pytest.raises(RuntimeError, match="previous snapshot stays"):
+        await snapshot(monkeypatch, connections={"posthog": "not_connected"}, **overrides)
 
 
 async def test_contract_errors_fail_the_run(monkeypatch):

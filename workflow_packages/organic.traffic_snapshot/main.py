@@ -10,6 +10,10 @@ No model. Every number is a bounded aggregate read; a failed or partial read lea
 null and names the step in `status_reasons`, never a zero. At most four Search Console and four
 PostHog reads, each read serving both the per-page data and the readout.
 
+Search Console is required; PostHog is optional. Without it (`definitions.sources.posthog` is
+not "connected") visits, signups, reading and channels stay null, the run is not partial for
+that alone, and the readout covers search only.
+
 Dates follow Search Console, which reports days in Pacific time: the 28-day windows and the two
 readout weeks end on Search Console's last final day, and the PostHog reads use the same dates.
 """
@@ -521,6 +525,12 @@ def readout_inputs(inputs, reasons):
     }
 
 
+def connection(ctx, name):
+    """An optional connection's state as Tin pinned it for this run (ctx["connections"])."""
+    value = ctx.get("connections") if isinstance(ctx, dict) else getattr(ctx, "connections", None)
+    return (value or {}).get(name, "connected")
+
+
 def label(channel, host):
     """A readout row label: the channel, with each named AI assistant on its own row."""
     if channel == "AI assistants":
@@ -545,15 +555,19 @@ async def run(ctx, inputs):
     if not isinstance(previous, dict):
         previous = None
 
+    posthog_state = connection(ctx, "posthog")
+    with_posthog = posthog_state == "connected"
     signup = event_name(inputs, "signup_event")
     activation = event_name(inputs, "activation_event")
     paid = event_name(inputs, "paid_event")
     days = int(inputs.get("activation_window_days") or 7)
+    # Without PostHog the event and exclusion inputs have nothing to apply to; say so once.
+    notes = reasons if with_posthog else []
     if not signup:
-        reasons.append("step 1: no signup_event was given; signups are not measured.")
+        notes.append("step 1: no signup_event was given; signups are not measured.")
     if not activation:
-        reasons.append("step 1: no activation_event was given; activation is not measured.")
-    rules, excluded = exclusions(inputs, reasons)
+        notes.append("step 1: no activation_event was given; activation is not measured.")
+    rules, excluded = exclusions(inputs, notes)
     settings = readout_inputs(inputs, reasons)
     reliable_from = None
     if inputs.get("impressions_reliable_from"):
@@ -727,6 +741,8 @@ async def run(ctx, inputs):
         host_source = "search_console"
     if not hosts:
         reasons.append("step 2: no website host was found; pageview queries cannot be scoped.")
+        if not with_posthog:
+            reasons.pop()  # nothing to scope
     brand_source = "inputs" if brands else None
     if not brands:
         for host in hosts:
@@ -848,10 +864,11 @@ async def run(ctx, inputs):
                     0, page["search"]["current"][0] - sum(q[1] for q in rows)
                 )
 
-    # P1-P4: PostHog, scoped to the site's hosts and the team exclusions.
-    posthog = {}
+    # P1-P4: PostHog, scoped to the site's hosts and the team exclusions. Not read at all when
+    # the project has no working PostHog connection.
+    posthog = dict.fromkeys(("P1", "P2", "P3", "P4")) if not with_posthog else {}
     sql = queries(window, hosts, excluded, signup, activation, paid, days) if hosts else {}
-    for step in ("P1", "P2", "P3", "P4"):
+    for step in ("P1", "P2", "P3", "P4") if with_posthog else ():
         if not hosts or (step == "P3" and not signup):
             calls.append(
                 {"step": step, "operation": "query.hogql", "outcome": "skipped", "rows": 0}
@@ -1172,6 +1189,7 @@ async def run(ctx, inputs):
             "audit": audit,
             "calls": [c["step"] for c in calls if c["outcome"] in ("ok", "truncated")],
             "exclusions": "; ".join(exclusion_words) or "none; team visits are counted",
+            "posthog": posthog_state,
         }
     )
 
@@ -1187,6 +1205,7 @@ async def run(ctx, inputs):
             "channels": KEYS,
             "sessions": "PostHog $session_id, counted at the window and page of its first pageview",
             "exclusions": rules,
+            "sources": {"search_console": "connected", "posthog": posthog_state},
             "website_hosts": hosts,
             "website_hosts_source": host_source,
             "brand_terms": brands,
@@ -1247,7 +1266,8 @@ async def run(ctx, inputs):
         content_text = encode()
     if len(content_text.encode()) > 63000:
         # The data is the contract other workflows read; the readout keeps its decisions.
-        cut = markdown.split("\n## Where people came from", 1)[0]
+        head, marker, rest = markdown.partition("\n## Needs a decision")
+        cut = head + marker + rest.split("\n## ", 1)[0].rstrip("\n")
         snapshot["readout"]["markdown"] = cut + (
             "\n\nThe rest of this week's readout was left out to keep the data file under 64 KB.\n"
         )
