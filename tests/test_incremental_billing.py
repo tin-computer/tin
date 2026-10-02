@@ -167,16 +167,17 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
         view = await f.billing.overview(f.project.id, ACTOR)
         return view["reserved_usd"], view["set_aside_usd"], view["available_usd"]
 
-    # Admission reserves nothing; the rest of the $2 estimate is set aside while it runs.
-    assert await held() == ("0.00", "2.00", "8.00")
+    # Admission reserves nothing; the rest of the $3 estimate (organic-audit-v13) is set aside
+    # while it runs.
+    assert await held() == ("0.00", "3.00", "7.00")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
     await operation(f, run, "one", 500_000_000)
-    assert await held() == ("0.50", "1.50", "8.00")
+    assert await held() == ("0.50", "2.50", "7.00")
     await asyncio.gather(*(observe(f, "one", 125_000_000) for _ in range(3)))
-    assert await held() == ("0.13", "1.87", "8.00")
+    assert await held() == ("0.13", "2.87", "7.00")
     await operation(f, run, "two", 500_000_000)
     await observe(f, "two", 125_000_000)
-    assert await held() == ("0.25", "1.75", "8.00")
+    assert await held() == ("0.25", "2.75", "7.00")
     await finish(f, run)
     assert await asyncio.gather(*(f.billing.settle(run.id) for _ in range(3))) == [250_000_000] * 3
     view = await f.billing.overview(f.project.id, ACTOR)
