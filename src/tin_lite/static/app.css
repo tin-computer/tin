@@ -824,6 +824,36 @@ html {
   scrollbar-gutter: stable;
 }
 
+/* Every scroll area: a slim rounded thumb in the theme's ink on a transparent track. Chrome and
+   Safari draw these parts unless an element sets its own scrollbar-color; Firefox uses the
+   fallback below. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--ink-rgb) / 34%);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
+}
+
 body {
   margin: 0;
   background: var(--paper-bg);
@@ -8531,20 +8561,9 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   scrollbar-gutter: stable;
 }
 
-/* Slim rounded thumb on a transparent track; the track keeps clear of the dialog corners. */
-.custom-api-dialog form::-webkit-scrollbar {
-  width: 6px;
-  background: transparent;
-}
-
+/* The track keeps clear of the dialog corners; the thumb darkens while the form is in use. */
 .custom-api-dialog form::-webkit-scrollbar-track {
   margin: 10px 0;
-  background: transparent;
-}
-
-.custom-api-dialog form::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 3px;
 }
 
 .custom-api-dialog form:hover::-webkit-scrollbar-thumb,
@@ -8553,11 +8572,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 }
 
 @supports not selector(::-webkit-scrollbar) {
-  .custom-api-dialog form {
-    scrollbar-color: var(--scrollbar-thumb) transparent;
-    scrollbar-width: thin;
-  }
-
   .custom-api-dialog form:hover,
   .custom-api-dialog form:focus-within {
     scrollbar-color: rgb(var(--ink-rgb) / 34%) transparent;
