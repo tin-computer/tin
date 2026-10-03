@@ -3861,8 +3861,8 @@ def create_mcp_app(
         For a content draft (answer page, article, content program draft) `delivery` says how
         the approved draft ships: github_pr opens a pull request, github_commit publishes to the
         default branch now, none keeps it in Tin; `remember` makes it the program's default.
-        Without `delivery` the program's setting applies. Tell the founder the result's
-        `relay` in your words.
+        Without `delivery` the program's setting applies; a page outside a saved workflow
+        stays in Tin, like none. Tell the founder the result's `relay` in your words.
 
         An answer page or public article with a GitHub repository is not committed as-is:
         approving with github_pr or github_commit starts a separately metered adaptation

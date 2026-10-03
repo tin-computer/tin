@@ -408,6 +408,45 @@ async def test_without_api_execution_publish_keeps_the_markdown_publisher(
     assert not await children(f, run)
 
 
+@pytest.mark.parametrize("surface", ["http", "mcp"])
+async def test_a_one_off_page_approved_with_no_delivery_stays_in_tin(
+    publication_db, monkeypatch, surface
+):
+    # Sheepdogs, content.public_article b9bf3237: approving with delivery "none" failed with
+    # "Save this workflow to the project before choosing where it publishes."
+    f = await fixture(publication_db, monkeypatch)
+    run = await public_article(f)
+    assert run.project_workflow_id is None
+    token = (await WorkflowReviews(runtime=f.runtime, settings=f.settings).view(run.id, ACTOR))[
+        "review_token"
+    ]
+    if surface == "http":
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+        ) as client:
+            response = await client.post(
+                f"/api/workflows/runs/{run.id}/approve",
+                json={"delivery": "none", "review_token": token},
+            )
+        assert response.status_code == 202, response.text
+    else:
+        result = structured(
+            await mcp(f, monkeypatch).call_tool(
+                "approve_workflow_run",
+                {"run_id": str(run.id), "delivery": "none", "review_token": token},
+            )
+        )
+        assert result["review_decision"] == "approved"
+    choice = (await f.db.get_effect(choice_key(run.id))).result
+    assert choice["settings"]["mode"] == "draft_only" and choice["path"] is None
+    await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", run.id)
+    await f.activities.deliver_content_draft(str(run.id))
+    # Nothing left Tin: no adaptation run, no commit, no pull request.
+    assert not await children(f, run)
+    f.runtime.integrations.github_commit_files.assert_not_called()
+    f.runtime.integrations.github_create_pull_request.assert_not_called()
+
+
 async def test_prepare_pr_is_refused_for_a_page_already_committed_as_markdown(
     publication_db, monkeypatch
 ):

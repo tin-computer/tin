@@ -669,6 +669,17 @@ class ContentDelivery:
                         "chosen_by": actor,
                     },
                 )
+        if mode == "none" and run.workflow_id != DRAFT_WORKFLOW_ID and not run.project_workflow_id:
+            # Keeping a one-off page in Tin leaves nothing to configure or remember.
+            return await self.record_choice(
+                run,
+                {
+                    "settings": DeliverySettings().model_dump(),
+                    "settings_revision": None,
+                    "path": None,
+                    "chosen_by": actor,
+                },
+            )
         program_id, selected = await self.program_for(run)
         configured = await self.settings(project_id=run.project_id, program_id=program_id)
         base = DeliverySettings.model_validate(configured["settings"])
