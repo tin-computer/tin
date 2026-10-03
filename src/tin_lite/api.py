@@ -423,6 +423,7 @@ ASSET_VERSION = hashlib.sha256(
 def _static_page(filename: str, request: Request) -> Response:
     from tin_lite.fonts import private_font_stylesheet
     from tin_lite.product_urls import product_origins
+    from tin_lite.traffic_sensor import TRAFFIC_SENSOR_MARKER, traffic_sensor_script
 
     settings = request.app.state.settings
     app_url = dashboard_url(settings)
@@ -461,6 +462,7 @@ def _static_page(filename: str, request: Request) -> Response:
     replacements = {
         "{{ASSET_VERSION}}": ASSET_VERSION,
         "<!--PRIVATE_FONTS_STYLESHEET-->": private_font_stylesheet(settings),
+        TRAFFIC_SENSOR_MARKER: traffic_sensor_script(settings),
         "{{BILLING_ENABLED}}": str(getattr(settings, "billing_enabled", False)).lower(),
         "{{BROWSER_LOCK_ENABLED}}": str(getattr(settings, "browser_lock_enabled", True)).lower(),
         "{{CLERK_PUBLISHABLE_KEY}}": settings.clerk_publishable_key,
@@ -484,7 +486,7 @@ def _static_page(filename: str, request: Request) -> Response:
     # A return URL can contain marker-like opaque state. Substitute only the
     # original template, never reinterpret text introduced by a replacement.
     html = re.sub(
-        r"\{\{[A-Z_]+\}\}|<!--PRIVATE_FONTS_STYLESHEET-->",
+        r"\{\{[A-Z_]+\}\}|<!--PRIVATE_FONTS_STYLESHEET-->|<!--TRAFFIC_SENSOR_SCRIPT-->",
         lambda match: replacements.get(match[0], match[0]),
         html,
     )
