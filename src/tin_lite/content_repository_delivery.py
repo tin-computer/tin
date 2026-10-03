@@ -8,7 +8,7 @@ the founder's delivery setting commits to main, Tin then merges the pull request
 only one that adds nothing except the approved page, once GitHub reports it clean.
 
 website.change (website_change.py) adapts pages with this same machinery: source pinning,
-the exact-copy proof, the saved patch, recovery and the merge loop. Its runs keep their pinned
+the page check, the saved patch, recovery and the merge loop. Its runs keep their pinned
 source under the same receipt key, and their own policy decides whether Tin merges (see
 publish_after_pull_request): website.change merges once the repository's required checks
 pass. content.deliver's own rules are unchanged.
@@ -16,6 +16,7 @@ pass. content.deliver's own rules are unchanged.
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 from dataclasses import asdict
@@ -505,7 +506,7 @@ async def recover_delivery(*, database, storage, integrations, run):
                 expected_base_sha=binding.head_sha,
                 expected_binding=binding,
                 allow_unrelated_base_advance=True,
-                blocking_paths=frozenset({proof["article_path"]}),
+                blocking_paths=blocking_paths(proof),
             )
             result = {**asdict(result), **proof}
             async with conn.transaction():
@@ -613,8 +614,8 @@ async def saved_manifest(database, storage, run):
 
 
 # Settings that reach every page, whatever folder they sit in.
-# Dependency and package-manager files. A page delivery never changes them (validate_copy),
-# and they reach every page, wherever they sit.
+# Dependency and package-manager files. They reach every page, wherever they sit, so a patch
+# that changes one always waits for the founder's review.
 DEPENDENCY_FILES = frozenset(
     {
         "package.json",
@@ -726,11 +727,13 @@ def merge_rule(manifest, proof, route):
     `page_only`: the approved page alone, the change the Markdown publisher commits today.
     `chosen_route`: the page plus the site code that serves it, when the founder chose where
     these pages live, the PR puts the page at that route and every other file sits in that
-    route's own folder. The copy proof, the five-file limit and the dependency ban still
-    hold; any other site change stays a PR.
+    route's own folder. Neither applies when Tin can't confirm the page keeps the approved
+    wording; any other site change stays a PR.
     """
     from tin_lite.page_routes import matches
 
+    if proof.get("copy_check") == "not_confirmed":
+        return None
     if page_only(manifest, proof):
         return "page_only"
     if (
@@ -813,6 +816,13 @@ async def publish_after_pull_request(
             )
             if hold:
                 result = {**base, "status": "left_open", "reason": hold}
+            elif proof["copy_check"] == "not_confirmed":
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": "Tin couldn't confirm the page keeps the approved wording word for "
+                    "word, so it waits for your review.",
+                }
             elif rule is None:
                 result = {
                     **base,
@@ -1039,12 +1049,15 @@ async def _merge_loop(
 
 
 def validate_copy(manifest, source):
-    """Prove lossless article storage, not that a site's renderer displays every byte.
+    """Find the page in the patch and say how closely it keeps the approved wording.
 
-    A Markdown site stores the reviewed body directly. Component-based sites retain
-    it as a JSON string literal consumed by their existing Markdown renderer. The
-    adapter may not introduce a renderer dependency or rewrite the prose as JSX.
-    Actual rendering/build checks are separate and must never be implied by this proof.
+    The page takes whatever form the site uses: a Markdown or MDX file, a component, a typed
+    page registry or plain HTML. A pull request is the founder's to review, so neither the
+    page's format nor its wording refuses one; only the pinned source and repository do.
+    `copy_check` decides whether Tin may merge on its own (merge_rule): it may when the
+    article is stored exactly (`exact_source_preserved`) or every paragraph reads word for
+    word in the page (`wording_preserved`), never when `not_confirmed`. Rendering and build
+    checks are separate and never implied.
     """
     article = source["article"]
     if hashlib.sha256(article.encode()).hexdigest() != source["article_sha256"]:
@@ -1054,52 +1067,71 @@ def validate_copy(manifest, source):
         or manifest["head_sha"] != source["binding"]["head_sha"]
     ):
         raise ValueError("The repository differs from the pinned delivery source.")
-    matches = []
+    paragraphs = [words for block in re.split(r"\n\s*\n", article) if (words := _words(block))]
+    exact, worded, closest = [], [], (0, None)
     for item in manifest["files"]:
         path, text = item["path"], item["content"]
-        if path.rsplit("/", 1)[-1] in DEPENDENCY_FILES:
-            raise ValueError("Article delivery cannot change dependencies.")
-        if path.endswith((".md", ".mdx")):
-            body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
-            if body.lstrip("\n") == article:
-                matches.append(path)
-        elif path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
-            # Decode complete JSON string tokens, not fragment matches in escaped
-            # prose. This proves source storage, not runtime consumption/rendering.
-            for token in re.findall(
-                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
-            ):
-                if json.loads(token) == article:
-                    matches.append(path)
-                    break
-    if len(matches) != 1:
-        raise ValueError(
-            "Keep the approved article unchanged in exactly one Markdown file "
-            "or JSON string consumed by the site's Markdown renderer."
-        )
+        if _stores_exactly(path, text, article):
+            exact.append(path)
+            continue
+        page = f" {' '.join(_words(text))} "
+        found = sum(f" {' '.join(words)} " in page for words in paragraphs)
+        if paragraphs and found == len(paragraphs):
+            worded.append(path)
+        elif found > closest[0]:
+            closest = (found, path)
+    if len(exact) == 1:
+        path, check = exact[0], "exact_source_preserved"
+    elif not exact and len(worded) == 1:
+        path, check = worded[0], "wording_preserved"
+    else:
+        path, check = (exact or worded or [closest[1]])[0], "not_confirmed"
     from tin_lite.page_urls import public_route
 
     route = public_route(manifest.get("body"))
     return {
-        "article_path": matches[0],
+        "article_path": path,
         "article_sha256": source["article_sha256"],
-        "copy_check": "exact_source_preserved",
+        "copy_check": check,
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
 
 
+def _stores_exactly(path, text, article):
+    """The article byte for byte: a Markdown body, or one complete JSON string token."""
+    if path.endswith((".md", ".mdx")):
+        body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
+        return body.lstrip("\n") == article
+    if path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
+        # Complete JSON string tokens, not fragment matches in escaped prose.
+        return any(
+            json.loads(token) == article
+            for token in re.findall(
+                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
+            )
+        )
+    return False
+
+
+def _words(text):
+    """The words a reader sees, in order: no markup, link targets, scripts or styles."""
+    text = re.sub(r"<(script|style)\b.*?</\1\s*>|<!--.*?-->", " ", text, flags=re.S | re.I)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)|\]\([^)]*\)", " ", text)
+    text = html.unescape(re.sub(r"</?[A-Za-z!][^>]*>", " ", text))
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
+def blocking_paths(proof):
+    """The page's own path, the one file another open PR must not also add; None when the
+    patch has no recognizable page, so every file blocks as for any other PR."""
+    return frozenset({proof["article_path"]}) if proof.get("article_path") else None
+
+
 def validate_patch(manifest, source):
-    """The exact-copy proof, plus website.change's own rules when the source is a change row.
-
-    A content.deliver source has no change row, so its patch is checked exactly as before.
-    """
-    proof = validate_copy(manifest, source)
-    if source.get("change"):
-        from tin_lite.website_change import check_patch
-
-        check_patch(manifest, source, proof)
-    return proof
+    """The page check for content.deliver and website.change alike. The procedure's own file
+    and byte caps bound the patch; website_change.hold_reason decides a website merge."""
+    return validate_copy(manifest, source)
 
 
 async def delivery_history(executor, *, project_id, source_ids):

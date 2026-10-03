@@ -3963,7 +3963,9 @@ class TinActivities:
                                     "allow_unrelated_base_advance": True,
                                     # Only the page itself blocks: a sitemap or index that
                                     # another open PR also edits is not the same change.
-                                    "blocking_paths": frozenset({copy_proof["article_path"]}),
+                                    "blocking_paths": content_repository_delivery.blocking_paths(
+                                        copy_proof
+                                    ),
                                 }
                                 if copy_proof
                                 else {}

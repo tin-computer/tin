@@ -27,6 +27,7 @@ from test_procedure_publication import publication_db as publication_db
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import website_change
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.documents import render_markdown
 from tin_lite.organic_audit import canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.procedures import procedure_checkpoint_path
@@ -553,25 +554,24 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
 ):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    page = await approved_for_main(f)
-    run = await start(f, page)
-    source = await delivery.saved_source(f.db, run.id)
-    # Tin's own draft folder is never a page on the site.
-    answers = manifest_for(
-        f, source, page_path="content/answers/reliable-ai-work.md", public_url=PAGE_URL
+    integrations = mergeable(f)
+    # Tin's own draft folder is never a page on the site: the PR opens, the merge waits.
+    run = await made(
+        f, await start(f, await approved_for_main(f)), page_path="content/answers/reliable.md"
     )
-    with pytest.raises(ValueError, match=r"page registry at /blog/\{slug\}"):
-        delivery.validate_patch(answers, source)
-    # Nor may a website change touch dependencies.
-    lockfile = manifest_for(
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open" and "Tin's draft folder" in merge["reason"]
+    # So does a change to dependencies, which reach every page.
+    run = await made(
         f,
-        source,
-        page_path="content/blog/reliable-ai-work.md",
-        public_url=PAGE_URL,
+        await start(f, await approved_for_main(f)),
         extra_files=({"path": "bun.lock", "content": "x\n"},),
     )
-    with pytest.raises(ValueError, match="cannot change dependencies"):
-        delivery.validate_patch(lockfile, source)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open" and "bun.lock" in merge["reason"]
+    integrations.github_merge_pull_request.assert_not_called()
+    run = await start(f, await approved_for_main(f))
+    source = await delivery.saved_source(f.db, run.id)
     # A typed page registry keeps the copy as one JSON string, served at the chosen route.
     registry = (
         "export const blogPages = [\n  {\n    slug: 'reliable-ai-work',\n"
@@ -609,6 +609,46 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
     )
 
 
+async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypatch):
+    # website.change a5828bd7 on sheepdogs.io: a static site in client/public/ that renders no
+    # Markdown. The page is HTML in the site's own layout, and the wording decides the merge.
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    integrations = mergeable(f)
+    run = await start(f, await approved_for_main(f))
+    source = await delivery.saved_source(f.db, run.id)
+    page = (
+        "<!doctype html><html><head><title>Reliable AI work</title><style>p{margin:0}</style>"
+        "</head><body><nav><a href='/'>Home</a></nav><main>"
+        f"{render_markdown(source['article']).html}</main></body></html>"
+    )
+    run = await made(
+        f, run, page_path="client/public/blog/reliable-ai-work/index.html", content=page
+    )
+    manifest = await delivery.saved_manifest(f.db, f.storage, run)
+    proof = delivery.validate_patch(manifest, source)
+    assert proof["copy_check"] == "wording_preserved"
+    assert proof["article_path"] == "client/public/blog/reliable-ai-work/index.html"
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["merge_rule"] == "chosen_route"
+    # Changed wording still opens the PR; only the merge waits for the founder.
+    integrations.github_merge_pull_request.reset_mock()
+    run = await made(
+        f,
+        await start(f, await approved_for_main(f)),
+        page_path="client/public/blog/reliable-ai-work-2/index.html",
+        public_url="https://example.com/blog/reliable-ai-work-2",
+        content=page.replace("receipts", "logs"),
+    )
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open"
+    assert merge["reason"] == (
+        "Tin couldn't confirm the page keeps the approved wording word for word, so it waits "
+        "for your review."
+    )
+    integrations.github_merge_pull_request.assert_not_called()
+
+
 # content.deliver keeps working as it did; the two never adapt one page twice.
 
 
@@ -620,10 +660,11 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
     for path in sorted(files):
         digest.update(path.encode())
         digest.update(files[path])
-    # The definition and procedure files pinned runs point to are byte-for-byte main's 1.3.0.
-    assert spec.version_label == "1.3.0"
+    # The definition and procedure files new runs pin: 1.4.0 builds the page in the site's own
+    # format (1.3.0 kept it as Markdown or a JSON string).
+    assert spec.version_label == "1.4.0"
     assert digest.hexdigest() == (
-        "078e681833686005fec18b779b83d6ed7cd621b078af512699962d597050b555"
+        "1b68e215fc8ae34a716a890d75c81e5c6d83ef17acfbd8ec7950d3033f4cfb79"
     )
     # An approval-started content.deliver run pins no change row and keeps its own rules:
     # a pull-request setting never merges, and nothing records a merge for it.

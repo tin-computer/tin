@@ -62,10 +62,6 @@ SOURCES: dict[str, tuple[str, ...]] = {
 # Sources website.change takes: an approved page, the latest audit's fixes, the URL changes
 # page decisions and the site architecture plan made, and the blog index plan.
 IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index")
-# A page change keeps content.deliver's caps: a 300 KB public article, its listing and a
-# route. A technical change follows site-fix-v5's (20 files, 800 changed lines).
-PAGE_MAX_FILES = 5
-PAGE_MAX_BYTES = 400_000
 # Sources whose approval is a row in website_changes. A page's approval is its own review.
 RECORDED_SOURCES = tuple(source for source in SOURCES if source != "content_draft")
 DECISIONS = {"approve": "approved", "decline": "declined"}
@@ -635,24 +631,10 @@ async def guard_source(conn, *, project_id, inputs, source) -> None:
 # After the pull request opens.
 
 
-def check_patch(manifest: dict[str, Any], source: dict[str, Any], proof: dict[str, Any]) -> None:
-    """website.change's own patch rules for a page, on top of the exact-copy proof (which
-    refuses dependency files): content.deliver's five files and 400 KB, and never a page in
-    Tin's own draft folder. An answer page lands in the site's page registry at its chosen
-    route.
-    """
-    files = manifest.get("files") or []
-    if len(files) > PAGE_MAX_FILES:
-        raise ValueError(f"A page change touches at most {PAGE_MAX_FILES} files.")
-    if sum(len(item["content"].encode()) for item in files) > PAGE_MAX_BYTES:
-        raise ValueError(f"A page change stays under {PAGE_MAX_BYTES // 1000} KB.")
-    page = proof["article_path"]
-    if any(page.startswith(folder) or f"/{folder}" in page for folder in TIN_DRAFT_FOLDERS):
-        where = f" at {source['route']}" if source.get("route") else ""
-        raise ValueError(
-            f"Put the page in the site's own page registry{where}. content/answers/ is Tin's "
-            "draft folder, not a page on the site."
-        )
+def in_draft_folder(path: str | None) -> bool:
+    return bool(path) and any(
+        path.startswith(folder) or f"/{folder}" in path for folder in TIN_DRAFT_FOLDERS
+    )
 
 
 async def hold_reason(database, run, source, manifest, proof) -> str | None:
@@ -685,6 +667,11 @@ async def hold_reason(database, run, source, manifest, proof) -> str | None:
     )
     if hit:
         return f"It touches {hit}, a protected page, so it waits for your review."
+    if in_draft_folder(proof.get("article_path")):
+        return (
+            "It puts the page in content/answers/, Tin's draft folder rather than a page on "
+            "the site, so it waits for your review."
+        )
     route = source.get("route")
     if route and not matches(route, address):
         return (
