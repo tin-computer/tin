@@ -601,11 +601,6 @@ async def test_caps_are_enforced(publication_db, monkeypatch):
         batch_rules.check_bounds(
             [{"path": "app/page.tsx", "content": "y\n" * 801}], {"app/page.tsx": "x\n"}
         )
-    # A page change keeps content.deliver's five files.
-    proof = {"article_path": "content/blog/a.md"}
-    six = {"files": [{"path": f"content/blog/{i}.md", "content": "x"} for i in range(6)]}
-    with pytest.raises(ValueError, match="at most 5 files"):
-        website_change.check_patch(six, {}, proof)
 
 
 # --- The technical fix is hidden; its pinned runs are unchanged ----------------------------

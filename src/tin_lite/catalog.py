@@ -606,14 +606,15 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
         title="Prepare article PR",
-        description="Adapt an approved article, answer page or public article to the "
-        "connected website repository's own format, adding a Markdown route once when the "
-        "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
-        "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
-        "to main and the PR adds nothing but the page, or the page at the route you chose "
+        description="Put an approved article, answer page or public article on the connected "
+        "website repository in the site's own format (Markdown, a component, plain HTML or "
+        "whatever it uses), adding its route when the site has none. Keep its wording, open "
+        "a reviewable GitHub PR, and keep the Markdown original in Tin. Tin merges the PR "
+        "only when your delivery setting commits to main, the page keeps the approved "
+        "wording, and the PR adds nothing but the page, or the page at the route you chose "
         "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.3.0",
+        version_label="1.4.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -674,9 +675,10 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                max_files=5,
-                # A 300 KB public article, its frontmatter and a small route still fit.
-                max_bytes=400_000,
+                # The procedure ceilings, as runaway guards: a page in any format, its route,
+                # index and sitemap.
+                max_files=10,
+                max_bytes=512_000,
             ),
         ),
     ),
@@ -686,16 +688,17 @@ BUILTIN_WORKFLOWS = (
         title="Change the website",
         description="Put approved changes on your website repository: an approved article, "
         "answer page or public article, adapted to the site's own format at the route you "
-        "chose with its copy unchanged; the technical fixes the latest audit found; the "
+        "chose with its wording kept; the technical fixes the latest audit found; the "
         "redirects and noindex changes your page decisions and site plan made; or the blog "
         "index plan. Each fix, planned change or plan is a change you approve or decline once "
         "in Tin. What you approved publishes: Tin merges the pull request once your "
-        "repository's required checks pass, then checks the live site. Anything else, and any "
+        "repository's required checks pass, then checks the live site. Anything else, a page "
+        "whose wording Tin can't confirm, and any "
         "change to a protected page such as /sign-in or one you added to the project's "
         "protected pages, opens a pull request for you to merge. Deleting a page stays with "
         "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.2.0",
+        version_label="1.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -808,8 +811,7 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="website/changes/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # site-fix-v5's file cap for an audit run; a page keeps content.deliver's five
-                # files and 400 KB (website_change.check_patch).
+                # site-fix-v5's file cap, for an audit run and a page alike.
                 max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
                 site_repair_policy=technical_fix.BATCH_POLICY,
                 allow_no_change=True,

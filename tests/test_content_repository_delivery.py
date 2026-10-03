@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 from copy import deepcopy
 from uuid import uuid4
@@ -160,7 +161,9 @@ async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypat
     assert sum(isinstance(r, WorkflowInputError) for r in results) == 1
 
 
-async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db, monkeypatch):
+async def test_the_page_takes_any_form_and_its_wording_decides_the_merge(
+    publication_db, monkeypatch
+):
     f = await prepared(publication_db, monkeypatch)
     run = await deliver_start(f)
     source = await delivery.saved_source(f.db, run.id)
@@ -177,14 +180,27 @@ async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db,
     )
     manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": component}]
     assert delivery.validate_copy(manifest, source)["copy_check"] == "exact_source_preserved"
+    # Prose transcribed into JSX or HTML keeps the approved wording too.
+    paragraphs = [block for block in source["article"].split("\n\n") if block.strip()]
+    markup = "".join(f"<p className='lede'>{html.escape(p.lstrip('# '))}</p>" for p in paragraphs)
+    manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": markup}]
+    assert delivery.validate_copy(manifest, source) == {
+        **delivery.validate_copy(manifest, source),
+        "article_path": "web/src/app/blog/article/page.tsx",
+        "copy_check": "wording_preserved",
+    }
+    # Changed wording or a dependency change opens the PR all the same: nothing is refused,
+    # and merge_rule keeps an unconfirmed page for the founder.
     altered = deepcopy(manifest)
-    altered["files"][0]["content"] = component.replace("mechanism", "trick")
-    with pytest.raises(ValueError, match="unchanged"):
-        delivery.validate_copy(altered, source)
+    altered["files"][0]["content"] = markup.replace("mechanism", "trick")
+    proof = delivery.validate_copy(altered, source)
+    assert proof["copy_check"] == "not_confirmed"
+    assert proof["article_path"] == "web/src/app/blog/article/page.tsx"
+    assert delivery.merge_rule(altered, proof, "/blog/{slug}") is None
     altered = deepcopy(manifest)
     altered["files"].append({"path": "package.json", "content": "{}"})
-    with pytest.raises(ValueError, match="dependencies"):
-        delivery.validate_copy(altered, source)
+    assert delivery.validate_copy(altered, source)["copy_check"] == "wording_preserved"
+    # Only the pinned source and repository are refused.
     with pytest.raises(ValueError, match="pinned"):
         delivery.validate_copy({**manifest, "repository": "other/site"}, source)
 

@@ -7,6 +7,7 @@ GitHub calls it clean; anything else stays an open PR that says why.
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,6 +34,7 @@ from tin_lite.content_delivery import (
 from tin_lite.content_delivery_api import publish_preview, retry_delivery
 from tin_lite.integrations import GitHubPullRequestResult, GitHubRepositoryBinding
 from tin_lite.organic_audit import canonical_json
+from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.page_urls import PageUrls, present
 from tin_lite.procedures import procedure_checkpoint_path
 from tin_lite.workflow_reviews import WorkflowReviews
@@ -791,6 +793,25 @@ async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
     assert after["url"] == "https://example.com/answers/reliable-ai-work"
     assert after["pull_request"]["number"] == 42
     assert after["note"].startswith("Pull request #42 is open.")
+
+
+async def test_a_proposed_url_follows_the_saved_route(publication_db, monkeypatch):
+    # Sheepdogs, content.public_article b9bf3237: page_url kept proposing the title slug at the
+    # site root after the founder chose /blog/{slug}; the first guess was saved for good.
+    f = await fixture(publication_db, monkeypatch)
+    run = await public_article(f)
+    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
+    pages._site = AsyncMock(return_value="example.com")  # the site the audit read
+    now = datetime.now(UTC)
+    first = await pages.view(run, None, now=now)
+    assert first["url"] == "https://example.com/a-useful-public-article"
+    assert first["source"] == "title_slug" and first["final"] is False
+    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
+    # Read again at most every ten minutes, like the delivery preview.
+    assert (await pages.view(run, None, now=now + timedelta(minutes=1)))["url"] == first["url"]
+    later = await pages.view(run, None, now=now + timedelta(minutes=11))
+    assert later["url"] == "https://example.com/blog/a-useful-public-article"
+    assert later["source"] == "saved_route" and later["final"] is False
 
 
 def test_card_cost_is_rounded_to_a_dollar_or_cents():
