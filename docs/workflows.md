@@ -74,7 +74,7 @@ Tin ships 40 built-in workflows. Every workflow also takes a `project_id`; requi
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
-| Recover failed payments (human review)<br>`revenue.payment_recovery` | Find customers whose automatic Stripe payment failed and is still unpaid, and write each one a short personal email in your voice: their plan, why the card failed, their history with you and your latest mail with them, with Stripe's own payment link. After you approve, Tin checks each invoice again and sends only the unpaid ones from your Gmail, never twice for the same invoice. | `lookback_days`, `max_customers` | — |
+| Recover failed payments (human review)<br>`revenue.payment_recovery` | Find customers whose automatic Stripe payment failed and is still unpaid, and write each one a short personal email in your voice: their plan, why the card failed, their history with you and your latest mail with them, with Stripe's own payment link. After you approve, Tin checks each invoice again and sends only the unpaid ones from your Gmail. Runs weekly by default; a person is emailed at most once a month, and an unanswered Decision closes unsent after six days. | `lookback_days`, `max_customers`, `products` | — |
 
 ## General
 

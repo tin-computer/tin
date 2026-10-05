@@ -769,7 +769,14 @@
             "id": "il_Fixture0004",
             "object": "line_item",
             "description": "Annual support (manual)",
-            "amount": 49000
+            "amount": 49000,
+            "pricing": {
+              "type": "price_details",
+              "price_details": {
+                "price": "price_FixturePro",
+                "product": "prod_FixturePro"
+              }
+            }
           }
         ],
         "has_more": false

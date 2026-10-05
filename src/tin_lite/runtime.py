@@ -401,6 +401,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         payment_recovery_activities.record_approval,
         payment_recovery_activities.apply,
         payment_recovery_activities.publish,
+        payment_recovery_activities.expire,
         payment_recovery_activities.failure,
         organic_system.organic_system_prepare,
         organic_system.organic_system_step,

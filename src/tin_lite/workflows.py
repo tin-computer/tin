@@ -26,6 +26,7 @@ from tin_lite.domain import (
     PAID_ADS_ASSESSMENT_WORKFLOW_NAME,
     PAID_ADS_LAUNCH_WORKFLOW_NAME,
     PAID_ADS_MONITOR_WORKFLOW_NAME,
+    PAYMENT_RECOVERY_DECISION_DAYS,
     PAYMENT_RECOVERY_WORKFLOW_NAME,
     PREREQUISITE_WAIT_MEMO,
     PREREQUISITE_WAIT_MINUTES,
@@ -1114,6 +1115,10 @@ class AwesomeSubmitWorkflow:
                 raise
 
 
+PAYMENT_RECOVERY_EXPIRY_PATCH = "payment-recovery-decision-expiry"
+PAYMENT_RECOVERY_DECISION_WINDOW = timedelta(days=PAYMENT_RECOVERY_DECISION_DAYS)
+
+
 @workflow.defn(name=PAYMENT_RECOVERY_WORKFLOW_NAME)
 class PaymentRecoveryWorkflow:
     """Read Stripe and the mailbox, draft one email per customer, then one founder approval
@@ -1155,7 +1160,23 @@ class PaymentRecoveryWorkflow:
             mode = await execute("payment_recovery_draft", minutes=10)
             if mode == "review":
                 await execute("payment_recovery_request_review", minutes=2)
-                await workflow.wait_condition(lambda: self._approved or self._stopped)
+                # Runs started before the expiry wait without a deadline, as they always did.
+                if workflow.patched(PAYMENT_RECOVERY_EXPIRY_PATCH):
+                    try:
+                        await workflow.wait_condition(
+                            lambda: self._approved or self._stopped,
+                            timeout=PAYMENT_RECOVERY_DECISION_WINDOW,
+                        )
+                    except TimeoutError:
+                        # Unanswered, the Decision closes unsent so the next scheduled run
+                        # can start. An approval already on its way wins: expiry refuses once
+                        # a reviewer is recorded, and the run waits for that signal instead.
+                        if not (self._approved or self._stopped):
+                            if await execute("payment_recovery_expire", minutes=2):
+                                return
+                            await workflow.wait_condition(lambda: self._approved or self._stopped)
+                else:
+                    await workflow.wait_condition(lambda: self._approved or self._stopped)
                 if self._stopped:
                     return
                 await execute("payment_recovery_record_approval", minutes=2)
