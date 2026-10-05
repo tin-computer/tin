@@ -10,6 +10,7 @@ description: Put one approved article, answer page or public article on an exist
 3. Resolve the public route. A planned article (`source_kind: article`) names its route
    in `item`; for an update, match the specified existing public route uniquely, and treat
    ambiguity as a prerequisite failure. An answer page or public article has no route yet:
+   use the slug the founder approved (`page_metadata.slug`) when it is given, otherwise
    derive a short kebab-case slug from `title`, under the folder or route the site uses for
    such pages. When `direction` names the route the founder chose (for example
    `/blog/{slug}`), use exactly that route, and add it as in step 5 if the site does not

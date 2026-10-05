@@ -52,7 +52,7 @@ def test_listing_does_not_excuse_a_missing_title():
 @pytest.mark.parametrize(
     ("key", "version", "skill"),
     [
-        ("content.public_article", "1.7.0", "search-and-answer-engines"),
+        ("content.public_article", "1.8.0", "search-and-answer-engines"),
         ("content.generate", "1.9.0", "search-and-answer-engines"),
     ],
 )
@@ -95,3 +95,20 @@ def test_public_articles_carry_the_listing_and_planned_drafts_do_not():
     # Planned drafts keep a title-first file: their delivery writes the site header.
     assert "meta_title" not in planned and "no frontmatter" in planned.replace("\n   ", " ")
     assert "keep the destination's structure" in planned
+
+
+def test_the_listing_carries_the_slug_the_founder_approves():
+    from tin_lite.approved_document import _metadata
+    from tin_lite.article_review import search_listing
+
+    page = (
+        '---\nmeta_title: "Filming the trailers"\nslug: "filming-sheepdogs-trailers"\n---\n\n# T\n'
+    )
+    listing, _ = search_listing(page)
+    assert listing["slug"] == "filming-sheepdogs-trailers"
+    assert _metadata(listing)["slug"] == "filming-sheepdogs-trailers"
+    # An odd slug is left to delivery rather than failing the draft.
+    odd, _ = search_listing('---\nmeta_title: "T"\nslug: "How I Filmed It"\n---\n\n# T\n')
+    assert "slug" not in odd and "slug" not in _metadata({"slug": "How I Filmed It"})
+    with pytest.raises(ValueError, match="search listing"):
+        search_listing('---\nmeta_title: "T"\nauthor: "x"\n---\n\n# T\n')

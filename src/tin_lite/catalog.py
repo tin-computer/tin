@@ -635,7 +635,7 @@ BUILTIN_WORKFLOWS = (
         "wording, and the PR adds nothing but the page, or the page at the route you chose "
         "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -719,7 +719,7 @@ BUILTIN_WORKFLOWS = (
         "protected pages, opens a pull request for you to merge. Deleting a page stays with "
         "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.4.0",
+        version_label="1.5.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -1776,7 +1776,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(

@@ -17,9 +17,10 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
 3. Resolve the public address. A planned article (`source_kind: article`) names its route
    in `item`; for an update, match the specified existing public route uniquely, and treat
    ambiguity as a prerequisite failure. For an answer page or public article, `route` is
-   the route the founder chose (for example `/blog/{slug}`): make `{slug}` three to five
+   the route the founder chose (for example `/blog/{slug}`). Use the slug the founder
+   approved, `page_metadata.slug`, when it is given. Otherwise make `{slug}` three to five
    lowercase, hyphenated words from the title that name its main search term, without
-   filler words, and publish at exactly that route. A new page must not overwrite an
+   filler words. Publish at exactly that route. A new page must not overwrite an
    existing one; add a short suffix instead.
 4. Put the page where the site keeps pages of that kind, never under `content/answers/`,
    which is Tin's draft folder and not a page on the site. Build it the way the site builds
