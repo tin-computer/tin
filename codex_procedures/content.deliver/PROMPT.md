@@ -18,6 +18,11 @@ site's own title and description fields, never into the copy. Prefer the site's 
 tools; add a dependency only when the page cannot be built without one, and say why in the
 PR body.
 
+Match the site's other pages of that kind: give the page the same header, footer, links
+back into the site (for example to the product), byline and dates, and structured data (such as
+JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
+fonts or other outside resources.
+
 If the site does not serve the page's route yet, add the smallest route that fits how its
 other pages are served. Change what the page needs (the page, its route, and any index or
 sitemap the site keeps) and nothing else.

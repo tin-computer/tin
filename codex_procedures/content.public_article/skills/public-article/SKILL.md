@@ -42,6 +42,9 @@ not automatically verified facts. Follow `source_policy`:
 Never fabricate a quote, case study, person, statistic, test result, or citation. If the article
 needs a human story and none exists in the evidence, use a documented real case or write without
 one. Attribute numbers and current claims with Markdown links near the sentence they support.
+Project files are private evidence: never link to them or list them as sources, because a reader
+can't open them. State the founder's own work and results plainly, without a citation, and link
+public pages instead when they exist (the founder's site, repository, videos or posts).
 Links you cite are copied clean, without tracking parameters (`utm_*`, `ref`, `source=openai`
 and similar); a search tool's tracking suffix is not part of the source.
 

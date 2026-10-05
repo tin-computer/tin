@@ -33,6 +33,11 @@ site's own title and description fields, never into the copy. Prefer the site's 
 tools; add a dependency only when the page cannot be built without one, and say why in the
 PR body.
 
+Match the site's other pages of that kind: give the page the same header, footer, links
+back into the site (for example to the product), byline and dates, and structured data (such as
+JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
+fonts or other outside resources.
+
 When `route` is set, the founder chose where these pages live: publish the page at exactly
 that route, wherever the site keeps such pages. Never put a
 page under `content/answers/`, which is Tin's draft folder and not a page on the site.

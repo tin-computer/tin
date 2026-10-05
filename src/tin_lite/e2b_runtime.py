@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import shlex
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, asynccontextmanager
@@ -1154,7 +1155,15 @@ def _run_secrets(run_input: SandboxRunInput) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*values, *(value for value in run_input.redact if value))))
 
 
+# Codex names the files it wrote by their sandbox paths, often as Markdown links. Founders know
+# them by their project path, and a sandbox link leads nowhere.
+SANDBOX_LINK = re.compile(r"\[([^\]\n]+)\]\(/home/user/(?:project|state)/([^)\s]+)\)")
+SANDBOX_PATH = re.compile(r"/home/user/(?:project|state)/")
+
+
 def _redact(value: str, secrets: tuple[str, ...]) -> str:
+    """Sandbox text as founders read it: secrets removed, files named by their project path."""
+    value = SANDBOX_PATH.sub("", SANDBOX_LINK.sub(r"\1 (\2)", value))
     return redact_text(value, secrets)[0]
 
 

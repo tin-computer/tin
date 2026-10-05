@@ -23,6 +23,9 @@ description: Put one approved article, answer page or public article on an exist
    `meta_title` and `meta_description` when the site already uses them); leave out any
    field the site does not read. Avoid a duplicate visible H1. The page must actually be
    served, not left in a comment, an unused constant or a folder nothing reads.
+   Match the site's other pages of that kind: the same header, footer, links back into the
+   site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
+   the site already loads; never add web fonts or other outside resources.
 5. If the site does not serve the page's route yet, add the smallest route that fits how
    its other pages are served (a static file in its public folder, a route file, a registry
    entry), within the 10-file limit. Prefer tools the site already has; add a dependency

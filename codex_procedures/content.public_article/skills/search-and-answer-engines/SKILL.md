@@ -39,9 +39,9 @@ Markdown and no line breaks. Add no other keys and put nothing else before the t
    `## FAQ` with three to five `### ` questions, each ending with a question mark and answered in
    two to four sentences. Leave it out of an argument or an announcement it would dilute.
 6. `## Sources` last: cite inline, linking the sentence that carries each claim, and list every
-   cited source again at the end. With `source_policy: project_only`, list the project documents
-   the article relies on instead of web pages. Never pad the list with sources the article does
-   not use.
+   cited source again at the end. Only public pages a reader can open belong there. Leave the
+   section out when the article cites none, for example with `source_policy: project_only`.
+   Never pad the list with sources the article does not use.
 
 ## Readability
 
