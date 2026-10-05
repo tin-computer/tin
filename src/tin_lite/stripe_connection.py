@@ -44,7 +44,7 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
 )
-from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import ProviderErrorDetail, explain
 from tin_lite.provider_errors import detail as provider_error_detail
 
 STRIPE_API = "https://api.stripe.com"
@@ -53,10 +53,10 @@ STRIPE_API = "https://api.stripe.com"
 STRIPE_VERSION = "2026-08-26.dahlia"
 RESTRICTED_KEY = re.compile(r"rk_(test|live)_[A-Za-z0-9]{20,247}\Z")
 UNRESTRICTED_KEY = re.compile(r"(sk|pk)_(test|live)_")
-# Stripe's dashboard pre-selects these on its "Create restricted key" page. Account read lets
-# Tin identify the account; products back the price reads; the rest match the capabilities.
+# Stripe's dashboard pre-selects these on its "Create restricted key" page. Products back the
+# price reads; the rest match the capabilities. GET /v1/account needs a Connect permission on a
+# restricted key, so Tin never asks for it and identifies the account without it.
 DASHBOARD_PERMISSIONS = (
-    "rak_account_read",
     "rak_customer_read",
     "rak_subscription_read",
     "rak_plan_read",
@@ -97,6 +97,8 @@ RATE_REASONS = frozenset(
 # 2100-01-01T00:00:00Z; Stripe timestamps are Unix seconds.
 MAX_TIMESTAMP = 4_102_444_800
 STRIPE_ID = re.compile(r"[A-Za-z0-9_]{3,255}\Z")
+# Stripe's permission errors name the account: "... for this endpoint on account 'acct_…'".
+ACCOUNT_IN_MESSAGE = re.compile(r"\b(acct_[A-Za-z0-9]{6,64})\b")
 
 
 def create_key_url(name: str = "Tin") -> str:
@@ -565,9 +567,23 @@ def _display_name(account: dict[str, Any]) -> str | None:
     return None
 
 
+def _account_from_refusal(error: StripePermissionDenied, key: str) -> str:
+    """The account a permission error names, or a stable stand-in derived from the key."""
+    message = error.provider_error.message if error.provider_error else None
+    found = ACCOUNT_IN_MESSAGE.search(message or "")
+    if found:
+        return found.group(1)
+    return "stripe_key_" + hashlib.sha256(key.encode()).hexdigest()[:24]
+
+
 async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
-    """Identify the account and probe each read; raise a founder-facing error otherwise."""
+    """Identify the account and probe each read; raise a founder-facing error otherwise.
+
+    Reading /v1/account needs a Connect permission on a restricted key, which Tin's link does not
+    ask for. Without it the account id comes from Stripe's refusal, and the account has no name.
+    """
     reader = StripeReader(client, key)
+    account: dict[str, Any] = {}
     try:
         account, _ = await reader.get("/v1/account")
     except StripeAuthenticationFailed:
@@ -575,21 +591,20 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
             "Stripe rejected this key. Copy the whole rk_… value, and check the key was not "
             "deleted or expired in Stripe."
         ) from None
-    except StripePermissionDenied:
-        raise IntegrationInputError(
-            "This key cannot read your Stripe account details. Create the key from Tin's link, "
-            "which includes Account read, or add it to the key in Stripe."
-        ) from None
+    except StripePermissionDenied as error:
+        account = {"id": _account_from_refusal(error, key)}
     except IntegrationRateLimitedError:
         raise IntegrationUpstreamError(
             "Stripe is rate-limiting requests right now; try again in a minute."
         ) from None
-    except ServiceCallRefused:
-        raise IntegrationUpstreamError("Stripe could not check the key; try again.") from None
+    except ServiceCallRefused as error:
+        raise IntegrationUpstreamError(
+            explain("Stripe could not check the key; try again.", error.provider_error)
+        ) from None
     except httpx.HTTPError:
         raise IntegrationUpstreamError("Stripe could not be reached; try again.") from None
     account_id = account.get("id")
-    if not isinstance(account_id, str) or not account_id.startswith("acct_"):
+    if not isinstance(account_id, str) or not account_id.startswith(("acct_", "stripe_key_")):
         raise IntegrationUpstreamError("Stripe did not identify the account for this key")
     readable: dict[str, bool] = {}
     for path in RESOURCE_NAMES:
@@ -600,7 +615,14 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
             readable[path] = False
         except StripeAuthenticationFailed:
             raise IntegrationInputError("Stripe rejected this key while checking it.") from None
-        except (ServiceCallRefused, httpx.HTTPError):
+        except ServiceCallRefused as error:
+            raise IntegrationUpstreamError(
+                explain(
+                    "Stripe could not finish checking the key; try again in a minute.",
+                    error.provider_error,
+                )
+            ) from None
+        except httpx.HTTPError:
             raise IntegrationUpstreamError(
                 "Stripe could not finish checking the key; try again in a minute."
             ) from None
@@ -623,7 +645,10 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
 
 
 def _label(configuration: dict[str, Any]) -> str:
-    name = configuration.get("account_name") or configuration.get("account_id") or "Stripe"
+    account_id = configuration.get("account_id")
+    if isinstance(account_id, str) and account_id.startswith("stripe_key_"):
+        account_id = None
+    name = configuration.get("account_name") or account_id or "Stripe"
     return name if configuration.get("livemode") else f"{name} (test mode)"
 
 

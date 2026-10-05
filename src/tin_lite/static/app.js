@@ -24,6 +24,7 @@ const projectMenu = document.querySelector("#project-menu");
 const integrationProjectDialog = document.querySelector("#integration-project-dialog");
 const integrationProjectForm = document.querySelector("#integration-project-form");
 const integrationProjectTitle = document.querySelector("#integration-project-title");
+const integrationProjectError = document.querySelector("#integration-project-error");
 const integrationProjectCopy = document.querySelector("#integration-project-copy");
 const integrationProjectOptions = document.querySelector("#integration-project-options");
 const projectCreateDialog = document.querySelector("#project-create-dialog");
@@ -489,10 +490,19 @@ async function api(path, options = {}) {
 }
 
 function showToast(message) {
+  // A modal dialog sits in the top layer above everything else, so the toast joins it there.
+  const host = document.querySelector("dialog:modal") || document.body;
+  if (toast.parentElement !== host) host.append(toast);
   toast.textContent = message;
   toast.classList.add("is-visible");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("is-visible"), 3200);
+}
+
+function showIntegrationDialogError(message) {
+  // Failures inside the connection dialog stay in it until the founder retries or closes it.
+  integrationProjectError.textContent = message || "";
+  integrationProjectError.hidden = !message;
 }
 
 async function signOutTin() {
@@ -7027,7 +7037,10 @@ async function chooseIntegrationResource(providerKey) {
   integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Later";
   integrationProjectOptions.setAttribute("aria-label", copy.noun);
   renderIntegrationResourceOptions();
-  if (!integrationProjectDialog.open) integrationProjectDialog.showModal();
+  if (!integrationProjectDialog.open) {
+    showIntegrationDialogError(null);
+    integrationProjectDialog.showModal();
+  }
   const current = () => state.resourceChoice?.providerKey === providerKey && state.resourceChoice.projectId === context.projectId;
   try {
     const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
@@ -7038,7 +7051,7 @@ async function chooseIntegrationResource(providerKey) {
   } catch (error) {
     if (!isCurrentProjectContext(context) || !current()) return;
     state.resourceChoice.options = [];
-    showToast(`Could not load the choices: ${error.message}`);
+    showIntegrationDialogError(`Could not load the choices: ${error.message}`);
   }
   renderIntegrationResourceOptions();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
@@ -7109,7 +7122,7 @@ async function confirmIntegrationResource() {
     showToast(`${updated.name} now uses ${option?.label || "your choice"}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not link the ${copy.noun}: ${error.message}`);
+    showIntegrationDialogError(`Could not link the ${copy.noun}: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = copy.confirm;
   }
@@ -7133,6 +7146,7 @@ function chooseGoogleAdsAccount(projectId) {
   input.value = state.googleAdsChoice.customerId;
   input.addEventListener("input", () => { state.googleAdsChoice.customerId = input.value; });
   integrationProjectOptions.append(field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   input.focus();
 }
@@ -7142,7 +7156,7 @@ async function confirmGoogleAdsAccount() {
   if (!choice) return;
   const digits = (choice.customerId || "").replace(/[^0-9]/g, "");
   if (digits.length !== 10) {
-    showToast("A Google Ads customer id has ten digits, like 123-456-7890.");
+    showIntegrationDialogError("A Google Ads customer id has ten digits, like 123-456-7890.");
     return;
   }
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
@@ -7164,7 +7178,7 @@ async function confirmGoogleAdsAccount() {
       : "Invitation sent. Accept it in Google Ads, then press Check again.");
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not link Google Ads: ${error.message}`);
+    showIntegrationDialogError(`Could not link Google Ads: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Send invitation";
   }
@@ -7193,6 +7207,7 @@ function chooseStripeKey(projectId) {
   field.className = "project-create-field";
   field.innerHTML = `<span>Stripe restricted key</span><input type="password" name="restricted_key" autocomplete="off" spellcheck="false" placeholder="rk_live_…" maxlength="300" required />`;
   integrationProjectOptions.append(link, field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   field.querySelector("input").focus();
 }
@@ -7203,7 +7218,7 @@ async function confirmStripeKey() {
   const input = integrationProjectOptions.querySelector('input[name="restricted_key"]');
   const key = (input?.value || "").trim();
   if (!/^rk_(live|test)_/.test(key)) {
-    showToast(/^(sk|pk)_/.test(key)
+    showIntegrationDialogError(/^(sk|pk)_/.test(key)
       ? "That is a secret or publishable key. Paste a restricted key starting rk_live_ or rk_test_."
       : "Paste a Stripe restricted key; it starts with rk_live_ or rk_test_.");
     return;
@@ -7226,7 +7241,7 @@ async function confirmStripeKey() {
     showToast(`Stripe connected: ${stripeHealth(updated)}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not connect Stripe: ${error.message}`);
+    showIntegrationDialogError(`Could not connect Stripe: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Save key";
   }
@@ -7276,6 +7291,7 @@ function chooseGitHubInstallation() {
     "The Tin GitHub App is installed on more than one account you can access. Choose the one that owns this project’s repository.";
   integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Continue to GitHub";
   renderGitHubInstallationOptions();
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
 }
@@ -7673,6 +7689,7 @@ projectInviteDialog.addEventListener("close", () => {
 
 integrationProjectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  showIntegrationDialogError(null);
   if (state.resourceChoice) {
     await confirmIntegrationResource();
     return;
@@ -7696,6 +7713,7 @@ integrationProjectForm.querySelector("[data-cancel-integration-project]").addEve
 });
 
 integrationProjectDialog.addEventListener("close", () => {
+  showIntegrationDialogError(null);
   state.githubInstallationChoice = null;
   state.resourceChoice = null;
   integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Cancel";
