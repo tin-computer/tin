@@ -1121,6 +1121,13 @@ class MarkdownHeadingView(BaseModel):
     title: str
 
 
+class MarkdownAssetView(BaseModel):
+    """A figure or embed the reader loads from the project at the document's revision."""
+
+    path: str
+    media_type: str
+
+
 class MarkdownDocumentView(BaseModel):
     markdown: str
     html: str
@@ -1135,6 +1142,57 @@ class MarkdownDocumentView(BaseModel):
     size_bytes: int | None = None
     related_documents: list[dict[str, str]] = Field(default_factory=list)
     sha256: str | None = None
+    assets: list[MarkdownAssetView] = Field(default_factory=list)
+    # Files the draft referred to that Tin left out, each with its reason.
+    asset_notes: list[str] = Field(default_factory=list)
+
+
+async def _run_document_assets(database, run, path, source):
+    """A draft's kept figures and embeds, from its published checkpoint, and what was left out."""
+    from tin_lite import page_assets
+
+    if source != "canonical" or not path.endswith(".md") or run.executor != "codex.procedure":
+        return [], [], None
+    published = await database.get_effect(f"{run.id}:procedure_canonical_commit")
+    checkpoint = (
+        (published.result or {}).get("checkpoint")
+        if published is not None and published.status == "completed"
+        else None
+    )
+    persisted = await database.get_effect(f"{run.id}:procedure_artifact_persist")
+    dropped = ((persisted.result or {}) if persisted is not None else {}).get("dropped_assets")
+    notes = [
+        f"{item['path'].rsplit('/', 1)[-1]} was left out: {item['reason']}."
+        for item in dropped or []
+    ]
+    assets = [
+        MarkdownAssetView(path=item["artifact_path"], media_type=item["media_type"])
+        for item in (checkpoint or {}).get("assets") or []
+    ]
+    return assets, notes, page_assets.folder(path) if assets or notes else None
+
+
+async def _file_document_assets(storage, project, path, revision, markdown):
+    """The figures and embeds a Markdown file in the project refers to that exist there."""
+    from tin_lite import page_assets
+
+    if not path.endswith(".md"):
+        return [], None
+    referenced = page_assets.referenced(markdown, path)
+    if not referenced:
+        return [], None
+    try:
+        present = set(
+            await storage.list_canonical_files_at(repo_id=project.state_repo_id, revision=revision)
+        )
+    except LookupError:
+        return [], None
+    assets = [
+        MarkdownAssetView(path=item, media_type=page_assets.media_type(item))
+        for item in referenced
+        if item in present
+    ]
+    return assets, page_assets.folder(path)
 
 
 class ProjectFileView(BaseModel):
@@ -2721,7 +2779,7 @@ async def get_project_file_document(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="project file is not Markdown",
         )
-    _, content = await _read_project_file(
+    project, content = await _read_project_file(
         project_id=project_id,
         path=path,
         revision=revision,
@@ -2735,7 +2793,10 @@ async def get_project_file_document(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Markdown project file is not UTF-8",
         ) from exc
-    document = render_markdown(markdown)
+    assets, folder = await _file_document_assets(
+        request.app.state.runtime.storage, project, path, revision, markdown
+    )
+    document = render_markdown(markdown, asset_folder=folder)
     source_query = f"path={quote(path, safe='')}&revision={revision}"
     response.headers["X-Tin-File-Source"] = "code.storage"
     response.headers["X-Tin-File-Revision"] = revision
@@ -2753,6 +2814,7 @@ async def get_project_file_document(
         path=path,
         revision=revision,
         size_bytes=len(content),
+        assets=assets,
     )
 
 
@@ -4469,7 +4531,10 @@ async def get_artifact_document(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Markdown artifact is not UTF-8",
         ) from exc
-    document = render_markdown(markdown)
+    assets, asset_notes, folder = await _run_document_assets(
+        request.app.state.runtime.database, run, output.path, source
+    )
+    document = render_markdown(markdown, asset_folder=folder)
     response.headers["X-Tin-Artifact-Source"] = "code.storage"
     response.headers["X-Tin-Output-Kind"] = source
     response.headers["X-Tin-Output-Revision"] = output.revision
@@ -4491,6 +4556,8 @@ async def get_artifact_document(
         headings=[
             MarkdownHeadingView(id=heading.id, title=heading.title) for heading in document.headings
         ],
+        assets=assets,
+        asset_notes=asset_notes,
     )
 
 

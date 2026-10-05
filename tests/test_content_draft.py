@@ -45,6 +45,8 @@ async def fixture(db, monkeypatch, *, editorial=False, clean=False, judgment=Fal
                 output_validator=(
                     content_draft.CLEAN_VALIDATOR if clean else content_draft.VALIDATOR
                 ),
+                # Historical contracts had no assets folder.
+                output_assets=None,
             ),
         )
     if assets:

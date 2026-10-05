@@ -35,7 +35,7 @@ const context = vm.createContext({
 });
 vm.runInContext([
   "workflowForRun", "availableRunOutput", "outputReadUrl", "retainedOutputMessage", "isMarkdownPath",
-  "openRunOutputFile", "openRunArtifact", "hasOutputConflict", "runFingerprint", "renderDocument",
+  "openRunOutputFile", "openRunArtifact", "hasOutputConflict", "runFingerprint", "renderDocument", "bundleAssetLoader",
 ].map(extract).join("\n"), context);
 assert.equal(context.availableRunOutput(run).source, "retained");
 context.openRunArtifact("run");

@@ -80,7 +80,9 @@ def test_only_article_drafts_declare_an_assets_folder():
     with pytest.raises(ValueError, match="Only article drafts"):
         validate_codex_procedure_definition(diagram)
     # Definitions without assets are unchanged, so pinned runs keep their exact contract.
-    plain, _ = spec.definition_and_resource_files()
+    plain, _ = replace(
+        spec, procedure=replace(spec.procedure, output_assets=None)
+    ).definition_and_resource_files()
     assert "assets" not in plain["procedure"]["output"]
     # The sandbox learns where the article's files go, and the runner's limits.
     pinned = PinnedCodexProcedure(
@@ -361,3 +363,67 @@ def test_the_wording_check_skips_embed_video_and_diagram_blocks():
     kept = FIGURE_FENCE.sub("\n\n", text)
     assert "height" not in kept and "graph LR" not in kept
     assert "Intro words here." in kept and "print(1)" in kept
+
+
+def test_the_reader_renders_figures_embeds_videos_and_callouts():
+    from tin_lite.documents import render_markdown
+
+    markdown = (
+        '# T\n\n![Flow](./a.assets/flow.svg "What to notice")\n\n'
+        "```tin-embed\nsrc: ./a.assets/field.html\nheight: 9999\ntitle: Try <b>it</b>\n```\n\n"
+        "```tin-embed\nsrc: ../../secrets.html\n```\n\n"
+        "```tin-video\nurl: https://www.youtube.com/watch?v=dQw4w9WgXcQ\ntitle: Trailer\n```\n\n"
+        "```tin-video\nurl: javascript:alert(1)\n```\n\n"
+        "> [!WARNING]\n> Mind the gate.\n\n> A plain quote.\n"
+    )
+    html = render_markdown(markdown, asset_folder="content/articles/a.assets").html
+    # A figure has no URL; the reader loads it with the member's session.
+    assert 'class="md-asset" data-asset="content/articles/a.assets/flow.svg"' in html
+    assert 'src="./a.assets' not in html
+    assert 'data-height="1600" data-title="Try &lt;b&gt;it&lt;/b&gt;"' in html
+    # A path outside the folder and a script URL stay plain code.
+    assert "src: ../../secrets.html" in html and "javascript:alert" in html
+    assert html.count('class="md-embed"') == 1 and html.count('class="md-video"') == 1
+    assert '<aside class="md-callout" data-kind="warning">' in html
+    assert "<blockquote>\n<p>A plain quote.</p>" in html
+    # Any other document renders as before.
+    plain = render_markdown(markdown).html
+    assert 'src="./a.assets/flow.svg"' in plain and "md-embed" not in plain
+
+
+async def test_the_review_shows_the_bundle_and_says_what_it_carries(publication_db, monkeypatch):
+    import httpx
+    from test_private_workflows import app
+
+    f, run, _, path, folder = await drafted(publication_db, monkeypatch)
+    await f.activities.persist_codex_procedure_artifact(str(run.id))
+    await f.activities.commit_codex_procedure_artifact(str(run.id))
+    assert await f.activities.request_codex_procedure_review(str(run.id))
+    explanation = await f.db.pool.fetchval(
+        "SELECT explanation FROM run_decisions WHERE run_id=$1", run.id
+    )
+    assert "With 1 figure and 1 interactive piece." in explanation
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+    ) as client:
+        document = (await client.get(f"/api/workflows/runs/{run.id}/artifact/document")).json()
+        run = await f.db.get_run(run.id)
+        in_files = (
+            await client.get(
+                f"/api/projects/{run.project_id}/files/document",
+                params={"path": path, "revision": run.canonical_commit_sha},
+            )
+        ).json()
+    kept = [
+        {"path": f"{folder}/flow.svg", "media_type": "image/svg+xml"},
+        {"path": f"{folder}/field.html", "media_type": "text/html"},
+    ]
+    assert document["assets"] == kept
+    assert document["asset_notes"] == [
+        "unsafe.svg was left out: the SVG contains script, event handlers or outside references.",
+        "missing.svg was left out: the file is missing.",
+    ]
+    assert f'data-asset="{folder}/flow.svg"' in document["html"]
+    assert f'class="md-embed" data-asset="{folder}/field.html"' in document["html"]
+    # Files shows the same article with the files it refers to that exist there.
+    assert in_files["assets"] == kept

@@ -126,3 +126,26 @@ async def verified(storage, *, repo_id: str, revision: str, binding: list[dict])
             }
         )
     return assets
+
+
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
+
+
+def attachments_line(checkpoint: dict | None, article: str) -> str | None:
+    """What a reviewer will see besides the words, for the Decisions card, or None."""
+    kept = [item["media_type"] for item in (checkpoint or {}).get("assets") or []]
+    figures = kept.count("image/svg+xml") + len(
+        re.findall(r"(?m)^(?:`{3,}|~{3,})\s*mermaid\b", article)
+    )
+    embeds = kept.count("text/html")
+    videos = len(re.findall(r"(?m)^(?:`{3,}|~{3,})\s*tin-video\b", article))
+    parts = [
+        _count(number, noun)
+        for number, noun in ((figures, "figure"), (embeds, "interactive piece"), (videos, "video"))
+        if number
+    ]
+    if not parts:
+        return None
+    listed = parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+    return f"With {listed}."

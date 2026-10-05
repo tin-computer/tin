@@ -3276,6 +3276,7 @@ function renderDocument() {
       ? cached.path || run?.artifact_path : null;
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached, {
       mode: "in-app",
+      loadAsset: route.source !== "retained" ? bundleAssetLoader(cached.revision) : undefined,
       contextLabel: route.source === "retained" && run?.retained_output?.reason === "execution_interrupted"
         ? `Partial result · ${cached.filename}` : undefined,
       pathElement: projectPath ? projectFilePathElement({ path: projectPath }, "markdown-filename") : undefined,
@@ -5613,6 +5614,14 @@ function projectFileRawUrl(route, download = false, projectId = state.project.id
   return `/api/projects/${encodeURIComponent(projectId)}/files/raw?${query.toString()}`;
 }
 
+// A draft's figures and embeds, read at the document's revision with the member's session.
+function bundleAssetLoader(revision, projectId = state.project?.id) {
+  if (!revision || !projectId) return undefined;
+  return (path) => authorizedFetch(projectFileRawUrl({ path, revision }, false, projectId), {
+    headers: { Accept: "*/*" },
+  }).then((response) => response.arrayBuffer());
+}
+
 function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} b`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} kb`;
@@ -5962,6 +5971,7 @@ function renderFile() {
   if (cached?.kind === "markdown") {
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached.document, {
       mode: "in-app",
+      loadAsset: bundleAssetLoader(route.revision),
       contextLabel: route.path,
       pathElement: projectFilePathElement(route, "markdown-filename"),
       factsText: `markdown · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`,

@@ -4447,6 +4447,13 @@ class TinActivities:
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
             artifact_title, lede = display_title(raw), review_line(raw)
+            from tin_lite.page_assets import attachments_line
+
+            attachments = attachments_line(
+                canonical.result.get("checkpoint"), raw.decode("utf-8", errors="replace")
+            )
+        else:
+            attachments = None
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
@@ -4469,7 +4476,7 @@ class TinActivities:
             artifact_path=path,
             artifact_title=artifact_title,
             summary=summary,
-            explanation=" ".join(part for part in (lede, destination) if part),
+            explanation=" ".join(part for part in (lede, attachments, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress
