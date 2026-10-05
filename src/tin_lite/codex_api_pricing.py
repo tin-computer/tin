@@ -118,7 +118,6 @@ def api_terms(definition, *, session_budget=False, before_v5=False, child=False,
     terms = {
         "rate_card": RATE_CARD["id"],
         "pricing": RATE_CARD,
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "codex_api",

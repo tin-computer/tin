@@ -114,6 +114,20 @@ class BillingService:
     def __init__(self, *, database, settings):
         self.db, self.settings = database, settings
 
+    @property
+    def mode(self):
+        """The Stripe mode funding new credits; it labels new accounts, terms and views."""
+        return getattr(self.settings, "stripe_mode", "test")
+
+    def funds_notice(self, notice):
+        return f"Test funds; {notice[0].lower()}{notice[1:]}" if self.mode == "test" else notice
+
+    def fallback_terms(self, definition):
+        # The fallback card's rates are invented, so they never charge live funds.
+        if self.mode != "test":
+            raise BillingError("unmetered_profile", "This execution profile is not billing-ready.")
+        return test_terms(definition)
+
     async def workspace_billing_admin(self, conn, workspace_id):
         """One authority for wallet creation and activation, including older workspaces.
 
@@ -154,11 +168,12 @@ class BillingService:
             return
         await conn.execute(
             """INSERT INTO billing_accounts(workspace_id, mode,
-                admin_clerk_user_id, run_billing_enabled) VALUES($1,'test',$2,true)
+                admin_clerk_user_id, run_billing_enabled) VALUES($1,$3,$2,true)
             ON CONFLICT(workspace_id) DO UPDATE SET run_billing_enabled=true
             WHERE billing_accounts.workspace_id=$1 AND NOT billing_accounts.run_billing_enabled""",
             workspace_id,
             admin,
+            self.mode,
         )
         # `concurrency` is no longer read: the money limits bound spending. The column is
         # written until a later migration drops it, so this release needs no migration.
@@ -224,10 +239,11 @@ class BillingService:
             if admin:
                 await conn.execute(
                     """INSERT INTO billing_accounts(workspace_id, mode, admin_clerk_user_id,
-                           run_billing_enabled) VALUES($1,'test',$2,false)
+                           run_billing_enabled) VALUES($1,$3,$2,false)
                        ON CONFLICT(workspace_id) DO NOTHING""",
                     target["workspace_id"],
                     admin,
+                    self.mode,
                 )
             account = await conn.fetchrow(
                 "SELECT * FROM billing_accounts WHERE workspace_id=$1 FOR UPDATE",
@@ -373,12 +389,13 @@ class BillingService:
                 raise BillingError("billing_admin_exists", "A billing admin is already assigned.")
             await conn.execute(
                 """INSERT INTO billing_accounts(workspace_id, mode, admin_clerk_user_id)
-                   VALUES($1,'test',$2) ON CONFLICT(workspace_id) DO UPDATE
+                   VALUES($1,$3,$2) ON CONFLICT(workspace_id) DO UPDATE
                    SET run_billing_enabled=true WHERE billing_accounts.workspace_id=$1""",
                 workspace_id,
                 actor,
+                self.mode,
             )
-        return {"workspace_id": str(workspace_id), "mode": "test"}
+        return {"workspace_id": str(workspace_id), "mode": self.mode}
 
     async def update_policy(self, project_id, actor, policy: ProjectSpendingPolicy):
         if not policy.per_run_nanos or not policy.monthly_nanos or policy.schedule_max_nanos == 0:
@@ -422,20 +439,21 @@ class BillingService:
         before_v5=False,
         room=None,
     ):
-        return configured_terms(
-            self._terms(
-                definition,
-                project_id,
-                inputs,
-                session_budget=session_budget,
-                before_v5=before_v5,
-                room=room,
-            ),
+        terms = self._terms(
             definition,
+            project_id,
             inputs,
+            session_budget=session_budget,
+            before_v5=before_v5,
+            room=room,
         )
+        return configured_terms(terms, definition, inputs)
 
-    def _terms(
+    def _terms(self, definition, project_id, inputs=None, **options):
+        """Priced terms labelled with the Stripe mode that funds them."""
+        return {**self._priced_terms(definition, project_id, inputs, **options), "mode": self.mode}
+
+    def _priced_terms(
         self,
         definition,
         project_id,
@@ -459,7 +477,7 @@ class BillingService:
             return {
                 "rate_card": POLICY,
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -468,7 +486,7 @@ class BillingService:
             return {
                 "rate_card": "tin-funded-onboarding-v1",
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -497,7 +515,7 @@ class BillingService:
             return {
                 "rate_card": CONNECTED_ACCOUNT_EXECUTORS[definition["executor"]],
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -513,7 +531,7 @@ class BillingService:
             return api_terms(
                 definition, session_budget=session_budget, before_v5=before_v5, room=room
             )
-        return test_terms(definition)
+        return self.fallback_terms(definition)
 
     async def quote(
         self,
@@ -573,7 +591,7 @@ class BillingService:
         if terms["kind"] == "included":
             return {
                 "enabled": False,
-                "mode": "test",
+                "mode": self.mode,
                 "maximum_usd": "0.00",
                 "estimated_usd": "0.00",
                 "approval_required": False,
@@ -587,7 +605,7 @@ class BillingService:
             }
         preview = {
             "enabled": True,
-            "mode": "test",
+            "mode": self.mode,
             "currency": "USD",
             "maximum_usd": usd(terms["maximum_nanos"]),
             "estimated_usd": usd(
@@ -625,20 +643,20 @@ class BillingService:
         return {
             **preview,
             "id": str(quote_id),
-            "mode": "test",
+            "mode": self.mode,
             "currency": "USD",
             "maximum_usd": usd(terms["maximum_nanos"]),
             "expires_at": expires.isoformat(),
             "rate_card": terms["rate_card"],
             "terms": terms,
-            "notice": (
-                "Test funds; published OpenAI API rates, no markup or sandbox fee. "
+            "notice": self.funds_notice(
+                "Published OpenAI API rates, no markup or sandbox fee. "
                 "Only verified usage is charged, up to this maximum."
                 if terms["kind"] == "codex_api"
-                else "Test funds; verified model and data-provider usage at the quoted rates. "
+                else "Verified model and data-provider usage at the quoted rates. "
                 "Child steps share this maximum; no orchestration fee."
                 if "service_pricing" in terms
-                else "Test funds and illustrative rates; no real customer charge."
+                else "Illustrative rates; no real customer charge."
             ),
         }
 
@@ -729,7 +747,8 @@ class BillingService:
                 if parent_terms.get("codex_api_children"):
                     terms = api_terms(definition, child=True)
                 else:
-                    terms = test_terms(definition)
+                    terms = self.fallback_terms(definition)
+                terms = {**terms, "mode": self.mode}
             else:
                 terms = self.terms(definition, run["project_id"], object_value(run["input"]))
             if "service_pricing" in terms:
@@ -1572,7 +1591,7 @@ class BillingService:
             return {
                 "run_id": str(run_id),
                 "root_run_id": str(root["run_id"]),
-                "mode": "test",
+                "mode": self.mode,
                 "status": "in_progress"
                 if (incremental(terms) or session_funded(terms)) and root["status"] == "reserved"
                 else root["status"],
@@ -1654,7 +1673,7 @@ class BillingService:
             result = {
                 "enabled": True,
                 "run_billing_enabled": account["run_billing_enabled"],
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "is_admin": bool(admin),
                 "workspace_id": str(project["workspace_id"]),

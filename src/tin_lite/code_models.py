@@ -105,7 +105,6 @@ def model_terms(definition):
     terms = {
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "metered_workflow",

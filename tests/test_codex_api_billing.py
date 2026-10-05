@@ -116,7 +116,7 @@ async def paid_relay(
             f.workflow.definition, session_budget=contract == SESSION_CONTRACT_V4, before_v5=True
         )
         q["terms"] = configured_terms(
-            isolated_v1_terms(terms) if contract == CONTRACT else terms,
+            {**(isolated_v1_terms(terms) if contract == CONTRACT else terms), "mode": "test"},
             f.workflow.definition,
             {"brief": "Explain the public docs"},
         )

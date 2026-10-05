@@ -1,4 +1,4 @@
-"""Small USD/test-only tariff contract. Supplier expense is a separate measurement."""
+"""Small USD tariff contract. Supplier expense is a separate measurement."""
 
 import hashlib
 import json
@@ -64,6 +64,8 @@ def final_charge(nanos, maximum):
 def test_terms(definition):
     """Deliberately fictional test tariff, not supplier prices or a live offer.
 
+    Stripe test mode only; BillingService.fallback_terms refuses it in live mode.
+
     No runtime/model route is selected by this function. All native adapters keep
     their own explicit provider/model contract; only metered executors qualify.
     """
@@ -85,7 +87,6 @@ def test_terms(definition):
         raise BillingError("unmetered_workflow", "This workflow is not in the paid test pilot.")
     return {
         "rate_card": "tin-test-only-v1",
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": kind,
