@@ -5,7 +5,8 @@ The trusted `workspace.content_delivery` context supplies the approved copy (`ar
 Markdown), its source identity and the destination repository. `source_kind` says what it
 is: `article` (a planned article, with its plan `item`), `answer_page` or `public_article`.
 Answer pages and public articles carry their search listing apart from the copy in
-`page_metadata` (`meta_title`, `meta_description`). Keep the Markdown in Tin unchanged.
+`page_metadata` (`meta_title`, `meta_description`, and the approved `slug` when the draft
+chose one). Keep the Markdown in Tin unchanged.
 Inspect this repository's instructions and existing pages, and prepare one coherent site
 change (at most 10 files) as an unmerged PR.
 

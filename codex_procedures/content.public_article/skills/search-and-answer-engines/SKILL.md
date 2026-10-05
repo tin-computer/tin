@@ -17,11 +17,14 @@ Start the artifact with frontmatter for search listings, then the `# ` title:
 ---
 meta_title: "<under 60 characters: the article's question or its answer>"
 meta_description: "<70 to 160 characters that state what the article answers or argues>"
+slug: "<three to five lowercase, hyphenated words that name the main search term>"
 ---
 ```
 
 Wrap each value in double quotes and escape any double quote inside it. Plain text only: no
-Markdown and no line breaks. Add no other keys and put nothing else before the title.
+Markdown and no line breaks. The slug is the last part of the page's address on the site, and
+the founder approves it with the draft, so leave out filler words such as the, a, of or how.
+Add no other keys and put nothing else before the title.
 
 ## Article shape
 

@@ -662,10 +662,10 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
         digest.update(files[path])
     # The definition and procedure files new runs pin: 1.4.0 builds the page in the site's own
     # format (1.3.0 kept it as Markdown or a JSON string); 1.5.0 matches the site's other pages
-    # and adds no outside fonts.
-    assert spec.version_label == "1.5.0"
+    # and adds no outside fonts; 1.6.0 uses the slug the founder approved with the draft.
+    assert spec.version_label == "1.6.0"
     assert digest.hexdigest() == (
-        "121ab1bbc9bb025f281f09de1af7f80138c2b54e7a99eae6da8020f6bfc35d95"
+        "3fae795a20f1259ec130a337ff23a8369f606d7606574a2e4b8b5a53b7f3f86c"
     )
     # An approval-started content.deliver run pins no change row and keeps its own rules:
     # a pull-request setting never merges, and nothing records a merge for it.

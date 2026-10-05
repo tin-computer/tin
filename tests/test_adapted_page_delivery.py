@@ -181,7 +181,7 @@ async def approve_answer_page(f, run):
     return await f.db.get_run(run.id)
 
 
-async def public_article(f, *, body=ARTICLE_BODY):
+async def public_article(f, *, body=ARTICLE_BODY, listing=LISTING):
     run, _ = await f.db.create_run(
         project_id=f.project.id,
         workflow_id=PUBLIC_ARTICLE_WORKFLOW_ID,
@@ -191,7 +191,7 @@ async def public_article(f, *, body=ARTICLE_BODY):
         input_payload={"brief": "Explain a practical buyer problem."},
     )
     path = f"content/articles/{run.id}.md"
-    raw = (LISTING + body).encode()
+    raw = (listing + body).encode()
     revision = f.storage.repo.edit({path: raw})
     key = f"{run.id}:procedure_canonical_commit"
     async with f.db.effect_lock(key, "procedure_canonical_commit") as (conn, _):
@@ -812,6 +812,24 @@ async def test_a_proposed_url_follows_the_saved_route(publication_db, monkeypatc
     later = await pages.view(run, None, now=now + timedelta(minutes=11))
     assert later["url"] == "https://example.com/blog/a-useful-public-article"
     assert later["source"] == "saved_route" and later["final"] is False
+
+
+async def test_the_approved_address_is_the_drafts_own_slug(publication_db, monkeypatch):
+    # Sheepdogs: Tin proposed /blog/how-i-filmed-the-sheepdogs-trailers-inside-the-game and
+    # content.deliver d93bbfd0 published /blog/filming-sheepdogs-trailers.
+    f = await fixture(publication_db, monkeypatch)
+    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
+    listing = LISTING.replace("---\n\n", 'slug: "keep-ai-work-reliable"\n---\n\n', 1)
+    run = await public_article(f, listing=listing)
+    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
+    pages._site = AsyncMock(return_value="example.com")
+    view = await pages.view(run, None)
+    assert view["url"] == "https://example.com/blog/keep-ai-work-reliable"
+    run = await approve_article(f, run)
+    source = await approved_document.select(
+        database=f.db, storage=f.storage, project_id=f.project.id, source_run_id=run.id
+    )
+    assert source["page_metadata"]["slug"] == "keep-ai-work-reliable"
 
 
 def test_card_cost_is_rounded_to_a_dollar_or_cents():

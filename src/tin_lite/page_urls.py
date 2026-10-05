@@ -138,9 +138,10 @@ def safe_pull_request(value):
     return {"url": value["url"], "number": number if type(number) is int else None}
 
 
-def base_for(run, *, selection=None, site=None, title=None, route=None):
-    """The page's address before delivery: the plan's destination, else a proposed slug,
-    under the route the founder chose for such pages when there is one."""
+def base_for(run, *, selection=None, site=None, title=None, route=None, slug=None):
+    """The page's address before delivery: the plan's destination, else the draft's own slug
+    (or one from its title), under the route the founder chose for such pages when there is
+    one."""
     title = title or run.artifact_title
     if run.workflow_id == DRAFT_WORKFLOW_ID:
         if not selection:
@@ -161,7 +162,7 @@ def base_for(run, *, selection=None, site=None, title=None, route=None):
         host = site_host(site)
     if not host or not title:
         return None
-    slug = slug_for(title, "page")
+    slug = slug or slug_for(title, "page")
     routed = route_url(route.replace("{slug}", slug), host) if route else None
     return {
         "url": routed or f"https://{host}/{slug}",
@@ -428,12 +429,28 @@ class PageUrls:
         title = await self._title(run)
         if not title:
             return None
-        route = None
+        route = slug = None
         if self.storage is not None:
             from tin_lite.page_routes import PageRouteService
 
             route = await PageRouteService(database=self.db, storage=self.storage).route_for(run)
-        return base_for(run, site=await self._site(run.project_id), title=title, route=route)
+            slug = await self._slug(run)
+        return base_for(
+            run, site=await self._site(run.project_id), title=title, route=route, slug=slug
+        )
+
+    async def _slug(self, run):
+        """The slug the founder approves with the draft's listing, or None."""
+        from tin_lite.article_review import page_slug
+        from tin_lite.content_delivery import ContentDelivery, page_frontmatter
+
+        try:
+            _raw, article, _title = await ContentDelivery(
+                database=self.db, storage=self.storage
+            ).document_source(run)
+            return page_slug(page_frontmatter(article)[0].get("slug"))
+        except (ValueError, LookupError):
+            return None
 
     async def _approval(self, run, delivery):
         """What Publish now or Open a pull request would write, before the reviewer chooses."""

@@ -46,12 +46,17 @@ def _page_path(path, kind):
 
 
 def _metadata(values):
-    """The search listing a site can reuse: plain one-line strings only."""
-    return {
+    """The search listing a site can reuse (plain one-line strings), and the approved slug."""
+    from tin_lite.article_review import page_slug
+
+    metadata = {
         key: " ".join(values[key].split())[:300]
         for key in METADATA_KEYS
         if isinstance(values.get(key), str) and values[key].strip()
     }
+    if slug := page_slug(values.get("slug")):
+        metadata["slug"] = slug
+    return metadata
 
 
 async def _review_command(executor, run_id):
