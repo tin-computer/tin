@@ -435,6 +435,13 @@ def test_arguments_map_to_stripe_list_parameters() -> None:
         "created[lte]": 1788307199,
         "status": "all",
     }
+    _, params = request_for("subscriptions.list", {"customer": "cus_X1", "status": "all"})
+    assert params == {
+        "limit": 100,
+        "expand[]": "data.customer",
+        "status": "all",
+        "customer": "cus_X1",
+    }
     _, params = request_for("prices.list", {"active": False, "limit": 5})
     assert params == {"limit": 5, "expand[]": "data.product", "active": "false"}
     _, params = request_for(

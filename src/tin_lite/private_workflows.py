@@ -109,6 +109,7 @@ def validate_private_definition(definition):
         "cold-outreach",
         "product-qa",
         "creative-studio",
+        "revenue",
     }:
         raise ValueError("choose an existing system or omit system")
     from tin_lite.workflow_packages import validate_package_input_schema

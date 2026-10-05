@@ -261,6 +261,14 @@ class IntegrationDeliveryUnknownError(IntegrationUpstreamError):
     """The provider call may have succeeded, so automatic replay must fail closed."""
 
 
+class IntegrationDeliveryRefusedError(IntegrationError):
+    """The provider answered and refused the send, so nothing was delivered."""
+
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
+
+
 @dataclass(frozen=True)
 class IntegrationDefinition:
     key: str
@@ -2982,8 +2990,9 @@ class IntegrationService:
                         status="failed",
                         error_code=f"gmail_http_{response.status_code}",
                     )
-                    raise IntegrationError(
-                        f"Gmail refused the message (HTTP {response.status_code})"
+                    raise IntegrationDeliveryRefusedError(
+                        f"Gmail refused the message (HTTP {response.status_code})",
+                        status=response.status_code,
                     )
                 try:
                     payload = _provider_json(response, provider="Gmail")

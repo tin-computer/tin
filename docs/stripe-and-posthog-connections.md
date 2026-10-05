@@ -21,7 +21,8 @@ founder's setup, so you can explain it. The code lives in
 Packages built on these connections: [`outreach.paying_segment`](../workflow_packages/outreach.paying_segment/main.py)
 (code, Stripe), [`product.analytics_brief`](product-analytics-brief.md) (procedure, PostHog)
 and the [`example.posthog_funnel`](../workflow_packages/example.posthog_funnel/workflow.json)
-authoring example.
+authoring example. The native [`revenue.payment_recovery`](payment-recovery.md) calls the same
+Stripe operations directly from its activities.
 
 ## Founder setup
 
@@ -135,11 +136,11 @@ the start of that day for `created_gte`, its last second for `created_lte`.
 
 | Operation | Arguments | Record fields |
 | --- | --- | --- |
-| `subscriptions.list` | `status` (`all` (default), `active`, `past_due`, `unpaid`, `canceled`, `incomplete`, `incomplete_expired`, `trialing`, `paused`, `ended`), `created_gte`, `created_lte` | `id`, `status`, `created`, `start_date`, `current_period_end`, `cancel_at_period_end`, `canceled_at`, `ended_at`, `trial_start`, `trial_end`, `cancellation_details{reason, feedback}`, `livemode`, `metadata`, `discount_ids`, `coupon_id`, `items[{price_id, product_id, unit_amount, currency, interval, interval_count, quantity}]` (at most 20), `customer{id, email, name, email_domain, country, created, metadata}` |
+| `subscriptions.list` | `status` (`all` (default), `active`, `past_due`, `unpaid`, `canceled`, `incomplete`, `incomplete_expired`, `trialing`, `paused`, `ended`), `customer` (`cus_…`), `created_gte`, `created_lte` | `id`, `status`, `created`, `start_date`, `current_period_end`, `cancel_at_period_end`, `canceled_at`, `ended_at`, `trial_start`, `trial_end`, `cancellation_details{reason, feedback}`, `livemode`, `metadata`, `discount_ids`, `coupon_id`, `items[{price_id, product_id, unit_amount, currency, interval, interval_count, quantity}]` (at most 20), `customer{id, email, name, email_domain, country, created, metadata}` |
 | `customers.list` | `created_gte`, `created_lte`, `email` (one exact address) | `id`, `email`, `name`, `email_domain`, `country`, `created`, `metadata`, `currency`, `delinquent` |
-| `invoices.list` | `status` (`draft`, `open`, `paid`, `uncollectible`, `void`), `customer` (`cus_…`), `subscription` (`sub_…`), `created_gte`, `created_lte` | `id`, `customer`, `subscription`, `status`, `billing_reason`, `amount_due`, `amount_paid`, `currency`, `created`, `period_start`, `period_end`, `attempt_count` |
+| `invoices.list` | `status` (`draft`, `open`, `paid`, `uncollectible`, `void`), `customer` (`cus_…`), `subscription` (`sub_…`), `created_gte`, `created_lte` | `id`, `customer`, `subscription`, `status`, `billing_reason`, `amount_due`, `amount_paid`, `amount_remaining`, `currency`, `created`, `period_start`, `period_end`, `attempt_count`, `collection_method`, `next_payment_attempt`, `due_date`, `customer_email`, `customer_name`, `hosted_invoice_url` (only on `https://invoice.stripe.com/`), `lines` (up to three line descriptions) |
 | `prices.list` | `active` (true/false) | `id`, `product{id, name}`, `unit_amount`, `currency`, `type`, `recurring{interval, interval_count}` (null for one-time prices), `active`, `nickname` |
-| `charges.list` | `created_gte`, `created_lte` | `id`, `customer`, `amount`, `amount_refunded`, `currency`, `status`, `paid`, `refunded`, `created`, `failure_code` |
+| `charges.list` | `created_gte`, `created_lte` | `id`, `customer`, `amount`, `amount_refunded`, `currency`, `status`, `paid`, `refunded`, `created`, `failure_code`, `failure_message`, `outcome_reason` (the bank's decline code), `card{brand, exp_month, exp_year}` (never card digits) |
 
 Amounts are in the currency's minor unit, as Stripe returns them. Timestamps are Unix seconds.
 A deleted customer is `{id, deleted: true}`. `metadata` keeps at most 20 string entries (keys
@@ -277,8 +278,9 @@ errors so a package bug fails the run.
 
 ## Privacy
 
-Stripe customer records, including the customer expanded into each subscription, return the
-customer's **full email address and name**. They exist so a workflow can group customers (for
+Stripe customer records, including the customer expanded into each subscription, and invoices
+(`customer_email`, `customer_name`) return the customer's **full email address and name**.
+An invoice's `hosted_invoice_url` is that customer's payment page; treat it like their address. They exist so a workflow can group customers (for
 example by email domain) or match them, not so it can publish them. Keep them out of reports
 unless the workflow's purpose requires it and its description says so. Customer and
 subscription `metadata` can contain anything the founder's checkout wrote there; treat it as

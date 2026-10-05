@@ -202,6 +202,8 @@ def request_for(operation: str, arguments: Any) -> tuple[Operation, dict[str, An
         params["created[lte]"] = bounds["created_lte"]
     if operation == "subscriptions.list":
         params["status"] = _choice(args.get("status", "all"), "status", SUBSCRIPTION_STATUSES)
+    if operation == "subscriptions.list" and args.get("customer") is not None:
+        params["customer"] = _stripe_id(args["customer"], "customer", "cus_")
     if operation == "invoices.list":
         if args.get("status") is not None:
             params["status"] = _choice(args["status"], "status", INVOICE_STATUSES)
@@ -356,7 +358,30 @@ def project_invoice(value: dict[str, Any]) -> dict[str, Any]:
         "period_start": integer(value.get("period_start")),
         "period_end": integer(value.get("period_end")),
         "attempt_count": integer(value.get("attempt_count")),
+        "amount_remaining": integer(value.get("amount_remaining")),
+        "collection_method": text(value.get("collection_method"), 40),
+        "next_payment_attempt": integer(value.get("next_payment_attempt")),
+        "due_date": integer(value.get("due_date")),
+        "customer_email": text(value.get("customer_email"), 320),
+        "customer_name": text(value.get("customer_name")),
+        "hosted_invoice_url": _invoice_url(value.get("hosted_invoice_url")),
+        "lines": _invoice_lines(value.get("lines")),
     }
+
+
+def _invoice_url(value: Any) -> str | None:
+    """Stripe's hosted page where the customer pays this invoice; only Stripe's own host."""
+    url = text(value, 500)
+    return url if url and url.startswith("https://invoice.stripe.com/") else None
+
+
+def _invoice_lines(value: Any) -> list[str]:
+    """The first few line descriptions ("1 × Pro (at $20.00 / month)"), as Stripe wrote them."""
+    rows = value.get("data") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return []
+    found = (text(row.get("description"), 160) for row in rows[:3] if isinstance(row, dict))
+    return [line for line in found if line]
 
 
 def project_price(value: dict[str, Any]) -> dict[str, Any]:
@@ -383,6 +408,10 @@ def project_price(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def project_charge(value: dict[str, Any]) -> dict[str, Any]:
+    outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
+    method = value.get("payment_method_details")
+    method = method if isinstance(method, dict) else {}
+    card = method.get("card") if isinstance(method.get("card"), dict) else {}
     return {
         "id": text(value.get("id"), 255),
         "customer": _id(value.get("customer")),
@@ -394,6 +423,16 @@ def project_charge(value: dict[str, Any]) -> dict[str, Any]:
         "refunded": boolean(value.get("refunded")),
         "created": integer(value.get("created")),
         "failure_code": text(value.get("failure_code"), 80),
+        "failure_message": text(value.get("failure_message"), 200),
+        "outcome_reason": text(outcome.get("reason"), 80),
+        # Brand and expiry say why a card failed; card digits never leave Tin.
+        "card": {
+            "brand": text(card.get("brand"), 20),
+            "exp_month": integer(card.get("exp_month")),
+            "exp_year": integer(card.get("exp_year")),
+        }
+        if card
+        else None,
     }
 
 
@@ -403,7 +442,7 @@ OPERATIONS: dict[str, Operation] = {
     "subscriptions.list": Operation(
         "subscriptions.read",
         "/v1/subscriptions",
-        _WINDOW | {"status"},
+        _WINDOW | {"status", "customer"},
         project_subscription,
         expand="data.customer",
     ),

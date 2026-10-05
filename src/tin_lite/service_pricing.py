@@ -56,6 +56,7 @@ NATIVE_EXECUTORS = {
     "ads.assessment",
     "ads.launch",
     "ads.monitor",
+    "revenue.payment_recovery",
 }
 PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_draft"}
 
@@ -170,6 +171,9 @@ def service_terms(definition, *, inputs=None):
     elif executor == "ads.monitor":
         maximum = amount_nanos(inputs.get("max_cost_usd", 2))
         kinds = ["native_model", "tool"]
+    elif executor == "revenue.payment_recovery":
+        # One drafting step; Stripe and Gmail calls go through the founder's own accounts.
+        maximum, kinds = 2 * NANOS_PER_DOLLAR, ["native_model", "tool"]
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
     return {

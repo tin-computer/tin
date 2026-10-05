@@ -14,6 +14,7 @@ from tin_lite import (
     growth_plan,
     paid_ads,
     paid_ads_launch,
+    payment_recovery,
     style_capture,
     x_feedback,
 )
@@ -58,6 +59,7 @@ from tin_lite.output_resolution import OutputResolutionService
 from tin_lite.paid_ads_activities import PaidAdsActivities
 from tin_lite.paid_ads_launch_activities import PaidAdsLaunchActivities
 from tin_lite.paid_ads_monitor_activities import PaidAdsMonitorActivities
+from tin_lite.payment_recovery_activities import PaymentRecoveryActivities
 from tin_lite.project_files import ProjectFileService
 from tin_lite.scan import ScanReporter
 from tin_lite.settings import Settings
@@ -139,6 +141,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
+            *payment_recovery.ROUTES,
             ModelRoute(
                 key=content_plan.ROUTE_KEY,
                 provider=ProviderName.OPENAI,
@@ -318,6 +321,13 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     awesome_submit_activities = AwesomeSubmitActivities(
         database=database, storage=storage, integrations=integrations
     )
+    payment_recovery_activities = PaymentRecoveryActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        router=model_router,
+        integrations=integrations,
+    )
     from tin_lite.code_activities import CodeActivities
 
     code = CodeActivities(common=activity_instance, model_router=model_router)
@@ -384,6 +394,14 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         awesome_submit_activities.apply,
         awesome_submit_activities.publish,
         awesome_submit_activities.failure,
+        payment_recovery_activities.prepare,
+        payment_recovery_activities.gather,
+        payment_recovery_activities.draft,
+        payment_recovery_activities.request_review,
+        payment_recovery_activities.record_approval,
+        payment_recovery_activities.apply,
+        payment_recovery_activities.publish,
+        payment_recovery_activities.failure,
         organic_system.organic_system_prepare,
         organic_system.organic_system_step,
         organic_system.organic_system_step_failure,
