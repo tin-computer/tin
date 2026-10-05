@@ -12,7 +12,7 @@ import json
 import re
 from uuid import UUID
 
-from tin_lite import approved_article
+from tin_lite import approved_article, page_assets
 from tin_lite.content_delivery import (
     ANSWER_PAGE_WORKFLOW_ID,
     PUBLIC_ARTICLE_WORKFLOW_ID,
@@ -87,15 +87,16 @@ async def select(*, database, storage, project_id, source_run_id):
     ):
         raise ValueError("The approved page's publication proof is unavailable.")
     publication_sha256 = None
+    approved_assets: list[dict] = []
     if kind == "public_article":
         # Public articles are approved through the review command; its token binds the
         # exact version that was read. An approval without one proves nothing.
         command = await _review_command(database.pool, run.id)
         if command is None:
             raise ValueError("The approved article's review proof is unavailable.")
-        publication_sha256 = approved_article._verify_review(run, published.result, command)[
-            "sha256"
-        ]
+        reviewed = approved_article._verify_review(run, published.result, command)
+        publication_sha256 = reviewed["sha256"]
+        approved_assets = reviewed.get("assets", [])
     project = await database.get_project(project_id)
     raw = await storage.read_canonical_artifact(
         repo_id=project.state_repo_id, commit_sha=run.canonical_commit_sha, path=run.artifact_path
@@ -121,6 +122,18 @@ async def select(*, database, storage, project_id, source_run_id):
         "article_sha256": hashlib.sha256(article.encode()).hexdigest(),
         "title": title,
         "page_metadata": _metadata(listing),
+        **(
+            {
+                "assets": await page_assets.verified(
+                    storage,
+                    repo_id=project.state_repo_id,
+                    revision=run.canonical_commit_sha,
+                    binding=approved_assets,
+                )
+            }
+            if approved_assets
+            else {}
+        ),
     }
 
 
@@ -152,6 +165,7 @@ async def guard(conn, *, project_id, source):
         "revision": source["source_revision"],
         "sha256": source["publication_sha256"],
         "assessment": False,
+        **page_assets.source_binding(source),
     }
     token = digest(
         {

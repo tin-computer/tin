@@ -1067,7 +1067,9 @@ def validate_copy(manifest, source):
         or manifest["head_sha"] != source["binding"]["head_sha"]
     ):
         raise ValueError("The repository differs from the pinned delivery source.")
-    paragraphs = [words for block in re.split(r"\n\s*\n", article) if (words := _words(block))]
+    # Embed, video and diagram blocks are figures, not prose; a figure line has no words.
+    prose = FIGURE_FENCE.sub("\n\n", article)
+    paragraphs = [words for block in re.split(r"\n\s*\n", prose) if (words := _words(block))]
     exact, worded, closest = [], [], (0, None)
     for item in manifest["files"]:
         path, text = item["path"], item["content"]
@@ -1096,6 +1098,11 @@ def validate_copy(manifest, source):
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
+
+
+FIGURE_FENCE = re.compile(
+    r"^(`{3,}|~{3,})[ \t]*(?:tin-embed|tin-video|mermaid)\b.*?^\1[ \t]*$", re.M | re.S
+)
 
 
 def _stores_exactly(path, text, article):

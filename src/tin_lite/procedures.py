@@ -16,6 +16,7 @@ from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
 from tin_lite.memory import MAX_MEMORY_BYTES, validate_memory_index
+from tin_lite.page_assets import AssetPolicy
 from tin_lite.procedure_documents import (
     DocumentPair,
     parse_document_pair,
@@ -377,6 +378,7 @@ class CodexProcedureSpec:
     sandbox: SandboxProfile = SandboxProfile()
     identity: TestIdentityPolicy = TestIdentityPolicy()
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -412,6 +414,8 @@ class PinnedCodexProcedure:
     sandbox: SandboxProfile = SandboxProfile()
     identity: TestIdentityPolicy = TestIdentityPolicy()
     output_section: OutputSection | None = None
+    # Article drafts that may write figures and embeds into their assets folder.
+    output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -434,6 +438,14 @@ class PinnedCodexProcedure:
     @property
     def binary_output(self) -> bool:
         return self.output_media_type in BINARY_ARTIFACT_MEDIA_TYPES
+
+    @property
+    def assets_folder(self) -> str | None:
+        if self.output_assets is None or not self.output_path:
+            return None
+        from tin_lite.page_assets import folder
+
+        return folder(self.output_path)
 
     @property
     def companion_path(self) -> str | None:
@@ -524,6 +536,8 @@ class PinnedCodexProcedure:
             output["validator"] = self.output_validator
         if self.output_section is not None:
             output["section"] = self.output_section.definition()
+        if self.assets_folder is not None:
+            output["assets"] = {"folder": self.assets_folder, **self.output_assets.definition()}
         context: dict[str, Any] = {
             "workflow_key": self.workflow_key,
             "prompt": self.prompt,
@@ -635,6 +649,7 @@ class CodexProcedureSource:
     github_pull_request: GitHubPullRequestProcedure | None = None
     github_workspace: GitHubRepositoryWorkspace | None = None
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
     sandbox: SandboxProfile = SandboxProfile()
     identity: bool | TestIdentityPolicy = False
 
@@ -744,11 +759,18 @@ class CodexProcedureSource:
                 output["validator"] = self.output_validator
             if self.output_section is not None:
                 output["section"] = self.output_section.definition()
+            if self.output_assets is not None:
+                output["assets"] = self.output_assets.definition()
             verification = {"commands": []}
         else:
-            if self.github_workspace is not None or self.output_section is not None:
+            if (
+                self.github_workspace is not None
+                or self.output_section is not None
+                or self.output_assets is not None
+            ):
                 raise ValueError(
-                    "pull-request procedures cannot declare a read-only workspace or a section"
+                    "pull-request procedures cannot declare a read-only workspace, a section "
+                    "or assets"
                 )
             pull_request = self.github_pull_request
             workspace = {
@@ -920,6 +942,9 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
     output_max_files = 1
     receipt_path_template: str | None = None
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
+    if result_kind != PROJECT_ARTIFACT_RESULT and output.get("assets") is not None:
+        raise ValueError("Only article drafts carry an assets folder")
     if result_kind == PROJECT_ARTIFACT_RESULT:
         if workspace_kind == GITHUB_REPOSITORY_WORKSPACE and workspace_capabilities != (
             "contents.read",
@@ -1040,6 +1065,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             PUBLIC_ARTICLE_VALIDATOR,
         }:
             output_max_files = 2
+        if output.get("assets") is not None:
+            if output_validator not in {
+                *content_draft.CLEAN_VALIDATORS,
+                PUBLIC_ARTICLE_VALIDATOR,
+            } or not resolved_path.endswith(".md"):
+                raise ValueError("Only article drafts carry an assets folder")
+            output_assets = AssetPolicy.load(output["assets"])
         if output_validator == CHARACTER_SVG_VALIDATOR and (
             output_media_type != CHARACTER_SVG_MEDIA_TYPE
             or output_path_template is None
@@ -1262,6 +1294,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         sandbox=sandbox,
         identity=identity,
         output_section=output_section,
+        output_assets=output_assets,
         workspace_capabilities=workspace_capabilities,
         repair_policy=repair_policy,
         allow_no_change=allow_no_change,
@@ -1417,6 +1450,7 @@ async def load_pinned_codex_procedure(
         sandbox=spec.sandbox,
         identity=spec.identity,
         output_section=spec.output_section,
+        output_assets=spec.output_assets,
         workspace_capabilities=spec.workspace_capabilities,
         repair_policy=spec.repair_policy,
         allow_no_change=spec.allow_no_change,

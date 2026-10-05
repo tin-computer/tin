@@ -3,7 +3,7 @@
 import hashlib
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from tin_lite import content_draft, content_editorial_judgment
+from tin_lite import content_draft, content_editorial_judgment, page_assets
 from tin_lite.domain import RunStatus
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict, accept_approval, digest, unpack
@@ -62,12 +62,15 @@ class WorkflowReviews:
             or receipt.result.get("artifact_path") != artifact_run.artifact_path
         ):
             raise ReviewConflict("The saved copy does not match its publication proof.")
+        assets = page_assets.review_binding(receipt.result.get("checkpoint"))
         return artifact_run, {
             "run_id": str(artifact_run.id),
             "path": artifact_run.artifact_path,
             "revision": artifact_run.canonical_commit_sha,
             "sha256": (receipt.result.get("checkpoint") or {}).get("sha256"),
             "assessment": content_editorial_judgment.no_draft(receipt.result),
+            # Only drafts with figures or embeds carry this, so older tokens stay the same.
+            **({"assets": assets} if assets else {}),
         }
 
     async def view(self, run_id, actor, post_id=""):
@@ -328,11 +331,14 @@ class WorkflowReviews:
                 raise ValueError(
                     "These versions are too large for comparison. Read each full copy."
                 )
+            published = await self.db.get_effect(f"{version.id}:procedure_canonical_commit")
+            checkpoint = (published.result or {}).get("checkpoint") if published else None
             result[name] = {
                 "run_id": str(version.id),
                 "version": version.review_version,
                 "path": version.artifact_path,
                 "content": raw.decode("utf-8"),
+                "assets": page_assets.review_binding(checkpoint),
             }
         return result
 

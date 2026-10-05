@@ -22,10 +22,12 @@ Plan before drafting, but publish only the finished article in the declared Mark
 article should open in the reader's world, land one salient idea, explain the mechanism, use concrete
 evidence, acknowledge material assumptions and limitations, and leave the reader with a useful
 contribution. Shape it with the search-and-answer-engines skill: its search-listing frontmatter
-comes first, then the `# ` title and an answer-first opening. Apply the public-article-edit pass
-before finishing.
+comes first, then the `# ` title and an answer-first opening. Use the page-figures skill for any
+figure, diagram, interactive piece, video or callout the article needs. Apply the public-article-edit
+pass before finishing.
 
-This is a reviewable draft, not a publishing action. Do not change another project file, publish to
+This is a reviewable draft, not a publishing action. Do not change another project file (the
+article's assets folder is part of the draft), publish to
 a website, send the article, contact anyone, or ask an interactive question. Put unresolved choices
 or missing evidence into the separate Generation notes document, never the public copy.
 

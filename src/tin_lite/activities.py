@@ -3278,6 +3278,14 @@ class TinActivities:
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=recovered
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, recovered_revision, recovered
+                    )
+                    if recovered_revision is not None
+                    and procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3285,6 +3293,7 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=None,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "summary": f"{workflow_definition.title} produced its result.",
                         "message": "The procedure result is ready.",
@@ -3307,6 +3316,7 @@ class TinActivities:
                                     companions=await self._procedure_companions(
                                         run, project, procedure, recovered_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if recovered_revision is not None
@@ -3712,6 +3722,13 @@ class TinActivities:
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=checkpoint
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, checkpoint_revision, checkpoint
+                    )
+                    if procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3719,6 +3736,7 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=sandbox_id,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "result_kind": procedure.result_kind,
                         "ephemeral_commit_sha": checkpoint_revision,
@@ -3734,6 +3752,7 @@ class TinActivities:
                                     companions=await self._procedure_companions(
                                         run, project, procedure, checkpoint_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if procedure.result_kind == PROJECT_ARTIFACT_RESULT
@@ -4110,6 +4129,50 @@ class TinActivities:
         ):
             raise StaleGenerationError("procedure lease no longer owns the session")
 
+    async def _procedure_assets(self, run, project, procedure, revision, content):
+        """The article's figures and embeds: the files it refers to that Tin can keep.
+
+        A missing, oversized or unsafe file is left out with its reason; it never fails a run.
+        """
+        from tin_lite import page_assets
+
+        policy = procedure.output_assets
+        if policy is None or procedure.assets_folder is None:
+            return (), []
+        try:
+            article = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return (), []
+        kept, dropped, total = [], [], 0
+        for path in page_assets.referenced(article, procedure.output_path):
+            if len(kept) == policy.max_files:
+                dropped.append({"path": path, "reason": "the article refers to too many files"})
+                continue
+            try:
+                raw = await self._storage.read_procedure_checkpoint(
+                    repo_id=project.state_repo_id, revision=revision, path=path
+                )
+            except (ValueError, OutputConflictError):
+                dropped.append({"path": path, "reason": "the file is missing"})
+                continue
+            reason = page_assets.problem(path, raw)
+            if reason is None and total + len(raw) > policy.max_bytes:
+                reason = "the files together are larger than their limit"
+            if reason is not None:
+                dropped.append({"path": path, "reason": reason})
+                continue
+            total += len(raw)
+            kept.append(
+                OutputCheckpoint.create(
+                    run=run,
+                    revision=revision,
+                    path=path,
+                    media_type=page_assets.media_type(path),
+                    content=raw,
+                )
+            )
+        return tuple(kept), dropped
+
     async def _procedure_companions(self, run, project, procedure, revision):
         from tin_lite import content_draft
 
@@ -4219,6 +4282,11 @@ class TinActivities:
             run, project, procedure, revision
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
+        if (
+            checkpoint.assets
+            != (await self._procedure_assets(run, project, procedure, revision, content))[0]
+        ):
+            raise ValueError("Saved assets differ from the article they belong to.")
         from tin_lite import content_draft
         from tin_lite.content_editorial_judgment import (
             LABELS,
@@ -4379,6 +4447,13 @@ class TinActivities:
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
             artifact_title, lede = display_title(raw), review_line(raw)
+            from tin_lite.page_assets import attachments_line
+
+            attachments = attachments_line(
+                canonical.result.get("checkpoint"), raw.decode("utf-8", errors="replace")
+            )
+        else:
+            attachments = None
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
@@ -4401,7 +4476,7 @@ class TinActivities:
             artifact_path=path,
             artifact_title=artifact_title,
             summary=summary,
-            explanation=" ".join(part for part in (lede, destination) if part),
+            explanation=" ".join(part for part in (lede, attachments, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress

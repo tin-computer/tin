@@ -16,6 +16,10 @@ if [[ "${1:-}" == "--check-companion" ]]; then
   printf 'TIN_PROCEDURE_COMPANION_V1\n'
   exit 0
 fi
+if [[ "${1:-}" == "--check-assets" ]]; then
+  printf 'TIN_PROCEDURE_ASSETS_V1\n'
+  exit 0
+fi
 
 if [[ -n "${OPENAI_API_KEY:-}" || -n "${CODEX_API_KEY:-}" || \
       -n "${TIN_LITE_LUNA_API_KEY:-}" || -n "${ANTHROPIC_API_KEY:-}" || \
@@ -93,6 +97,22 @@ if [[ -n "${TIN_PROCEDURE_COMPANION_PATH:-}" ]]; then
   fi
   output_paths+=("${TIN_PROCEDURE_COMPANION_PATH}")
 fi
+# An article draft may also write figures and embeds into its assets folder, next to it.
+assets_folder="${TIN_PROCEDURE_ASSETS_FOLDER:-}"
+if [[ -n "${assets_folder}" ]]; then
+  if [[ "${result_kind}" != "project.artifact" ||
+        "${assets_folder}" != "${TIN_PROCEDURE_OUTPUT_PATH%.md}.assets" ||
+        ! "${TIN_PROCEDURE_ASSETS_MAX_FILES:-}" =~ ^[1-9][0-9]*$ ||
+        ! "${TIN_PROCEDURE_ASSETS_MAX_BYTES:-}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "invalid procedure assets folder" >&2
+    exit 64
+  fi
+fi
+# Changed paths outside the declared outputs, ignoring files directly in the assets folder.
+outside_outputs() {
+  grep -Fvx -f <(printf '%s\n' "${output_paths[@]}") |
+    { if [[ -n "${assets_folder}" ]]; then grep -Ev "^${assets_folder//./\\.}/[^/]+$"; else cat; fi; } || true
+}
 if [[ -n "${TIN_RUN_TOOLS_URL:-}" || -n "${TIN_RUN_TOOLS_GRANT:-}" ]]; then
   if [[ -z "${TIN_RUN_TOOLS_URL:-}" || -z "${TIN_RUN_TOOLS_GRANT:-}" ]]; then
     echo "incomplete run-tool configuration" >&2
@@ -236,7 +256,7 @@ if [[ "${remote_status}" -eq 0 ]]; then
   GIT_CONFIG_VALUE_0="${TIN_EPHEMERAL_AUTH_HEADER}" \
     git -C "${state_workspace}" fetch --quiet ephemeral "${commit_sha}"
   changed="$(git -C "${state_workspace}" diff-tree --no-commit-id --name-only -r "${commit_sha}")"
-  unexpected="$(printf '%s\n' "${changed}" | grep -Fvx -f <(printf '%s\n' "${output_paths[@]}") || true)"
+  unexpected="$(printf '%s\n' "${changed}" | outside_outputs)"
   if [[ -n "${unexpected}" ]]; then
     echo "ephemeral recovery branch is not a valid procedure result" >&2
     exit 67
@@ -420,16 +440,42 @@ else
     exit 65
   fi
   done
-  unexpected="$({
+  if [[ -n "${assets_folder}" && -d "${state_workspace}/${assets_folder}" ]]; then
+    # Only regular files directly in the folder can be referenced; anything else is dropped.
+    while IFS= read -r -d '' extra; do
+      echo "Discarded ${extra#"${state_workspace}/"}: assets are files directly in the folder" >&2
+      rm -rf -- "${extra}"
+    done < <(find "${state_workspace}/${assets_folder}" -mindepth 1 -maxdepth 1 \
+      \( -type l -o ! -type f \) -print0)
+  fi
+  unexpected="$(
     git -C "${state_workspace}" status --porcelain --untracked-files=all | cut -c4- |
-      grep -Fvx -f <(printf '%s\n' "${output_paths[@]}")
-  } || true)"
+      outside_outputs
+  )"
   if [[ -n "${unexpected}" ]]; then
     echo "Codex changed files outside the procedure output contract:" >&2
     printf '%s\n' "${unexpected}" | head -n 20 >&2
     exit 66
   fi
-  if ! python3 - "${state_workspace}/${TIN_PROCEDURE_OUTPUT_PATH}" <<'PY'
+  if [[ -n "${assets_folder}" && -d "${state_workspace}/${assets_folder}" ]]; then
+    # The host keeps only the files the article refers to; these are runaway guards.
+    asset_count=0
+    asset_bytes=0
+    while IFS= read -r -d '' asset; do
+      asset_count=$((asset_count + 1))
+      asset_bytes=$((asset_bytes + $(wc -c < "${asset}")))
+    done < <(find "${state_workspace}/${assets_folder}" -mindepth 1 -maxdepth 1 -type f -print0)
+    if (( asset_count > TIN_PROCEDURE_ASSETS_MAX_FILES || asset_bytes > TIN_PROCEDURE_ASSETS_MAX_BYTES )); then
+      echo "Codex procedure assets exceed their declared limits" >&2
+      exit 65
+    fi
+  fi
+  scanned=("${state_workspace}/${TIN_PROCEDURE_OUTPUT_PATH}")
+  if [[ -n "${assets_folder}" && -d "${state_workspace}/${assets_folder}" ]]; then
+    while IFS= read -r -d '' asset; do scanned+=("${asset}"); done < \
+      <(find "${state_workspace}/${assets_folder}" -mindepth 1 -maxdepth 1 -type f -print0)
+  fi
+  if ! python3 - "${scanned[@]}" <<'PY'
 import base64, json, os, sys
 context_path = os.environ.get("TIN_PROCEDURE_CONTEXT_PATH")
 if context_path:
@@ -437,11 +483,13 @@ if context_path:
 else:
     context = json.loads(base64.b64decode(os.environ["TIN_PROCEDURE_CONTEXT_B64"], validate=True))
 secret = (context.get("identity") or {}).get("password")
-if secret and secret.encode("utf-8") in open(sys.argv[1], "rb").read():
-    raise SystemExit("procedure output contains the test identity secret")
 sys.path.insert(0, "/opt/tin-lite")
 from payment_card_guard import reject_card_leak
-reject_card_leak(open(sys.argv[1], "rb").read(), context.get("payment_card"))
+for path in sys.argv[1:]:
+    content = open(path, "rb").read()
+    if secret and secret.encode("utf-8") in content:
+        raise SystemExit("procedure output contains the test identity secret")
+    reject_card_leak(content, context.get("payment_card"))
 PY
   then
     exit 65
@@ -450,6 +498,9 @@ fi
 
 if [[ -n "$(git -C "${state_workspace}" status --porcelain)" ]]; then
   git -C "${state_workspace}" add -- "${output_paths[@]}"
+  if [[ -n "${assets_folder}" && -d "${state_workspace}/${assets_folder}" ]]; then
+    git -C "${state_workspace}" add -- "${assets_folder}"
+  fi
   git -C "${state_workspace}" commit -m "Save codex.procedure result" >/dev/null
 fi
 commit_sha="$(git -C "${state_workspace}" rev-parse HEAD)"

@@ -10,7 +10,7 @@ import json
 import re
 from uuid import UUID
 
-from tin_lite import content_draft, content_editorial_judgment
+from tin_lite import content_draft, content_editorial_judgment, page_assets
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, article_body
 from tin_lite.domain import RunStatus
 from tin_lite.workflow_review_store import digest
@@ -44,12 +44,14 @@ def _review_artifact(run, publication):
         not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256)
     ):
         raise ValueError("The approved article's publication digest is invalid.")
+    assets = page_assets.review_binding(checkpoint)
     return {
         "run_id": str(run.id),
         "path": run.artifact_path,
         "revision": run.canonical_commit_sha,
         "sha256": sha256,
         "assessment": content_editorial_judgment.no_draft(publication),
+        **({"assets": assets} if assets else {}),
     }
 
 
@@ -137,6 +139,18 @@ async def select(*, database, storage, project_id, source_run_id, include_style=
         "due_date": prepared.result["due_date"],
         # A content.generate answer page is adapted like content.answer_page's pages.
         **({"source_kind": "answer_page", "page_metadata": metadata} if metadata else {}),
+        **(
+            {
+                "assets": await page_assets.verified(
+                    storage,
+                    repo_id=project.state_repo_id,
+                    revision=run.canonical_commit_sha,
+                    binding=artifact["assets"],
+                )
+            }
+            if artifact.get("assets")
+            else {}
+        ),
     }
     style = prepared.result.get("style")
     if include_style and style is not None and not isinstance(style, dict):
@@ -198,6 +212,7 @@ async def guard(conn, *, project_id, source):
             "revision": source["source_revision"],
             "sha256": source["publication_sha256"],
             "assessment": False,
+            **page_assets.source_binding(source),
         }
         token = digest(
             {
