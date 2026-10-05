@@ -23,6 +23,10 @@ contents over checkout copies. If a requested file is missing or ambiguous, expl
 in Generation notes instead of inventing its contents or claiming you read it.
 Recheck factual corrections against evidence. You may retain an assessment if another
 article still adds no value. Never claim a requested change was made when it was not.
+When `source.assets` lists figures or embeds, they are the saved copy's files in the project
+checkout. Copy the ones you keep into this run's own assets folder, change them as the
+feedback asks, and point the article's references at your folder; files you don't copy are
+left out of the revision.
 Put a short `## What changed` section and `## Feedback not followed` section in the separate
 Generation notes file. Use 'None.' in the latter only when appropriate. Neither section,
 process notes, nor a link to them belongs in the public copy. The existing output contract,

@@ -40,6 +40,14 @@ outbox bridges dispatch; Temporal carries command/run identifiers, not feedback 
 article contents. Preserve historical adapter/output contracts and exact-version
 guards. Do not infer approval from a generated no-draft assessment.
 
+An article draft whose definition declares `output.assets` may carry figures and embeds in
+its assets folder (`<article>.assets/`, `src/tin_lite/page_assets.py`). The article declares
+them: Tin keeps only the files it refers to, leaves out a missing, oversized or unsafe one
+with its reason (never a failed run), and records each kept file's checksum with the
+checkpoint. The review token binds that list with the article, approved-page consumers
+re-check it, and a revision copies the files it keeps into its own folder. Drafts without
+assets keep their exact token and contract.
+
 The shared implementation lives in `src/tin_lite/workflow_reviews.py`,
 `workflow_review_store.py`, `workflow_review_dispatch.py` and `article_review.py`.
 The dashboard composer is `src/tin_lite/static/workflow-review.js`.

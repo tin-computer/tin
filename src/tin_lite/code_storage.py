@@ -630,7 +630,7 @@ class CodeStorage:
     async def _checkpoint_contents(self, repo_id, checkpoint, content):
         checkpoint.validate_content(content)
         files = {checkpoint.artifact_path: content}
-        for item in checkpoint.companions:
+        for item in (*checkpoint.companions, *checkpoint.assets):
             raw = await self.read_procedure_checkpoint(
                 repo_id=repo_id, revision=item.ephemeral_commit_sha, path=item.artifact_path
             )

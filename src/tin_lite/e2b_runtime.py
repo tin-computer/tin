@@ -591,6 +591,11 @@ class E2BRuntime:
                 envs["TIN_PROCEDURE_COMPANION_MAX_BYTES"] = str(
                     run_input.context["output"]["companion_max_bytes"]
                 )
+        assets = run_input.context.get("output", {}).get("assets")
+        if assets:
+            envs["TIN_PROCEDURE_ASSETS_FOLDER"] = str(assets["folder"])
+            envs["TIN_PROCEDURE_ASSETS_MAX_FILES"] = str(assets["max_files"])
+            envs["TIN_PROCEDURE_ASSETS_MAX_BYTES"] = str(assets["max_bytes"])
         envs["TIN_PROCEDURE_OUTPUT_MAX_BYTES"] = str(run_input.output_max_bytes)
         envs["TIN_PROCEDURE_RESULT_KIND"] = run_input.result_kind
         if run_input.project_revision is not None:
@@ -656,6 +661,12 @@ class E2BRuntime:
                 )
                 if ready.stdout.strip() != "TIN_PROCEDURE_COMPANION_V1":
                     raise RuntimeError("Sandbox image lacks companion document support")
+            if assets:
+                ready = await sandbox.commands.run(
+                    "/opt/tin-lite/run-procedure --check-assets", timeout=15
+                )
+                if ready.stdout.strip() != "TIN_PROCEDURE_ASSETS_V1":
+                    raise RuntimeError("Sandbox image lacks article assets support")
             if run_input.isolated:
                 if run_input.usage_sink is None:
                     raise ValueError("isolated procedures require their own profile and usage sink")

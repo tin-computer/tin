@@ -344,6 +344,22 @@ def _identity_instruction(context: dict) -> str:
     )
 
 
+def _assets_instruction(output: dict[str, Any]) -> str:
+    """The one exception to "modify no other project file": the article's assets folder."""
+    assets = output.get("assets")
+    if not isinstance(assets, dict):
+        return ""
+    folder = str(assets["folder"])
+    name = folder.rsplit("/", 1)[-1]
+    return (
+        f" The article may also use figures and embeds: write them as files directly in "
+        f"`{STATE_DIR / folder}` (SVG images, or self-contained HTML files for interactive "
+        f"pieces), at most {assets['max_files']} files and {assets['max_bytes']} bytes "
+        f"together, and refer to each one from the article as `./{name}/<file name>`. Tin "
+        "keeps only the files the article refers to."
+    )
+
+
 def _result_instruction(output: dict[str, Any], output_kind: str, output_path: object) -> str:
     if output_kind != "project.artifact":
         text = (
@@ -382,12 +398,14 @@ def _result_instruction(output: dict[str, Any], output_kind: str, output_path: o
                 f"the structured judgment only to `{companion}` "
                 f"(at most {output['companion_max_bytes']} bytes). Modify no other project file. "
                 "Do not force an article when current coverage already satisfies the brief."
+                + _assets_instruction(output)
             )
         return (
             f"Write the public article only to `{absolute}`. Write internal generation notes "
             f"only to `{companion}` (at most {output['companion_max_bytes']} bytes). "
             "Modify no other project file. Do not put notes or source frontmatter in the article. "
             "Do not merely describe the artifacts in your final response."
+            + _assets_instruction(output)
         )
     workspace_note = ""
     if STATE_DIR != WORKSPACE:
