@@ -52,7 +52,7 @@ def test_listing_does_not_excuse_a_missing_title():
 @pytest.mark.parametrize(
     ("key", "version", "skill"),
     [
-        ("content.public_article", "1.6.0", "search-and-answer-engines"),
+        ("content.public_article", "1.7.0", "search-and-answer-engines"),
         ("content.generate", "1.9.0", "search-and-answer-engines"),
     ],
 )
@@ -71,6 +71,16 @@ def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
     assert "ANSWER_SEO_V1" not in text and "Last updated" not in text
     prompt = (spec.procedure.root / "PROMPT.md").read_text()
     assert "search-and-answer-engines" in prompt
+
+
+def test_a_public_article_cites_only_pages_a_reader_can_open():
+    # Sheepdogs, content.public_article 760bbad2: Sources linked ../../reports/
+    # GROWTH_ONBOARDING_PLAN.md, because the skill said to list project documents.
+    _, files = workflow("content.public_article").definition_and_resource_files()
+    skills = {path.rsplit("/", 2)[-2]: content.decode() for path, content in files.items()}
+    assert "list the project documents" not in skills["search-and-answer-engines"]
+    assert "Only public pages a reader can open" in skills["search-and-answer-engines"]
+    assert "never link to them or list them as sources" in skills["public-article"]
 
 
 def test_public_articles_carry_the_listing_and_planned_drafts_do_not():

@@ -30,6 +30,9 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    `page_metadata` onto the site's own fields (for example `title` and `description`);
    leave out any field the site does not read. Avoid a duplicate visible H1. The page must
    actually be served, not left in a comment, an unused constant or a folder nothing reads.
+   Match the site's other pages of that kind: the same header, footer, links back into the
+   site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
+   the site already loads; never add web fonts or other outside resources.
 5. If the site does not serve the chosen path yet, add the smallest route that fits how its
    other pages are served (a static file in its public folder, a route file, a registry
    entry), keeping its files inside the route's own folder where the framework allows, so

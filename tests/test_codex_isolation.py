@@ -675,3 +675,17 @@ async def test_controller_narration_is_redacted_and_malformed_frames_are_ignored
     result = await runtime.run_procedure_and_kill(sandbox_id="sandbox", run_input=input)
     assert result.summary == "done"
     assert received == ["Signed in with [redacted]; writing the report."]
+
+
+def test_run_text_names_files_by_their_project_path():
+    # Codex links the files it wrote by sandbox path (content.public_article 760bbad2).
+    from tin_lite.e2b_runtime import _redact
+
+    message = (
+        "Done. [Read the article](/home/user/project/content/articles/a.md) and copied "
+        "/home/user/state/brand/BRAND.md; see [the site](https://example.com/blog)."
+    )
+    assert _redact(message, ("secret",)) == (
+        "Done. Read the article (content/articles/a.md) and copied brand/BRAND.md; "
+        "see [the site](https://example.com/blog)."
+    )
