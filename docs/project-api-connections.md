@@ -257,8 +257,8 @@ shape. Attio and Clay adapters are not included.
 
 ## Services Tin holds the key for
 
-Two services need no founder connection: Tin holds the key, pays the vendor and passes the
-cost through credits. Declare the provider in `integration_requirements` with its capabilities,
+Three services need no founder connection: Tin holds the key and pays the vendor. DataForSEO
+reads pass their cost through credits; PageSpeed Insights, CrUX and Podscan are free to runs. Declare the provider in `integration_requirements` with its capabilities,
 bind it once in `code.services`, and call it with `ctx.services.call`, like any adapter above.
 
 ```json
@@ -308,6 +308,19 @@ serp = await ctx.services.call(
 | `managed.dataforseo` | `keywords.overview` (`keywords.read`) | `keywords` (1-50); market as above | the same records plus 12 `monthly` volumes | $0.012 + $0.00012 per keyword |
 | `managed.dataforseo` | `backlinks.summary` (`backlinks.read`) | `target` (a domain such as `example.com`, or an absolute page URL); `include_subdomains` (default true) | rank, backlinks, spam score, referring domains/IPs/pages, broken links | $0.024 + $0.000036 per row |
 | `managed.dataforseo` | `backlinks.referring_domains` (`backlinks.read`) | `target`; `include_subdomains`; `limit` 1-100 (default 20); `offset` | `records` (domain, rank, backlinks, spam score, first seen, lost date), highest rank first, `next_offset` | $0.024 + $0.000036 per row |
+| `managed.podscan` | `episodes.search` (`podcasts.read`) | `query`; `since`/`before`; `language`; `region`; `has_guests`; `min_audience`; `search_fields` (`transcription`, `title`, `description`); `order_by`; `per_page` 1-50; `page` 1-20 | episode `records` with guests (name, company, occupation), hosts, sponsors, `is_branded`, a `match` snippet and the show's audience numbers; never transcripts | $0 |
+| `managed.podscan` | `podcasts.search` (`podcasts.read`) | `query`; `language`; `region`; `has_guests`; `min_audience`; `active_since`; `search_fields`; `order_by`; `per_page`; `page` | show `records`: reach score, audience estimate, Apple and Spotify rating counts, `last_posted` | $0 |
+| `managed.podscan` | `podcasts.get`, `podcasts.episodes` (`podcasts.read`) | `podcast_id`; for episodes `per_page`, `page` | one show in full (description, style, website, social links, unverified `listed_email`), or its newest episodes with guests | $0 |
+| `managed.podscan` | `people.search`, `people.appearances` (`podcasts.read`) | `query` and `search_fields` (`name`, `company`, `occupation`, `industry`); or `entity_id`, `role`, `since`/`before` | people with company, occupation and appearance counts; or a person's episodes with their shows | $0 |
+| `managed.podscan` | `charts.top` (`podcasts.read`) | `platform` `apple` or `spotify`; `country`; `category` slug; `limit` | ranked shows with `podcast_id` | $0 |
+
+Podscan reads are free to runs because Tin pays Podscan a flat subscription; a binding's
+`max_calls` is the guard. Podscan's own rate limit comes back as a rate-limit error: wait and
+call again under a new step. A timeout or Podscan failure returns `status: "unavailable"` and
+an unknown id `status: "not_found"`, both answers rather than errors. Podscan splits one
+person across several entity records and its `audience_size` is an estimate, so packages
+merge people by company and compare audiences only within a niche; `listed_email` is never a
+verified pitch address. Procedures may bind it.
 
 Every DataForSEO response carries `cost_usd`, the cost DataForSEO reported for that call.
 Prices are DataForSEO's list prices as of September 2026 (after the July 2026 update); the
@@ -326,7 +339,7 @@ usually $0, and later steps can still call. A read Tin can't confirm (a server e
 oversized, malformed or mismatched answer) stays unconfirmed: billing reconciles it rather than
 counting it free, Tin doesn't repeat it, and the run's later service calls stop with a named error. Paid managed services are for `workflow.code`
 packages only; a Codex procedure's session budget funds its own model calls, so procedures
-may bind `managed.pagespeed` but not `managed.dataforseo`.
+may bind `managed.pagespeed` and `managed.podscan` but not `managed.dataforseo`.
 
 **Responses and limits.** Tin cuts each response to what a report needs, never the provider's
 raw payload: a Lighthouse report of hundreds of kilobytes comes back as under 1 KB. List operations

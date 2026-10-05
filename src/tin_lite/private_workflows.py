@@ -826,7 +826,8 @@ def authoring_guide(*, settings, project_id):
             "call_service; no browser, Studio or test-identity combinations.",
             "costs": "Codex uses existing model pricing. Connected-provider costs are separate "
             "and unknown unless independently verified; call limits are not dollar ceilings.",
-            "managed": "managed.pagespeed (free) works through call_service. Paid managed "
+            "managed": "managed.pagespeed and managed.podscan (free) work through call_service. "
+            "Paid managed "
             "services such as managed.dataforseo are for workflow.code packages only.",
             "errors": SERVICE_ERRORS_GUIDE
             + " A call_service or request_service tool error is JSON with code, message "
@@ -892,7 +893,13 @@ def authoring_guide(*, settings, project_id):
                 "device, depth}, keywords.ideas {keywords, location_code, language_code, limit, "
                 "offset}, keywords.overview {keywords, location_code, language_code}, "
                 "backlinks.summary {target, include_subdomains}, backlinks.referring_domains "
-                "{target, include_subdomains, limit, offset}. Lists come back as records that "
+                "{target, include_subdomains, limit, offset}. managed.podscan (podcasts.read; $0): "
+                "episodes.search {query, since, before, language, region, has_guests, "
+                "min_audience, search_fields, order_by, per_page, page}, podcasts.search, "
+                "podcasts.get {podcast_id}, podcasts.episodes, people.search {query, "
+                "search_fields, type}, people.appearances {entity_id, role, since, before}, "
+                "charts.top {platform, country, category, limit}; records carry guests, hosts "
+                "and sponsors, never transcripts. Lists come back as records that "
                 "fit max_response_bytes, with truncated and next_offset. Details: "
                 "docs/project-api-connections.md in Tin's source.",
                 "recovery": "Stable steps replay completed bounded responses. Changed "

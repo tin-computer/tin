@@ -1,12 +1,14 @@
-"""Services Tin holds the key for: PageSpeed Insights with CrUX, and DataForSEO live reads.
+"""Services Tin holds the key for: PageSpeed Insights with CrUX, DataForSEO and Podscan.
 
-A package binds `managed.pagespeed` or `managed.dataforseo` the way it binds any provider: a
+A package binds `managed.pagespeed`, `managed.dataforseo` or `managed.podscan` the way it binds
+any provider: a
 required `integration_requirements` entry plus one `code.services` alias. There is no founder
 connection. Tin's own settings hold the credentials; they stay on the switchboard and never
 reach the sandbox. Each call goes through the same service gateway, receipts and replay rules
 as connected providers. DataForSEO reads are paid: each call reserves a per-call ceiling
 before dispatch and settles the cost DataForSEO reports, through `service_pricing`, exactly
-as the native keyword workflows do. PageSpeed Insights and CrUX are free.
+as the native keyword workflows do. PageSpeed Insights, CrUX and Podscan are free to runs:
+Tin pays Podscan a flat subscription, and the binding's call limit is the runaway guard.
 
 Only live (synchronous) endpoints are exposed. DataForSEO task_post endpoints, such as the
 OnPage crawl, stay native.
@@ -25,6 +27,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from tin_lite import podscan
 from tin_lite.connection_records import ServiceArgumentError, fit_records, text
 from tin_lite.integrations import (
     IntegrationDefinition,
@@ -37,10 +40,12 @@ from tin_lite.provider_errors import detail as provider_error_detail
 
 PAGESPEED_PROVIDER = "managed.pagespeed"
 DATAFORSEO_PROVIDER = "managed.dataforseo"
+PODSCAN_PROVIDER = podscan.PROVIDER
 MANAGED_KEY = re.compile(r"managed\.[a-z][a-z0-9_]{0,47}\Z")
 CAPABILITIES = {
     PAGESPEED_PROVIDER: ("pagespeed.read", "crux.read"),
     DATAFORSEO_PROVIDER: ("serp.read", "keywords.read", "backlinks.read"),
+    PODSCAN_PROVIDER: (podscan.CAPABILITY,),
 }
 # The settings each provider needs, named by their environment variables in errors.
 SETTINGS = {
@@ -49,6 +54,7 @@ SETTINGS = {
         ("dataforseo_login", "dataforseo_password"),
         "DATAFORSEO_LOGIN and DATAFORSEO_PASSWORD",
     ),
+    PODSCAN_PROVIDER: (("podscan_api_key",), "TIN_LITE_PODSCAN_API_KEY"),
 }
 DEFINITIONS = {
     PAGESPEED_PROVIDER: IntegrationDefinition(
@@ -69,9 +75,23 @@ DEFINITIONS = {
         CAPABILITIES[DATAFORSEO_PROVIDER],
         ("Code workflows",),
     ),
+    PODSCAN_PROVIDER: IntegrationDefinition(
+        PODSCAN_PROVIDER,
+        "Podscan",
+        "Tin",
+        "Podcast search, the guests and hosts of each episode, and podcast charts, on Tin's "
+        "Podscan account.",
+        "Public podcast data; no project data",
+        CAPABILITIES[PODSCAN_PROVIDER],
+        ("Code workflows", "Codex procedures"),
+    ),
 }
 # The provider name each managed service's usage observations carry.
-USAGE_PROVIDER = {PAGESPEED_PROVIDER: "pagespeed", DATAFORSEO_PROVIDER: "dataforseo"}
+USAGE_PROVIDER = {
+    PAGESPEED_PROVIDER: "pagespeed",
+    DATAFORSEO_PROVIDER: "dataforseo",
+    PODSCAN_PROVIDER: "podscan",
+}
 # What one paid call reserves before dispatch. The reported cost settles it; a supplier
 # overrun is Tin's loss, not a larger customer charge. At the argument bounds below every
 # live read costs well under this ($0.03 at most at DataForSEO's September 2026 prices).
@@ -151,6 +171,10 @@ OPERATIONS = {
         frozenset({"target", "include_subdomains", "limit", "offset"}),
         "backlinks/referring_domains/live",
     ),
+    **{
+        (PODSCAN_PROVIDER, name): Operation(podscan.CAPABILITY, spec.arguments)
+        for name, spec in podscan.OPERATIONS.items()
+    },
 }
 # Bounds on list arguments and pages; each keeps one call inside its reservation.
 BOUNDS = {
@@ -245,6 +269,8 @@ def request_for(operation: str, args: Any) -> dict[str, Any]:
     extra = set(args) - spec.arguments
     if extra:
         raise ServiceArgumentError(f"unsupported argument {sorted(extra)[0]}")
+    if provider == PODSCAN_PROVIDER:
+        return podscan.request_for(operation, args)
     if operation == "pagespeed.run":
         if "url" not in args:
             raise ServiceArgumentError("url is required")
@@ -603,6 +629,8 @@ class ManagedServices:
             if operation == "pagespeed.run":
                 return await self._pagespeed(request)
             return await self._crux(request)
+        if provider == PODSCAN_PROVIDER:
+            return await self._podscan(operation, request, max_response_bytes=max_response_bytes)
         return await self._dataforseo(
             operation, request, execution_key=execution_key, max_response_bytes=max_response_bytes
         )
@@ -706,6 +734,80 @@ class ManagedServices:
         if status == 200 and isinstance(payload, dict):
             return crux_result(request, payload)
         return {**base, "status": "unavailable", "reason": "provider_error", "http_status": status}
+
+    async def _podscan(self, operation, request, *, max_response_bytes):
+        """One Podscan read. Free and read-only, so a slow or failed read is a known outcome."""
+        key = self.settings.podscan_api_key.get_secret_value()
+        echo = {"status": "unavailable", **request["echo"]}
+        try:
+            async with (
+                asyncio.timeout(podscan.SECONDS),
+                httpx.AsyncClient(
+                    trust_env=False,
+                    timeout=podscan.SECONDS,
+                    follow_redirects=False,
+                    transport=self.transport,
+                ) as client,
+                client.stream(
+                    "GET",
+                    podscan.ORIGIN + request["path"],
+                    params=request["params"],
+                    headers={"Authorization": f"Bearer {key}", "Accept": "application/json"},
+                ) as response,
+            ):
+                status, body = response.status_code, bytearray()
+                async for chunk in response.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > podscan.MAX_BYTES:
+                        return {**echo, "reason": "response_too_large"}
+        except (TimeoutError, httpx.TimeoutException):
+            return {**echo, "reason": "timed_out", "seconds": podscan.SECONDS}
+        except (httpx.HTTPError, OSError):
+            return {**echo, "reason": "request_failed"}
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeError, RecursionError):
+            payload = None
+
+        def error():
+            return provider_error_detail("Podscan", status, payload, secrets=(key,))
+
+        if (
+            status == 429
+            and isinstance(payload, dict)
+            and payload.get("error") == "daily_limit_exceeded"
+        ):
+            # Tin's plan allows so many reads a day; retrying today only spends calls.
+            raise ServiceCallRefused(
+                "Tin's Podscan allowance for today is used up; continue without Podscan "
+                "and say so in the report.",
+                code="provider_quota",
+                provider_error=error(),
+            )
+        if status == 429:
+            raise IntegrationRateLimitedError(
+                "Podscan rate-limited Tin's reads; wait a minute and try again in a new step.",
+                provider_error=error(),
+            )
+        if status in {401, 402, 403}:
+            raise ServiceCallRefused(
+                "Podscan refused Tin's key; an operator needs to check TIN_LITE_PODSCAN_API_KEY "
+                "and Tin's Podscan plan.",
+                code="provider_refused",
+                provider_error=error(),
+            )
+        if status == 404:
+            # An unknown podcast, person or chart category is an answer, not a failure.
+            return {**echo, "status": "not_found"}
+        if status in {400, 422}:
+            raise ServiceCallRefused(
+                "Podscan did not accept these arguments; check the query, ids and dates.",
+                code="invalid_request",
+                provider_error=error(),
+            )
+        if status != 200 or not isinstance(payload, dict):
+            return {**echo, "reason": "provider_error", "http_status": status}
+        return podscan.result(operation, request, payload, max_response_bytes=max_response_bytes)
 
     async def _dataforseo(self, operation, request, *, execution_key, max_response_bytes):
         from tin_lite.dataforseo import DataForSEOError
