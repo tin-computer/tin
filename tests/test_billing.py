@@ -23,8 +23,10 @@ from tin_lite.billing_contracts import (
     final_charge,
     token_charge,
 )
-from tin_lite.billing_payments import PRODUCT_ID, StripePayments
+from tin_lite.billing_payments import PRODUCTS, StripePayments
 from tin_lite.run_service import start_workflow_run
+
+PRODUCT_ID = PRODUCTS["test"][0]
 
 
 @pytest.fixture

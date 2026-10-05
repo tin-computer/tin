@@ -22,12 +22,14 @@ An entirely fresh no-OAuth deployment has not yet passed clean-clone acceptance;
 provider spending ceilings, fencing, permissions, review and overlap rules still apply. This
 change does not add a new general self-hosted concurrency/operational-budget administration UI.
 
-## Hosted test deployment
+## Hosted deployment
 
 Set `TIN_LITE_BILLING_ENABLED=true` to attach the billing service and expose its APIs/tools.
-`TIN_LITE_BILLING_TEST_ENABLED=true` separately enables the current test-only payment/admission
-pilot. Supply the deployment's Stripe test secret and webhook secret. Credentials alone do
-not enroll workspaces or enable billing.
+`TIN_LITE_BILLING_TEST_ENABLED=true` separately starts paid work and top-ups; despite its name
+it is the paid-work switch in either Stripe mode. `TIN_LITE_STRIPE_MODE` (`test` by default, or
+`live`) picks the Stripe mode, and startup refuses a `STRIPE_SECRET_KEY` from the other mode.
+Supply that mode's secret key and webhook signing secret. Credentials alone do not enroll
+workspaces or enable billing. See [switching to live mode](prepaid-billing-implementation.md#switching-to-live-mode).
 
 Hosted Tin also enables `TIN_LITE_BILLING_HOSTED_DEFAULTS_ENABLED=true` together with welcome
 credits. On authenticated project discovery this enables run billing for workspaces with
@@ -50,8 +52,10 @@ remain available; existing payment and reservation records are not discarded. St
 silently treating funded projects as unbilled. No automatic account conversion or data deletion
 is performed. Before upgrading an existing billed deployment, explicitly set the new flag true.
 
-This remains a test tariff and test-payment rollout, not live customer charging. The existing
-billing eligibility limits and accounting acceptance requirements still apply.
+Live mode charges supplier list prices at cost: published OpenAI, data-provider and fal rates,
+no markup or execution fee, and Tin pays for sandbox time. The illustrative fallback card
+(`tin-test-only-v1`) is refused in live mode, so a profile priced only by it cannot start.
+The existing billing eligibility limits and accounting acceptance requirements still apply.
 
 ## Welcome credits
 

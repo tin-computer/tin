@@ -175,7 +175,6 @@ def service_terms(definition, *, inputs=None):
     return {
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "parent" if executor in PARENT_EXECUTORS else "metered_workflow",

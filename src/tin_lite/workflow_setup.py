@@ -95,7 +95,11 @@ async def code_readiness(
         except ValueError as exc:
             issues.append(str(exc))
     terms = (
-        configured_terms(model_terms(workflow.definition), workflow.definition, inputs)
+        configured_terms(
+            {**model_terms(workflow.definition), "mode": getattr(settings, "stripe_mode", "test")},
+            workflow.definition,
+            inputs,
+        )
         if spec.metered
         else None
     )

@@ -345,7 +345,8 @@ async def test_issued_private_v1_quotes_keep_their_limits_and_funding(billed, wh
     f.settings.codex_api_projects = {f.project.id}
     q = await quote(f)
     terms = configured_terms(
-        isolated_v1_terms(api_terms(f.workflow.definition, before_v5=True)),
+        # Quotes issued before Stripe live mode carried their mode inside the price list.
+        {**isolated_v1_terms(api_terms(f.workflow.definition, before_v5=True)), "mode": "test"},
         f.workflow.definition,
         {"brief": "Explain the public docs"},
     )
@@ -374,7 +375,7 @@ async def test_quote_issued_before_v5_keeps_its_v4_session_and_ceiling(billed):
     assert q["terms"]["codex_contract"] == SESSION_CONTRACT
     assert q["terms"]["maximum_nanos"] == MAXIMUM
     issued = configured_terms(
-        api_terms(f.workflow.definition, session_budget=True, before_v5=True),
+        {**api_terms(f.workflow.definition, session_budget=True, before_v5=True), "mode": "test"},
         f.workflow.definition,
         {"brief": "Explain the public docs"},
     )

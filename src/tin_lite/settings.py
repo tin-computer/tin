@@ -5,6 +5,7 @@ from base64 import urlsafe_b64decode
 from binascii import Error as Base64Error
 from functools import cached_property
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
 from pydantic import Field, SecretStr, field_validator, model_validator
@@ -70,7 +71,11 @@ class Settings(BaseSettings):
     # Browser sign-ups see a locked dashboard until their coding agent sets up the first
     # workflow. Off once browser onboarding exists, or for a test account.
     browser_lock_enabled: bool = Field(default=True, alias="TIN_LITE_BROWSER_LOCK_ENABLED")
+    # Starts new paid work and Stripe top-ups. Off pauses them; reads and reconciliation stay.
+    # The name predates live payments: it is the paid-work switch in either Stripe mode.
     billing_test_enabled: bool = Field(default=False, alias="TIN_LITE_BILLING_TEST_ENABLED")
+    # Which Stripe mode Tin's own top-ups use. The key prefix and every Stripe object must match.
+    stripe_mode: Literal["test", "live"] = Field(default="test", alias="TIN_LITE_STRIPE_MODE")
     billing_hosted_defaults_enabled: bool = Field(
         default=False, alias="TIN_LITE_BILLING_HOSTED_DEFAULTS_ENABLED"
     )
@@ -323,8 +328,12 @@ class Settings(BaseSettings):
         if self.private_workflows_open and not self.billing_enabled:
             raise ValueError("Open private workflows require billing enabled")
         if self.billing_test_enabled and self.stripe_secret_key is not None:
-            if not self.stripe_secret_key.get_secret_value().startswith(("sk_test_", "rk_test_")):
-                raise ValueError("Tin billing currently accepts Stripe test keys only")
+            prefixes = (f"sk_{self.stripe_mode}_", f"rk_{self.stripe_mode}_")
+            if not self.stripe_secret_key.get_secret_value().startswith(prefixes):
+                raise ValueError(
+                    f"STRIPE_SECRET_KEY is not a {self.stripe_mode}-mode key; "
+                    "TIN_LITE_STRIPE_MODE and the key must match"
+                )
         if "OPENAI_API_KEY" in os.environ or "CODEX_API_KEY" in os.environ:
             raise ValueError(
                 "OPENAI_API_KEY and CODEX_API_KEY are forbidden; Luna uses its explicit "

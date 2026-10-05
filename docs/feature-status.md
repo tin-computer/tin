@@ -86,8 +86,9 @@ exemption. Ordinary starts check a configured conservative cost estimate, fund p
 operations internally, and deduct actual verified usage. Users do not approve quotes or manage
 holds. Uncertain usage is not treated as free or automatically purchased again.
 
-Stripe is still **test mode only**. API usage can incur real supplier costs even when Tin's
-credit ledger and Checkout use test mode. This is not a live-payment launch. Self-hosted
+Checkout supports Stripe live mode (`TIN_LITE_STRIPE_MODE=live`) at supplier list prices with
+no markup; Tin pays for sandbox time. Until a deployment switches and passes a real top-up and
+refund, it runs in test mode, where API usage still incurs real supplier costs. Self-hosted
 customer billing defaults off; the operator still pays providers and infrastructure directly.
 Four provider adapters exist, but a billed route needs explicit registration and pricing.
 

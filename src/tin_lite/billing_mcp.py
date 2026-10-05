@@ -136,7 +136,7 @@ def register_billing_tools(server, *, runtime, settings, caller):
     async def create_billing_checkout(
         workspace_id: str, amount_cents: int, request_id: str
     ) -> dict[str, Any]:
-        """Billing admin: open a hosted Stripe test checkout. Returning does not start a run."""
+        """Billing admin: open a hosted Stripe checkout. Returning does not start a run."""
         token = await caller()
         payments = StripePayments(billing=service(), settings=settings)
         return await result(
@@ -150,14 +150,14 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def list_billing_payments(workspace_id: str) -> dict[str, Any]:
-        """Billing admin: read test payments, invoices and refundable balances."""
+        """Billing admin: read payments, invoices and refundable balances."""
         token = await caller()
         payments = StripePayments(billing=service(), settings=settings)
         return {"payments": await result(payments.list_payments(UUID(workspace_id), token.subject))}
 
     @server.tool()
     async def enroll_billing_test(workspace_id: str) -> dict[str, Any]:
-        """Billing administrator: enable test-only billing; no live charge.
+        """Billing administrator: enable paid runs for a workspace in the configured Stripe mode.
 
         Hosted Tin enables billing automatically. This explicit operator/pilot control
         changes future admission only; configure limits and funds when not using hosted defaults.
