@@ -54,6 +54,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "awesome_submit_request_review",
         "payment_recovery_apply",
         "payment_recovery_draft",
+        "payment_recovery_expire",
         "payment_recovery_failure",
         "payment_recovery_gather",
         "payment_recovery_prepare",

@@ -415,6 +415,8 @@ class BuiltinWorkflow:
     integration_requirements: tuple[IntegrationRequirement, ...] = ()
     model_route: ModelRoute | None = None
     schedule_modes: tuple[str, ...] = ("on_demand", "daily", "weekly")
+    # The cadence a new setup starts with; the founder can still choose another or none.
+    default_schedule: dict[str, Any] | None = None
     system: str | None = None
     presentation: WorkflowDiagram | None = None
     prerequisites: tuple[WorkflowPrerequisite, ...] = ()
@@ -456,6 +458,10 @@ class BuiltinWorkflow:
         }
         if self.review_policy is not None:
             definition["human_review"] = self.review_policy.definition()
+        if self.default_schedule is not None:
+            if self.default_schedule.get("cadence") not in self.schedule_modes:
+                raise ValueError(f"workflow {self.key} defaults to a cadence it does not allow")
+            definition["default_schedule"] = dict(self.default_schedule)
         if self.system is not None:
             if self.system not in WORKFLOW_SYSTEM_IDS:
                 raise ValueError(f"workflow {self.key} references unknown system {self.system}")
@@ -2843,15 +2849,19 @@ BUILTIN_WORKFLOWS = (
             "write each one a short personal email in your voice: their plan, why the card "
             "failed, their history with you and your latest mail with them, with Stripe's own "
             "payment link. After you approve, Tin checks each invoice again and sends only the "
-            "unpaid ones from your Gmail, never twice for the same invoice."
+            "unpaid ones from your Gmail. Runs weekly by default; a person is emailed at most "
+            "once a month, and an unanswered Decision closes unsent after six days."
         ),
         # Code reads Stripe and the mailbox and checks every draft; one model step writes the
         # emails; one approval gates every send, and each invoice has a project-wide receipt.
         executor=payment_recovery.KEY,
-        version_label="1.0.0",
+        # 1.1.0: product scope, one email per person, weekly schedules and expiring Decisions.
+        version_label="1.1.0",
         system=REVENUE_SYSTEM,
         review_policy=PAYMENT_RECOVERY_REVIEW_POLICY,
-        schedule_modes=("on_demand",),
+        # Stripe retries a card for two to four weeks; weekly catches a failure inside that.
+        schedule_modes=("on_demand", "weekly", "monthly"),
+        default_schedule={"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00"},
         input_schema=payment_recovery.INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(

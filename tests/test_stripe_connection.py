@@ -412,7 +412,7 @@ async def test_unknown_rate_limit_reasons_are_not_echoed() -> None:
         ("invoices.list", {"status": "paid,open"}, "status must be one of"),
         ("prices.list", {"active": "true"}, "true or false"),
         ("prices.list", {"created_gte": 0}, "unsupported argument"),
-        ("charges.list", {"customer": "cus_Abc"}, "unsupported argument"),
+        ("charges.list", {"customer": "sub_Abc"}, "customer must start with cus_"),
         ("refunds.list", {}, "unknown Stripe operation"),
     ],
 )

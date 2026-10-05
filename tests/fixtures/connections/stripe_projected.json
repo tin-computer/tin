@@ -259,6 +259,9 @@
         "hosted_invoice_url": "https://invoice.stripe.com/i/acct_Fixture/test_FixtureInvoice0004",
         "lines": [
           "Annual support (manual)"
+        ],
+        "product_ids": [
+          "prod_FixturePro"
         ]
       },
       {
@@ -281,7 +284,8 @@
         "customer_email": null,
         "customer_name": null,
         "hosted_invoice_url": null,
-        "lines": []
+        "lines": [],
+        "product_ids": []
       },
       {
         "id": "in_Fixture0002",
@@ -303,7 +307,8 @@
         "customer_email": null,
         "customer_name": null,
         "hosted_invoice_url": null,
-        "lines": []
+        "lines": [],
+        "product_ids": []
       },
       {
         "id": "in_Fixture0001",
@@ -325,7 +330,8 @@
         "customer_email": null,
         "customer_name": null,
         "hosted_invoice_url": null,
-        "lines": []
+        "lines": [],
+        "product_ids": []
       }
     ],
     "has_more": false,

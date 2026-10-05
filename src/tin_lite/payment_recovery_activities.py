@@ -10,6 +10,7 @@ customer about the same invoice twice, even from a later run.
 from __future__ import annotations
 
 import asyncio
+import time
 from dataclasses import asdict
 from datetime import UTC, datetime
 from uuid import UUID
@@ -247,69 +248,116 @@ class PaymentRecoveryActivities:
         run = await self._active(run_id)
         await self._progress(run_id, "gather", 1, "Reading failed payments in Stripe")
         stripe = await self._stripe_connection(run_id, run.project_id, scope)
-        now = scope["now"]
-        since = now - scope["inputs"]["lookback_days"] * 86_400
-        window = {"created_gte": since, "created_lte": now}
+        inputs, now = scope["inputs"], scope["now"]
+        since = now - inputs["lookback_days"] * 86_400
         invoices, complete = await self._stripe_pages(
             run_id,
             "invoices",
             "invoices.list",
-            {"status": "open", **window},
+            {"status": "open", "created_gte": since, "created_lte": now},
             POLICY["max_invoice_pages"],
             stripe,
         )
-        partial = [] if complete else ["open invoices"]
-        failed = payment_recovery.failed_invoices(invoices)
-        earlier, eligible = [], []
-        for customer_id in payment_recovery.candidates(invoices, len(failed)):
-            reason = await self._earlier(run.project_id, failed[customer_id])
+        prices, _ = await self._stripe_pages(
+            run_id, "prices", "prices.list", {}, POLICY["max_price_pages"], stripe
+        )
+        names = payment_recovery.product_names(prices)
+        selected, unknown = payment_recovery.resolve_products(inputs.get("products") or [], names)
+        failing = payment_recovery.failed_invoices(invoices)
+        billed = list(dict.fromkeys(p for i in failing for p in i.get("product_ids") or ()))
+        notes = {
+            "partial": [] if complete else ["open invoices"],
+            "unknown_products": unknown,
+            "selected": bool(selected),
+            "limit": inputs["max_customers"],
+            "other_products": [names.get(p, p) for p in billed if p not in selected]
+            if selected or len(billed) > 1
+            else [],
+            "suggested": []
+            if selected
+            else payment_recovery.like_project(
+                scope["product"], {p: names[p] for p in billed if p in names}
+            ),
+        }
+        context = await self._context(run.project_id)
+        notes["no_voice"] = not any(c["path"] == STYLE_PATH for c in context)
+        if inputs.get("products") and not selected:
+            # Nothing the founder chose exists: say what the account sells, email nobody.
+            notes["other_products"] = [names.get(p, p) for p in billed]
+            await self._save_evidence(run_id, [], [], notes, context, invoices)
+            return
+        persons = payment_recovery.people(
+            payment_recovery.failed_invoices(invoices, selected or None)
+        )
+        sends = await self._sends(run.project_id)
+        skipped, eligible, throwaway = [], [], 0
+        for person in persons:
+            if person["email"] and payment_recovery.throwaway(person["email"]):
+                throwaway += 1
+                continue
+            reason = payment_recovery.held_back(person, sends, now)
             if reason:
-                newest = failed[customer_id][0]
-                label = newest.get("customer_name") or newest.get("customer_email") or customer_id
-                earlier.append({"customer": label, "reason": reason})
-            else:
-                eligible.append(customer_id)
-        limit = scope["inputs"]["max_customers"]
+                skipped.append({"customer": person["label"], "reason": reason})
+                continue
+            eligible.append(person)
+        limit = inputs["max_customers"]
+        # Read a few more than the limit, since some turn out canceled or recently written to.
         chosen = eligible[: limit + 10]
-        subscriptions = []
-        for customer_id in chosen:
+        subscriptions, charges = [], []
+        for person in chosen:
+            newest = person["invoices"][0]
+            customer = newest["customer"]
             # Every status, so a canceled or paused subscription is seen and skipped.
             rows, _ = await self._stripe_pages(
                 run_id,
-                f"subscriptions:{customer_id}",
+                f"subscriptions:{customer}",
                 "subscriptions.list",
-                {"customer": customer_id, "status": "all"},
+                {"customer": customer, "status": "all"},
                 1,
                 stripe,
             )
             subscriptions += rows
-        charges, complete = await self._stripe_pages(
-            run_id,
-            "charges",
-            "charges.list",
-            {"created_gte": since, "created_lte": now},
-            POLICY["max_charge_pages"],
-            stripe,
+            rows, _ = await self._stripe_pages(
+                run_id,
+                f"charges:{customer}",
+                "charges.list",
+                {"customer": customer, "created_gte": max(0, (newest.get("created") or 0) - 3_600)},
+                1,
+                stripe,
+            )
+            charges += rows
+            if activity.in_activity():
+                activity.heartbeat({"customer": customer})
+        cases, unusable = payment_recovery.build_cases(
+            chosen=chosen, subscriptions=subscriptions, charges=charges, names=names, now=now
         )
-        partial += [] if complete else ["failed charges"]
-        prices, _ = await self._stripe_pages(
-            run_id, "prices", "prices.list", {}, POLICY["max_price_pages"], stripe
-        )
-        chosen_set = set(chosen)
-        cases, skipped = payment_recovery.build_cases(
-            invoices=[i for i in invoices if i.get("customer") in chosen_set],
-            subscriptions=subscriptions,
-            charges=charges,
-            prices=prices,
-            now=now,
-            max_customers=limit,
-        )
-        for customer_id in eligible[limit + 10 :]:
-            newest = failed[customer_id][0]
-            label = newest.get("customer_name") or newest.get("customer_email") or customer_id
-            skipped.append({"customer": label, "reason": f"beyond this run's limit of {limit}"})
+        skipped += unusable
         await self._progress(run_id, "gather", 1, "Reading each customer's history")
+        final, overflow = [], []
+        person_of = {p["invoices"][0]["id"]: p for p in chosen}
         for case in cases:
+            person = person_of[case["invoice_id"]]
+            if activity.in_activity():
+                activity.heartbeat({"customer": case["customer_id"]})
+            if len(final) == limit:
+                overflow.append(person)
+                continue
+            mail = await self._mailbox(run_id, run, scope, case)
+            if mail.get("unavailable"):
+                # Without the mailbox Tin cannot tell whether you already wrote to them.
+                skipped.append(
+                    {"customer": person["label"], "reason": "Tin could not check your mailbox"}
+                )
+                continue
+            if mail.pop("founder_wrote", False):
+                skipped.append(
+                    {
+                        "customer": person["label"],
+                        "reason": "you wrote to them in the last "
+                        f"{payment_recovery.FOUNDER_CONTACT_DAYS} days",
+                    }
+                )
+                continue
             paid, _ = await self._stripe_pages(
                 run_id,
                 f"paid:{case['customer_id']}",
@@ -319,37 +367,50 @@ class PaymentRecoveryActivities:
                 stripe,
             )
             case["history"] = payment_recovery.history(paid)
-            case["mailbox"] = await self._mailbox(run_id, run, scope, case)
-            if activity.in_activity():
-                activity.heartbeat({"customer": case["customer_id"]})
-        context = await self._context(run.project_id)
+            case["mailbox"] = mail
+            case["other_customers"] = len(person["customers"]) - 1
+            final.append(case)
+        waiting = overflow + eligible[limit + 10 :]
+        notes["beyond_limit"] = len(waiting)
+        notes["beyond_names"] = [p["label"] for p in waiting[:5]]
+        notes["throwaway"] = throwaway
+        await self._save_evidence(run_id, final, skipped, notes, context, invoices)
+
+    async def _save_evidence(self, run_id, cases, skipped, notes, context, invoices):
         await self._save(
             run_id,
             "evidence",
             {
                 "cases": cases,
                 "skipped": skipped,
-                "earlier": earlier,
-                "partial": partial,
+                "notes": notes,
                 "context": context,
-                "counts": {"open_invoices": len(invoices), "charges": len(charges)},
+                "counts": {"open_invoices": len(invoices)},
             },
         )
 
-    async def _earlier(self, project_id, invoices: list[dict]) -> str | None:
-        """Why this customer was already handled: any of their open invoices was emailed."""
-        for invoice in invoices:
-            receipt = await self.db.get_effect(self.invoice_key(project_id, invoice["id"]))
-            if receipt is None:
-                continue
+    async def _sends(self, project_id) -> list[dict]:
+        """The project's earlier recovery sends, one per emailed invoice."""
+        found = []
+        for receipt in await self.db.payment_recovery_sends(project_id):
             saved = receipt.result or {}
-            if receipt.status == "completed" and saved.get("status") == "sent":
-                return f"already emailed about an open invoice on {saved['sent_at'][:10]}"
-            return "an earlier email to them is unconfirmed; check your Sent folder"
-        return None
+            when = saved.get("sent_at") or saved.get("attempted_at")
+            sent = receipt.status == "completed" and saved.get("status") == "sent"
+            found.append(
+                {
+                    "invoice": receipt.execution_key.split(":invoice:", 1)[-1],
+                    "run_id": saved.get("run_id"),
+                    "to": saved.get("to"),
+                    "subscription": saved.get("subscription"),
+                    "state": "sent" if sent else "unconfirmed",
+                    "at": int(datetime.fromisoformat(when).timestamp()) if when else None,
+                }
+            )
+        return found
 
     async def _mailbox(self, run_id, run, scope, case) -> dict:
-        """The latest mail with this customer; an unreadable mailbox is a gap, not a failure."""
+        """The latest mail with this customer and whether the founder wrote to them lately;
+        an unreadable mailbox is a gap, not a failure."""
         gmail = scope["gmail"]
         common = {
             "project_id": run.project_id,
@@ -372,8 +433,16 @@ class PaymentRecoveryActivities:
                 thread = await self.integrations.workspace_get_thread(
                     **common, thread_id=messages[0]["thread_id"], execution_key=f"{key}:thread"
                 )
+            days = payment_recovery.FOUNDER_CONTACT_DAYS
+            wrote = await self.integrations.workspace_search_messages(
+                **common,
+                query=f'from:me to:"{address}" newer_than:{days}d',
+                max_results=1,
+                execution_key=f"{key}:founder",
+            )
             # Only these few facts are kept; the thread itself is never stored.
-            return payment_recovery.mailbox(thread, customer_email=address, matches=len(messages))
+            facts = payment_recovery.mailbox(thread, customer_email=address, matches=len(messages))
+            return {**facts, "founder_wrote": bool(wrote.get("messages"))}
 
         try:
             return await self._once(run_id, f"gmail:{case['customer_id']}", read)
@@ -442,8 +511,7 @@ class PaymentRecoveryActivities:
                 emails=emails,
                 cases=cases,
                 skipped=evidence["skipped"],
-                earlier=evidence["earlier"],
-                partial=evidence.get("partial") or (),
+                notes=evidence.get("notes") or {},
             )
         }
         publication = await self._publish(
@@ -649,6 +717,8 @@ class PaymentRecoveryActivities:
 
     async def _send(self, run, scope, email, row, stripe) -> dict:
         key = self.invoice_key(run.project_id, email["invoice_id"])
+        # Kept on the receipt, so later runs can hold back a person and cap a subscription.
+        who = {"run_id": str(run.id), "to": email["to"], "subscription": email.get("subscription")}
         async with self.db.effect_lock(key, KEY) as (conn, existing):
             saved = (existing.result or {}) if existing else {}
             if existing and saved.get("run_id") != str(run.id):
@@ -660,6 +730,16 @@ class PaymentRecoveryActivities:
             # message up by its Message-ID before posting, so it is retried, never re-checked.
             first = existing is None
             if first:
+                # Another run may have emailed this person since this one was drafted.
+                others = [
+                    s
+                    for s in await self._sends(run.project_id)
+                    if s["run_id"] != str(run.id) and s["to"] == email["to"]
+                ]
+                person = {"email": email["to"], "invoices": [{"id": email["invoice_id"]}]}
+                reason = payment_recovery.held_back(person, others, int(time.time()))
+                if reason:
+                    return {**row, "status": "skipped", "reason": reason}
                 still_open = await self.integrations.stripe.call(
                     "invoices.list",
                     {"customer": email["customer_id"], "status": "open", "limit": 100},
@@ -674,7 +754,7 @@ class PaymentRecoveryActivities:
                 await self.db.save_effect_progress(
                     conn,
                     execution_key=key,
-                    result={"run_id": str(run.id), "attempted_at": datetime.now(UTC).isoformat()},
+                    result={**who, "attempted_at": datetime.now(UTC).isoformat()},
                 )
             try:
                 sent = await self.integrations.workspace_send_message(
@@ -689,14 +769,14 @@ class PaymentRecoveryActivities:
                     body=email["body"],
                 )
                 result = {
-                    "run_id": str(run.id),
+                    **who,
                     "status": "sent",
                     "sent_at": datetime.now(UTC).isoformat(),
                     "thread_id": sent.get("thread_id"),
                 }
             except IntegrationDeliveryUnknownError:
                 result = {
-                    "run_id": str(run.id),
+                    **who,
                     "status": "unknown",
                     "reason": "Gmail did not confirm delivery; check your Sent folder",
                 }
@@ -728,13 +808,16 @@ class PaymentRecoveryActivities:
         await self._progress(run_id, "publish", 5, "Saving the result to your project files")
         names = paths(run_id, RESULT_DOCS)
         results = [{k: v for k, v in r.items() if k != "replayed"} for r in applied["results"]]
-        skipped = [*evidence["earlier"], *evidence["skipped"]]
+        # Runs drafted before 1.1.0 kept earlier skips and partial reads apart from notes.
+        skipped = [*evidence.get("earlier", []), *evidence["skipped"]]
+        notes = evidence.get("notes") or {"partial": evidence.get("partial") or []}
         if results:
             document = payment_recovery.render_result(
                 sender=scope["gmail"]["email"],
                 product=scope["product"],
                 results=results,
                 skipped=skipped,
+                notes=notes,
             )
             summary = payment_recovery.summary_line(results)
         else:
@@ -743,6 +826,7 @@ class PaymentRecoveryActivities:
                 lookback_days=scope["inputs"]["lookback_days"],
                 counts=evidence["counts"],
                 skipped=skipped,
+                notes=notes,
             )
             summary = "No failed payments to recover right now."
         publication = await self._publish(
@@ -766,6 +850,24 @@ class PaymentRecoveryActivities:
                 summary=summary,
                 approved=bool(results),
             )
+
+    @activity.defn(name="payment_recovery_expire")
+    async def expire(self, run_id: str) -> bool:
+        """Nobody decided in time: close the Decision unsent, so the next run can start."""
+        draft = await self._result(run_id, "draft")
+        run = await self.db.get_run(UUID(run_id))
+        if run is None or run.executor != KEY:
+            return True
+        count = len(draft["emails"])
+        # The plan stays readable in Files; the run and Activity say why nothing was sent.
+        return await self.db.expire_payment_recovery_review(
+            run_id=run.id,
+            execution_key=self.key(run_id, "expired"),
+            summary=(
+                f"Not approved within {payment_recovery.DECISION_DAYS} days; "
+                f"{count} failed-payment email{'s' if count != 1 else ''} closed unsent."
+            ),
+        )
 
     @activity.defn(name="payment_recovery_failure")
     async def failure(self, run_id: str) -> None:

@@ -1058,7 +1058,7 @@ function systemTemplateSetupCard(workflow) {
       </section>
       <section class="system-config-when">
         ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : null, false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -3530,7 +3530,7 @@ function workflowDraftForm(workflow) {
       ${fields || '<p class="workflow-no-inputs">This workflow has no additional inputs.</p>'}
       ${workflowHowItRuns(workflow)}
       <div class="workflow-config-divider"><span>Schedule</span></div>
-      ${workflowScheduleControls(workflow.id, null, false, workflow.definition?.schedule_modes)}
+      ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}
     </div>
     <div class="workflow-config-actions">
       <code>Run now uses these inputs once · saving pins v${escapeHtml(workflow.version_label)}</code>
@@ -3669,6 +3669,12 @@ function workflowLedgerSchedule(configured, editing) {
   return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
     ${workflowScheduleControls(configured.workflow_id, schedule, true, workflow?.definition?.schedule_modes)}
   </form>`;
+}
+
+// A workflow may declare the cadence a new setup starts with, in the project's timezone.
+function workflowDefaultSchedule(workflow) {
+  const schedule = workflow.definition?.default_schedule;
+  return schedule ? {...schedule, timezone: state.project?.timezone || "UTC"} : null;
 }
 
 function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = null) {

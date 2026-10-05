@@ -202,7 +202,7 @@ def request_for(operation: str, arguments: Any) -> tuple[Operation, dict[str, An
         params["created[lte]"] = bounds["created_lte"]
     if operation == "subscriptions.list":
         params["status"] = _choice(args.get("status", "all"), "status", SUBSCRIPTION_STATUSES)
-    if operation == "subscriptions.list" and args.get("customer") is not None:
+    if operation in {"subscriptions.list", "charges.list"} and args.get("customer") is not None:
         params["customer"] = _stripe_id(args["customer"], "customer", "cus_")
     if operation == "invoices.list":
         if args.get("status") is not None:
@@ -366,6 +366,7 @@ def project_invoice(value: dict[str, Any]) -> dict[str, Any]:
         "customer_name": text(value.get("customer_name")),
         "hosted_invoice_url": _invoice_url(value.get("hosted_invoice_url")),
         "lines": _invoice_lines(value.get("lines")),
+        "product_ids": _invoice_products(value.get("lines")),
     }
 
 
@@ -373,6 +374,24 @@ def _invoice_url(value: Any) -> str | None:
     """Stripe's hosted page where the customer pays this invoice; only Stripe's own host."""
     url = text(value, 500)
     return url if url and url.startswith("https://invoice.stripe.com/") else None
+
+
+def _invoice_products(value: Any) -> list[str]:
+    """The products this invoice bills, from its first ten lines, in line order."""
+    rows = value.get("data") if isinstance(value, dict) else None
+    found: list[str] = []
+    for row in rows[:10] if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        # Since basil a line names its price under pricing.price_details; before, under price.
+        pricing = row.get("pricing") if isinstance(row.get("pricing"), dict) else {}
+        details = pricing.get("price_details")
+        details = details if isinstance(details, dict) else {}
+        price = row.get("price") if isinstance(row.get("price"), dict) else {}
+        product = _id(details.get("product")) or _id(price.get("product"))
+        if product and product not in found:
+            found.append(product)
+    return found
 
 
 def _invoice_lines(value: Any) -> list[str]:
@@ -462,7 +481,9 @@ OPERATIONS: dict[str, Operation] = {
         project_price,
         expand="data.product",
     ),
-    "charges.list": Operation("charges.read", "/v1/charges", _WINDOW, project_charge),
+    "charges.list": Operation(
+        "charges.read", "/v1/charges", _WINDOW | {"customer"}, project_charge
+    ),
 }
 assert {op.capability for op in OPERATIONS.values()} == set(STRIPE_CAPABILITIES)
 

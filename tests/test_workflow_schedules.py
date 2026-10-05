@@ -172,7 +172,7 @@ def test_monthly_runs_only_where_the_workflow_declares_it() -> None:
         ensure_schedule_allowed({}, monthly)
     assert {
         w.key for w in BUILTIN_WORKFLOWS if "monthly" in w.definition.get("schedule_modes", [])
-    } == {"organic.keyword_plan", "organic.audit"}
+    } == {"organic.keyword_plan", "organic.audit", "revenue.payment_recovery"}
     quarterly = WorkflowSchedule(
         cadence="monthly", day_of_month=1, months=[1, 4, 7, 10], local_time="09:00", timezone="UTC"
     )

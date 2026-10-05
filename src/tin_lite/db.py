@@ -6818,6 +6818,62 @@ class Database:
                 "effect progress cannot replace a completed or failed effect"
             )
 
+    async def payment_recovery_sends(self, project_id: UUID) -> list[EffectReceipt]:
+        """Every recovery send attempt in a project: one receipt per emailed invoice."""
+        rows = await self.pool.fetch(
+            """
+            SELECT * FROM effect_receipts
+            WHERE operation = 'revenue.payment_recovery' AND execution_key LIKE $1
+            """,
+            f"payment_recovery:{project_id}:invoice:%",
+        )
+        return [_effect_receipt(row) for row in rows]
+
+    async def expire_payment_recovery_review(
+        self, *, run_id: UUID, summary: str, execution_key: str
+    ) -> bool:
+        """Close a recovery Decision nobody answered in time: the run stops unsent and the
+        next scheduled run may start. Returns False when someone decided first, including an
+        approval whose reviewer is recorded but whose signal has not landed yet."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            closed = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    result_summary = $2, progress_summary = $2, progress_updated_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND status = 'needs_input' AND review_decision IS NULL
+                  AND reviewed_by_clerk_user_id IS NULL
+                RETURNING id
+                """,
+                run_id,
+                result_line(summary),
+            )
+            if closed is None:
+                return False
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"expired"}'::jsonb,
+                    applied_at = now()
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_expired",
+                details={"kind": "runs", "status": "stopped"},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_expired",
+            )
+        await self._track_run(run_id, "run_review_recorded", decision="expired")
+        return True
+
     async def complete_payment_recovery_projection(
         self,
         conn: asyncpg.Connection,
