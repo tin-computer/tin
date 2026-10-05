@@ -37,7 +37,8 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
 5. If the site does not serve the chosen path yet, add the smallest route that fits how its
    other pages are served (a static file in its public folder, a route file, a registry
    entry), keeping its files inside the route's own folder where the framework allows, so
-   Tin can merge it as part of the page. Stay within the 20-file limit.
+   Tin can merge it as part of the page. Stay within the 20-file limit. Place the page's
+   figures, embeds, diagrams and videos as the prompt describes.
 6. Stay clear of protected paths: never change a file that serves a path in
    `protected_paths` (the shared sign-in, sign-up and auth-return pages, plus any the
    founder listed). Leave root layouts, middleware, redirects, host and build settings and

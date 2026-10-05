@@ -55,8 +55,10 @@ ARTIFACT_MEDIA_TYPES = frozenset(
         DEMO_VIDEO_MEDIA_TYPE,
     }
 )
-MAX_PROCEDURE_PULL_REQUEST_BYTES = 512_000
-MAX_PROCEDURE_PULL_REQUEST_FILES = 10
+# Ceilings a procedure may declare; the default stays 512 KB so existing contracts don't move.
+MAX_PROCEDURE_PULL_REQUEST_BYTES = 2_000_000
+MAX_PROCEDURE_PULL_REQUEST_FILES = 30
+DEFAULT_PULL_REQUEST_BYTES = 512_000
 PROJECT_ARTIFACT_RESULT = "project.artifact"
 GITHUB_PULL_REQUEST_RESULT = "github.pull_request"
 PROJECT_STATE_WORKSPACE = "project.state"
@@ -294,7 +296,7 @@ class GitHubPullRequestProcedure:
     receipt_path_template: str
     verification_commands: tuple[str, ...]
     max_files: int = 3
-    max_bytes: int = MAX_PROCEDURE_PULL_REQUEST_BYTES
+    max_bytes: int = DEFAULT_PULL_REQUEST_BYTES
     provider_key: str = "infra.github"
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -926,6 +928,8 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         MAX_PROCEDURE_BINARY_ARTIFACT_BYTES
         if result_kind == PROJECT_ARTIFACT_RESULT
         and declared_media_type in BINARY_ARTIFACT_MEDIA_TYPES
+        else MAX_PROCEDURE_PULL_REQUEST_BYTES
+        if result_kind == GITHUB_PULL_REQUEST_RESULT
         else MAX_PROCEDURE_ARTIFACT_BYTES
     )
     if (

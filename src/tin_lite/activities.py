@@ -228,6 +228,18 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
     return _TRANSIENT_FAILURE_PATTERN.search(message) is not None
 
 
+def procedure_project_revision(run, procedure, content_source):
+    """The project revision a procedure's checkout pins, or None for the canonical head."""
+    if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS or (
+        procedure.review_revision_context or {}
+    ).get("project_revision"):
+        return run.expected_head_sha
+    if content_source is not None and content_source.get("assets"):
+        # A page's figures and embeds are read where they were approved.
+        return content_source["source_revision"]
+    return None
+
+
 class TinActivities:
     async def _run_accounted_procedure(self, *, conn, run, sandbox_id, run_input):
         if (
@@ -3504,12 +3516,12 @@ class TinActivities:
                         f"{self._settings.switchboard_public_url.rstrip('/')}"
                         "/internal/run-tools/mcp"
                     )
+                content_source = None
                 if procedure.result_kind == GITHUB_PULL_REQUEST_RESULT:
                     technical = None
                     expected_binding = None
                     from tin_lite import content_repository_delivery
 
-                    content_source = None
                     if content_repository_delivery.adapts(run):
                         content_source = await content_repository_delivery.saved_source(
                             self._db, run_id
@@ -3627,15 +3639,8 @@ class TinActivities:
                             ),
                             # Card runs keep no agent narration, as they keep no rollouts.
                             progress_sink=None if payment_card else self._progress_sink(run_id),
-                            project_revision=(
-                                run.expected_head_sha
-                                if (
-                                    procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS
-                                    or (procedure.review_revision_context or {}).get(
-                                        "project_revision"
-                                    )
-                                )
-                                else None
+                            project_revision=procedure_project_revision(
+                                run, procedure, content_source
                             ),
                             result_kind=procedure.result_kind,
                             run_tools_url=run_tools_url,

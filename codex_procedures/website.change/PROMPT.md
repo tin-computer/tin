@@ -38,6 +38,20 @@ back into the site (for example to the product), byline and dates, and structure
 JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
 fonts or other outside resources.
 
+The approved page may carry figures and interactive pieces, listed in `assets` with each
+file's project path, and diagram, video and callout blocks in `article`. Your project-state
+checkout is at the approved revision: copy each asset from `/home/user/state/<path>` into the
+place this site keeps such files, and show it the way the site shows media. An SVG becomes an
+image or the site's figure component, with its alt text and caption. An interactive piece
+becomes an iframe or an inline component, with its script and data unchanged. Turn each
+`mermaid` block into SVG with
+`node /opt/tin-lite/diagram/scripts/check_diagram.mjs check <file>.mmd --out <empty absolute directory> --no-previews`,
+which writes `light.svg` and `dark.svg`; use the site's own diagram support instead when it
+has one. Show each `tin-video` block with the site's video component or the provider's embed
+code, linking a video file rather than copying it, and each `> [!NOTE]`-style callout with
+the site's own note style, or a plain aside. Every approved asset, diagram and video has to
+appear on the page.
+
 When `route` is set, the founder chose where these pages live: publish the page at exactly
 that route, wherever the site keeps such pages. Never put a
 page under `content/answers/`, which is Tin's draft folder and not a page on the site.
