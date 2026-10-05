@@ -26,6 +26,7 @@ from tin_lite.domain import (
     PAID_ADS_ASSESSMENT_WORKFLOW_NAME,
     PAID_ADS_LAUNCH_WORKFLOW_NAME,
     PAID_ADS_MONITOR_WORKFLOW_NAME,
+    PAYMENT_RECOVERY_WORKFLOW_NAME,
     PREREQUISITE_WAIT_MEMO,
     PREREQUISITE_WAIT_MINUTES,
     PROJECT_MEMORY_WORKFLOW_NAME,
@@ -1113,6 +1114,59 @@ class AwesomeSubmitWorkflow:
                 raise
 
 
+@workflow.defn(name=PAYMENT_RECOVERY_WORKFLOW_NAME)
+class PaymentRecoveryWorkflow:
+    """Read Stripe and the mailbox, draft one email per customer, then one founder approval
+    before any email is sent from the founder's Gmail. Only the run identifier enters
+    history."""
+
+    def __init__(self) -> None:
+        self._approved = False
+        self._stopped = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
+    @workflow.signal(name="stop")
+    async def stop(self) -> None:
+        self._stopped = True
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def execute(name, *, minutes, heartbeat=None):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3, maximum_interval=timedelta(seconds=30)
+                ),
+            )
+
+        try:
+            await execute("payment_recovery_prepare", minutes=2)
+            if self._stopped:
+                return
+            await execute("payment_recovery_gather", minutes=15, heartbeat=3)
+            if self._stopped:
+                return
+            mode = await execute("payment_recovery_draft", minutes=10)
+            if mode == "review":
+                await execute("payment_recovery_request_review", minutes=2)
+                await workflow.wait_condition(lambda: self._approved or self._stopped)
+                if self._stopped:
+                    return
+                await execute("payment_recovery_record_approval", minutes=2)
+                await execute("payment_recovery_apply", minutes=30, heartbeat=5)
+            await execute("payment_recovery_publish", minutes=5)
+        except BaseException:
+            if not self._stopped:
+                await execute("payment_recovery_failure", minutes=2)
+                raise
+
+
 @workflow.defn(name=PAID_ADS_MONITOR_WORKFLOW_NAME)
 class PaidAdsMonitorWorkflow:
     """Read, decide, apply the bounded automatic changes, save proposals, publish. The run
@@ -1669,6 +1723,7 @@ def registered_workflows() -> list[type]:
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
+        PaymentRecoveryWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -1704,6 +1759,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         PAID_ADS_LAUNCH_WORKFLOW_NAME: PaidAdsLaunchWorkflow,
         PAID_ADS_MONITOR_WORKFLOW_NAME: PaidAdsMonitorWorkflow,
         AWESOME_SUBMIT_WORKFLOW_NAME: AwesomeSubmitWorkflow,
+        PAYMENT_RECOVERY_WORKFLOW_NAME: PaymentRecoveryWorkflow,
         ANSWER_PAGE_WORKFLOW_NAME: AnswerPageWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
         WEEKLY_BRIEF_WORKFLOW_NAME: WeeklyBriefWorkflow,

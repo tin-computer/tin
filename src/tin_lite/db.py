@@ -6698,6 +6698,11 @@ class Database:
             "DELETE FROM project_test_identities WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
+            # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
+            # one send receipt per invoice, keyed payment_recovery:<run or project>:...
+            "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "
+            "split_part(execution_key, ':', 2) IN (SELECT id::text FROM workflow_runs "
+            "WHERE project_id = $1 UNION SELECT $1::text)",
             "UPDATE integration_webhook_deliveries SET project_id = NULL WHERE project_id = $1",
             "DELETE FROM integration_connections WHERE project_id = $1",
             "DELETE FROM project_secrets WHERE project_id = $1",
@@ -6771,6 +6776,14 @@ class Database:
             error_message[:2000],
         )
 
+    async def discard_started_effect(self, conn: asyncpg.Connection, *, execution_key: str) -> None:
+        """Forget an effect the provider refused outright, so nothing happened and a later run
+        may try again. Completed effects are never discarded."""
+        await conn.execute(
+            "DELETE FROM effect_receipts WHERE execution_key = $1 AND status = 'started'",
+            execution_key,
+        )
+
     async def save_publication_intent(
         self, conn: asyncpg.Connection, *, execution_key: str, intent: dict[str, Any]
     ) -> None:
@@ -6804,6 +6817,57 @@ class Database:
             raise SideEffectConflictError(
                 "effect progress cannot replace a completed or failed effect"
             )
+
+    async def complete_payment_recovery_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+        approved: bool,
+    ) -> None:
+        """A recovery run finishes with its result: after approval when it drafted emails, or
+        without a decision when Stripe had no failed payment to recover."""
+        async with conn.transaction():
+            projected = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'succeeded', canonical_commit_sha = $2, artifact_ref = $3,
+                    artifact_path = $4, result_summary = $5, error_message = NULL,
+                    finished_at = COALESCE(finished_at, now()), progress_percent = 100,
+                    progress_updated_at = now(), heartbeat_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND (NOT $6 OR (review_required AND review_decision = 'approved'))
+                  AND ($6 OR review_decision IS NULL)
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                RETURNING id
+                """,
+                run_id,
+                canonical_commit_sha,
+                artifact_ref,
+                artifact_path,
+                result_line(summary),
+                approved,
+            )
+            if projected is None:
+                raise SideEffectConflictError("recovery run cannot complete in its current state")
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_ready",
+                details={"kind": "runs", "status": "succeeded", "artifact_ref": artifact_ref},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_ready",
+            )
+            await self.complete_effect(
+                conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
+            )
+        await self._track_run(run_id, "run_succeeded", artifact_path=artifact_path)
 
     async def complete_organic_audit_projection(
         self,

@@ -24,6 +24,8 @@ hosted-default policy does so. Neither enables live Stripe charging.
   operator-run gak Keyword Planner service reports $0), `ads.launch` (ceiling
   `max_cost_usd`, default $4) and `ads.monitor` (default $2); both are model steps
   only, since the Google Ads API reports no cost and its calls are receipted at $0.
+  `revenue.payment_recovery` has a $2 ceiling for its one drafting step; its Stripe and
+  Gmail calls go through the founder's own accounts and are receipted at $0.
 - OpenAI Responses search and DataForSEO crawl/keyword task costs, using trusted
   supplier responses, including usage recorded before content validation fails.
 - `organic.traffic_system`: one root spending ceiling;

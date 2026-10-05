@@ -748,8 +748,8 @@
       "created": 1774816000,
       "currency": "usd",
       "customer": "cus_Fixture0003",
-      "customer_email": null,
-      "customer_name": null,
+      "customer_email": "linus@kernel.example",
+      "customer_name": "Linus T.",
       "discounts": [],
       "livemode": false,
       "metadata": {},
@@ -758,7 +758,22 @@
       "period_start": 1772224000,
       "status": "open",
       "subtotal": 49000,
-      "total": 49000
+      "total": 49000,
+      "hosted_invoice_url": "https://invoice.stripe.com/i/acct_Fixture/test_FixtureInvoice0004",
+      "next_payment_attempt": 1775075200,
+      "due_date": null,
+      "lines": {
+        "object": "list",
+        "data": [
+          {
+            "id": "il_Fixture0004",
+            "object": "line_item",
+            "description": "Annual support (manual)",
+            "amount": 49000
+          }
+        ],
+        "has_more": false
+      }
     }
   ],
   "prices": [
@@ -1004,14 +1019,14 @@
       "description": null,
       "disputed": false,
       "failure_code": "card_declined",
-      "failure_message": null,
+      "failure_message": "Your card was declined.",
       "livemode": false,
       "metadata": {},
       "outcome": {
         "network_status": "declined_by_network",
-        "reason": "card_declined",
+        "reason": "insufficient_funds",
         "risk_level": "normal",
-        "seller_message": "Payment complete.",
+        "seller_message": "The bank returned the decline code `insufficient_funds`.",
         "type": "issuer_declined"
       },
       "paid": false,
@@ -1019,13 +1034,13 @@
       "payment_method": "pm_FixtureCard",
       "payment_method_details": {
         "card": {
-          "brand": "visa",
+          "brand": "mastercard",
           "country": "US",
-          "exp_month": 12,
-          "exp_year": 2030,
+          "exp_month": 4,
+          "exp_year": 2027,
           "funding": "credit",
-          "last4": "4242",
-          "network": "visa"
+          "last4": "4444",
+          "network": "mastercard"
         },
         "type": "card"
       },

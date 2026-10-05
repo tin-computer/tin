@@ -20,6 +20,7 @@ from tin_lite import (
     paid_ads,
     paid_ads_launch,
     paid_ads_monitor,
+    payment_recovery,
     style_capture,
     technical_fix,
     website_change,
@@ -66,6 +67,7 @@ from tin_lite.integrations import (
     GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
     GSC_PROVIDER,
+    STRIPE_PROVIDER,
     IntegrationRequirement,
     parse_integration_requirements,
 )
@@ -134,6 +136,7 @@ PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
 X_SYSTEM = "x"
+REVENUE_SYSTEM = "revenue"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -160,6 +163,7 @@ PAID_ADS_ASSESSMENT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000040")
 PAID_ADS_LAUNCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000041")
 PAID_ADS_MONITOR_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000042")
 AWESOME_SUBMIT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000043")
+PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # Numbers below were used by built-ins that later left the catalog. Their rows still exist in
 # deployed databases, and the boot-time sync refuses to bind a number to a different key, so a
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
@@ -215,6 +219,7 @@ WORKFLOW_SYSTEMS = (
         display_order=5,
     ),
     WorkflowSystem(id=X_SYSTEM, name="X", display_order=6),
+    WorkflowSystem(id=REVENUE_SYSTEM, name="Revenue system", display_order=7),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -339,6 +344,16 @@ AWESOME_SUBMIT_REVIEW_POLICY = HumanReviewPolicy(
         "request text. Nothing is sent from your GitHub account until you approve."
     ),
     queue_clause="Awesome list submissions ready to send",
+)
+PAYMENT_RECOVERY_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Sends email to your customers from your mailbox.",
+    review_label="Approve & send",
+    defer_label="Not now",
+    summary=(
+        "The exact failed-payment emails are ready, one per customer, with why each was "
+        "written that way. Nothing is sent until you approve."
+    ),
+    queue_clause="Failed-payment emails ready to send",
 )
 EMAIL_CAMPAIGN_REVIEW_POLICY = HumanReviewPolicy(
     reason="Sends email to external recipients.",
@@ -2814,6 +2829,39 @@ BUILTIN_WORKFLOWS = (
             IntegrationRequirement(
                 GITHUB_USER_PROVIDER,
                 ("forks.write", "public_pull_requests.write", "public_issues.write"),
+                required=True,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=PAYMENT_RECOVERY_WORKFLOW_ID,
+        key=payment_recovery.KEY,
+        public_mcp=PublicMCPExposure("start_payment_recovery", destructive=True, open_world=True),
+        title="Recover failed payments",
+        description=(
+            "Find customers whose automatic Stripe payment failed and is still unpaid, and "
+            "write each one a short personal email in your voice: their plan, why the card "
+            "failed, their history with you and your latest mail with them, with Stripe's own "
+            "payment link. After you approve, Tin checks each invoice again and sends only the "
+            "unpaid ones from your Gmail, never twice for the same invoice."
+        ),
+        # Code reads Stripe and the mailbox and checks every draft; one model step writes the
+        # emails; one approval gates every send, and each invoice has a project-wide receipt.
+        executor=payment_recovery.KEY,
+        version_label="1.0.0",
+        system=REVENUE_SYSTEM,
+        review_policy=PAYMENT_RECOVERY_REVIEW_POLICY,
+        schedule_modes=("on_demand",),
+        input_schema=payment_recovery.INPUT_SCHEMA,
+        integration_requirements=(
+            IntegrationRequirement(
+                STRIPE_PROVIDER,
+                ("invoices.read", "subscriptions.read", "charges.read", "prices.read"),
+                required=True,
+            ),
+            IntegrationRequirement(
+                GOOGLE_WORKSPACE_PROVIDER,
+                ("gmail.messages.send", "gmail.messages.read"),
                 required=True,
             ),
         ),

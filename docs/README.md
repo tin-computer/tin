@@ -58,6 +58,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.
+- [Failed-payment recovery](payment-recovery.md): the Revenue system's first workflow, from
+  Stripe's failed payments to approved emails sent from the founder's Gmail.
 - [Paid ads assessment](paid-ads-assessment-implementation.md): the native LLM flow that decides
   whether Google Search ads fit, its evidence sources, scorer and outputs.
 - [Google Ads launch and monitor](paid-ads-launch-implementation.md): the identifier-entry
