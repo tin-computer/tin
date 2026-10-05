@@ -31,19 +31,22 @@ authoring example.
    page with Tin's read permissions already selected:
 
    ```text
-   https://dashboard.stripe.com/apikeys/create?name=Tin&permissions[]=rak_account_read
-     &permissions[]=rak_customer_read&permissions[]=rak_subscription_read
-     &permissions[]=rak_plan_read&permissions[]=rak_product_read
-     &permissions[]=rak_invoice_read&permissions[]=rak_charge_read
+   https://dashboard.stripe.com/apikeys/create?name=Tin&permissions[]=rak_customer_read
+     &permissions[]=rak_subscription_read&permissions[]=rak_plan_read
+     &permissions[]=rak_product_read&permissions[]=rak_invoice_read
+     &permissions[]=rak_charge_read
    ```
 
-   Account read identifies the account. The others back the capabilities below.
+   Each one backs a capability below. Tin asks for no account permission: on a restricted key
+   `GET /v1/account` needs a Connect permission, which a read-only key should not carry.
 2. The founder creates the key in Stripe and pastes the `rk_live_…` or `rk_test_…` value into
    the password field on Tin's page. Tin refuses secret (`sk_`) and publishable (`pk_`) keys:
    a full secret key is never stored. Keys go only into that page, never into chat or MCP;
    MCP `start_integration_connection` returns the setup link instead.
-3. Tin calls `GET /v1/account` for the account ID and display name, then reads one record
-   from each resource to find which reads the key allows. A 403 on one resource means that
+3. Tin calls `GET /v1/account` for the account ID and display name. When the key may not read
+   it (the usual case), Tin takes the account ID from Stripe's 403 message, or a stand-in
+   derived from the key when the message names none, and the card shows no account name. Tin
+   then reads one record from each resource to find which reads the key allows. A 403 on one resource means that
    capability is not granted; a 401 rejects the key. The key is stored encrypted.
 4. A `rk_test_` key is labelled **test mode** on the card ("Test mode · sandbox data only")
    and in the connection label. Packages see `livemode: false` in every response.

@@ -6633,6 +6633,12 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   box-shadow: 0 0 0 1px var(--accent-deep);
 }
 
+.integration-project-error {
+  margin: 14px 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .integration-project-dialog footer {
   display: flex;
   justify-content: flex-end;
