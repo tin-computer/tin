@@ -46,8 +46,11 @@ amounts and longest-standing customers come first, up to `max_customers` (defaul
 
 One model step (`gpt-6-sol`) writes every email. Its input holds no customer email address or card
 details. Each draft must have a one-line subject, a 80–1,500 character body, the payment link
-placeholder exactly once, no other link, address or placeholder, and no refund, discount,
-free period, suspension or deletion: only the founder decides those. Code then puts Stripe's own
+placeholder exactly once; no other link or bare domain, address, phone or account number, or
+placeholder; no other way to pay or to send card details (a wire, PayPal, "reply with your
+card"); and no refund, discount, free period, suspension or deletion: only the founder decides
+those. These checks hold whatever a customer's mail asked the model to write. In the plan,
+each email is shown as exact plain text and customer-supplied text is escaped. Code then puts Stripe's own
 `hosted_invoice_url` in place of the placeholder. A draft that fails a check, or a model answer
 that is missing or unusable, is replaced by Tin's plain email for that situation, so every
 customer still gets one and the run never fails on model output.

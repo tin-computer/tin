@@ -100,7 +100,18 @@ SITUATIONS = {
 # Currencies Stripe counts in whole units (docs.stripe.com/currencies#zero-decimal).
 ZERO_DECIMAL = frozenset("bif clp djf gnf jpy kmf krw mga pyg rwf ugx vnd vuv xaf xof xpf".split())
 SYMBOLS = {"usd": "$", "eur": "€", "gbp": "£", "cad": "CA$", "aud": "A$", "inr": "₹", "jpy": "¥"}
-URL = re.compile(r"(?i)\b(?:https?://|www\.)\S+")
+# Any link or bare domain ("pay.example.com/x", "example.co"): only Stripe's link is allowed.
+URL = re.compile(
+    r"(?i)(?:https?://|www\.|\b[a-z0-9-]+(?:\.[a-z0-9-]+)*\."
+    r"(?:com|net|org|io|co|ai|app|dev|me|info|biz|xyz|link|page|site|shop|pay|us|uk|de|eu)\b)"
+)
+# Ways to move money or card details outside Stripe's page; a draft that asks for one is
+# replaced, whatever the model was told by a customer's mail.
+REDIRECT = re.compile(
+    r"(?i)\b(?:wire|bank transfer|iban|swift|routing number|account number|paypal|venmo|"
+    r"zelle|cash ?app|crypto|bitcoin|gift ?card|card number|cvc|cvv|security code|"
+    r"expiry date|send (?:us|me) your card|phone|call (?:us|me) (?:at|on))\b"
+)
 # Plain addresses only: they are quoted into a Gmail search, so no quotes, spaces or brackets.
 EMAIL = re.compile(r"[A-Za-z0-9._%+'-]{1,64}@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,24}\Z")
 # Promises only the founder can make; a draft that makes one is replaced.
@@ -520,16 +531,21 @@ def check_draft(draft: dict, case: dict) -> str | None:
         return "the body is too short or too long"
     if CONTROL.search(subject + body):
         return "the draft contains control characters"
+    if re.search(r"@\S+\.\S+", body) or "tin.computer" in (subject + body).lower():
+        return "the draft names an address or Tin"
     if URL.search(subject + body.replace(LINK, "")):
         return "the draft contains a link Tin did not supply"
     if body.count(LINK) != (1 if case.get("payment_link") else 0):
         return "the payment link placeholder is missing or repeated"
     if "{{" in body.replace(LINK, "") or "{{" in subject:
         return "the draft contains an unfilled placeholder"
-    if re.search(r"@\S+\.\S+", body) or "tin.computer" in (subject + body).lower():
-        return "the draft names an address or Tin"
     if PROMISE.search(subject + " " + body):
         return "the draft promises or threatens something only you can decide"
+    if REDIRECT.search(subject + " " + body.replace(LINK, "")):
+        return "the draft asks for payment or card details outside Stripe's page"
+    numbers = re.finditer(r"\+?\d[\d\s().-]{7,}\d", body.replace(LINK, ""))
+    if any(sum(c.isdigit() for c in m.group()) >= 9 for m in numbers):
+        return "the draft contains a phone or account number"
     return None
 
 
@@ -573,7 +589,10 @@ def _md(text) -> str:
 
 
 def _quote(text: str) -> str:
-    return "\n".join(f"> {line}" if line else ">" for line in text.splitlines())
+    """The exact email as plain text: markup in it is shown, never rendered."""
+    runs = [len(r) for r in re.findall(r"`+", text)]
+    fence = "`" * max(3, max(runs, default=0) + 1)
+    return f"{fence}text\n{text}\n{fence}"
 
 
 def _facts(case: dict) -> str:
@@ -630,18 +649,18 @@ def render_plan(
     for n, email in enumerate(emails, 1):
         case = by_invoice[email["invoice_id"]]
         out += [
-            f"## {n}. {email['name'] or email['to']}",
+            f"## {n}. {_md(email['name'] or email['to'])}",
             "",
-            f"**To:** {email['to']}  ",
+            f"**To:** {_md(email['to'])}  ",
             f"**Why:** {_facts(case)}  ",
             f"**Approach:** {_md(email['approach']) or '—'}",
         ]
         if email["source"] == "template":
             out.append(f"**Note:** Tin's standard email, because {email['problem']}.")
-        out += ["", f"**Subject:** {email['subject']}", "", _quote(email["body"]), ""]
+        out += ["", f"**Subject:** {_md(email['subject'])}", "", _quote(email["body"]), ""]
     if skipped or earlier:
         out += ["## Not included", ""]
-        out += [f"- **{s['customer']}**: {s['reason']}" for s in [*earlier, *skipped]]
+        out += [f"- **{_md(s['customer'])}**: {_md(s['reason'])}" for s in [*earlier, *skipped]]
         out += [""]
     return "\n".join(out).rstrip() + "\n"
 
@@ -660,10 +679,11 @@ def render_result(*, sender: str, product: str, results: list[dict], skipped) ->
     ]
     for r in results:
         outcome = "sent" if r["status"] == "sent" else r.get("reason") or r["status"]
-        out.append(f"| {r['name'] or r['to']} | {r['amount']} (`{r['invoice_id']}`) | {outcome} |")
+        who, invoice = _md(r["name"] or r["to"]), _md(r["invoice_id"])
+        out.append(f"| {who} | {r['amount']} ({invoice}) | {_md(outcome)} |")
     if skipped:
         out += ["", "## Not included", ""]
-        out += [f"- **{s['customer']}**: {s['reason']}" for s in skipped]
+        out += [f"- **{_md(s['customer'])}**: {_md(s['reason'])}" for s in skipped]
     return "\n".join(out).rstrip() + "\n"
 
 
@@ -677,7 +697,7 @@ def render_empty(*, product: str, lookback_days: int, counts: dict, skipped) -> 
     ]
     if skipped:
         out += ["", "## Not included", ""]
-        out += [f"- **{s['customer']}**: {s['reason']}" for s in skipped]
+        out += [f"- **{_md(s['customer'])}**: {_md(s['reason'])}" for s in skipped]
     return "\n".join(out).rstrip() + "\n"
 
 

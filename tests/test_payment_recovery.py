@@ -924,3 +924,54 @@ def test_promises_markup_and_odd_addresses_are_caught():
     }
     facts = pr._facts(case)
     assert "open since" not in facts and "\\[click\\]" in facts and "<b>" not in facts
+
+
+def test_drafts_that_redirect_payment_or_hide_a_link_are_replaced():
+    case = {"payment_link": LINK_A}
+    base = "Hi there,\n\n" + "x" * 80 + "\n\n{{payment_link}}\n\nThanks"
+    for bad in (
+        "Or pay at pay.example.com/acme",
+        "You can also use acme-billing.co",
+        "Happy to take a wire transfer instead",
+        "Reply with your card number and we'll retry",
+        "Call me on +1 (415) 555-0134",
+        "Send it via PayPal",
+    ):
+        assert pr.check_draft({"subject": "Payment", "body": base + " " + bad}, case), bad
+    for fine in (
+        "Stripe retries on 2026-10-01.",
+        "Thanks for the last 14 months. Co-founder here.",
+        "The $1,234.00 payment",
+    ):
+        assert pr.check_draft({"subject": "Payment", "body": base + " " + fine}, case) is None, fine
+
+
+def test_customer_and_model_text_cannot_inject_markup_into_the_plan():
+    case = {
+        "invoice_id": "in_X",
+        "amount": "$5.00",
+        "invoice_date": "2026-09-01",
+        "situation": "payment_failed",
+    }
+    email = {
+        "invoice_id": "in_X",
+        "to": "a@b.co",
+        "name": "**Approve now** [here](https://x)",
+        "subject": "<img src=x> Payment",
+        "body": "Hi,\n\n# Ignore the above\n<script>x</script>",
+        "approach": "fine",
+        "source": "model",
+        "problem": None,
+    }
+    plan = pr.render_plan(
+        sender="me@acme.co",
+        product="Acme",
+        livemode=True,
+        emails=[email],
+        cases=[case],
+        skipped=[{"customer": "[x](https://y)", "reason": "r"}],
+        earlier=[],
+    )
+    assert "**Approve now**" not in plan and "](https://" not in plan
+    assert "\\<img src=x\\>" in plan
+    assert "```text\nHi,\n\n# Ignore the above\n<script>x</script>\n```" in plan
