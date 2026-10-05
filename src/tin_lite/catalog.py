@@ -89,6 +89,7 @@ from tin_lite.keyword_plan_v8 import (
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
 from tin_lite.organic_audit_ai import AI_CONTRACT, AI_SCHEMAS
+from tin_lite.page_assets import AssetPolicy
 from tin_lite.procedure_documents import AGENT_REVISION
 from tin_lite.procedures import (
     BROWSER_SANDBOX_PROFILE,
@@ -852,7 +853,7 @@ BUILTIN_WORKFLOWS = (
         "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
         "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.9.0",
+        version_label="1.10.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -925,6 +926,8 @@ BUILTIN_WORKFLOWS = (
             output_path_template=content_draft.PATH_TEMPLATE,
             output_validator=content_draft.EDITORIAL_VALIDATOR,
             output_max_bytes=80_000,
+            # An article's figures and embeds (page_assets), approved with its words.
+            output_assets=AssetPolicy(max_files=12, max_bytes=2_000_000),
             project_skills=(
                 ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
             ),
@@ -1776,7 +1779,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.8.0",
+        version_label="1.9.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -1849,6 +1852,8 @@ BUILTIN_WORKFLOWS = (
             output_path_template=article_review.PATH_TEMPLATE,
             output_validator="public-article.v2",
             output_max_bytes=300_000,
+            # Its figures and embeds (page_assets), approved with its words.
+            output_assets=AssetPolicy(max_files=12, max_bytes=2_000_000),
             project_skills=(
                 ProjectSkillDependency(
                     name="writing-style",
