@@ -636,7 +636,7 @@ BUILTIN_WORKFLOWS = (
         "wording, and the PR adds nothing but the page, or the page at the route you chose "
         "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.6.0",
+        version_label="1.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -697,10 +697,10 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # The procedure ceilings, as runaway guards: a page in any format, its route,
+                # Runaway guards: a page in any format with its figures and embeds, its route,
                 # index and sitemap.
-                max_files=10,
-                max_bytes=512_000,
+                max_files=30,
+                max_bytes=2_000_000,
             ),
         ),
     ),
@@ -720,7 +720,7 @@ BUILTIN_WORKFLOWS = (
         "protected pages, opens a pull request for you to merge. Deleting a page stays with "
         "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.6.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -833,8 +833,10 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="website/changes/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                # site-fix-v5's file cap, for an audit run and a page alike.
+                # site-fix-v5's file cap, for an audit run and a page alike; a page with its
+                # figures and embeds needs more bytes than a technical batch.
                 max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
+                max_bytes=2_000_000,
                 site_repair_policy=technical_fix.BATCH_POLICY,
                 allow_no_change=True,
             ),

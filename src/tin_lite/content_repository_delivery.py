@@ -732,7 +732,7 @@ def merge_rule(manifest, proof, route):
     """
     from tin_lite.page_routes import matches
 
-    if proof.get("copy_check") == "not_confirmed":
+    if "not_confirmed" in {proof.get("copy_check"), proof.get("figure_check")}:
         return None
     if page_only(manifest, proof):
         return "page_only"
@@ -822,6 +822,13 @@ async def publish_after_pull_request(
                     "status": "left_open",
                     "reason": "Tin couldn't confirm the page keeps the approved wording word for "
                     "word, so it waits for your review.",
+                }
+            elif proof.get("figure_check") == "not_confirmed":
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": "Tin couldn't confirm every approved figure, interactive piece, "
+                    "diagram and video is on the page, so it waits for your review.",
                 }
             elif rule is None:
                 result = {
@@ -1091,13 +1098,65 @@ def validate_copy(manifest, source):
     from tin_lite.page_urls import public_route
 
     route = public_route(manifest.get("body"))
+    figures = figure_check(manifest, source)
     return {
         "article_path": path,
         "article_sha256": source["article_sha256"],
         "copy_check": check,
+        **({"figure_check": figures} if figures else {}),
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
+
+
+VIDEO_BLOCK = re.compile(r"^(`{3,}|~{3,})[ \t]*tin-video\b(.*?)^\1[ \t]*$", re.M | re.S)
+MERMAID_BLOCK = re.compile(r"^(?:`{3,}|~{3,})[ \t]*mermaid\b", re.M)
+
+
+def figure_check(manifest, source):
+    """Whether every approved figure, embed, diagram and video is on the page, or None.
+
+    An approved file must arrive byte for byte (the same checksum), a video by its address or
+    its last path segment (the provider's ID), and each diagram as an SVG or the site's own
+    Mermaid support. Like copy_check this decides only Tin's own merge, never the PR.
+    """
+    article = source["article"]
+    assets = source.get("assets") or []
+    videos = [
+        match.group(1).strip()
+        for block in VIDEO_BLOCK.finditer(article)
+        if (match := re.search(r"(?m)^\s*url\s*:\s*(\S+)", block.group(2)))
+    ]
+    diagrams = len(MERMAID_BLOCK.findall(article))
+    if not (assets or videos or diagrams):
+        return None
+    files = manifest.get("files") or []
+    digests = {hashlib.sha256(item["content"].encode()).hexdigest() for item in files}
+    text = "\n".join(item["content"] for item in files)
+    # Diagrams arrive as new SVG files (not the approved figures' copies) or inline SVG.
+    approved = {asset["sha256"] for asset in assets}
+    drawn = sum(
+        (hashlib.sha256(item["content"].encode()).hexdigest() not in approved)
+        if item["path"].endswith(".svg")
+        else item["content"].count("<svg")
+        for item in files
+    )
+    confirmed = (
+        all(asset["sha256"] in digests for asset in assets)
+        and all(_video_shown(url, text) for url in videos)
+        and (drawn >= diagrams or "mermaid" in text.casefold())
+    )
+    return "confirmed" if confirmed else "not_confirmed"
+
+
+def _video_shown(url, text):
+    from urllib.parse import parse_qs, urlsplit
+
+    if url in text:
+        return True
+    parts = urlsplit(url)
+    ids = [parts.path.rstrip("/").rsplit("/", 1)[-1], *parse_qs(parts.query).get("v", [])]
+    return any(len(value) >= 4 and value in text for value in ids)
 
 
 FIGURE_FENCE = re.compile(

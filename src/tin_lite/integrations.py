@@ -165,6 +165,12 @@ GSC_MAX_START_ROW = 100_000
 GSC_MIN_ROW_BYTES = 70
 
 
+# Runaway guards for one pull request or commit Tin writes: a technical batch (20 files) or a
+# page with its figures, embeds, route and sitemap. Each procedure declares its own, smaller limit.
+PULL_REQUEST_MAX_FILES = 30
+PULL_REQUEST_MAX_BYTES = 2_000_000
+
+
 class IntegrationError(RuntimeError):
     """A safe integration failure that may be shown to a project member."""
 
@@ -2081,8 +2087,9 @@ class IntegrationService:
             raise IntegrationError("GitHub pull request to merge is invalid")
         if not commit_title.strip() or len(commit_title) > 200 or not _safe_github_ref(branch):
             raise IntegrationError("GitHub merge request is invalid")
-        # Up to 20: a website.change technical batch (site-fix-v5's file cap).
-        if not 1 <= len(files) <= 20 or not all(_safe_github_path(item.path) for item in files):
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES or not all(
+            _safe_github_path(item.path) for item in files
+        ):
             raise IntegrationError("GitHub merge must name the pull request's files")
 
         def request_fingerprint(repository):
@@ -3276,10 +3283,12 @@ class IntegrationService:
             raise IntegrationError("GitHub execution key is invalid")
         if not title.strip() or len(title) > 200 or len(body) > 20_000:
             raise IntegrationError("GitHub pull-request title or body is invalid")
-        if not 1 <= len(files) <= 10:
-            raise IntegrationError("GitHub pull requests must contain between 1 and 10 files")
-        if sum(len(item.content.encode()) for item in files) > 512_000:
-            raise IntegrationError("GitHub pull-request files exceed the 512 KB limit")
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES:
+            raise IntegrationError(
+                f"GitHub pull requests must contain between 1 and {PULL_REQUEST_MAX_FILES} files"
+            )
+        if sum(len(item.content.encode()) for item in files) > PULL_REQUEST_MAX_BYTES:
+            raise IntegrationError("GitHub pull-request files exceed the 2 MB limit")
         for item in files:
             if not _safe_github_path(item.path):
                 raise IntegrationError("GitHub pull request contains an unsafe file path")
@@ -3466,10 +3475,12 @@ class IntegrationService:
             raise IntegrationError("GitHub execution key is invalid")
         if not message.strip() or len(message) > 200:
             raise IntegrationError("GitHub commit message is invalid")
-        if not 1 <= len(files) <= 10:
-            raise IntegrationError("GitHub commits must contain between 1 and 10 files")
-        if sum(len(item.content.encode()) for item in files) > 512_000:
-            raise IntegrationError("GitHub commit files exceed the 512 KB limit")
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES:
+            raise IntegrationError(
+                f"GitHub commits must contain between 1 and {PULL_REQUEST_MAX_FILES} files"
+            )
+        if sum(len(item.content.encode()) for item in files) > PULL_REQUEST_MAX_BYTES:
+            raise IntegrationError("GitHub commit files exceed the 2 MB limit")
         for item in files:
             if not _safe_github_path(item.path):
                 raise IntegrationError("GitHub commit contains an unsafe file path")

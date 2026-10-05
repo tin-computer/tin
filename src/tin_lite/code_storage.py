@@ -37,6 +37,8 @@ _TASK_DIFF_MAX_BYTES = 1_000_000
 # Text outputs stay under the comparison limit; a declared binary output (the demo video) is
 # only ever read whole, never diffed.
 _PUBLICATION_TEXT_MAX_BYTES = 1_000_000
+# A pull-request patch saved as JSON may reach twice its procedure's 2 MB ceiling.
+_CHECKPOINT_TEXT_MAX_BYTES = 4_000_000
 _PUBLICATION_BINARY_MAX_BYTES = 16_000_000
 _BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
 # Reads addressed by a full commit SHA are immutable, so one process keeps a bounded copy.
@@ -513,7 +515,7 @@ class CodeStorage:
     ) -> bytes:
         if not _is_commit_sha(revision) or not _safe_repo_path(path):
             raise ValueError("procedure checkpoint requires an immutable revision and safe path")
-        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _PUBLICATION_TEXT_MAX_BYTES
+        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _CHECKPOINT_TEXT_MAX_BYTES
         key = ("checkpoint", repo_id, revision, path, max_bytes)
         if (cached := self._pinned.get(key)) is not None:
             return cached

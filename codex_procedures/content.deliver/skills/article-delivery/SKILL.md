@@ -29,7 +29,8 @@ description: Put one approved article, answer page or public article on an exist
    the site already loads; never add web fonts or other outside resources.
 5. If the site does not serve the page's route yet, add the smallest route that fits how
    its other pages are served (a static file in its public folder, a route file, a registry
-   entry), within the 10-file limit. Prefer tools the site already has; add a dependency
+   entry), within the 30-file limit. Place the page's figures, embeds, diagrams and videos as
+   the prompt describes. Prefer tools the site already has; add a dependency
    only when the page cannot be built without one, and say why in the PR body.
 6. Add only necessary page/index metadata, following existing dates, slugs, canonical
    links and components. Do not invent author identity, product claims or new sales copy.

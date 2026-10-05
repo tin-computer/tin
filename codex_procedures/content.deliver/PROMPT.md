@@ -8,7 +8,7 @@ Answer pages and public articles carry their search listing apart from the copy 
 `page_metadata` (`meta_title`, `meta_description`, and the approved `slug` when the draft
 chose one). Keep the Markdown in Tin unchanged.
 Inspect this repository's instructions and existing pages, and prepare one coherent site
-change (at most 10 files) as an unmerged PR.
+change (at most 30 files) as an unmerged PR.
 
 Build the page the way this site builds its pages: a Markdown or MDX file, a component, a
 typed page registry, plain HTML or whatever else the repository uses. Convert the format
@@ -23,6 +23,20 @@ Match the site's other pages of that kind: give the page the same header, footer
 back into the site (for example to the product), byline and dates, and structured data (such as
 JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
 fonts or other outside resources.
+
+The approved page may carry figures and interactive pieces, listed in `assets` with each
+file's project path, and diagram, video and callout blocks in `article`. Your project-state
+checkout is at the approved revision: copy each asset from `/home/user/state/<path>` into the
+place this site keeps such files, and show it the way the site shows media. An SVG becomes an
+image or the site's figure component, with its alt text and caption. An interactive piece
+becomes an iframe or an inline component, with its script and data unchanged. Turn each
+`mermaid` block into SVG with
+`node /opt/tin-lite/diagram/scripts/check_diagram.mjs check <file>.mmd --out <empty absolute directory> --no-previews`,
+which writes `light.svg` and `dark.svg`; use the site's own diagram support instead when it
+has one. Show each `tin-video` block with the site's video component or the provider's embed
+code, linking a video file rather than copying it, and each `> [!NOTE]`-style callout with
+the site's own note style, or a plain aside. Every approved asset, diagram and video has to
+appear on the page.
 
 If the site does not serve the page's route yet, add the smallest route that fits how its
 other pages are served. Change what the page needs (the page, its route, and any index or

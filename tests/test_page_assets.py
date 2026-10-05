@@ -427,3 +427,93 @@ async def test_the_review_shows_the_bundle_and_says_what_it_carries(publication_
     assert f'class="md-embed" data-asset="{folder}/field.html"' in document["html"]
     # Files shows the same article with the files it refers to that exist there.
     assert in_files["assets"] == kept
+
+
+def bundle_source(article, assets=()):
+    from tin_lite.content_repository_delivery import validate_copy  # noqa: F401
+
+    return {
+        "article": article,
+        "article_sha256": hashlib.sha256(article.encode()).hexdigest(),
+        "binding": {"repository": "owner/site", "head_sha": "9" * 40},
+        "assets": [
+            {"path": path, "sha256": hashlib.sha256(raw).hexdigest()} for path, raw in assets
+        ],
+    }
+
+
+def test_delivery_confirms_every_figure_embed_diagram_and_video_arrived():
+    from tin_lite.content_repository_delivery import figure_check, merge_rule, validate_copy
+
+    article = (
+        "# Filming the trailers\n\nEvery shot follows recorded game events in order.\n\n"
+        "![Flow](./a.assets/flow.svg)\n\n```tin-embed\nsrc: ./a.assets/field.html\n```\n\n"
+        "```mermaid\ngraph LR\nA-->B\n```\n\n"
+        "```tin-video\nurl: https://www.youtube.com/watch?v=dQw4w9WgXcQ\ntitle: Trailer\n```\n"
+    )
+    source = bundle_source(
+        article, [("content/a.assets/flow.svg", GOOD_SVG), ("content/a.assets/field.html", EMBED)]
+    )
+    page = (
+        "<h1>Filming the trailers</h1><p>Every shot follows recorded game events in order.</p>"
+        '<img src="flow.svg"><iframe src="field.html"></iframe>'
+        '<iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ"></iframe>'
+    )
+    manifest = {
+        "repository": "owner/site",
+        "head_sha": "9" * 40,
+        "body": "Public URL: https://example.com/blog/filming",
+        "files": [
+            {"path": "public/blog/filming/index.html", "content": page},
+            {"path": "public/blog/filming/flow.svg", "content": GOOD_SVG.decode()},
+            {"path": "public/blog/filming/field.html", "content": EMBED.decode()},
+            {"path": "public/blog/filming/diagram-1.svg", "content": "<svg></svg>"},
+        ],
+    }
+    proof = validate_copy(manifest, source)
+    assert proof["copy_check"] == "wording_preserved" and proof["figure_check"] == "confirmed"
+    assert merge_rule(manifest, proof, "/blog/{slug}") == "chosen_route"
+    # A missing embed, a changed figure, a missing video or diagram: the merge waits.
+    for drop in ("field.html", "flow.svg", "youtube", "diagram-1.svg"):
+        broken = {
+            **manifest,
+            "files": [
+                {**item, "content": item["content"].replace("youtube-nocookie", "vimeo")}
+                if drop == "youtube"
+                else item
+                for item in manifest["files"]
+                if drop == "youtube" or not item["path"].endswith(drop)
+            ],
+        }
+        if drop == "youtube":
+            broken["files"][0]["content"] = broken["files"][0]["content"].replace(
+                "dQw4w9WgXcQ", "other"
+            )
+        proof = validate_copy(broken, source)
+        assert proof["figure_check"] == "not_confirmed", drop
+        assert merge_rule(broken, proof, "/blog/{slug}") is None
+    # A page without figures has no figure check at all.
+    assert figure_check(manifest, bundle_source("# Plain\n\nWords.\n")) is None
+
+
+def test_a_delivery_with_assets_reads_them_where_they_were_approved():
+    from tin_lite.activities import procedure_project_revision
+
+    run = SimpleNamespace(expected_head_sha="a" * 40)
+    procedure = SimpleNamespace(output_validator=None, review_revision_context=None)
+    with_assets = {"source_revision": "b" * 40, "assets": [{"path": "x", "sha256": "y"}]}
+    assert procedure_project_revision(run, procedure, with_assets) == "b" * 40
+    assert procedure_project_revision(run, procedure, {"source_revision": "b" * 40}) is None
+    assert procedure_project_revision(run, procedure, None) is None
+
+
+def test_github_writes_fit_a_page_with_its_figures():
+    from tin_lite.integrations import PULL_REQUEST_MAX_BYTES, PULL_REQUEST_MAX_FILES
+    from tin_lite.procedures import DEFAULT_PULL_REQUEST_BYTES, GitHubPullRequestProcedure
+
+    assert (PULL_REQUEST_MAX_FILES, PULL_REQUEST_MAX_BYTES) == (30, 2_000_000)
+    # Procedures that declare nothing keep their existing 512 KB contract.
+    assert GitHubPullRequestProcedure("r/{run_id}.md", ()).max_bytes == DEFAULT_PULL_REQUEST_BYTES
+    deliver = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.deliver")
+    output = deliver.definition_and_resource_files()[0]["procedure"]["output"]
+    assert (output["max_files"], output["max_bytes"]) == (30, 2_000_000)
