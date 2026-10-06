@@ -268,7 +268,7 @@ def connected(f, monkeypatch):
 
 def test_the_definition_drafts_three_kinds_with_a_review_policy_each():
     definition = spec(content_draft.KEY).definition
-    assert definition["version"] == "1.14.0"
+    assert definition["version"] == "1.15.0"
     assert content_draft.supported_kinds(definition) == ("article", "answer", "refresh")
     assert definition["human_review"]["review_label"] == "Review article"
     kinds = definition["human_review_kinds"]
@@ -655,8 +655,9 @@ def test_versions_on_main_are_unchanged():
 # content.generate 1.10.0 lets an article carry figures and embeds (page bundles); 1.11.0 draws
 # them in the project's look, in light and dark; 1.12.0 lets the drafting agent choose each
 # diagram's form; 1.13.0 looks at each figure in light and dark before finishing; 1.14.0
-# follows the site's theming, keeping figures light on a light-only site.
-RELEASED = {"content.generate": "1.14.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
+# follows the site's theming, keeping figures light on a light-only site; 1.15.0 makes each
+# draft's figures fresh and checks every mark and label in both themes.
+RELEASED = {"content.generate": "1.15.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

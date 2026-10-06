@@ -70,12 +70,16 @@ its height: Tin fits the frame to it, so `height` is only a first guess.
 
 ## Look at it before you finish
 
-Look at every figure and piece the way a reader will, in light and in dark, and fix what you see:
-anything missing, overlapping, cut off, unreadable or wrong in one theme. The sandbox has an
+Look at every figure and piece the way a reader will, in light and in dark, and fix what you see,
+then look again. Check each one against what it is meant to show: every shape, line and mark you
+drew must be visible in both themes, and no text may touch other text or lines. The sandbox has an
 offline Chromium for this. In a small Node script, `require("/opt/tin-lite/diagram/node_modules/playwright")`,
 run it with `PLAYWRIGHT_BROWSERS_PATH=/opt/tin-lite/diagram/browsers`, open each file with
 `colorScheme` set to `light` and then `dark`, and save screenshots under `/tmp`. View them with
 your image viewing tool. Keep the screenshots out of the assets folder.
+
+Make this draft's figures yourself. Don't copy them from an earlier draft that wasn't approved:
+its problems come with it.
 
 ## Video
 
