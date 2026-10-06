@@ -4248,27 +4248,10 @@ class IntegrationService:
             )
             if connection is not None:
                 await self.github_account.revoke(connection)
-        if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
-            connection = await self._database.get_integration_connection(
-                project_id=project_id, provider_key=provider_key
-            )
-            if connection is not None and connection.credential_ciphertext is not None:
-                try:
-                    assert self._cipher is not None
-                    refresh_token = self._cipher.decrypt(
-                        connection.credential_ciphertext,
-                        context=f"credential:{project_id}:{provider_key}",
-                    )
-                    await self._client.post(
-                        "https://oauth2.googleapis.com/revoke",
-                        params={"token": refresh_token},
-                    )
-                except Exception:
-                    # Local disconnection is authoritative even when upstream revocation is down.
-                    logger.warning(
-                        "Google token revocation unavailable for project integration",
-                        extra={"project_id": str(project_id), "provider_key": provider_key},
-                    )
+        # Google (Search Console, Workspace) is not revoked upstream. Revoking any token ends
+        # the founder's whole grant to Tin's app, which every other project they connected with
+        # the same Google account shares. Deleting the stored credential below is the
+        # disconnection; the founder can remove Tin from their Google account themselves.
         deleted = await self._database.delete_integration_connection(
             project_id=project_id, provider_key=provider_key
         )
@@ -5417,6 +5400,55 @@ def _granted(connection: IntegrationConnection) -> set[str]:
 def _selected_string(connection: IntegrationConnection, key: str) -> str | None:
     value = connection.configuration.get(key)
     return value if isinstance(value, str) and value else None
+
+
+# The one resource a provider's connection works on. Signing in is not enough: until the
+# founder chooses it, nothing that reads the provider can use the connection.
+SELECTED_RESOURCES = {
+    GSC_PROVIDER: ("selected_site_url", "Search Console property"),
+    GITHUB_PROVIDER: ("selected_repository", "repository"),
+    POSTHOG_PROVIDER: ("selected_project_id", "PostHog project"),
+}
+
+
+def connection_readiness(
+    connection: IntegrationConnection | None, *, site_url: str | None = None
+) -> dict[str, Any]:
+    """Whether a connection can be used now, and if not, what the founder does next.
+
+    `ready` needs a connected status and the provider's chosen resource. With `site_url`,
+    a Search Console property must also cover that site, the way the audit and the keyword
+    plan match it; a property for another domain reads nothing for this one.
+    """
+    if connection is None or connection.status != "connected":
+        return {
+            "ready": False,
+            "reason": "not_connected",
+            "next_action": "Connect it, then choose what Tin should use.",
+        }
+    key, noun = SELECTED_RESOURCES.get(connection.provider_key, (None, None))
+    selected = _selected_string(connection, key) if key else None
+    if key and not selected:
+        return {
+            "ready": False,
+            "reason": "selection_required",
+            "next_action": f"Choose the {noun} on Tin's Integrations page.",
+        }
+    if connection.provider_key == GSC_PROVIDER and site_url:
+        from tin_lite.keyword_plan import gsc_property_matches
+
+        host = (urlsplit(site_url.strip()).hostname or "").lower()
+        hosts = {host, host.removeprefix("www."), f"www.{host.removeprefix('www.')}"}
+        if host and not any(gsc_property_matches(selected or "", item) for item in hosts):
+            return {
+                "ready": False,
+                "reason": "property_mismatch",
+                "next_action": (
+                    f"The chosen Search Console property ({selected}) is not {host}; choose "
+                    f"the property for {host} on Tin's Integrations page."
+                ),
+            }
+    return {"ready": True, "reason": None, "next_action": None}
 
 
 def _search_console_filters(value: Any) -> list[dict[str, str]]:

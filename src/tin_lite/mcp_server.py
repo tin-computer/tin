@@ -412,6 +412,9 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 def _mcp_integration_view(
     definition: Any, connection: Any | None, *, configured: bool
 ) -> dict[str, Any]:
+    from tin_lite.integrations import connection_readiness
+
+    readiness = connection_readiness(connection)
     return {
         "key": definition.key,
         "name": definition.name,
@@ -423,6 +426,9 @@ def _mcp_integration_view(
         "configured": configured,
         "connection_id": str(connection.id) if connection is not None else None,
         "status": connection.status if connection is not None else "available",
+        # Connected and the site, repository or project it works on chosen.
+        "ready": readiness["ready"],
+        "next_action": None if connection is None else readiness["next_action"],
         "external_account_label": (
             connection.external_account_label if connection is not None else None
         ),
@@ -642,11 +648,12 @@ Unknown repository details are a reason to ask which repository serves the site,
 useful access. Ask for mailbox access only for selected work that needs it. Explain
 delivery_destination: reports, review queue, and whether notifications are enabled. Offer only
 supported delivery channels. Say each connection takes about a minute in the browser
-and GitHub also asks which repository; for the ones they allow, call
+and GitHub and Search Console also ask which repository or site; for the ones they allow, call
 start_integration_connections with every provider at once (one page, one visit;
 start_integration_connection for a single one), open the link in their browser yourself when your
 shell allows it (the result's open_command), otherwise paste it, and confirm each with
-get_integration; note each they decline with their reason.
+get_integration until it shows `ready` (follow its next_action otherwise); note each they
+decline with their reason.
 Then call record_onboarding_picks once with the run_id, the systems (or ["suggested"]), the
 control and every connection they decided (connected, or not_now with the reason); it ticks the
 plan for you. Then approve_workflow_run; it refuses until the picks are recorded. Say Tin now
@@ -4813,7 +4820,11 @@ def create_mcp_app(
 
     @server.tool()
     async def get_integration(project_id: str, provider_key: str) -> dict[str, Any]:
-        """Read one project integration and its granted Tin capabilities."""
+        """Read one project integration and its granted Tin capabilities.
+
+        `ready` is true once it is connected and its Search Console property, repository or
+        PostHog project is chosen; until then `next_action` says what the founder does.
+        """
         values = await list_integrations(project_id)
         value = next((item for item in values if item["key"] == provider_key), None)
         if value is None:

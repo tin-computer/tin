@@ -4010,3 +4010,98 @@ async def test_disconnect_google_ads_is_authoritative_when_google_is_down() -> N
     service.google_ads._sleep = no_sleep
     assert await service.disconnect(project_id=PROJECT_ID, provider_key=ADS_PROVIDER) is True
     assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+
+
+@pytest.mark.parametrize(
+    ("provider", "configuration", "site_url", "ready", "reason"),
+    [
+        ("analytics.gsc", {"selected_site_url": None}, None, False, "selection_required"),
+        ("analytics.gsc", {"selected_site_url": "sc-domain:acme.example"}, None, True, None),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:acme.example"},
+            "https://www.acme.example/",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "https://acme.example/"},
+            "https://acme.example",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:other.example"},
+            "https://acme.example",
+            False,
+            "property_mismatch",
+        ),
+        ("infra.github", {}, None, False, "selection_required"),
+        ("infra.github", {"selected_repository": "acme/site"}, None, True, None),
+        ("analytics.posthog", {}, None, False, "selection_required"),
+        ("workspace.google", {}, "https://acme.example", True, None),
+    ],
+)
+def test_connection_readiness_needs_the_chosen_resource(
+    provider, configuration, site_url, ready, reason
+) -> None:
+    from tin_lite.integrations import connection_readiness
+
+    connection = SimpleNamespace(
+        provider_key=provider, status="connected", configuration=configuration
+    )
+    result = connection_readiness(connection, site_url=site_url)
+    assert (result["ready"], result["reason"]) == (ready, reason)
+    assert (result["next_action"] is None) is ready
+
+
+def test_connection_readiness_of_a_missing_or_broken_connection() -> None:
+    from tin_lite.integrations import connection_readiness
+
+    assert connection_readiness(None)["reason"] == "not_connected"
+    broken = SimpleNamespace(
+        provider_key="analytics.gsc",
+        status="needs_attention",
+        configuration={"selected_site_url": "sc-domain:acme.example"},
+    )
+    assert connection_readiness(broken)["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_disconnecting_google_deletes_the_credential_without_revoking_the_shared_grant() -> (
+    None
+):
+    database = FakeIntegrationDatabase()
+    seen: list[str] = []
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/token":
+            return httpx.Response(
+                200,
+                json={
+                    "refresh_token": "refresh-secret",
+                    "scope": "https://www.googleapis.com/auth/webmasters.readonly",
+                },
+            )
+        raise AssertionError(f"unexpected provider request {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GSC_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        await service.complete_google(state=state, code="one-time-code", clerk_user_id=USER_ID)
+        seen.clear()
+        assert await service.disconnect(project_id=PROJECT_ID, provider_key=GSC_PROVIDER)
+
+    # Revoking any token would end the founder's grant for every project on that account.
+    assert seen == []
+    assert (PROJECT_ID, GSC_PROVIDER) not in database.connections
