@@ -22,6 +22,7 @@ from tin_lite.organic_audit import (
     LATEST_SUMMARY_PATH,
     SUMMARY_READ_LIMIT,
     V12_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     summary_paths,
 )
@@ -81,11 +82,12 @@ def test_the_policy_asks_six_engines_within_a_dollar():
     assert per_question_usd(AUDIT_POLICY) * AUDIT_POLICY["max_questions"] <= Decimal(
         AUDIT_POLICY["ai_engines_max_cost_usd"]
     )
-    # The audit's billing maximum grows by the engines' ceiling, for v13 runs only.
+    # The audit's billing maximum grows by the engines' ceiling, from v13 on: $1 for v13 and
+    # v14's eight questions, $2 for v15's sixteen.
     definition = {"executor": "organic.audit"}
     v12 = service_terms({**definition, "audit_policy": V12_AUDIT_POLICY})
-    v13 = service_terms({**definition, "audit_policy": AUDIT_POLICY})
-    assert v13["maximum_nanos"] - v12["maximum_nanos"] == NANOS_PER_DOLLAR
+    v14 = service_terms({**definition, "audit_policy": V14_AUDIT_POLICY})
+    assert v14["maximum_nanos"] - v12["maximum_nanos"] == NANOS_PER_DOLLAR
 
 
 def test_questions_alternate_between_jobs_so_a_ceiling_keeps_both():

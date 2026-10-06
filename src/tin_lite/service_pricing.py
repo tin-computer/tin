@@ -70,6 +70,14 @@ PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_dra
 # would cost $1.92. Real runs cost far less: a production audit, keyword plan and content plan
 # together came to $0.73.
 AUDIT_MAXIMUM_USD = 2
+
+
+def audit_maximum_nanos(policy: dict | None) -> int:
+    """An audit's own ceiling: organic-audit-v15 pins its own ($4 for sixteen questions)."""
+    pinned = amount_nanos((policy or {}).get("billing_maximum_usd"))
+    return pinned if pinned is not None else AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR
+
+
 # The organic parent's spending pool beyond the founder's keyword limit: about five times what a
 # production run spent ($2.49 for audit, keyword research, content plan and one draft, with the
 # technical fix and page adaptation costing nothing that run). Every child keeps its own
@@ -106,7 +114,8 @@ def service_terms(definition, *, inputs=None):
     maximum = 2 * NANOS_PER_DOLLAR
     kinds = ["native_model"]
     if executor == "organic.audit":
-        maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
+        maximum = audit_maximum_nanos(definition.get("audit_policy"))
+        kinds = ["native_model", "tool"]
         # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
         # ceiling ($1; eight questions cost at most $0.63 at the pinned request prices).
         engines = (definition.get("audit_policy") or {}).get("ai_engines_max_cost_usd")

@@ -22,6 +22,8 @@ NEUTRAL_KEYS = {
     "answer_timeout_seconds",
     "check_applicability",
     "respect_sitemap",
+    # The billed ceiling, not how an answer is requested or graded.
+    "billing_maximum_usd",
     *SITE_EVIDENCE_POLICY_KEYS,
     *PANEL_PREPARATION_POLICY_KEYS,
     *AI_ENGINE_POLICY_KEYS,

@@ -169,7 +169,13 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("51b9959f-3f5c-4df3-b417-f6fbf12d19fc"), "organic.content_efficacy"),
     PublicWorkflow(UUID("d6a097d3-056f-4ffd-af85-3205f32f58f8"), "organic.site_architecture"),
     PublicWorkflow(UUID("896b8e66-ea09-4dda-ac11-7a1824282349"), "content.blog_index"),
-    PublicWorkflow(UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"), "organic.prompt_panel"),
+    # organic-audit-v15 drafts its own questions from Search Console, so new setups no longer
+    # offer the panel; audits pinned to v13 or v14 still read the newest one.
+    PublicWorkflow(
+        UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"),
+        "organic.prompt_panel",
+        public_discovery=False,
+    ),
 )
 
 
