@@ -493,7 +493,7 @@ async def test_http_mcp_preflight_and_upload_authorization(publication_db, monke
             },
         )
     )
-    assert contract["system"]["id"] == "organic-traffic" and contract["runtime_available"]
+    assert contract["system"] is None and contract["runtime_available"]
     assert contract["preparation"] == style_capture_preparation(f.project.id, include_guide=True)
     f.storage.repo.edit({SOURCE: b"not useful"})
     with pytest.raises(WorkflowInputError):

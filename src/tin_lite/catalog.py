@@ -1013,7 +1013,6 @@ BUILTIN_WORKFLOWS = (
         executor=style_capture.KEY,
         version_label="1.3.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
-        system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=style_capture.ROUTE,
         prerequisites=(
