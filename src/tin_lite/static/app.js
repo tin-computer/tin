@@ -2485,7 +2485,7 @@ function systemRunCard(run, configured = null) {
            <button class="system-card-identity is-toggle" type="button" ${configureAttributes}><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></button>`
         : `<span class="system-card-mark">${systemCardIndicator(run.status)}</span>
            <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></span>`}
-      ${workflow ? systemDiagramButton(workflow, configured) : ""}
+      ${systemDiagramButton(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
@@ -3469,6 +3469,7 @@ function workflowForProjectWorkflow(configured) {
     description: configured.workflow_description,
     version_label: configured.version_label,
     definition: { input_schema: configured.input_schema },
+    drawn: Boolean(configured.workflow_drawn),
   };
 }
 
@@ -3591,13 +3592,19 @@ function workflowFlow(workflow) {
   return workflow?.definition?.presentation?.flow || null;
 }
 
+// A saved workflow the catalog hides (content.refresh) is drawn all the same; its drawing
+// comes from the saved workflow's diagram endpoint rather than the catalog.
+function workflowDrawn(workflow) {
+  return Boolean(workflowFlow(workflow) || workflow?.drawn);
+}
+
 function diagramPanelShows(workflowId, projectWorkflowId) {
   const open = state.diagramPanel;
   return Boolean(open && open.workflowId === workflowId && (open.projectWorkflowId || "") === (projectWorkflowId || ""));
 }
 
 function systemDiagramButton(workflow, configured = null) {
-  if (!workflowFlow(workflow)) return "";
+  if (!workflowDrawn(workflow)) return "";
   const shown = diagramPanelShows(workflow.id, configured?.id);
   const name = configured?.name || workflow.title || workflow.key;
   return `<button class="system-card-diagram" type="button" data-show-workflow-diagram="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured?.id || "")}" aria-pressed="${shown}" aria-label="Workflow diagram for ${escapeHtml(name)}" title="Show workflow diagram">${DIAGRAM_ICON}</button>`;
@@ -3643,10 +3650,12 @@ function closeDiagramPanelElement(existing) {
 function renderDiagramPanel() {
   const open = state.diagramPanel;
   const existing = document.getElementById("workflow-diagram-panel");
-  const workflow = open ? state.workflows.find((item) => item.id === open.workflowId) : null;
   const configured = open?.projectWorkflowId
     ? state.projectWorkflows.find((item) => item.id === open.projectWorkflowId) : null;
-  if (!open || !workflowFlow(workflow) || (open.projectWorkflowId && !configured)) {
+  const workflow = configured
+    ? workflowForProjectWorkflow(configured)
+    : open ? state.workflows.find((item) => item.id === open.workflowId) : null;
+  if (!open || !workflowDrawn(workflow) || (open.projectWorkflowId && !configured)) {
     closeDiagramPanelElement(existing);
     return;
   }
@@ -3655,6 +3664,10 @@ function renderDiagramPanel() {
   const loading = Boolean(configured) && !saved;
   const resolved = saved && !saved.failed ? saved : null;
   const flow = resolved?.flow || workflowFlow(workflow);
+  if (!flow && !loading) {
+    closeDiagramPanelElement(existing);
+    return;
+  }
   // One line under the title: the key and version, and which version drew it when the
   // schedule is pinned to an older one.
   const runs = resolved?.pinned_version;
@@ -3680,12 +3693,12 @@ function renderDiagramPanel() {
     </header>
     <div class="diagram-panel-canvas ${loading ? "is-loading" : ""}" tabindex="0" aria-label="${escapeHtml(title)}, from start to finish" aria-busy="${loading}"></div>
     <footer>
-      <code>${escapeHtml(window.TinWorkflowSpine.summary(flow))}</code>
+      <code>${flow ? escapeHtml(window.TinWorkflowSpine.summary(flow)) : ""}</code>
       ${configured ? `<button type="button" data-diagram-workflow-settings>Workflow settings</button>` : ""}
     </footer>`;
   diagramSpine?.dispose();
-  diagramSpine = window.TinWorkflowSpine.render(flow, { trigger });
-  panel.querySelector(".diagram-panel-canvas").append(diagramSpine.element);
+  diagramSpine = flow ? window.TinWorkflowSpine.render(flow, { trigger }) : null;
+  if (diagramSpine) panel.querySelector(".diagram-panel-canvas").append(diagramSpine.element);
   if (!existing) document.body.append(panel);
   window.requestAnimationFrame(() => diagramSpine?.redraw());
   panel.querySelector("[data-close-workflow-diagram]").addEventListener("click", () => closeWorkflowDiagram());

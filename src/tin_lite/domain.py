@@ -259,6 +259,8 @@ class ProjectWorkflow:
     failed_count: int = 0
     typical_duration_seconds: float | None = None
     content_revision: dict[str, Any] | None = None
+    # Whether today's definition draws how it runs (presentation.flow).
+    workflow_drawn: bool = False
 
 
 @dataclass(frozen=True)

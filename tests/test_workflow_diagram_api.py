@@ -47,6 +47,13 @@ async def test_a_saved_workflow_is_drawn_from_its_pinned_revision(publication_db
         elsewhere = await client.get(f"/api/projects/{f.project.id}/workflows/{uuid4()}/diagram")
         assert elsewhere.status_code == 404
 
+        # The saved list says it is drawn, so a row shows the button even when the catalog
+        # hides the workflow.
+        listed = await client.get(f"/api/projects/{f.project.id}/workflows")
+        assert listed.status_code == 200, listed.json()
+        row = next(item for item in listed.json() if item["id"] == str(configured.id))
+        assert row["workflow_drawn"] is True
+
 
 async def test_a_diagram_needs_project_membership(publication_db):
     f = await fixture(publication_db)
