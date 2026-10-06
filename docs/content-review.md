@@ -18,7 +18,8 @@ the next roadmap item.
 - An article (content.public_article 1.9.0, content.generate 1.10.0 articles) may carry
   figures, diagrams, interactive pieces, videos and callouts. From content.public_article 1.10.0
   and content.generate 1.11.0 they follow the brand guide and work in light and dark; from 1.11.0
-  and 1.12.0 the drafting agent chooses each diagram's form. The reader shows them as
+  and 1.12.0 the drafting agent chooses each diagram's form, and from 1.12.0 and 1.13.0 it looks at
+  each figure in light and dark before finishing. The reader shows them as
   they'll ship: SVG figures as images, embeds in a sandboxed frame with no network or
   access to Tin, videos from YouTube, Vimeo, Loom or Mux (a video file loads only on
   play), and a note under the title for any file Tin left out. The Decisions card says

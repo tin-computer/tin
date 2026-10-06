@@ -66,6 +66,15 @@ variables, light on `:root` with `color-scheme: light`, and the dark values with
 and `:root[data-theme="dark"] { … }`; Tin sets `data-theme` to match its reader. Let the content
 set its height: Tin fits the frame to it, so `height` is only a first guess.
 
+## Look at it before you finish
+
+Look at every figure and piece the way a reader will, in light and in dark, and fix what you see:
+anything missing, overlapping, cut off, unreadable or wrong in one theme. The sandbox has an
+offline Chromium for this. In a small Node script, `require("/opt/tin-lite/diagram/node_modules/playwright")`,
+run it with `PLAYWRIGHT_BROWSERS_PATH=/opt/tin-lite/diagram/browsers`, open each file with
+`colorScheme` set to `light` and then `dark`, and save screenshots under `/tmp`. View them with
+your image viewing tool. Keep the screenshots out of the assets folder.
+
 ## Video
 
 A video that already exists at a public address, on the founder's site or on YouTube, Vimeo, Loom
