@@ -120,6 +120,16 @@ async def contract(database, storage, run) -> ProposalContract | None:
     return ProposalContract("brand", "brand and design guide", (primary, companion))
 
 
+def short_note(note) -> str:
+    """The note on one line, cut at a word to fit the history. A long note never refuses
+    a revision: the documents are what matter."""
+    note = " ".join(str(note or "").split())
+    if len(note) <= MAX_NOTE_CHARS:
+        return note
+    cut = note[: MAX_NOTE_CHARS - 1]
+    return (cut.rsplit(" ", 1)[0] or cut) + "…"
+
+
 def _row(row) -> dict[str, Any]:
     value = dict(row)
     if isinstance(value.get("files"), str):
@@ -300,9 +310,7 @@ class CaptureRevisions:
                 "revised here. Start a new capture, or approve or discard this one in Decisions."
             )
         changes = self._changes(files, proposal)
-        note = " ".join(str(note or "").split())
-        if len(note) > MAX_NOTE_CHARS:
-            raise RevisionRefused(f"Keep the note under {MAX_NOTE_CHARS} characters.")
+        note = short_note(note)
         request_digest = digest(
             {
                 "run": str(run.id),

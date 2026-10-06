@@ -930,7 +930,8 @@ class ProposalRevisionRequest(BaseModel):
     review_token: str = Field(min_length=64, max_length=64)
     request_id: UUID
     files: list[ProposalFile] = Field(min_length=1, max_length=2)
-    note: str = Field(default="", max_length=500)
+    # Shortened to the history's length by the service, never refused for it.
+    note: str = Field(default="", max_length=20_000)
     client: Literal["claude_code", "codex", "api"] | None = None
 
 

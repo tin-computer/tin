@@ -3738,6 +3738,7 @@ def create_mcp_app(
         Send the complete new text of one or both files, not a patch. Tin checks them with the
         capture's own validators, replaces the proposal files and keeps the run waiting. Only
         that run's proposal files, only before the founder decides. Reuse request_id to retry.
+        `note` is a one-line summary of the change; Tin shortens a longer one to 500 characters.
         This never approves: the founder still approves or discards it in Decisions.
         """
         from tin_lite.capture_revisions import CaptureRevisions, review_view
