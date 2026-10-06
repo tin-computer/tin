@@ -1,0 +1,115 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "outreach.podcast_guest",
+    "title": "Find the podcasts to go on as a guest",
+    "description": "Finds the podcasts worth going on across every audience where you carry weight: your buyers, your own craft, your home country and your product's topic. Checks that each show is active, listened to and has hosted guests like you, and drafts one pitch per show in its language. Shows that need a first step, like a talk or a guest post, get that step drafted. Skips shows pitched in earlier runs; never sends anything.",
+    "executor": "codex.procedure",
+    "version": "1.0.0",
+    "schedule_modes": ["on_demand"],
+    "system": "cold-outreach",
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "founder_profile"],
+      "properties": {
+        "project_id": { "type": "string", "format": "uuid" },
+        "founder_profile": {
+          "type": "string",
+          "title": "About you",
+          "description": "Who is going on the shows: your role and title, past companies and what you built there, numbers you can share, languages and where you're from. Paste a bio or CV text. Tin knows your product but not you.",
+          "maxLength": 6000,
+          "x-tin-ui": { "control": "textarea", "order": 10 }
+        },
+        "include_shows": {
+          "type": "string",
+          "title": "Shows to consider (optional)",
+          "description": "Podcasts you want checked, one per line. Each comes back picked, as a later step, or excluded with the reason.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 20 }
+        },
+        "already_pitched": {
+          "type": "string",
+          "title": "Shows pitched outside Tin (optional)",
+          "description": "Podcasts to skip because you already pitched them or were on them. Shows pitched in earlier runs are skipped automatically.",
+          "maxLength": 2000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 30 }
+        },
+        "max_pitches": {
+          "type": "integer",
+          "title": "Pitches to draft",
+          "minimum": 3,
+          "maximum": 20,
+          "default": 10,
+          "x-tin-ui": { "control": "counter", "order": 40 }
+        },
+        "voice_notes": {
+          "type": "string",
+          "title": "Voice notes (optional)",
+          "description": "How the pitches should sound. The project's writing style guide is used when present; these notes win where they differ.",
+          "maxLength": 1000,
+          "default": "",
+          "x-tin-ui": { "control": "textarea", "order": 50 }
+        }
+      }
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "managed.podscan",
+        "capabilities": ["podcasts.read"],
+        "required": true
+      }
+    ],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "The Feature map supplies the real product detail and numbers a pitch cites."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan says who buys, which decides the buyers' shows, and records hard no's such as no cold email."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "A captured writing style guide shapes the drafted pitches; voice notes still win."
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/podcast-guest/SKILL.md",
+        "skills/podcast-guest/SEARCH.md",
+        "skills/podcast-guest/SCORING.md"
+      ],
+      "entry_skill": "podcast-guest",
+      "workspace": { "kind": "project.state" },
+      "sandbox": { "profile": "isolated", "egress": "fenced", "timeout_seconds": 2400 },
+      "services": {
+        "podcasts": {
+          "provider_key": "managed.podscan",
+          "max_calls": 30,
+          "max_response_bytes": 24000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/outreach/podcasts/{run_id}.md",
+        "media_type": "text/markdown",
+        "max_bytes": 200000
+      }
+    }
+  }
+}

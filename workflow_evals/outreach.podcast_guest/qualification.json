@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Evidence comes from Tin's Podscan account (managed.podscan, at most 30 calls) and the agent's fenced web search; these cases check the report's contract and input handling, not live show facts.",
+    "Live qualification of whether picked shows are active, listened to and reachable needs an explicitly authorized live case with a real founder profile; nothing here fixture-replays Podscan.",
+    "Static checking runs every case's inputs through the declared input_schema; cases only cover schema-valid inputs.",
+    "Project context (wiki/INDEX.md Feature map, reports/GROWTH_ONBOARDING_PLAN.md, the writing style guide) is read when present; without a growth plan the buyers arena comes from the Feature map and the profile."
+  ],
+  "cost_drivers": [
+    "One bounded Codex session on the existing pinned model pricing and spending ceiling; no managed-model routes are declared. The 2,400-second runtime ceiling is not an expected price.",
+    "Podscan reads are free to the run (Tin pays a flat subscription); the 30-call limit is a runaway guard. Cost scales with how many arenas and finalists are searched and verified on the web."
+  ],
+  "effects": [
+    "One project.artifact write to a run-owned reports/outreach/podcasts/<run_id>.md; no other project files change.",
+    "Reads wiki/INDEX.md, reports/GROWTH_ONBOARDING_PLAN.md, the writing style guide and earlier reports in reports/outreach/podcasts/ from project state, Podscan through the service gateway, and public web pages through fenced web search.",
+    "No sending, submitting, applying, emailing, following or messaging any show or host, no guessed email addresses, no publication or credential access, no recursive workflow start. Sending approved pitches is stage two's separate, approval-bound email campaign."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A founding engineer at a US venture-backed AI startup, based abroad, with a product for small SaaS teams. The plan must cover buyers, craft, home country and topic arenas.",
+      "inputs": {
+        "founder_profile": "Founding engineer and first hire at a seed-stage, US venture-backed startup in San Francisco that builds an autonomous growth agent for small SaaS companies; it runs SEO, content and paid ads for about 100 businesses. I lead the agent orchestration engine: a manager agent that plans tasks and dispatches fleets of parallel coding subagents, then verifies their work. Before that I was the founding ML engineer at two AI startups (video generation, conversational companions) and built two small products of my own with a few hundred daily users. Based in Istanbul; native Turkish speaker, fluent English.",
+        "include_shows": "",
+        "already_pitched": "",
+        "max_pitches": 10,
+        "voice_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "Founder:",
+          "## Arenas",
+          "(buyers,",
+          "(craft,",
+          "(home, tr)",
+          "## Picks",
+          "Similar guest:",
+          "Send via:",
+          "## Ladder",
+          "## Gaps",
+          "## Excluded candidates",
+          "```tin-podcast-pitches",
+          "```tin-podcast-state"
+        ],
+        "excludes": [
+          "Status: no shows verified",
+          "Status: needs context"
+        ]
+      }
+    },
+    {
+      "id": "named_show_is_accounted_for",
+      "description": "A show the founder names must come back picked, as a ladder step, or excluded with a reason, never silently dropped.",
+      "inputs": {
+        "founder_profile": "Founding engineer and first hire at a seed-stage, US venture-backed startup building an autonomous growth agent for small SaaS companies; I lead its agent orchestration engine across about 100 businesses. Based in Istanbul; native Turkish speaker.",
+        "include_shows": "Latent Space",
+        "already_pitched": "",
+        "max_pitches": 10,
+        "voice_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "## Shows you asked about",
+          "Latent Space",
+          "```tin-podcast-state"
+        ],
+        "excludes": [
+          "not evaluated"
+        ]
+      }
+    },
+    {
+      "id": "already_pitched_excluded",
+      "description": "A show pitched outside Tin is excluded with its reason rather than drafted again.",
+      "inputs": {
+        "founder_profile": "Founding engineer and first hire at a seed-stage, US venture-backed startup building an autonomous growth agent for small SaaS companies; I lead its agent orchestration engine across about 100 businesses.",
+        "include_shows": "Latent Space",
+        "already_pitched": "Latent Space",
+        "max_pitches": 10,
+        "voice_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "named in already_pitched",
+          "## Excluded candidates"
+        ]
+      }
+    },
+    {
+      "id": "thin_profile_needs_context",
+      "description": "A profile that says nothing about the person ends with needs context instead of an invented founder.",
+      "inputs": {
+        "founder_profile": "Hi, find me podcasts.",
+        "include_shows": "",
+        "already_pitched": "",
+        "max_pitches": 10,
+        "voice_notes": ""
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status: needs context",
+          "Verdict: not a fit",
+          "```tin-podcast-state"
+        ],
+        "excludes": [
+          "### 1."
+        ]
+      }
+    },
+    {
+      "id": "tight_cap",
+      "description": "The minimum max_pitches, to check the cap is respected and still spread across arenas.",
+      "inputs": {
+        "founder_profile": "Solo founder of a bootstrapped invoicing tool for freelance designers, 400 paying customers, built in public for two years. Previously a product designer at an agency in Lisbon; native Portuguese speaker.",
+        "include_shows": "",
+        "already_pitched": "",
+        "max_pitches": 3,
+        "voice_notes": "Plain and specific, no hype."
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Status:",
+          "Verdict:",
+          "## Picks",
+          "## Excluded candidates"
+        ],
+        "excludes": [
+          "### 4."
+        ]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "arena_coverage",
+      "question": "Does the plan cover every audience where this founder carries weight (buyers, their own craft, their home country or native language, the product's topic), and say in Gaps why any kind was skipped?"
+    },
+    {
+      "id": "relative_credibility",
+      "question": "Does each arena say why the founder stands out among those particular listeners, and does each pitch use that arena's angle rather than one generic bio?"
+    },
+    {
+      "id": "reachability_evidence",
+      "question": "Is each pick backed by a real past guest who resembles the founder, with the episode linked and dated, or an honest statement that none was found? Are big shows without such guests placed on the ladder with a concrete step instead of being picked or silently dropped?"
+    },
+    {
+      "id": "audience_evidence",
+      "question": "Does each pick state the audience numbers relied on and their source, compared only with shows in the same arena, and is every pick active within the last few months?"
+    },
+    {
+      "id": "address_honesty",
+      "question": "Is every pitch address one the show itself publishes, with the page that publishes it, and never a guessed address or an unverified directory email?"
+    },
+    {
+      "id": "language",
+      "question": "Is each pitch written in its show's language, so home-country shows get pitches in that language?"
+    },
+    {
+      "id": "specificity",
+      "question": "Does each pitch name a specific recent episode of that show and follow from it?"
+    },
+    {
+      "id": "honesty",
+      "question": "Are all facts about the founder and the product traceable to the profile and the project files, with no invented metrics, appearances or titles?"
+    },
+    {
+      "id": "notes_not_filters",
+      "question": "Are guest fees, sponsored-episode signs and other caveats recorded as notes for the founder rather than used to drop shows?"
+    },
+    {
+      "id": "scope",
+      "question": "Does the run only write the declared report, with no attempt to send, submit, email or message any show or host?"
+    }
+  ]
+}
