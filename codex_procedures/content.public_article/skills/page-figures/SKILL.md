@@ -23,26 +23,22 @@ font families with their fallbacks. Without brand files, keep a plain look: syst
 quiet neutral palette that reads on light and dark pages.
 
 Every figure and piece works in light and dark. Leave its background transparent so the page shows
-through, and give its colours a dark variant (the brand's dark tokens when there are any).
+through, and give its colours a dark variant (the brand's dark tokens when there are any); in an
+SVG, a `prefers-color-scheme: dark` block in its `<style>` does it.
 
-## Figure and diagram
+## Figures and diagrams
 
-An SVG file in the assets folder, for a flow, a structure, a comparison, a timeline or a measured
-result:
+Make each one however suits it: an SVG file for a still figure or diagram, an interactive piece
+when the reader should try something, or a `mermaid` block when the site's own pages render
+Mermaid. Tin shows what you make; it doesn't redraw it. For an SVG file:
 
 ```markdown
 ![What the figure shows](./<folder name>/<file>.svg "What the reader should notice")
 ```
 
-The alt text says what the figure shows; the caption says what to notice. Draw it plainly, with
-real labels and the article's own numbers, in the site's diagram style when DESIGN.md describes
-one. Use a `viewBox` and no fixed pixel width. Put colours in a `<style>` inside the SVG: the light
-values first, then the dark ones in `@media (prefers-color-scheme: dark)`. The SVG must have no
-script, no event handlers, no `foreignObject` and no links, images or fonts from elsewhere; Tin
-leaves out an SVG that has any.
-
-Use a `mermaid` block instead only when the site's own pages already render Mermaid. Tin then
-shows its source for review, and the site draws it.
+The alt text says what the figure shows; the caption says what to notice. Use real labels and the
+article's own numbers. The SVG must have no script, no event handlers, no `foreignObject` and no
+links, images or fonts from elsewhere; Tin leaves out an SVG that has any.
 
 ## Interactive piece
 

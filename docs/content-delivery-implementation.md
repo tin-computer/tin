@@ -68,8 +68,8 @@ site in its own form:
 
 - The approved source lists each asset's project path and checksum; a delivery run with assets
   checks out the approved revision (`procedure_project_revision`) and copies the files from
-  `/home/user/state`. Mermaid blocks become SVG with the sandbox's offline renderer
-  (`check_diagram.mjs check … --no-previews`), unless the site has its own diagram support.
+  `/home/user/state`. Mermaid blocks use the site's own Mermaid support, or Codex draws them as
+  SVG figures in the site's style; Tin's diagram renderer is not involved.
 - `figure_check` sits beside `copy_check`: each approved file must arrive byte for byte (same
   checksum), each video by its address or ID, each diagram as a new SVG or the site's Mermaid
   support. `not_confirmed` only holds Tin's own merge; the pull request still opens.

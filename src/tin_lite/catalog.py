@@ -636,7 +636,7 @@ BUILTIN_WORKFLOWS = (
         "wording, and the PR adds nothing but the page, or the page at the route you chose "
         "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -720,7 +720,7 @@ BUILTIN_WORKFLOWS = (
         "protected pages, opens a pull request for you to merge. Deleting a page stays with "
         "you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.6.0",
+        version_label="1.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -855,7 +855,7 @@ BUILTIN_WORKFLOWS = (
         "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
         "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.11.0",
+        version_label="1.12.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -1781,7 +1781,7 @@ BUILTIN_WORKFLOWS = (
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.10.0",
+        version_label="1.11.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
