@@ -13,13 +13,13 @@ from test_organic_audit import activities_fixture
 from test_organic_audit_v12 import RUN_ID, documents, site_evidence
 from test_prompt_panel import audit_with, panel_row, published
 
-from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import (
     AI_ENGINE_POLICY_KEYS,
     PANEL_PREPARATION_POLICY_KEYS,
     V11_AUDIT_POLICY,
     V12_AUDIT_POLICY,
     V13_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     digest,
@@ -89,9 +89,8 @@ def test_v13_adds_the_panel_and_the_engines_to_v12():
     assert {k: v for k, v in V13_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V12_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
-    # The catalog now pins v14 (catalog 0.10.0); tests/test_organic_audit_v14.py checks it.
-    workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert {k: v for k, v in workflow.definition["audit_policy"].items() if k != "version"} == {
+    # v14 keeps v13 and adds link following; tests/test_organic_audit_v14.py checks it.
+    assert {k: v for k, v in V14_AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"},
         "follow_links_without_sitemap": True,
         "next_action_fix": "website_change",

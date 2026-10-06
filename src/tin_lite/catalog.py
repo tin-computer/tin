@@ -88,7 +88,7 @@ from tin_lite.keyword_plan_v9 import (
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
-from tin_lite.organic_audit_ai import AI_CONTRACT, AI_SCHEMAS
+from tin_lite.organic_audit_ai import ai_contract, ai_schemas
 from tin_lite.page_assets import AssetPolicy
 from tin_lite.procedure_documents import AGENT_REVISION
 from tin_lite.procedures import (
@@ -551,8 +551,8 @@ class BuiltinWorkflow:
             definition["content_schema"] = content_plan_editorial.MODEL_SCHEMA
         if self.key == AUDIT_KEY:
             definition["audit_policy"] = dict(AUDIT_POLICY)
-            definition["audit_instructions"] = dict(AI_CONTRACT)
-            definition["audit_schemas"] = dict(AI_SCHEMAS)
+            definition["audit_instructions"] = dict(ai_contract(AUDIT_POLICY["version"]))
+            definition["audit_schemas"] = dict(ai_schemas(AUDIT_POLICY["version"]))
         if self.key == KEYWORD_KEY:
             definition["keyword_policy"] = dict(KEYWORD_POLICY)
             definition["keyword_instructions"] = dict(KEYWORD_INSTRUCTIONS)
@@ -1915,7 +1915,9 @@ BUILTIN_WORKFLOWS = (
         executor=AUDIT_KEY,
         # 0.9.1: the same organic-audit-v13 run, now also on a monthly or quarterly schedule.
         # 0.10.0: organic-audit-v14 follows links when the site has no sitemap.
-        version_label="0.10.0",
+        # 0.11.0: organic-audit-v15 drafts up to sixteen questions from public pages and
+        # Search Console searches, and no longer reads organic.prompt_panel.
+        version_label="0.11.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

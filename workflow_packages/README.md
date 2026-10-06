@@ -62,7 +62,7 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `organic.content_efficacy` | traffic snapshot, organic audit, onboarding plan, brand guide, earlier `content.refresh` drafts | `website.change` (source `planned`, PR #266) reads its URL changes; refresh rows wait for the content workflow | Organic traffic, technical SEO |
 | `organic.site_architecture` | organic audit summary, Search Console, traffic snapshot, page decisions | `website.change` (source `planned`, PR #266) reads its `redirects.json` block; `content.refresh`, `content.diagram` | Technical SEO |
 | `content.blog_index` | connected repository (read-only), saved article route (`save_page_route`), Code map, traffic snapshot | `website.change` (source `blog_index`) builds the index from `PLAN.md` after approval; `content.deliver` adds a missing route with the next article | Organic traffic |
-| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` asks the newest panel for its site | Organic traffic |
+| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` runs pinned to v13 or v14 ask the newest panel for its site; hidden from new setups since v15 drafts its own questions | Organic traffic |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`

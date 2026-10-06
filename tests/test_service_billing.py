@@ -397,7 +397,7 @@ async def test_child_identity_and_step_ceiling_are_enforced(billed):
     async with f.db.pool.acquire() as conn:
         with pytest.raises(BillingError, match="step"):
             await f.billing.begin_operation(
-                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_000
+                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_001
             )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
 

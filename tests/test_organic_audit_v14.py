@@ -15,12 +15,11 @@ from temporalio.exceptions import ApplicationError
 from test_organic_audit import activities_fixture, page_fixture
 from test_organic_audit_v12 import RUN_ID, documents, site_evidence
 
-from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.dataforseo import DataForSEO
 from tin_lite.organic_audit import (
-    AUDIT_POLICY,
     SITE_EVIDENCE_POLICY_KEYS,
     V13_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     check_outcome,
@@ -93,10 +92,10 @@ async def test_a_v13_run_reads_and_writes_exactly_what_it_did_before_v14():
     )
 
 
-def test_v14_is_the_default_and_adds_only_link_following_and_the_fix_label_to_v13():
-    assert AUDIT_POLICY["version"] == V14 and audit_policy() is AUDIT_POLICY
-    assert audit_policy(V14) is AUDIT_POLICY
-    assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
+def test_v14_adds_only_link_following_and_the_fix_label_to_v13():
+    v14 = audit_policy(V14)
+    assert v14 is V14_AUDIT_POLICY
+    assert {k: v for k, v in v14.items() if k != "version"} == {
         **{k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"},
         "follow_links_without_sitemap": True,
         "next_action_fix": "website_change",
@@ -105,16 +104,14 @@ def test_v14_is_the_default_and_adds_only_link_following_and_the_fix_label_to_v1
     # completion may cross them.
     assert {"follow_links_without_sitemap", "next_action_fix"} <= SITE_EVIDENCE_POLICY_KEYS
     assert ai_contract(V14) == ai_contract(V13) and ai_schemas(V14) == ai_schemas(V13)
-    assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
+    assert {k: v for k, v in v14.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V13_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
-    workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.10.0"
-    assert workflow.definition["audit_policy"] == AUDIT_POLICY
+    # The catalog now pins v15 (catalog 0.11.0); tests/test_organic_audit_v15.py checks it.
     # The same billing maximum as v13.
     definition = {"executor": "organic.audit"}
     v13 = service_terms({**definition, "audit_policy": V13_AUDIT_POLICY})
-    v14 = service_terms({**definition, "audit_policy": AUDIT_POLICY})
+    v14 = service_terms({**definition, "audit_policy": V14_AUDIT_POLICY})
     assert v14["maximum_nanos"] == v13["maximum_nanos"]
 
 
@@ -124,7 +121,7 @@ async def test_v14_findings_send_fixes_to_website_change_and_v13_keeps_technical
 
     files, pages = await site_evidence(V13_AUDIT_POLICY)
     actions = {}
-    for policy in (V13_AUDIT_POLICY, AUDIT_POLICY):
+    for policy in (V13_AUDIT_POLICY, V14_AUDIT_POLICY):
         docs = documents(policy, files, pages)
         findings = json.loads(docs[audit_paths(RUN_ID)["findings.json"]])["findings"]
         actions[policy["version"]] = {f["next_action"] for f in findings}

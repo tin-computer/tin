@@ -8,7 +8,6 @@ WORKFLOW_DISPLAY_ORDER: tuple[str, ...] = (
     # the audit, keyword plan, content plan and drafting for you, so it leads.
     "organic.traffic_system",
     "organic.audit",
-    "organic.prompt_panel",
     "organic.keyword_plan",
     "organic.traffic_snapshot",
     "organic.content_efficacy",

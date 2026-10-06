@@ -167,31 +167,31 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
         view = await f.billing.overview(f.project.id, ACTOR)
         return view["reserved_usd"], view["set_aside_usd"], view["available_usd"]
 
-    # Admission reserves nothing; the rest of the $3 estimate (organic-audit-v13) is set aside
+    # Admission reserves nothing; the rest of the $6 estimate (organic-audit-v15) is set aside
     # while it runs.
-    assert await held() == ("0.00", "3.00", "7.00")
+    assert await held() == ("0.00", "6.00", "4.00")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
     await operation(f, run, "one", 500_000_000)
-    assert await held() == ("0.50", "2.50", "7.00")
+    assert await held() == ("0.50", "5.50", "4.00")
     await asyncio.gather(*(observe(f, "one", 125_000_000) for _ in range(3)))
-    assert await held() == ("0.13", "2.87", "7.00")
+    assert await held() == ("0.13", "5.87", "4.00")
     await operation(f, run, "two", 500_000_000)
     await observe(f, "two", 125_000_000)
-    assert await held() == ("0.25", "2.75", "7.00")
+    assert await held() == ("0.25", "5.75", "4.00")
     await finish(f, run)
     assert await asyncio.gather(*(f.billing.settle(run.id) for _ in range(3))) == [250_000_000] * 3
     view = await f.billing.overview(f.project.id, ACTOR)
     assert view["available_usd"] == "9.75" and view["reserved_usd"] == "0.00"
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
     charge = await f.billing.run_charge(run.id, ACTOR)
-    # $2 for the audit's own calls and $1 for its six AI engines (organic-audit-v13).
-    assert charge["estimated_usd"] == "3.00" and charge["charged_usd"] == "0.25"
+    # $4 for the audit's own calls and $2 for its six AI engines (organic-audit-v15).
+    assert charge["estimated_usd"] == "6.00" and charge["charged_usd"] == "0.25"
     assert charge["released_usd"] is None  # Never imply a $2 upfront hold existed.
 
 
 async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
     f = billed
-    with pytest.raises(BillingError, match=r"estimated at up to \$3.00") as error:
+    with pytest.raises(BillingError, match=r"estimated at up to \$6.00") as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
@@ -407,7 +407,8 @@ async def test_zero_work_or_zero_cost_releases_everything(billed):
 
 async def test_runs_start_while_another_is_active_and_an_unknown_bill_keeps_its_liability(billed):
     f = billed
-    await fund(f, 1000)
+    # Two $6 audits at once (organic-audit-v15).
+    await fund(f, 2000)
     await f.billing.update_policy(
         f.project.id,
         ACTOR,
@@ -425,7 +426,7 @@ async def test_runs_start_while_another_is_active_and_an_unknown_bill_keeps_its_
     assert await f.billing.settle(concurrent.id) == 0
     await finish(f, first)
     assert await f.billing.settle(first.id) is None
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.90"
+    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "19.90"
     second = await direct(f)
     assert second.id != first.id
     assert (

@@ -1,4 +1,8 @@
-"""organic-audit-v10 keeps one buyer-question set per site and market; offline, no paid calls."""
+"""organic-audit-v10 keeps one buyer-question set per site and market; offline, no paid calls.
+
+These runs are pinned to v14, the last policy that drafts two buyer jobs (eight questions);
+v15's sixteen are in test_organic_audit_v15.py.
+"""
 
 from __future__ import annotations
 
@@ -12,8 +16,8 @@ from test_organic_audit import activities_fixture, panel_fixture, response
 from test_organic_audit_panel import interpretation, research, review
 
 from tin_lite.organic_audit import (
-    AUDIT_POLICY,
     V9_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     content_review_findings,
     question_results,
@@ -88,7 +92,7 @@ def test_limit_keeps_the_first_jobs_and_recomputes_the_question_set_digest():
 
 @pytest.mark.asyncio
 async def test_first_audit_drafts_two_buyer_jobs_with_three_answers_each():
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     # Eight questions, three answers each with web search and one without: 32.
     assert await draft_first_panel(activities, run_id) == 32
@@ -106,7 +110,7 @@ async def test_first_audit_drafts_two_buyer_jobs_with_three_answers_each():
 
 @pytest.mark.asyncio
 async def test_each_question_gets_three_answers_in_order():
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     await draft_first_panel(activities, run_id)
     panel = await activities._result(run_id, "panel")
@@ -140,7 +144,7 @@ def previous_audit(db, *, market="US", host="example.com", repetitions=3, mentio
             "host": host,
             "market": market,
             "started_at": "2026-09-01T00:00:00+00:00",
-            "policy_version": AUDIT_POLICY["version"],
+            "policy_version": V14_AUDIT_POLICY["version"],
         },
         "panel": panel,
     }
@@ -169,7 +173,7 @@ def previous_audit(db, *, market="US", host="example.com", repetitions=3, mentio
 
 @pytest.mark.asyncio
 async def test_a_later_audit_reuses_the_frozen_questions_without_paid_preparation():
-    activities, db, storage, _ = await activities_fixture()
+    activities, db, storage, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     source, panel = previous_audit(db, mentioned={0})
     activities.responses = SimpleNamespace(create=AsyncMock(side_effect=AssertionError))
@@ -230,7 +234,7 @@ async def test_a_later_audit_reuses_the_frozen_questions_without_paid_preparatio
     ],
 )
 async def test_questions_from_another_market_host_or_policy_are_not_reused(change):
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     previous_audit(db, **change)
     assert await draft_first_panel(activities, run_id) == 32
@@ -243,7 +247,7 @@ async def test_questions_from_another_market_host_or_policy_are_not_reused(chang
 async def test_refresh_questions_drafts_a_new_set_and_starts_a_new_comparison():
     from dataclasses import replace
 
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     db.run = replace(db.run, input={**db.run.input, "refresh_questions": True})
     run_id = str(db.run.id)
     previous_audit(db)
@@ -270,11 +274,11 @@ def test_content_findings_need_every_answer_to_a_question():
         }
         for index in range(12)
     ]
-    ai = summarize(panel, rows, policy_version=AUDIT_POLICY["version"])
+    ai = summarize(panel, rows, policy_version=V14_AUDIT_POLICY["version"])
     assert ai["summary"].startswith("12/12 planned observations completed.")
     assert "Three fresh answers per question." in ai["summary"]
     assert content_review_findings(ai, "example.com")[0]["affected_count"] == 4
-    ai = summarize(panel, rows[:-1], policy_version=AUDIT_POLICY["version"])
+    ai = summarize(panel, rows[:-1], policy_version=V14_AUDIT_POLICY["version"])
     assert content_review_findings(ai, "example.com")[0]["affected_count"] == 3
     assert question_results(panel, rows[:-1])[3]["scored"] == 2
     # A set drafted before v10 keeps its two answers per question and its wording.
@@ -284,7 +288,7 @@ def test_content_findings_need_every_answer_to_a_question():
 
 @pytest.mark.asyncio
 async def test_a_retry_keeps_the_source_it_already_chose():
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     first, panel = previous_audit(db, mentioned={0})
     await activities.organic_prepare_panel(run_id)
