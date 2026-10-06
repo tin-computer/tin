@@ -1,6 +1,6 @@
 # Workflow diagram panel: implementation plan
 
-Status: pull request 1 built, 2026-10-06. Pull request 2 (batches 2 and 3) follows.
+Status: built, 2026-10-06, in two pull requests. The second draws batches 2 and 3 and removes `PRESENTATION_PENDING`.
 Design: the Paper file thinklikeanagent, page "System · workflow diagram panel". The chosen layout is PANEL-3B; the grammar is on the ANATOMY board.
 
 ## Goal

@@ -119,6 +119,27 @@
         "media_type": "text/markdown",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "stripe", "kind": "surface", "label": "Stripe subscriptions", "fact": "read only, at most 8 pages of 100"},
+          {"id": "judge", "kind": "step", "label": "Mark who paid and stayed", "fact": "60 paid days, trial days not counted"},
+          {"id": "compare", "kind": "step", "label": "Compare segments with the rest", "fact": "Fisher test, Holm-adjusted p under 0.05"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "PAYING_SEGMENT.md in reports/outreach"},
+          {"id": "handoff", "kind": "receipt", "label": "Inputs for three workflows", "fact": "shortlist, keywords, ads, starts none"},
+          {"id": "nothing", "kind": "ghost", "label": "Nothing to hand off yet", "fact": "too few judged, or no segment stands out"}
+        ],
+        "edges": [
+          {"from": "stripe", "to": "judge", "kind": "call"},
+          {"from": "stripe", "to": "report", "kind": "call", "label": "Stripe refuses"},
+          {"from": "judge", "to": "compare", "kind": "call"},
+          {"from": "compare", "to": "report", "kind": "call"},
+          {"from": "report", "to": "handoff", "kind": "call", "label": "segment found"},
+          {"from": "report", "to": "nothing", "kind": "call", "label": "none yet"}
+        ]
+      }
     }
   }
 }

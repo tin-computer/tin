@@ -65,6 +65,26 @@
         "media_type": "text/markdown",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "buyer", "kind": "step", "label": "Learn the buyer", "fact": "site, README, tools already shipped"},
+          {"id": "search", "kind": "surface", "label": "Search results pages", "fact": "at most 24 searches and 16 page reads"},
+          {"id": "repo", "kind": "surface", "label": "Repository code", "fact": "read only, sets the build effort"},
+          {"id": "score", "kind": "step", "label": "Veto, score and pick one", "fact": "9 vetoes, a pick needs 6 of 10"},
+          {"id": "none", "kind": "ghost", "label": "No tool worth building", "fact": "the report says why, nothing to build"},
+          {"id": "report", "kind": "receipt", "label": "Free tool report", "fact": "reports/free-tool, spec only, not built"}
+        ],
+        "edges": [
+          {"from": "buyer", "to": "search", "kind": "call"},
+          {"from": "search", "to": "repo", "kind": "call"},
+          {"from": "repo", "to": "score", "kind": "call"},
+          {"from": "score", "to": "report", "kind": "call", "label": "one pick"},
+          {"from": "score", "to": "none", "kind": "call", "label": "none eligible"}
+        ]
+      }
     }
   }
 }

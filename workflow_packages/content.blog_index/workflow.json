@@ -88,6 +88,24 @@
         "max_bytes": 200000,
         "validator": "blog-index-plan.v1"
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "read only, post route and its source"},
+          {"id": "gsc", "kind": "surface", "label": "Search Console", "fact": "at most 4 calls, 28 and 90 day windows"},
+          {"id": "plan", "kind": "step", "label": "Plan the index files", "fact": "Codex, at most 5 files, tried in a copy"},
+          {"id": "ask", "kind": "ghost", "label": "No route for articles yet", "fact": "no files, your agent asks you once"},
+          {"id": "receipt", "kind": "receipt", "label": "Plan in project Files", "fact": "website.change applies it after approval"}
+        ],
+        "edges": [
+          {"from": "repo", "to": "plan", "kind": "call"},
+          {"from": "gsc", "to": "plan", "kind": "call"},
+          {"from": "plan", "to": "receipt", "kind": "call"},
+          {"from": "plan", "to": "ask", "kind": "call", "label": "no article route"}
+        ]
+      }
     }
   }
 }

@@ -213,7 +213,7 @@ const catalogFlows = JSON.parse(execFileSync("uv", ["run", "--frozen", "python",
   "print(json.dumps(flows))",
 ].join("\n")], {encoding: "utf8"}));
 
-test("every catalog drawing fits the panel without overlapping cards or labels", async () => {
+test("every catalog drawing fits the panel without overlapping cards, labels or hidden lines", async () => {
   const assets = path.resolve("src/tin_lite/static");
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
@@ -237,7 +237,7 @@ test("every catalog drawing fits the panel without overlapping cards or labels",
     const page = await browser.newPage({viewport: {width: 1440, height: 1000}});
     await page.goto(`http://127.0.0.1:${server.address().port}/`);
     await page.evaluate(() => document.fonts.ready);
-    assert.ok(catalogFlows.length >= 17, `expected the drawn catalog, got ${catalogFlows.length}`);
+    assert.ok(catalogFlows.length >= 66, `expected every drawing in the catalog, got ${catalogFlows.length}`);
     const problems = await page.evaluate(async (items) => {
       const found = [];
       for (const {key, flow} of items) {
@@ -267,6 +267,25 @@ test("every catalog drawing fits the panel without overlapping cards or labels",
         labels.forEach((label) => cards.forEach((card) => {
           if (overlaps(label, card)) found.push(`${key}: an edge label sits on a card`);
         }));
+        // A line may only pass under the two cards it joins; a wait shows only its words.
+        const solid = cardElements.map((element) => ({
+          id: element.dataset.spineNode,
+          element,
+          box: (element.querySelector(".spine-wait-text") || element).getBoundingClientRect(),
+        }));
+        for (const line of panel.querySelectorAll(".spine-lines path")) {
+          const matrix = line.getScreenCTM();
+          const length = line.getTotalLength();
+          const hidden = solid.find(({id, box}) => {
+            if (id === line.dataset.from || id === line.dataset.to) return false;
+            for (let at = 0; at <= length; at += 3) {
+              const point = line.getPointAtLength(at).matrixTransform(matrix);
+              if (point.x > box.left + 2 && point.x < box.right - 2 && point.y > box.top + 2 && point.y < box.bottom - 2) return true;
+            }
+            return false;
+          });
+          if (hidden) found.push(`${key}: the line ${line.dataset.from} to ${line.dataset.to} runs under ${named(hidden.element)}`);
+        }
         const drawn = panel.querySelectorAll(".spine-lines path").length;
         if (drawn < flow.edges.length) found.push(`${key}: ${flow.edges.length - drawn} edges were not drawn`);
       }

@@ -146,6 +146,26 @@
         "max_bytes": 20000,
         "path_template": "reports/error-surface/{run_id}.md"
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Code map, keyword plan, audit", "fact": "demand only as the plan observed it"},
+          {"id": "repository", "kind": "surface", "label": "GitHub repository", "fact": "read-only, at most 1000 files"},
+          {"id": "extract", "kind": "step", "label": "Find the errors users see", "fact": "Codex, up to 30, 80 or 150 by depth"},
+          {"id": "docs", "kind": "step", "label": "Check which your docs answer", "fact": "documented scores zero, cited by file"},
+          {"id": "score", "kind": "step", "label": "Score each message by formula", "fact": "top 15 by default, no hand reordering"},
+          {"id": "receipt", "kind": "receipt", "label": "Error surface inventory", "fact": "a content.plan context file, under 18 KB"}
+        ],
+        "edges": [
+          {"from": "context", "to": "extract", "kind": "call"},
+          {"from": "repository", "to": "extract", "kind": "call"},
+          {"from": "extract", "to": "docs", "kind": "call"},
+          {"from": "docs", "to": "score", "kind": "call"},
+          {"from": "score", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }
