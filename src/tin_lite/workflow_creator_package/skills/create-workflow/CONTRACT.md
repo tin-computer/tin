@@ -117,3 +117,17 @@ Other fields are bounded strings, numbers, booleans or bounded arrays of bounded
 No nested input objects. Code may declare on_demand plus daily/weekly; private procedures only
 on_demand. Human review is {"eligible":true,"reason":"..."} when supported, not a string.
 Review after execution cannot guard an external effect that already happened.
+
+Every manifest carries a presentation: how the run goes, drawn top to bottom for the workflow's
+diagram panel. It never changes how the workflow runs. Shape:
+{"flow": {"direction": "TD", "nodes": [...], "edges": [...]}}, 2-8 nodes and 1-12 edges, one
+connected graph. A node is {"id", "kind", "label", "fact"}: id lowercase_snake, label at most 32
+characters, fact at most 48, and no & < > " ` { | } ; characters. Kinds: step (work the run
+does), surface (an outside service it reads or writes), store (something Tin keeps, such as a
+file in project Files), wait (a timer or poll), gate (where it waits for a person's approval),
+receipt (the record it leaves, usually last) and ghost (an ending where nothing happens). An
+edge is {"from", "to", "kind", "label"?}: call when the run moves on by itself, signal when a
+schedule, approval or timer moves it on; edges leaving a gate are signals. Two nodes in one row
+run side by side or are the two ways a run can go; an edge back to an earlier node is a loop.
+Labels are plain: steps start with a verb. A fact states something checkable, such as a limit,
+a provider or where the result lands, and never praises the workflow.

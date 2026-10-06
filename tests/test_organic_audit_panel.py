@@ -417,7 +417,7 @@ async def test_blind_readers_are_bounded_and_keep_each_question_separate():
         active -= 1
         return {"status": "completed", "value": {"text": request["input"]}}
 
-    questions = [{"question": f"Independent question {index}"} for index in range(12)]
+    questions = [{"question": f"Independent question {index}"} for index in range(16)]
     result = await interpret_questions(
         SimpleNamespace(_model=model),
         "run",
@@ -425,7 +425,7 @@ async def test_blind_readers_are_bounded_and_keep_each_question_separate():
         {"policy_version": AUDIT_POLICY["version"], "market": "US"},
         "",
     )
-    assert peak == 4
-    assert len({stage for stage, _ in requests}) == 12
+    assert peak == AUDIT_POLICY["question_interpretation_concurrency"] == 8
+    assert len({stage for stage, _ in requests}) == 16
     assert {text for _, text in requests} == {q["question"] for q in questions}
-    assert [row["number"] for row in json.loads(result["value"]["text"])] == list(range(1, 13))
+    assert [row["number"] for row in json.loads(result["value"]["text"])] == list(range(1, 17))

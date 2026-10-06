@@ -102,6 +102,28 @@
         "media_type": "text/markdown",
         "max_bytes": 250000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Growth plan and Code map", "fact": "product URL, repo, license, hard no's"},
+          {"id": "lists", "kind": "surface", "label": "GitHub awesome lists", "fact": "about 30, README and contributing guide"},
+          {"id": "rules", "kind": "step", "label": "Test each list's own rules", "fact": "alive in 12 months, each rule tested"},
+          {"id": "score", "kind": "step", "label": "Score the lists that pass", "fact": "out of 7, top 5 get exact entries"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "reports/awesome-lists, submissions block"},
+          {"id": "receipt", "kind": "receipt", "label": "Entries ready to review", "fact": "sent from your GitHub only once approved"}
+        ],
+        "edges": [
+          {"from": "context", "to": "lists", "kind": "call"},
+          {"from": "lists", "to": "rules", "kind": "call"},
+          {"from": "rules", "to": "score", "kind": "call"},
+          {"from": "rules", "to": "report", "kind": "call", "label": "no list passes"},
+          {"from": "score", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"},
+          {"from": "report", "to": "score", "kind": "signal", "label": "next run skips these"}
+        ]
+      }
     }
   }
 }

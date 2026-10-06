@@ -17,6 +17,7 @@ from tin_lite.procedures import (
     validate_codex_procedure_definition,
 )
 from tin_lite.project_files import safe_project_file_path
+from tin_lite.workflow_diagrams import check_presentation
 from tin_lite.workflow_inputs import WorkflowInputError
 from tin_lite.workflow_packages import PACKAGE_FORMAT, decode_workflow_source, package_digest
 from tin_lite.workflow_prerequisites import parse_workflow_prerequisites
@@ -85,9 +86,12 @@ def validate_private_definition(definition):
             "integration_requirements",
             "system",
             "prerequisites",
+            "presentation",
         },
         "private definition",
     )
+    # Drawn by the creator and validated when present; older packages simply have none.
+    check_presentation(definition, required=False)
     if not isinstance(definition.get("key"), str) or not PRIVATE_KEY.fullmatch(definition["key"]):
         raise ValueError(
             "private keys must be custom.<lowercase_name> (letters, digits, underscores)"
@@ -672,6 +676,35 @@ def authoring_guide(*, settings, project_id):
                     "max_bytes": 64000,
                 },
             },
+            "presentation": {
+                "flow": {
+                    "direction": "TD",
+                    "nodes": [
+                        {
+                            "id": "evidence",
+                            "kind": "store",
+                            "label": "Project evidence",
+                            "fact": "the project files at this revision",
+                        },
+                        {
+                            "id": "digest",
+                            "kind": "step",
+                            "label": "Write the digest",
+                            "fact": "every point labelled with its source",
+                        },
+                        {
+                            "id": "report",
+                            "kind": "receipt",
+                            "label": "Digest in Files",
+                            "fact": "reports/custom/RESEARCH_DIGEST.md",
+                        },
+                    ],
+                    "edges": [
+                        {"from": "evidence", "to": "digest", "kind": "call"},
+                        {"from": "digest", "to": "report", "kind": "call"},
+                    ],
+                }
+            },
         },
     }
     return {
@@ -681,6 +714,10 @@ def authoring_guide(*, settings, project_id):
         "steps": [
             "Edit the example for the user's intended workflow. "
             "Use an unused custom key; its folder must match.",
+            "Draw how it runs in definition.presentation.flow, top to bottom (direction TD): "
+            "2-8 nodes, each a kind, a label of at most 32 characters and a one-line fact of "
+            "at most 48 describing it. Tin shows it in the workflow's diagram panel; it never "
+            "changes how the workflow runs. See presentation below.",
             "Commit via commit_project_changes with current project HEAD and a stable request_id. "
             "File writes do not activate or start anything.",
             "Call validate_workflow_package with the manifest path and returned commit revision. "
@@ -705,6 +742,35 @@ def authoring_guide(*, settings, project_id):
             "start_workflow with a prerequisite_missing diagnostic, recommended ones return "
             "advisories.",
         ],
+        "presentation": {
+            "node_kinds": {
+                "step": "work the run does",
+                "surface": "an outside service it reads or writes",
+                "store": "something Tin keeps, such as a file in project Files",
+                "wait": "time passing: a timer or a poll",
+                "gate": "where the run waits for a person's approval",
+                "receipt": "the record the run leaves behind, usually last",
+                "ghost": "an ending where nothing happens",
+            },
+            "edge_kinds": {
+                "call": "the run moves on by itself",
+                "signal": "a schedule, an approval or a timer moves it on",
+            },
+            "limits": {
+                "nodes": [2, 8],
+                "edges": [1, 12],
+                "label": 32,
+                "fact": 48,
+                "edge_label": 40,
+            },
+            "writing": (
+                "Labels are short and plain: steps start with a verb, the rest are nouns. "
+                "A fact states something checkable, such as a limit, a provider or where the "
+                "result lands. Two nodes in one row run side by side or are the two ways a run "
+                "can go. An edge back to an earlier node is a loop; label it with what sends "
+                "the run back."
+            ),
+        },
         "public_contribution": (
             "To offer a workflow for Tin's public catalog, the pull request author must be the "
             "Tin user who ran it here: GitHub connected on this business project (not the "

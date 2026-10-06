@@ -20,6 +20,7 @@ from tin_lite.organic_audit import (
     AUDIT_POLICY,
     V10_AUDIT_POLICY,
     V11_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     ai_report_details,
     audit_policy,
     digest,
@@ -213,7 +214,7 @@ def test_a_review_that_rejects_nothing_keeps_the_panel_unchanged():
 
 @pytest.mark.asyncio
 async def test_v11_preparation_asks_the_three_questions_that_passed():
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     activities.responses = SimpleNamespace(
         create=AsyncMock(
             side_effect=[research(), draft(), *interpretations(), review(rejected=(4,))]
@@ -231,7 +232,7 @@ async def test_v11_preparation_asks_the_three_questions_that_passed():
 
 @pytest.mark.asyncio
 async def test_v11_redrafts_when_the_review_rejects_two_of_four():
-    activities, db, _, _ = await activities_fixture()
+    activities, db, _, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     activities.responses = SimpleNamespace(
         create=AsyncMock(
             side_effect=[

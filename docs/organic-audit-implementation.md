@@ -725,3 +725,41 @@ label, so v13 and earlier keep `"technical_fix"` and still verify.
   value. The orphan-page check needs the sitemap, so in a links crawl it is unknown rather
   than a pass or a problem. Technical fix and website change sources read the same context
   key, a boolean either way, so v14 evidence verifies unchanged.
+
+## 0.11 — sixteen questions, drafted from Search Console (organic-audit-v15)
+
+The buyer prompt panel was a separate workflow that only a hand-started run produced: in
+production it never ran for a customer, and the one audit that read a panel asked 8 of its 36
+prompts. The audit already drafts a question set on its first run and reuses it on later runs,
+so v15 folds the panel's one useful input, the site's own searches, into that draft and stops
+reading `organic.prompt_panel`. v14 is on main and may deploy at any time, so this is a new
+pinned policy, `organic-audit-v15` (catalog organic.audit 0.11.0). Tests freeze v14's policy,
+instructions and schemas as main shipped them.
+
+- **Sixteen questions:** `max_panel_jobs` 4 and `max_questions` 16. The draft may name one to
+  four buyer jobs of four questions (`BuyerPanelV15`, `PanelReviewV15`); a site with fewer
+  supported jobs asks fewer. Every question is still read blind and reviewed one by one;
+  v15 reads eight at a time (`question_interpretation_concurrency`), so the preparation
+  activity keeps the same depth of sequential calls as eight questions at four.
+  Runs pinned to v14 or earlier draft up to three jobs and keep two, as before.
+- **Search Console searches:** the draft reads up to `search_console_questions` (40) of the
+  run's own Search Console queries, impressions summed over pages, without queries that
+  contain the site's host label. The instructions treat them as evidence of what buyers look
+  for and the words they use: the job with the most search demand the product supports comes
+  first, and searches for the product's or another site's name are ignored. Without Search
+  Console the draft reads the public research alone.
+- **Output bound:** the draft alone gets `panel_max_output_tokens` (12,000); every other call
+  keeps 6,000.
+- **No prompt panel:** `prompt_panel` is false, so a v15 run never reads an
+  `organic.prompt_panel` run. Audits pinned to v13 or v14 still do. The package stays
+  registered with `public_discovery: false`, so new setups, the onboarding plan and the
+  dashboard order no longer offer it.
+- **Cost:** sixteen questions on the six engines cost at most $1.24, so
+  `ai_engines_max_cost_usd` is $2. Every audit call at every bound costs at most $3.56, so the
+  policy pins `billing_maximum_usd` $4; the audit's billing maximum is $6 for v15 runs and
+  stays $3 for v13 and v14. On a project that is not billed, the audit's spending limit
+  counts reservations ($0.20 for each answer with web search), so the operator's
+  `TIN_LITE_ORGANIC_AUDIT_MAX_COST_USD` must be about $16 for sixteen questions and the
+  engines to fit; with $5 the audit stops buying answers partway through.
+- The new keys are panel-preparation settings and `billing_maximum_usd` is neutral, so an
+  answer completion may cross v14 and v15.

@@ -27,6 +27,20 @@
         "media_type": "text/markdown",
         "max_bytes": 8000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "orders", "kind": "store", "label": "Fixture orders", "fact": "fixtures/orders.json in the package"},
+          {"id": "filter", "kind": "step", "label": "Keep the larger orders", "fact": "at or above your minimum, in Python"},
+          {"id": "report", "kind": "receipt", "label": "Order report in Files", "fact": "reports/custom/ORDER_REPORT.md"}
+        ],
+        "edges": [
+          {"from": "orders", "to": "filter", "kind": "call"},
+          {"from": "filter", "to": "report", "kind": "call"}
+        ]
+      }
     }
   }
 }

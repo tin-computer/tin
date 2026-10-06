@@ -265,6 +265,7 @@ const state = {
   workflowSearch: "",
   workflowEditor: null,
   expandedRun: null,
+  diagramPanel: null,
   runDetails: new Map(),
   activityFilter: "all",
   activityHasMore: false,
@@ -965,6 +966,7 @@ function systemTemplateCard(workflow, query) {
         ${saved
           ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
           : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
+        ${systemDiagramButton(workflow)}
         <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
       </span>
       ${workflow.last_run_id && workflow.last_run_at
@@ -1052,7 +1054,7 @@ function systemTemplateSetupCard(workflow) {
   return `<form class="system-template-card is-open workflow-config-form ${workflow.key === "content.plan" ? "is-weekly" : "is-manual"}" data-workflow-id="${escapeHtml(workflow.id)}">
     <header class="system-template-open-header">
       <span class="system-template-identity"><strong>${escapeHtml(workflow.title)}</strong><span class="system-template-description">${escapeHtml(workflow.description)}</span><code>${escapeHtml(workflow.key)} · v${escapeHtml(workflow.version_label)}</code></span>
-      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
+      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}${systemDiagramButton(workflow)}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
     </header>
     <div class="system-template-setup-body">
       <section>
@@ -1593,6 +1595,7 @@ function render() {
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
   updateRail();
+  if (state.diagramPanel && (state.view !== "workflows" || !hasProject)) closeWorkflowDiagram({ restoreFocus: false });
   if (state.projectAccess === "locked") {
     if (state.view === "integrations" && connectRequest().length) renderIntegrations();
     else renderLockPage();
@@ -1997,6 +2000,13 @@ function bindWorkflowResultControls(root) {
   root.querySelectorAll("[data-skip-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => skipProjectWorkflow(button.dataset.skipProjectWorkflow, button));
   });
+  root.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      // The row opens its settings on click; the diagram is a separate thing.
+      event.stopPropagation();
+      toggleWorkflowDiagram(button);
+    });
+  });
   root.querySelectorAll("[data-remove-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => removeProjectWorkflow(button.dataset.removeProjectWorkflow, button));
   });
@@ -2076,7 +2086,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
       <button class="workflow-section ${state.workflowSection === "yours" ? "is-active" : ""}" type="button" data-workflow-section="yours">My system ${runningCount ? `<i aria-hidden="true"></i><span>${runningCount}</span>` : ""}</button>
       <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Workflows</button>
       <button class="workflow-section ${state.workflowSection === "activity" ? "is-active" : ""}" type="button" data-workflow-section="activity">Activity</button>
-      <span class="system-pace">${escapeHtml(state.workflowSection === "activity" ? systemActivityPace() : systemPaceLine())}</span>
+      <span class="system-pace">${state.workflowSection === "activity" ? escapeHtml(systemActivityPace()) : `<span class="system-pace-long">${escapeHtml(systemPaceLine())}</span><span class="system-pace-short">${escapeHtml(systemPaceShort())}</span>`}</span>
     </div>
     ${sectionContent}
   </section>`;
@@ -2107,6 +2117,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
   }
   bindWorkflowResultControls(document);
   bindWorkflowRunControls(main);
+  if (state.diagramPanel) renderDiagramPanel();
   if (state.workflowSection === "activity") bindActivityControls(main, "workflows");
   if (placeholder) {
     if (freshStatus.length) {
@@ -2156,6 +2167,17 @@ function systemPaceLine() {
     ? `Set up today: ${workflowCountValue} ${workflowCountValue === 1 ? "role" : "roles"}. First results ${nextRunAt ? systemDateTime(nextRunAt) : "within the hour"}. · `
     : "";
   return `${firstRun}${workflowCountValue} saved ${workflowCountValue === 1 ? "workflow" : "workflows"} · ${runningCount} running · ${runsThisMonth} runs this month · ${next}`;
+}
+
+// Beside the diagram panel the pace line keeps only the count and the next run.
+function systemPaceShort() {
+  const summary = state.systemSummary;
+  const workflowCountValue = summary?.workflow_count ?? state.projectWorkflows.length;
+  const nextRunAt = summary?.next_run_at || state.projectWorkflows
+    .map((item) => item.next_run_at)
+    .filter(Boolean)
+    .sort()[0];
+  return `${workflowCountValue} saved · ${nextRunAt ? `next ${systemDateTime(nextRunAt)}` : "nothing scheduled"}`;
 }
 
 function systemDateTime(value) {
@@ -2455,13 +2477,15 @@ function systemRunCard(run, configured = null) {
     ? `data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" data-editor-run-id="${escapeHtml(run.id)}"`
     : "";
   const expanded = state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null;
-  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""}">
+  const diagramShown = workflow ? diagramPanelShows(workflow.id, configured?.id) : false;
+  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row ${configured ? "is-configurable" : ""}" ${configured ? `data-open-system-workflow ${configureAttributes}` : ""}>
       ${configured
         ? `<button class="system-card-mark is-toggle" type="button" ${configureAttributes} aria-label="Open ${escapeHtml(title)} settings">${systemCardIndicator(run.status)}</button>
            <button class="system-card-identity is-toggle" type="button" ${configureAttributes}><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></button>`
         : `<span class="system-card-mark">${systemCardIndicator(run.status)}</span>
            <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></span>`}
+      ${systemDiagramButton(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
@@ -2492,10 +2516,12 @@ function systemConfiguredCard(configured) {
         ? `<button class="system-action is-strong" type="button" data-skip-project-workflow="${escapeHtml(configured.id)}">Skip once</button>
            <button class="system-action" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="pause">Pause</button>`
         : `<button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`;
-  return `<article class="system-workflow-card ${failed ? "is-failed" : ""}">
+  const diagramShown = diagramPanelShows(configured.workflow_id, configured.id);
+  return `<article class="system-workflow-card ${failed ? "is-failed" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row is-configurable" data-open-system-workflow data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
       <button class="system-card-mark is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" aria-label="Open ${escapeHtml(configured.name)} settings">${systemCardIndicator(failed ? "failed" : "idle")}</button>
       <button class="system-card-identity is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}"><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2708,6 +2734,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     <div class="system-card-row is-configurable" data-close-system-workflow>
       <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2744,6 +2771,7 @@ function systemContentProgramEditor(workflow, configured, run) {
     <div class="system-card-row is-configurable" data-close-system-workflow>
       <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -3441,6 +3469,7 @@ function workflowForProjectWorkflow(configured) {
     description: configured.workflow_description,
     version_label: configured.version_label,
     definition: { input_schema: configured.input_schema },
+    drawn: Boolean(configured.workflow_drawn),
   };
 }
 
@@ -3537,7 +3566,6 @@ function workflowDraftForm(workflow) {
         <div class="workflow-row-control"><input class="workflow-inline-input" id="workflow-name-${escapeHtml(workflow.id)}" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></div>
       </div>
       ${fields || '<p class="workflow-no-inputs">This workflow has no additional inputs.</p>'}
-      ${workflowHowItRuns(workflow)}
       <div class="workflow-config-divider"><span>Schedule</span></div>
       ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}
     </div>
@@ -3554,42 +3582,165 @@ function loadDiagramRenderer() {
   return window.TinDiagramLoader.load();
 }
 
-function workflowHowItRuns(workflow) {
-  const flow = workflow.definition?.presentation?.flow;
-  if (!flow) return "";
-  const counts = flow.nodes.reduce((value, node) => {
-    value[node.kind] = (value[node.kind] || 0) + 1;
-    return value;
-  }, {});
-  const facts = [
-    `${flow.nodes.length} ${flow.nodes.length === 1 ? "step" : "steps"}`,
-    counts.gate ? `${counts.gate} gate` : null,
-    counts.wait ? `${counts.wait} wait` : null,
-  ].filter(Boolean).join(" · ");
-  return `<section class="workflow-how-it-runs" aria-label="How it runs">
-    <header><strong>How it runs</strong><code>derived from the pinned definition · ${escapeHtml(facts)}</code></header>
-    <div class="tin-diagram workflow-diagram" data-workflow-diagram="${escapeHtml(workflow.id)}"><span>Drawing workflow…</span></div>
-  </section>`;
+// The workflow diagram panel. A row's diagram button opens one workflow's
+// presentation flow in a narrow sheet on the right, read top to bottom
+// (workflow-spine.js); the page stays usable beside it.
+const DIAGRAM_ICON = '<svg aria-hidden="true" viewBox="0 0 14 14"><rect x="3.5" y="0.75" width="7" height="3.5" rx="1" /><rect x="3.5" y="9.75" width="7" height="3.5" rx="1" /><path d="M7 4.25v5.5" /></svg>';
+let diagramSpine = null;
+
+function workflowFlow(workflow) {
+  return workflow?.definition?.presentation?.flow || null;
 }
 
-async function hydrateWorkflowDiagrams(root) {
-  const targets = [...root.querySelectorAll("[data-workflow-diagram]")];
-  if (!targets.length) return;
-  try {
-    const renderer = await loadDiagramRenderer();
-    for (const target of targets) {
-      if (!target.isConnected) continue;
-      const workflow = state.workflows.find((item) => item.id === target.dataset.workflowDiagram);
-      const flow = workflow?.definition?.presentation?.flow;
-      if (!flow) continue;
-      const rendered = await renderer.renderFlow(flow);
-      if (target.isConnected) target.innerHTML = rendered.svg;
-    }
-  } catch (_error) {
-    for (const target of targets) {
-      if (target.isConnected) target.innerHTML = "<span>Diagram unavailable.</span>";
-    }
+// A saved workflow the catalog hides (content.refresh) is drawn all the same; its drawing
+// comes from the saved workflow's diagram endpoint rather than the catalog.
+function workflowDrawn(workflow) {
+  return Boolean(workflowFlow(workflow) || workflow?.drawn);
+}
+
+function diagramPanelShows(workflowId, projectWorkflowId) {
+  const open = state.diagramPanel;
+  return Boolean(open && open.workflowId === workflowId && (open.projectWorkflowId || "") === (projectWorkflowId || ""));
+}
+
+function systemDiagramButton(workflow, configured = null) {
+  if (!workflowDrawn(workflow)) return "";
+  const shown = diagramPanelShows(workflow.id, configured?.id);
+  const name = configured?.name || workflow.title || workflow.key;
+  return `<button class="system-card-diagram" type="button" data-show-workflow-diagram="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured?.id || "")}" aria-pressed="${shown}" aria-label="Workflow diagram for ${escapeHtml(name)}" title="Show workflow diagram">${DIAGRAM_ICON}</button>`;
+}
+
+function diagramTrigger(configured) {
+  const schedule = configured?.schedule;
+  if (!schedule) return "";
+  const label = systemScheduleLabel(configured);
+  const when = schedule.cadence === "monthly" ? label : `every ${label}`;
+  return configured.status === "paused" ? `paused · ${when}` : when;
+}
+
+// A saved workflow is drawn from its pinned revision, or from today's definition when the
+// pin has no drawing (the API says which); a template is drawn from today's definition.
+const savedDiagrams = new Map();
+
+function savedDiagramKey(configured) {
+  return `${configured.id}:${configured.settings_revision ?? ""}:${configured.version_label ?? ""}`;
+}
+
+function loadSavedDiagram(configured) {
+  const key = savedDiagramKey(configured);
+  if (savedDiagrams.has(key)) return;
+  savedDiagrams.set(key, null);
+  const context = currentProjectContext();
+  api(`/api/projects/${encodeURIComponent(context.projectId)}/workflows/${encodeURIComponent(configured.id)}/diagram`)
+    .then((value) => savedDiagrams.set(key, value))
+    .catch(() => savedDiagrams.set(key, { failed: true }))
+    .finally(() => {
+      if (isCurrentProjectContext(context)) renderDiagramPanel();
+    });
+}
+
+function closeDiagramPanelElement(existing) {
+  state.diagramPanel = null;
+  diagramSpine?.dispose();
+  diagramSpine = null;
+  existing?.remove();
+  document.body.classList.remove("has-diagram-panel");
+}
+
+function renderDiagramPanel() {
+  const open = state.diagramPanel;
+  const existing = document.getElementById("workflow-diagram-panel");
+  const configured = open?.projectWorkflowId
+    ? state.projectWorkflows.find((item) => item.id === open.projectWorkflowId) : null;
+  const workflow = configured
+    ? workflowForProjectWorkflow(configured)
+    : open ? state.workflows.find((item) => item.id === open.workflowId) : null;
+  if (!open || !workflowDrawn(workflow) || (open.projectWorkflowId && !configured)) {
+    closeDiagramPanelElement(existing);
+    return;
   }
+  const saved = configured ? savedDiagrams.get(savedDiagramKey(configured)) : undefined;
+  if (configured && saved === undefined) loadSavedDiagram(configured);
+  const loading = Boolean(configured) && !saved;
+  const resolved = saved && !saved.failed ? saved : null;
+  const flow = resolved?.flow || workflowFlow(workflow);
+  if (!flow && !loading) {
+    closeDiagramPanelElement(existing);
+    return;
+  }
+  // One line under the title: the key and version, and which version drew it when the
+  // schedule is pinned to an older one.
+  const runs = resolved?.pinned_version;
+  const drawn = resolved?.version || configured?.version_label || workflow.version_label;
+  const versionLine = runs && drawn && runs !== drawn
+    ? `${workflow.key} · runs v${runs} · drawn from v${drawn}`
+    : `${workflow.key}${drawn ? ` · v${drawn}` : ""}`;
+  const trigger = diagramTrigger(configured);
+  const title = configured?.name || workflow.title || workflow.key;
+  const key = JSON.stringify([workflow.id, configured?.id || "", title, versionLine, trigger, loading, flow]);
+  document.body.classList.add("has-diagram-panel");
+  if (existing?.dataset.panelKey === key) return;
+  const panel = existing || document.createElement("aside");
+  panel.id = "workflow-diagram-panel";
+  panel.className = "workflow-diagram-panel";
+  panel.tabIndex = -1;
+  panel.dataset.panelKey = key;
+  panel.setAttribute("aria-labelledby", "workflow-diagram-title");
+  panel.innerHTML = `<header>
+      <h2 id="workflow-diagram-title">${escapeHtml(title)}</h2>
+      <button class="diagram-panel-close" type="button" data-close-workflow-diagram aria-label="Close the workflow diagram"><svg aria-hidden="true" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" /></svg></button>
+      <code>${escapeHtml(versionLine)}</code>
+    </header>
+    <div class="diagram-panel-canvas ${loading ? "is-loading" : ""}" tabindex="0" aria-label="${escapeHtml(title)}, from start to finish" aria-busy="${loading}"></div>
+    <footer>
+      <code>${flow ? escapeHtml(window.TinWorkflowSpine.summary(flow)) : ""}</code>
+      ${configured ? `<button type="button" data-diagram-workflow-settings>Workflow settings</button>` : ""}
+    </footer>`;
+  diagramSpine?.dispose();
+  diagramSpine = flow ? window.TinWorkflowSpine.render(flow, { trigger }) : null;
+  if (diagramSpine) panel.querySelector(".diagram-panel-canvas").append(diagramSpine.element);
+  if (!existing) document.body.append(panel);
+  window.requestAnimationFrame(() => diagramSpine?.redraw());
+  panel.querySelector("[data-close-workflow-diagram]").addEventListener("click", () => closeWorkflowDiagram());
+  panel.querySelector("[data-diagram-workflow-settings]")?.addEventListener("click", () => {
+    state.workflowSection = "yours";
+    state.expandedRun = null;
+    state.workflowEditor = { workflowId: configured.workflow_id, projectWorkflowId: configured.id, runId: null, field: null };
+    renderWorkflows();
+    main.querySelector(`.system-config-form[data-project-workflow-id="${CSS.escape(configured.id)}"], .workflow-config-ledger[data-project-workflow-id="${CSS.escape(configured.id)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function syncDiagramButtons() {
+  document.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    const shown = diagramPanelShows(button.dataset.showWorkflowDiagram, button.dataset.projectWorkflowId);
+    if (button.matches(".system-card-diagram")) button.setAttribute("aria-pressed", String(shown));
+    button.closest(".system-workflow-card")?.classList.toggle("is-diagram-open", shown);
+  });
+}
+
+function toggleWorkflowDiagram(button) {
+  const workflowId = button.dataset.showWorkflowDiagram;
+  const projectWorkflowId = button.dataset.projectWorkflowId || "";
+  if (diagramPanelShows(workflowId, projectWorkflowId)) {
+    closeWorkflowDiagram();
+    return;
+  }
+  state.diagramPanel = { workflowId, projectWorkflowId };
+  renderDiagramPanel();
+  syncDiagramButtons();
+  document.getElementById("workflow-diagram-panel")?.focus({ preventScroll: true });
+}
+
+function closeWorkflowDiagram({ restoreFocus = true } = {}) {
+  const open = state.diagramPanel;
+  state.diagramPanel = null;
+  renderDiagramPanel();
+  syncDiagramButtons();
+  if (!restoreFocus || !open) return;
+  document.querySelector(`[data-show-workflow-diagram="${CSS.escape(open.workflowId)}"][data-project-workflow-id="${CSS.escape(open.projectWorkflowId || "")}"]`)
+    ?.focus({ preventScroll: true });
 }
 
 function projectWorkflowLedger(workflow, configured, editingField) {
@@ -3606,6 +3757,7 @@ function projectWorkflowLedger(workflow, configured, editingField) {
     <div class="workflow-config-heading">
       <span class="status-dot is-${escapeHtml(configured.status)}"></span>
       <div><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(workflow.key)} · v${escapeHtml(configured.version_label)}</code></div>
+      ${systemDiagramButton(workflow, configured)}
       <button class="workflow-collapse" type="button" data-cancel-workflow-editor>collapse ↑</button>
     </div>
     <div class="workflow-config-rows">
@@ -7627,6 +7779,12 @@ copyAgentCommand?.addEventListener("click", async () => {
 projectSwitcher.addEventListener("click", () => {
   if (projectMenu.hidden) openProjectMenu();
   else closeProjectMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !state.diagramPanel) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  closeWorkflowDiagram();
 });
 
 projectSwitcher.addEventListener("keydown", (event) => {

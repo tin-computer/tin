@@ -268,7 +268,7 @@ def connected(f, monkeypatch):
 
 def test_the_definition_drafts_three_kinds_with_a_review_policy_each():
     definition = spec(content_draft.KEY).definition
-    assert definition["version"] == "1.15.0"
+    assert definition["version"] == "1.16.0"
     assert content_draft.supported_kinds(definition) == ("article", "answer", "refresh")
     assert definition["human_review"]["review_label"] == "Review article"
     kinds = definition["human_review_kinds"]
@@ -565,8 +565,9 @@ async def test_an_approved_refresh_applies_only_the_exact_replacements(
 
 # The retired entry points: hidden from discovery, still runnable for pinned runs and schedules.
 
-# Digests of each retired definition (without its version, description and discovery flag)
-# and its procedure files, as content.refresh 1.0.0 and content.answer_page 1.6.0 shipped.
+# Digests of each retired definition (without its version, description, discovery flag and
+# drawing, none of which changes a run) and its procedure files, as content.refresh 1.0.0 and
+# content.answer_page 1.6.0 shipped.
 RETIRED = {
     "content.refresh": (
         "1.1.0",
@@ -584,7 +585,7 @@ def contract_digest(key):
     kept = {
         k: v
         for k, v in definition.items()
-        if k not in {"version", "description", "public_discovery"}
+        if k not in {"version", "description", "public_discovery", "presentation"}
     }
     return hashlib.sha256(
         json.dumps(
@@ -656,8 +657,9 @@ def test_versions_on_main_are_unchanged():
 # them in the project's look, in light and dark; 1.12.0 lets the drafting agent choose each
 # diagram's form; 1.13.0 looks at each figure in light and dark before finishing; 1.14.0
 # follows the site's theming, keeping figures light on a light-only site; 1.15.0 makes each
-# draft's figures fresh and checks every mark and label in both themes.
-RELEASED = {"content.generate": "1.15.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
+# draft's figures fresh and checks every mark and label in both themes; 1.16.0 sizes figures
+# for the article column and checks them on a phone.
+RELEASED = {"content.generate": "1.16.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

@@ -656,7 +656,9 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
     f = await fixture(publication_db, monkeypatch)
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
     definition, files = spec.definition_and_resource_files()
-    digest = hashlib.sha256(canonical_json(definition))
+    # The drawing is display-only; a run never reads it.
+    pinned = {k: v for k, v in definition.items() if k != "presentation"}
+    digest = hashlib.sha256(canonical_json(pinned))
     for path in sorted(files):
         digest.update(path.encode())
         digest.update(files[path])
@@ -664,10 +666,11 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
     # format (1.3.0 kept it as Markdown or a JSON string); 1.5.0 matches the site's other pages
     # and adds no outside fonts; 1.6.0 uses the slug the founder approved with the draft;
     # 1.7.0 carries the page's figures, embeds, diagrams and videos (30 files, 2 MB); 1.8.0 shows
-    # Mermaid with the site's own support or as a figure Codex draws, not Tin's renderer.
-    assert spec.version_label == "1.8.0"
+    # Mermaid with the site's own support or as a figure Codex draws, not Tin's renderer; 1.9.0
+    # never moves another page to make room and adds no code that enforces the approved copy.
+    assert spec.version_label == "1.9.0"
     assert digest.hexdigest() == (
-        "803c614f39f5a946f447966533fe42542d2477e7a605043f6020af7261fbdf19"
+        "5b7cad27dfbb6ca3e3017c4148328e7df7c7c1d701a48b7ee95e64d90b932fcb"
     )
     # An approval-started content.deliver run pins no change row and keeps its own rules:
     # a pull-request setting never merges, and nothing records a merge for it.

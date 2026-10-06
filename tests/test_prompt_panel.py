@@ -1,4 +1,7 @@
-"""organic.prompt_panel: families and weights in code, one model call, and the audit asking it."""
+"""organic.prompt_panel: families and weights in code, one model call, and the audit asking it.
+
+Audits pinned to v13 or v14 ask the newest panel; v15 drafts its own (test_organic_audit_v15.py).
+"""
 
 import json
 from dataclasses import replace
@@ -12,6 +15,7 @@ from test_organic_audit import activities_fixture
 
 from tin_lite import prompt_panel
 from tin_lite.community import REPOSITORY_ROOT
+from tin_lite.organic_audit import V14_AUDIT_POLICY
 from tin_lite.workflow_code import validate_code_definition, validate_code_result
 from tin_lite.workflow_qualification import Qualification, assess_output
 
@@ -288,7 +292,7 @@ async def published(monkeypatch, target="example.com"):
 @pytest.mark.asyncio
 async def test_the_audit_asks_the_newest_succeeded_panel_without_approval(monkeypatch):
     content = await published(monkeypatch)
-    activities, db, storage, _ = await activities_fixture()
+    activities, db, storage, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     run_id = str(db.run.id)
     await audit_with(db, storage, [panel_row(content)])  # nobody approved it
     activities.responses = SimpleNamespace(create=AsyncMock(side_effect=AssertionError))
@@ -321,7 +325,7 @@ async def test_other_workflows_other_sites_and_unready_panels_are_ignored(monkey
         panel_row(other_site),  # loopwell.example is not the audited example.com
         panel_row(not_ready),
     ):
-        activities, db, storage, _ = await activities_fixture()
+        activities, db, storage, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
         run_id = str(db.run.id)
         await audit_with(db, storage, [row])
         scope = await activities._result(run_id, "scope")
@@ -332,7 +336,7 @@ async def test_other_workflows_other_sites_and_unready_panels_are_ignored(monkey
 async def test_refresh_questions_skips_the_panel(monkeypatch):
     from tin_lite.organic_audit_panel import panel_questions
 
-    activities, db, storage, _ = await activities_fixture()
+    activities, db, storage, _ = await activities_fixture(policy=V14_AUDIT_POLICY)
     db.run = replace(db.run, input={**db.run.input, "refresh_questions": True})
     run_id = str(db.run.id)
     await audit_with(db, storage, [panel_row(await published(monkeypatch))])

@@ -185,7 +185,7 @@ V13_AUDIT_POLICY = {
 # respect_sitemap on and no sitemap (or an empty or unreadable one) the provider crawls only
 # the homepage, so the whole audit covers one page. v13 may be deployed, so a run pinned to it
 # or earlier always sends respect_sitemap as its policy says.
-AUDIT_POLICY = {
+V14_AUDIT_POLICY = {
     **V13_AUDIT_POLICY,
     "version": "organic-audit-v14",
     # respect_sitemap is sent only when the run's saved site files list at least one HTTPS
@@ -195,6 +195,31 @@ AUDIT_POLICY = {
     # A finding Tin can fix says next_action "website_change": website.change (source audit)
     # is the one workflow that fixes audit findings now. Earlier policies keep "technical_fix".
     "next_action_fix": "website_change",
+}
+# v15 drafts its own buyer questions again, now from the site's Search Console searches as well
+# as its public pages, and asks up to sixteen. The questions are frozen on the first run and
+# reused by later runs, so organic.prompt_panel is no longer read. v14 may be deployed, so a run
+# pinned to it or earlier still reads the newest panel and asks at most eight questions.
+AUDIT_POLICY = {
+    **V14_AUDIT_POLICY,
+    "version": "organic-audit-v15",
+    "prompt_panel": False,
+    # Four buyer jobs of four questions. A panel with fewer supported jobs asks fewer.
+    "max_panel_jobs": 4,
+    "max_questions": 16,
+    # Each question is read blind; eight at a time keeps two waves, as eight questions at four
+    # did, so the preparation activity's 85-minute bound still holds.
+    "question_interpretation_concurrency": 8,
+    # The draft names up to sixteen questions with their fit reasons; 6,000 output tokens
+    # left too little room after reasoning. Only the panel draft gets the larger bound.
+    "panel_max_output_tokens": 12_000,
+    # The draft reads the site's most-searched queries (summed over pages) from this run's
+    # Search Console read, without queries that name the site, to choose and word the jobs.
+    "search_console_questions": 40,
+    # Sixteen questions on six engines cost at most $1.24 at the pinned request prices.
+    "ai_engines_max_cost_usd": "2.00",
+    # The billed ceiling for the audit's own calls; see service_pricing.AUDIT_MAXIMUM_USD.
+    "billing_maximum_usd": "4.00",
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -247,6 +272,9 @@ PANEL_PREPARATION_POLICY_KEYS = frozenset(
         "unsearched_answers",
         "min_panel_questions",
         "prompt_panel",
+        "question_interpretation_concurrency",
+        "panel_max_output_tokens",
+        "search_console_questions",
     }
 )
 # The engine measurement runs after the audit's own answers and never changes how they are
@@ -305,6 +333,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V11_AUDIT_POLICY,
         V12_AUDIT_POLICY,
         V13_AUDIT_POLICY,
+        V14_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -325,6 +354,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V11_AUDIT_POLICY,
         V12_AUDIT_POLICY,
         V13_AUDIT_POLICY,
+        V14_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 

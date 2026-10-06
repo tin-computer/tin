@@ -12,9 +12,9 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import AUDIT_POLICY
 from tin_lite.organic_audit_ai import (
     AnswerGrade,
-    BuyerPanel,
+    BuyerPanelV15,
     ContentReview,
-    PanelReview,
+    PanelReviewV15,
     payload,
 )
 from tin_lite.organic_audit_engines import per_question_usd
@@ -41,10 +41,10 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
     calls = (
         ("research", policy["max_research_attempts"], None, True),
         ("answer", questions * policy["repetitions"] + policy["brand_checks"], None, True),
-        ("panel", policy["max_panel_attempts"], BuyerPanel, False),
+        ("panel", policy["max_panel_attempts"], BuyerPanelV15, False),
         ("interpret", policy["max_panel_attempts"] * questions, None, False),
         # v11 reviews each question: the schema names rejected questions and why.
-        ("validate", policy["max_panel_attempts"], PanelReview, False),
+        ("validate", policy["max_panel_attempts"], PanelReviewV15, False),
         ("judge_graded", questions * policy["repetitions"], AnswerGrade, False),
         # One answer per question without web search, and its grade. Its input is the
         # question (at most 400 characters); the grade reads an answer of at most 32 KB.
@@ -68,18 +68,20 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
         assert tokens < CARD["long_context_above_input_tokens"]
         total += count * usd(
             tokens * max(rate["input"], rate["cache_write"])
-            + policy["max_output_tokens"] * rate["output"]
+            + request["max_output_tokens"] * rate["output"]
             + searches * CARD["web_search_call_nanos"]
         )
-    # v10 asks at most 8 questions three times with web search and once without, plus a
-    # review of the top pages: 28 searched and 61 unsearched calls, about $1.92.
-    assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
+    # v15 asks at most 16 questions three times with web search and once without, plus a
+    # review of the top pages: 52 searched and 117 unsearched calls, about $3.56. Earlier
+    # policies asked at most eight and keep the $2 ceiling.
+    maximum = Decimal(policy["billing_maximum_usd"])
+    assert Decimal("3.5") < total < maximum == 4 > AUDIT_MAXIMUM_USD
     # v13 also asks the same questions on six AI engines within their own pinned ceiling.
     engines = per_question_usd(policy) * questions
-    assert engines <= Decimal(policy["ai_engines_max_cost_usd"]) == 1
+    assert engines <= Decimal(policy["ai_engines_max_cost_usd"]) == 2
     terms = service_terms(SPECS["organic.audit"].definition)
-    assert terms["maximum_nanos"] == (AUDIT_MAXIMUM_USD + 1) * NANOS_PER_DOLLAR
-    assert total + engines < AUDIT_MAXIMUM_USD + 1
+    assert terms["maximum_nanos"] == (maximum + 2) * NANOS_PER_DOLLAR
+    assert total + engines < maximum + 2
 
 
 def test_content_plan_share_covers_its_one_model_call():

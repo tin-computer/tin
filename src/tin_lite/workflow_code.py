@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 
 from tin_lite.project_files import safe_project_file_path
+from tin_lite.workflow_diagrams import check_presentation
 from tin_lite.workflow_packages import relative_path, validate_package_input_schema
 from tin_lite.workflow_services import ServiceBinding, service_bindings
 
@@ -150,8 +151,10 @@ def validate_code_definition(definition) -> CodeSpec:
         "system",
         "prerequisites",
         "integration_requirements",
+        "presentation",
     }:
         raise ValueError("unsupported code workflow fields or capabilities")
+    check_presentation(definition, required=False)
     if definition.get("kind", "workflow") != "workflow":
         raise ValueError("code packages define workflows")
     modes = definition.get("schedule_modes")

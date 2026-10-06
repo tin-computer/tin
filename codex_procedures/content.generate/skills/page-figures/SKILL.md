@@ -39,7 +39,8 @@ Mermaid. Tin shows what you make; it doesn't redraw it. For an SVG file:
 ```
 
 The alt text says what the figure shows; the caption says what to notice. Use real labels and the
-article's own numbers. The SVG must have no script, no event handlers, no `foreignObject` and no
+article's own numbers. Size it for the article's text column (DESIGN.md often records the width;
+otherwise about 700px), so its labels show near body-text size instead of shrinking. The SVG must have no script, no event handlers, no `foreignObject` and no
 links, images or fonts from elsewhere; Tin leaves out an SVG that has any.
 
 ## Interactive piece
@@ -70,7 +71,8 @@ its height: Tin fits the frame to it, so `height` is only a first guess.
 
 ## Look at it before you finish
 
-Look at every figure and piece the way a reader will, in light and in dark, and fix what you see,
+Look at every figure and piece the way a reader will, in light and in dark, at the article's
+column width and at a phone width, and fix what you see,
 then look again. Check each one against what it is meant to show: every shape, line and mark you
 drew must be visible in both themes, and no text may touch other text or lines. The sandbox has an
 offline Chromium for this. In a small Node script, `require("/opt/tin-lite/diagram/node_modules/playwright")`,

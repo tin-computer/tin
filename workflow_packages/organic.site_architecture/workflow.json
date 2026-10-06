@@ -135,6 +135,31 @@
         "media_type": "text/markdown",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "sources", "kind": "store", "label": "Audit, snapshot, Page decisions", "fact": "from project Files, not the repository"},
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "12 months of clicks, at most 3 calls"},
+          {"id": "triggers", "kind": "step", "label": "Check the seven triggers", "fact": "planned change, orphans, deep key pages"},
+          {"id": "follow_up", "kind": "step", "label": "Compare clicks with baseline", "fact": "two weeks or more after the change"},
+          {"id": "name", "kind": "step", "label": "Name and group the sections", "fact": "one model call, at most 40 sections"},
+          {"id": "unchanged", "kind": "ghost", "label": "Tree stays as it is", "fact": "no trigger fired, nothing is planned"},
+          {"id": "redirects", "kind": "step", "label": "List redirects and a baseline", "fact": "only from paths you give, 20 per plan"},
+          {"id": "receipt", "kind": "receipt", "label": "Site architecture report", "fact": "tree, URL rules, redirects, no edits"}
+        ],
+        "edges": [
+          {"from": "sources", "to": "search_console", "kind": "call"},
+          {"from": "search_console", "to": "triggers", "kind": "call", "label": "plan mode"},
+          {"from": "search_console", "to": "follow_up", "kind": "call", "label": "follow-up mode"},
+          {"from": "triggers", "to": "name", "kind": "call", "label": "a trigger fired"},
+          {"from": "triggers", "to": "unchanged", "kind": "call", "label": "none fired"},
+          {"from": "name", "to": "redirects", "kind": "call"},
+          {"from": "redirects", "to": "receipt", "kind": "call"},
+          {"from": "follow_up", "to": "receipt", "kind": "call", "label": "before and after"}
+        ]
+      }
     }
   }
 }

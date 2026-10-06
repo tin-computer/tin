@@ -14,7 +14,9 @@ description: Put one approved article, answer page or public article on an exist
    derive a short kebab-case slug from `title`, under the folder or route the site uses for
    such pages. When `direction` names the route the founder chose (for example
    `/blog/{slug}`), use exactly that route, and add it as in step 5 if the site does not
-   serve it yet. A new page must not overwrite an existing one; add a short suffix instead.
+   serve it yet. A new page must not overwrite an existing one: when that address already
+   holds a different page, add a short suffix to the new page's slug and say so in the PR
+   body. Never move, rename or remove an existing page, or change its address.
 4. Build the page the way this site builds pages of that kind: a Markdown or MDX file, a
    component, a typed page registry, plain HTML or whatever the repository uses. Convert
    the Markdown freely and wrap it in the site's own layout, styles and components. Keep
@@ -23,7 +25,9 @@ description: Put one approved article, answer page or public article on an exist
    `page_metadata` onto the site's own fields (for example `title` and `description`, or
    `meta_title` and `meta_description` when the site already uses them); leave out any
    field the site does not read. Avoid a duplicate visible H1. The page must actually be
-   served, not left in a comment, an unused constant or a folder nothing reads.
+   served, not left in a comment, an unused constant or a folder nothing reads. Hold its
+   content the way the site's other pages do, and add no code that checks or enforces the
+   approved copy or files; Tin checks them itself.
    Match the site's other pages of that kind: the same header, footer, links back into the
    site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
    the site already loads; never add web fonts or other outside resources.

@@ -95,6 +95,28 @@
         "media_type": "text/markdown",
         "max_bytes": 120000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Plan, audit and last ledger", "fact": "brand, site, aliases, earlier asks"},
+          {"id": "sources", "kind": "surface", "label": "AI-cited pages and web search", "fact": "at most 60 searches and fetches"},
+          {"id": "triage", "kind": "step", "label": "Never ask the same page twice", "fact": "asked pages rechecked up to 4 times"},
+          {"id": "confirm", "kind": "step", "label": "Confirm each unlinked mention", "fact": "stops when 15 qualify, by default"},
+          {"id": "draft", "kind": "step", "label": "Draft one ask per page", "fact": "under 120 words, to a real contact only"},
+          {"id": "receipt", "kind": "receipt", "label": "Backlink asks", "fact": "you send each, Tin contacts nobody"}
+        ],
+        "edges": [
+          {"from": "context", "to": "sources", "kind": "call"},
+          {"from": "sources", "to": "triage", "kind": "call"},
+          {"from": "triage", "to": "confirm", "kind": "call"},
+          {"from": "confirm", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "receipt", "kind": "call"},
+          {"from": "context", "to": "receipt", "kind": "call", "label": "no brand or site"},
+          {"from": "receipt", "to": "triage", "kind": "signal", "label": "next run rechecks"}
+        ]
+      }
     }
   }
 }

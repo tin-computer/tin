@@ -94,6 +94,26 @@
         "media_type": "text/markdown",
         "max_bytes": 80000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "history", "kind": "store", "label": "Last watch and your plans", "fact": "last evidence block, Feature map, plan"},
+          {"id": "pages", "kind": "surface", "label": "Pricing and changelog pages", "fact": "5 competitors, 4 pages each, 30 actions"},
+          {"id": "diff", "kind": "step", "label": "Diff against the last watch", "fact": "fixed code decides what is material"},
+          {"id": "respond", "kind": "step", "label": "Suggest up to three responses", "fact": "each names a workflow, hard no's kept"},
+          {"id": "report", "kind": "receipt", "label": "Competitor watch report", "fact": "reports/competitor-watch, next run diffs it"}
+        ],
+        "edges": [
+          {"from": "history", "to": "pages", "kind": "call"},
+          {"from": "pages", "to": "diff", "kind": "call"},
+          {"from": "diff", "to": "respond", "kind": "call", "label": "material change"},
+          {"from": "diff", "to": "report", "kind": "call", "label": "nothing material"},
+          {"from": "respond", "to": "report", "kind": "call"},
+          {"from": "history", "to": "report", "kind": "call", "label": "none to watch"}
+        ]
+      }
     }
   }
 }

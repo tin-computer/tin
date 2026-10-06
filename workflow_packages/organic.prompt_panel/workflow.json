@@ -112,6 +112,30 @@
         "media_type": "text/markdown",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "positioning", "kind": "store", "label": "Positioning in project Files", "fact": "BRAND.md, Feature map, plan, 2 notes"},
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "90 days of searches, one call"},
+          {"id": "stopped", "kind": "ghost", "label": "No panel this run", "fact": "no positioning or site, says what to run"},
+          {"id": "group", "kind": "step", "label": "Group searches into families", "fact": "up to 4, brand and comparison left out"},
+          {"id": "write", "kind": "step", "label": "Write 36 buyer prompts", "fact": "one model call, 8 per family, 4 branded"},
+          {"id": "check", "kind": "step", "label": "Set weights, check every rule", "fact": "F1 at 0.40, at most one fix call"},
+          {"id": "receipt", "kind": "receipt", "label": "Buyer prompt panel", "fact": "PROMPT_PANEL.md, the next audit asks it"},
+          {"id": "rejected", "kind": "ghost", "label": "Panel not published", "fact": "the audit keeps its current questions"}
+        ],
+        "edges": [
+          {"from": "positioning", "to": "search_console", "kind": "call"},
+          {"from": "positioning", "to": "stopped", "kind": "call", "label": "no context or site"},
+          {"from": "search_console", "to": "group", "kind": "call"},
+          {"from": "group", "to": "write", "kind": "call"},
+          {"from": "write", "to": "check", "kind": "call"},
+          {"from": "check", "to": "receipt", "kind": "call", "label": "passes"},
+          {"from": "check", "to": "rejected", "kind": "call", "label": "still failing"}
+        ]
+      }
     }
   }
 }

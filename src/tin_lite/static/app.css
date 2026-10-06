@@ -126,6 +126,19 @@
   --diagram-mono: "Tin Diagram Mono", "Geist Mono", "SFMono-Regular", Consolas, monospace;
   --diagram-store-top: #f5f2ea;
   --diagram-ghost-border: rgb(var(--ink-rgb) / 25%);
+  /* The workflow diagram panel (workflow-spine.js): a canvas a step below the page,
+     opaque nodes on it, and one stroke for lines and chevrons. */
+  --spine-panel-width: 420px;
+  --spine-canvas: #ece9e2;
+  --spine-canvas-dot: rgb(var(--ink-rgb) / 16%);
+  --spine-line: rgb(var(--ink-rgb) / 32%);
+  --spine-page-shadow: rgb(var(--ink-rgb) / 10%);
+  --spine-surface-fill: #f3f1ea;
+  --spine-gate-fill: #fceee4;
+  --spine-gate-border: rgb(var(--hot-rgb) / 16%);
+  --spine-receipt-fill: #eaecdf;
+  --spine-receipt-border: rgb(var(--accent-deep-rgb) / 24%);
+  --spine-ghost-border: rgb(var(--ink-rgb) / 25%);
   --file-icon-surface: var(--paper-card);
   --file-icon-folder: var(--paper-deep);
   --file-icon-stroke: var(--ink-secondary);
@@ -213,6 +226,15 @@ html[data-theme="dark"] {
   --diagram-receipt-wash: rgb(var(--accent-deep-rgb) / 10%);
   --diagram-store-top: #23201d;
   --diagram-edge: #7d786f;
+  --spine-canvas: #0d0c0a;
+  --spine-canvas-dot: rgb(var(--ink-rgb) / 12%);
+  --spine-line: rgb(var(--ink-rgb) / 34%);
+  --spine-page-shadow: rgb(0 0 0 / 65%);
+  --spine-surface-fill: #2a2620;
+  --spine-gate-fill: #2e1a12;
+  --spine-gate-border: transparent;
+  --spine-receipt-fill: #23241a;
+  --spine-receipt-border: transparent;
   --file-icon-surface: var(--paper-card);
   --file-icon-folder: var(--paper-deep);
   --file-icon-stroke: var(--ink-secondary);
@@ -2979,33 +3001,8 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 16px;
 }
 
-.workflow-how-it-runs {
-  padding: 8px 10px 10px;
-  border-top: 1px solid rgb(var(--ink-rgb) / 9%);
-}
 
-.workflow-how-it-runs > header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding-bottom: 6px;
-}
 
-.workflow-how-it-runs > header strong {
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 16px;
-}
-
-.workflow-how-it-runs > header code {
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .tin-diagram {
   min-width: 0;
@@ -3030,15 +3027,455 @@ html[data-theme="dark"] .markdown-logo::before {
   text-rendering: geometricPrecision;
 }
 
-.workflow-diagram {
-  min-height: 116px;
-  padding: 4px 0;
+/* The workflow diagram panel: one workflow's flow, read top to bottom along a single
+   spine (workflow-spine.js), on a dot-grid canvas that sits a step below the page. While
+   it is open the page narrows beside it instead of running underneath. Paper:
+   thinklikeanagent, "System · workflow diagram panel", PANEL-3B and ANATOMY. */
+.system-card-diagram {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
 }
 
-.workflow-diagram > span {
-  display: block;
-  padding: 44px 0;
-  text-align: center;
+.system-card-diagram svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2px;
+}
+
+.system-card-diagram:hover {
+  background: var(--paper-well);
+  color: var(--ink);
+}
+
+.system-card-diagram[aria-pressed="true"] {
+  background: var(--paper-well);
+  box-shadow: inset 0 0 0 1px var(--paper-border-strong);
+  color: var(--ink);
+}
+
+.system-workflow-card.is-diagram-open {
+  border-color: rgb(var(--ink-rgb) / 26%);
+}
+
+.workflow-diagram-panel {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: var(--spine-panel-width);
+  flex-direction: column;
+  background: var(--spine-canvas);
+  border-left: 1px solid var(--paper-border-strong);
+}
+
+/* The page's short shadow falls onto the panel's left edge: the diagram sits behind it. */
+.workflow-diagram-panel::after {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 16px;
+  background: linear-gradient(90deg, var(--spine-page-shadow), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+body.has-diagram-panel .main {
+  margin-right: var(--spine-panel-width);
+}
+
+/* Beside the panel, a row keeps its name, key, schedule and actions. */
+@container view (max-width: 860px) {
+  .has-diagram-panel .system-card-identity {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .has-diagram-panel .system-card-state,
+  .has-diagram-panel .system-card-last,
+  .has-diagram-panel .system-pace-long {
+    display: none;
+  }
+
+  .has-diagram-panel .system-pace-short {
+    display: inline;
+  }
+}
+
+.system-pace-short {
+  display: none;
+}
+
+.workflow-diagram-panel > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 20px 16px 16px 20px;
+  border-bottom: 1px solid var(--paper-border);
+}
+
+.diagram-panel-close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  margin: -3px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.diagram-panel-close:hover {
+  background: var(--paper-well);
+  color: var(--ink);
+}
+
+.diagram-panel-close svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.4px;
+}
+
+.workflow-diagram-panel h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 400 18px/23px var(--sans);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.workflow-diagram-panel > header code {
+  grid-column: 1 / -1;
+  color: var(--ink-muted);
+  font: 11px/14px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.diagram-panel-canvas {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 28px 18px 36px;
+  background-color: var(--spine-canvas);
+  background-image: radial-gradient(circle, var(--spine-canvas-dot) 1px, transparent 1.4px);
+  background-attachment: local;
+  background-position: 8px 8px;
+  background-size: 16px 16px;
+}
+
+.diagram-panel-canvas:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: -2px;
+}
+
+.diagram-panel-canvas.is-loading .spine-diagram {
+  visibility: hidden;
+}
+
+.workflow-diagram-panel > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px 11px 20px;
+  border-top: 1px solid var(--paper-border);
+}
+
+.workflow-diagram-panel > footer code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font: 11px/14px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-diagram-panel > footer button {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font: 13px/16px var(--sans);
+}
+
+.workflow-diagram-panel > footer button:hover {
+  color: var(--ink);
+}
+
+.spine-diagram {
+  position: relative;
+  max-width: 384px;
+  margin: 0 auto;
+  font-synthesis: none;
+}
+
+.spine-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  margin: 0;
+  padding: 0 24px;
+  list-style: none;
+}
+
+.spine-row {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.spine-row.has-edge-label {
+  margin-top: calc(14px + var(--spine-label-room, 0px));
+}
+
+.spine-row.is-single > .spine-node {
+  width: min(248px, 100%);
+}
+
+.spine-row.is-pair > .spine-node {
+  min-width: 0;
+  flex: 1 1 50%;
+  max-width: 176px;
+}
+
+.spine-node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px 11px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+}
+
+.spine-node strong {
+  color: var(--ink);
+  font: 700 13px/17px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+/* A node's description: one plain line in the sans, never the mono. */
+.spine-node code {
+  color: var(--ink-secondary);
+  font: 12px/16px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.spine-node.is-surface {
+  background: var(--spine-surface-fill);
+  border-color: transparent;
+}
+
+.spine-node.is-store:has(.spine-node-icon) {
+  padding-right: 32px;
+}
+
+.spine-node-icon {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  width: 12px;
+  height: 14px;
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-linejoin: round;
+  stroke-width: 1.1px;
+}
+
+.spine-node.is-gate {
+  background: var(--spine-gate-fill);
+  border-color: var(--spine-gate-border);
+}
+
+.spine-node.is-receipt {
+  background: var(--spine-receipt-fill);
+  border-color: var(--spine-receipt-border);
+}
+
+.spine-node.is-gate strong,
+.spine-node.is-receipt strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.spine-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--hot);
+}
+
+.spine-node.is-receipt .spine-dot {
+  background: var(--accent-deep);
+}
+
+.spine-node.is-ghost {
+  background: var(--spine-canvas);
+  border: 1px dashed var(--spine-ghost-border);
+}
+
+.spine-node.is-ghost strong {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+.spine-node.is-wait {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr);
+  gap: 0 10px;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+}
+
+.spine-wait-mark {
+  grid-column: 2;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--ink-muted);
+  border-radius: 50%;
+  background: var(--spine-canvas);
+}
+
+.spine-wait-text {
+  display: flex;
+  min-width: 0;
+  grid-column: 3;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.spine-node.is-wait strong {
+  color: var(--ink-secondary);
+  font: 12px/16px var(--sans);
+}
+
+.spine-row.is-trigger {
+  margin-bottom: -6px;
+}
+
+.spine-trigger {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--paper-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--spine-canvas);
+  color: var(--ink-secondary);
+  font: 11px/14px var(--mono);
+  white-space: nowrap;
+}
+
+.spine-trigger-mark {
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent-deep);
+  border-radius: 50%;
+}
+
+.spine-edges {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Lines and their chevrons share one stroke. */
+.spine-lines path,
+.spine-heads path {
+  fill: none;
+  stroke: var(--spine-line);
+  stroke-width: 1.2px;
+}
+
+.spine-heads path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.spine-labels {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spine-edge-label {
+  position: absolute;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--spine-canvas);
+  color: var(--ink-muted);
+  font: 10.5px/13px var(--mono);
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+/* Beside a line a label wraps inside its lane; the renderer sets how wide that is. */
+.spine-edge-label.is-right {
+  width: max-content;
+  white-space: normal;
+}
+
+.spine-edge-label.is-rail,
+.spine-edge-label.is-skip {
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+
+@media (max-width: 640px) {
+  .workflow-diagram-panel {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .workflow-diagram-panel::after {
+    display: none;
+  }
+
+  body.has-diagram-panel .main {
+    margin-right: 0;
+  }
 }
 
 .tin-segmented {

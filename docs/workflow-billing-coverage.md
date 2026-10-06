@@ -167,6 +167,7 @@ the worst case one run can reach, so a normal run is never refused. Charges stay
 | `organic.keyword_plan` (new runs) | $10 default, $5 floor | $2 default and floor | Keyword policy v6 reserves at most $1.65 for a full run |
 | `organic.audit` | $5 | $2 | Every call at every bound at once costs $1.83 (v10) |
 | `organic.audit` (v13) | $2 | $3 | The same questions on six AI engines, within their own $1 ceiling (eight questions cost at most $0.62) |
+| `organic.audit` (v15) | $3 | $6 | Sixteen questions: every call at every bound costs $3.56 ($4 pinned), and the engines' ceiling is $2 (sixteen cost at most $1.24) |
 | `organic.traffic_system` | $26 ($31 with a technical fix) | $12, with or without a technical fix; $10 draft-only | The keyword limit plus a $10 pool (see "The traffic system's pool" below) |
 | `content.generate` | $5 | $5, unchanged | No code-level bound below $5 (see below) |
 | `organic.traffic_system` 0.5.0 | — | $17.50 ($22.50); $12.50 draft-only | The above plus the first page refresh, $2.50 |

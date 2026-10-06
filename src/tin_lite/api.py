@@ -836,6 +836,7 @@ class ProjectWorkflowView(BaseModel):
     workflow_key: str
     workflow_title: str
     workflow_description: str
+    workflow_drawn: bool = False
     version_label: str
     definition_commit_sha: str
     name: str
@@ -2837,6 +2838,55 @@ async def list_project_workflows(
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return [ProjectWorkflowView.model_validate(item) for item in configured]
+
+
+class SavedWorkflowDiagramView(BaseModel):
+    flow: dict[str, Any] | None
+    version: str | None
+    pinned_version: str | None
+    exact: bool
+
+
+@router.get(
+    "/api/projects/{project_id}/workflows/{project_workflow_id}/diagram",
+    response_model=SavedWorkflowDiagramView,
+)
+async def get_project_workflow_diagram(
+    project_id: UUID,
+    project_workflow_id: UUID,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> SavedWorkflowDiagramView:
+    """How a saved workflow runs: its pinned revision's drawing, else today's, marked."""
+    from tin_lite.workflow_definitions import resolve_execution_contract
+    from tin_lite.workflow_diagrams import diagram_for_saved_workflow
+
+    await _require_project_access(project_id, request, user)
+    database = request.app.state.runtime.database
+    configured = await database.get_project_workflow(project_workflow_id)
+    if configured is None or configured.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="project workflow not found"
+        )
+    workflow = await database.get_workflow(configured.workflow_id)
+    if workflow is None or workflow.project_id not in (None, project_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow not found")
+    pinned = None
+    try:
+        pinned = (
+            await resolve_execution_contract(
+                storage=getattr(request.app.state.runtime, "storage", None),
+                workflow=workflow,
+                project_id=project_id,
+                revision=configured.definition_commit_sha,
+            )
+        ).definition
+    except (LookupError, ValueError):
+        # An unreadable pin still gets today's drawing, marked as not exact.
+        pinned = None
+    return SavedWorkflowDiagramView.model_validate(
+        diagram_for_saved_workflow(current=workflow.definition, pinned=pinned)
+    )
 
 
 class WorkflowSetupRequest(BaseModel):
