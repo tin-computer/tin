@@ -62,9 +62,10 @@ def test_v8_changes_only_screening_caps_and_leaves_v7_alone():
     # Every earlier policy stays supported by the worker.
     for policy in (v2.POLICY, v6.POLICY, v7.POLICY, v8.POLICY):
         assert CONTRACTS[policy["version"]][0] is policy
+    # v8 is deployed and immutable; new definitions pin v9 (catalog 0.9.0).
     keyword = next(spec for spec in BUILTIN_WORKFLOWS if spec.key == "organic.keyword_plan")
-    assert keyword.definition["keyword_policy"] == v8.POLICY
-    assert keyword.version_label == "0.8.0"
+    assert keyword.definition["keyword_policy"]["version"] == "keyword-plan-v9"
+    assert keyword.version_label == "0.9.0"
 
 
 def test_v8_caps_stay_inside_the_route_and_reservations_cover_their_bounds():
@@ -158,7 +159,7 @@ def test_the_largest_possible_v8_batch_fits_the_request_bound():
 
 
 async def test_new_runs_pin_v8_and_screen_with_its_caps():
-    activities, db, _storage, _provider, _model, calls = await collected("current")
+    activities, db, _storage, _provider, _model, calls = await collected("v8")
     run_id = str(db.run.id)
     assert (await activities._result(run_id, "scope"))["policy_version"] == "keyword-plan-v8"
     await activities.keyword_collect(run_id)
@@ -172,11 +173,11 @@ async def test_new_runs_pin_v8_and_screen_with_its_caps():
 
 async def test_v8_merges_to_exactly_what_v7_returns():
     results = {}
-    for version in ("v7", "current"):
+    for version in ("v7", "v8"):
         activities, db, _storage, _provider, _model, calls = await collected(version)
         await activities.keyword_collect(str(db.run.id))
         results[version] = (await activities._result(str(db.run.id), "collection"), calls)
-    (v7_collection, v7_calls), (v8_collection, v8_calls) = results["v7"], results["current"]
+    (v7_collection, v7_calls), (v8_collection, v8_calls) = results["v7"], results["v8"]
     assert [tokens for tokens, _ in v7_calls] == [8000] * len(v7_calls)
     assert [tokens for tokens, _ in v8_calls] == [32_000] * len(v8_calls)
     assert sorted(keywords for _, keywords in v7_calls) == sorted(
@@ -192,7 +193,7 @@ async def test_v8_merges_to_exactly_what_v7_returns():
 async def test_a_cut_off_v8_batch_is_asked_once_more_with_twice_the_cap(monkeypatch):
     monkeypatch.setattr("tin_lite.keyword_plan_activities.TRIAGE_CONCURRENCY", 1)
     activities, db, _storage, _provider, _model, calls = await collected(
-        "current", cut=lambda request, count: count == 1
+        "v8", cut=lambda request, count: count == 1
     )
     run_id = str(db.run.id)
     await activities.keyword_collect(run_id)
@@ -210,7 +211,7 @@ async def test_a_cut_off_v8_batch_is_asked_once_more_with_twice_the_cap(monkeypa
 async def test_a_v8_batch_cut_off_twice_fails_named(monkeypatch):
     monkeypatch.setattr("tin_lite.keyword_plan_activities.TRIAGE_CONCURRENCY", 1)
     activities, db, *_rest, calls = await collected(
-        "current", cut=lambda request, count: count in {1, 2}
+        "v8", cut=lambda request, count: count in {1, 2}
     )
     run_id = str(db.run.id)
     with pytest.raises(ApplicationError, match="stopped at its output limit"):
@@ -225,11 +226,11 @@ async def test_a_v8_batch_cut_off_twice_fails_named(monkeypatch):
 
 async def test_v8_run_at_its_two_dollar_floor_refuses_nothing():
     activities, db, *_ = await fixture(
-        prepare=False, modern="current", budget=2, inputs={"max_cost_usd": 2}
+        prepare=False, modern="v8", budget=2, inputs={"max_cost_usd": 2}
     )
     await activities.keyword_prepare(str(db.run.id))
     activities, db, *_ = await fixture(
-        prepare=False, modern="current", budget=1.99, inputs={"max_cost_usd": 2}
+        prepare=False, modern="v8", budget=1.99, inputs={"max_cost_usd": 2}
     )
     with pytest.raises(ApplicationError, match=r"at least \$2"):
         await activities.keyword_prepare(str(db.run.id))

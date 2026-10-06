@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from tin_lite.keyword_plan_v8 import POLICY as KEYWORD_POLICY
+from tin_lite.keyword_plan_v9 import POLICY as KEYWORD_POLICY
 from tin_lite.organic_system import INPUT_SCHEMA as ORGANIC_SYSTEM_INPUTS
 
 # The current keyword policy's floor: it reserves $2.00 at most, so $2 never refuses a call.

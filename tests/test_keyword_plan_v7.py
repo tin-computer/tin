@@ -66,7 +66,7 @@ def widen(provider):
 
     async def query(kind, **kwargs):
         result = await original(kind, **kwargs)
-        if kind not in {"competitors", "serp"}:
+        if kind not in {"competitors", "competitors_wide", "serp"}:
             result["items"] = many_rows(kind, kwargs["value"])
             result["items_count"] = result["total_count"] = len(result["items"])
         return result
@@ -139,8 +139,8 @@ def test_v7_changes_only_screening_and_leaves_earlier_pins_alone():
     assert v7.POLICY["triage_reservation_usd"] == v7.POLICY["triage_retry_reservation_usd"]
     assert v7.POLICY["triage_reservation_usd"] == "0.02"
     keyword = next(spec for spec in BUILTIN_WORKFLOWS if spec.key == "organic.keyword_plan")
-    assert keyword.definition["keyword_policy"]["version"] == "keyword-plan-v8"
-    assert keyword.version_label == "0.8.0"
+    assert keyword.definition["keyword_policy"]["version"] == "keyword-plan-v9"
+    assert keyword.version_label == "0.9.0"
 
 
 def test_v7_caps_stay_inside_the_route_and_reservations_cover_their_bounds():
