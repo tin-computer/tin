@@ -684,7 +684,7 @@ def test_registry_system_assignments_are_manifest_metadata_only() -> None:
     assert definitions["outreach.email_campaign"]["system"] == OUTREACH_SYSTEM
     assert "system" not in definitions["research.deep_dive"]
     assert definitions["content.public_article"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["style.capture"]["system"] == ORGANIC_TRAFFIC_SYSTEM
+    assert "system" not in definitions["style.capture"]
     assert definitions["ads.assessment"]["system"] == "paid-ads"
     assert "agent_only" not in definitions["ads.assessment"]
 
