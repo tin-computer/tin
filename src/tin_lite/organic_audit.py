@@ -152,7 +152,7 @@ V12_AUDIT_POLICY = {
 }
 # v13 keeps v12, asks the buyer prompt panel and measures its questions on six AI engines.
 # v11 and v12 may be deployed, so a run pinned to either never reads these keys.
-AUDIT_POLICY = {
+V13_AUDIT_POLICY = {
     **V12_AUDIT_POLICY,
     "version": "organic-audit-v13",
     # The newest succeeded buyer prompt panel for this site (organic.prompt_panel) replaces
@@ -180,6 +180,21 @@ AUDIT_POLICY = {
     # per-request prices one question on the six engines costs at most $0.0776, so eight
     # cost at most $0.63.
     "ai_engines_max_cost_usd": "1.00",
+}
+# v14 keeps v13 and asks the provider to follow links when the site has no sitemap. With
+# respect_sitemap on and no sitemap (or an empty or unreadable one) the provider crawls only
+# the homepage, so the whole audit covers one page. v13 may be deployed, so a run pinned to it
+# or earlier always sends respect_sitemap as its policy says.
+AUDIT_POLICY = {
+    **V13_AUDIT_POLICY,
+    "version": "organic-audit-v14",
+    # respect_sitemap is sent only when the run's saved site files list at least one HTTPS
+    # sitemap URL on the audited site; otherwise the provider follows links from the homepage
+    # up to the run's page cap. Decided from saved receipts only, so a retry sends the same.
+    "follow_links_without_sitemap": True,
+    # A finding Tin can fix says next_action "website_change": website.change (source audit)
+    # is the one workflow that fixes audit findings now. Earlier policies keep "technical_fix".
+    "next_action_fix": "website_change",
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -215,6 +230,8 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "summary_max_bytes",
         "max_internal_links",
         "next_action_from_repair_plan",
+        "follow_links_without_sitemap",
+        "next_action_fix",
     }
 )
 
@@ -287,6 +304,7 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V10_AUDIT_POLICY,
         V11_AUDIT_POLICY,
         V12_AUDIT_POLICY,
+        V13_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -306,6 +324,7 @@ def grounded_preparation(policy_version: str) -> bool:
         V10_AUDIT_POLICY,
         V11_AUDIT_POLICY,
         V12_AUDIT_POLICY,
+        V13_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -510,6 +529,32 @@ def audit_hosts(scope: dict) -> tuple[str, ...]:
     return (host, *sorted(observed - {host}))
 
 
+def sitemap_page_urls(files: dict | None, scope: dict) -> list[str]:
+    """HTTPS sitemap URLs on the audited site, from the run's saved site files."""
+    hosts = audit_hosts(scope)
+    return [
+        row["loc"]
+        for row in ((files or {}).get("sitemaps") or {}).get("urls", [])
+        if urlsplit(row["loc"]).scheme == "https"
+        and in_scope_url(row["loc"], scope["host"], aliases=hosts)
+    ]
+
+
+def crawl_respects_sitemap(scope: dict, files: dict | None) -> bool:
+    """Whether the provider crawl follows the sitemap rather than links from the homepage.
+
+    Runs pinned before v14 send the policy's respect_sitemap whatever the site files hold. A
+    v14 run sends it only when its saved site files found an in-scope sitemap URL. An answer
+    completion reuses its source crawl and reads no site files, so it keeps the policy.
+    """
+    policy = audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]))
+    if not policy.get("respect_sitemap"):
+        return False
+    if not policy.get("follow_links_without_sitemap") or scope.get("completion"):
+        return True
+    return bool(sitemap_page_urls(files, scope))
+
+
 # Flag, check ID, status, severity, observation, remedy. Deliberate exclusions
 # are review items; absent fields never become either a pass or a failure.
 CHECKS = (
@@ -618,8 +663,12 @@ def normalize_pages(
     *,
     aliases: tuple[str, ...] = (),
     policy_version: str = LEGACY_AUDIT_POLICY["version"],
+    respect_sitemap: bool | None = None,
 ) -> list[dict]:
+    """`respect_sitemap` is what the crawl request sent; None reads the pinned policy."""
     policy = audit_policy(policy_version)
+    if respect_sitemap is None:
+        respect_sitemap = bool(policy.get("respect_sitemap"))
     applicability = policy.get("check_applicability", False)
     if len(items) > policy["max_pages"]:
         raise ValueError("Provider page collection exceeded its pinned limit.")
@@ -653,9 +702,7 @@ def normalize_pages(
                             "canonical": checks.get("canonical")
                             if type(checks.get("canonical")) is bool
                             else None,
-                            "respect_sitemap": bool(
-                                audit_policy(policy_version).get("respect_sitemap")
-                            ),
+                            "respect_sitemap": respect_sitemap,
                         }
                     }
                     if applicability
@@ -754,7 +801,8 @@ def technical_findings(
                     "kind": "recrawl_and_inspect",
                     "check_id": check_id,
                 },
-                "next_action": "technical_fix",
+                # v14 names website.change; a pinned earlier policy keeps technical_fix.
+                "next_action": audit_policy(policy_version).get("next_action_fix", "technical_fix"),
                 "evidence_refs": ["crawl.pages"],
             }
         )
@@ -1473,7 +1521,16 @@ def site_check_documents(
     if policy.get("next_action_from_repair_plan"):
         from tin_lite.technical_repair_plan import next_action
 
-        findings = [{**f, "next_action": next_action(f["check_id"])} for f in findings]
+        fix_action = policy.get("next_action_fix", "technical_fix")
+        findings = [
+            {
+                **f,
+                "next_action": fix_action
+                if next_action(f["check_id"]) == "technical_fix"
+                else next_action(f["check_id"]),
+            }
+            for f in findings
+        ]
     evidence = {
         "schema_version": 1,
         "run_id": run_id,

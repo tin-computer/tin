@@ -16,10 +16,10 @@ from test_prompt_panel import audit_with, panel_row, published
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import (
     AI_ENGINE_POLICY_KEYS,
-    AUDIT_POLICY,
     PANEL_PREPARATION_POLICY_KEYS,
     V11_AUDIT_POLICY,
     V12_AUDIT_POLICY,
+    V13_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     digest,
@@ -65,9 +65,9 @@ async def test_a_v12_run_reads_and_writes_exactly_what_it_did_before_v13():
     )
 
 
-def test_v13_is_the_default_and_adds_the_panel_and_the_engines_to_v12():
-    assert AUDIT_POLICY["version"] == V13 and audit_policy() is AUDIT_POLICY
-    assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
+def test_v13_adds_the_panel_and_the_engines_to_v12():
+    assert V13_AUDIT_POLICY["version"] == V13 and audit_policy(V13) is V13_AUDIT_POLICY
+    assert {k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V12_AUDIT_POLICY.items() if k != "version"},
         "prompt_panel": True,
         "ai_engines": [
@@ -83,15 +83,19 @@ def test_v13_is_the_default_and_adds_the_panel_and_the_engines_to_v12():
         "ai_engines_max_cost_usd": "1.00",
     }
     assert "prompt_panel" in PANEL_PREPARATION_POLICY_KEYS
-    assert set(AUDIT_POLICY) - set(V12_AUDIT_POLICY) - {"prompt_panel"} == AI_ENGINE_POLICY_KEYS
+    assert set(V13_AUDIT_POLICY) - set(V12_AUDIT_POLICY) - {"prompt_panel"} == AI_ENGINE_POLICY_KEYS
     # The same answers and grading as v12, so an answer completion may cross them.
     assert ai_contract(V13) == ai_contract(V12) and ai_schemas(V13) == ai_schemas(V12)
-    assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
+    assert {k: v for k, v in V13_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V12_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
     }
+    # The catalog now pins v14 (catalog 0.10.0); tests/test_organic_audit_v14.py checks it.
     workflow = next(w for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
-    assert workflow.version_label == "0.9.1"
-    assert workflow.definition["audit_policy"] == AUDIT_POLICY
+    assert {k: v for k, v in workflow.definition["audit_policy"].items() if k != "version"} == {
+        **{k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"},
+        "follow_links_without_sitemap": True,
+        "next_action_fix": "website_change",
+    }
 
 
 @pytest.mark.asyncio
@@ -113,7 +117,7 @@ async def test_runs_pinned_before_v13_never_read_the_panel(monkeypatch, policy):
 @pytest.mark.asyncio
 async def test_a_v13_run_asks_the_panel(monkeypatch):
     content = await published(monkeypatch)
-    activities, db, storage, _ = await activities_fixture()
+    activities, db, storage, _ = await activities_fixture(policy=V13_AUDIT_POLICY)
     run_id = str(db.run.id)
     await audit_with(db, storage, [panel_row(content)])
     assert await activities.organic_prepare_panel(run_id) == 32

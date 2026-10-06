@@ -76,7 +76,7 @@ OpenRouter route needs a verified explicit rate card before a billed request can
 be dispatched; keys or model prefixes never choose a provider or a price.
 
 The normal native maximum is $2, the organic audit maximum is $2 (it was $5 until
-September 29, 2026; see below; audits pinned to `organic-audit-v13` add their $1 AI-engine
+September 29, 2026; see below; audits pinned to `organic-audit-v13` or later add their $1 AI-engine
 ceiling, so $3), and keyword planning uses its configured total research ceiling. These are conservative estimates
 and ceilings, not fixed charges. The organic parent ceiling composes its selected stages:
 audit, keyword research, planning, optional technical fix, and, for the current content

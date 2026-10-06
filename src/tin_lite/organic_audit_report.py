@@ -351,7 +351,12 @@ def report_lines(
             f"{selection['search_impressions']} pages with the most Search Console impressions, "
             f"{selection['section']} more so every URL section has at least one page, then "
             f"{selection['section_fill']} taken in turn from each section. The provider crawl "
-            "was asked to fetch the first of these before following the sitemap."
+            "was asked to fetch the first of these before following "
+            + (
+                "links from the homepage, since no sitemap was found."
+                if crawl.get("crawl_mode") == "links"
+                else "the sitemap."
+            )
         )
     else:
         lines.append("No page selection was recorded for this run.")
