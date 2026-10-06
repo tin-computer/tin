@@ -706,6 +706,14 @@ request it did before; tests freeze v13's policy and the files a synthetic v13 r
 - `follow_links_without_sitemap` is a crawl setting in `SITE_EVIDENCE_POLICY_KEYS`, so an
   answer completion may cross v13 and v14.
 
+### Fixable findings name website.change
+
+v14 also sets `next_action_fix: "website_change"`: a finding Tin can fix says `next_action:
+"website_change"` instead of `"technical_fix"`, because website.change (`source: audit`) is
+the one workflow that fixes audit findings and organic.technical_fix refuses new starts. Both
+the published findings and the technical inventory a fix recomputes use the pinned policy's
+label, so v13 and earlier keep `"technical_fix"` and still verify.
+
 ### What the report says
 
 - `evidence.json`'s crawl records `crawl_mode` (`sitemap` or `links`), and its note says why:

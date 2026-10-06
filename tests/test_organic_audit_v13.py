@@ -94,6 +94,7 @@ def test_v13_adds_the_panel_and_the_engines_to_v12():
     assert {k: v for k, v in workflow.definition["audit_policy"].items() if k != "version"} == {
         **{k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"},
         "follow_links_without_sitemap": True,
+        "next_action_fix": "website_change",
     }
 
 

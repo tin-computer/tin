@@ -192,6 +192,9 @@ AUDIT_POLICY = {
     # sitemap URL on the audited site; otherwise the provider follows links from the homepage
     # up to the run's page cap. Decided from saved receipts only, so a retry sends the same.
     "follow_links_without_sitemap": True,
+    # A finding Tin can fix says next_action "website_change": website.change (source audit)
+    # is the one workflow that fixes audit findings now. Earlier policies keep "technical_fix".
+    "next_action_fix": "website_change",
 }
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
@@ -228,6 +231,7 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "max_internal_links",
         "next_action_from_repair_plan",
         "follow_links_without_sitemap",
+        "next_action_fix",
     }
 )
 
@@ -797,7 +801,8 @@ def technical_findings(
                     "kind": "recrawl_and_inspect",
                     "check_id": check_id,
                 },
-                "next_action": "technical_fix",
+                # v14 names website.change; a pinned earlier policy keeps technical_fix.
+                "next_action": audit_policy(policy_version).get("next_action_fix", "technical_fix"),
                 "evidence_refs": ["crawl.pages"],
             }
         )
@@ -1516,7 +1521,16 @@ def site_check_documents(
     if policy.get("next_action_from_repair_plan"):
         from tin_lite.technical_repair_plan import next_action
 
-        findings = [{**f, "next_action": next_action(f["check_id"])} for f in findings]
+        fix_action = policy.get("next_action_fix", "technical_fix")
+        findings = [
+            {
+                **f,
+                "next_action": fix_action
+                if next_action(f["check_id"]) == "technical_fix"
+                else next_action(f["check_id"]),
+            }
+            for f in findings
+        ]
     evidence = {
         "schema_version": 1,
         "run_id": run_id,

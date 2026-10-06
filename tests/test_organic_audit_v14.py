@@ -93,15 +93,17 @@ async def test_a_v13_run_reads_and_writes_exactly_what_it_did_before_v14():
     )
 
 
-def test_v14_is_the_default_and_adds_only_link_following_to_v13():
+def test_v14_is_the_default_and_adds_only_link_following_and_the_fix_label_to_v13():
     assert AUDIT_POLICY["version"] == V14 and audit_policy() is AUDIT_POLICY
     assert audit_policy(V14) is AUDIT_POLICY
     assert {k: v for k, v in AUDIT_POLICY.items() if k != "version"} == {
         **{k: v for k, v in V13_AUDIT_POLICY.items() if k != "version"},
         "follow_links_without_sitemap": True,
+        "next_action_fix": "website_change",
     }
-    # A crawl setting: the same answers and grading, so an answer completion may cross them.
-    assert "follow_links_without_sitemap" in SITE_EVIDENCE_POLICY_KEYS
+    # Crawl and finding-format settings: the same answers and grading, so an answer
+    # completion may cross them.
+    assert {"follow_links_without_sitemap", "next_action_fix"} <= SITE_EVIDENCE_POLICY_KEYS
     assert ai_contract(V14) == ai_contract(V13) and ai_schemas(V14) == ai_schemas(V13)
     assert {k: v for k, v in AUDIT_POLICY.items() if k not in NEUTRAL_KEYS} == {
         k: v for k, v in V13_AUDIT_POLICY.items() if k not in NEUTRAL_KEYS
@@ -114,6 +116,22 @@ def test_v14_is_the_default_and_adds_only_link_following_to_v13():
     v13 = service_terms({**definition, "audit_policy": V13_AUDIT_POLICY})
     v14 = service_terms({**definition, "audit_policy": AUDIT_POLICY})
     assert v14["maximum_nanos"] == v13["maximum_nanos"]
+
+
+@pytest.mark.asyncio
+async def test_v14_findings_send_fixes_to_website_change_and_v13_keeps_technical_fix():
+    import json
+
+    files, pages = await site_evidence(V13_AUDIT_POLICY)
+    actions = {}
+    for policy in (V13_AUDIT_POLICY, AUDIT_POLICY):
+        docs = documents(policy, files, pages)
+        findings = json.loads(docs[audit_paths(RUN_ID)["findings.json"]])["findings"]
+        actions[policy["version"]] = {f["next_action"] for f in findings}
+    # The synthetic site has fixable findings; only the label of those changes.
+    assert "technical_fix" in actions[V13] and "website_change" not in actions[V13]
+    assert "website_change" in actions[V14] and "technical_fix" not in actions[V14]
+    assert actions[V14] - {"website_change"} == actions[V13] - {"technical_fix"}
 
 
 def test_only_an_in_scope_https_sitemap_url_keeps_the_sitemap():
