@@ -19,9 +19,9 @@ from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import (
     ANSWER_PAGE_WORKFLOW_ID,
     BUILTIN_WORKFLOWS,
-    COLD_OUTREACH_SYSTEM,
     DESIGN_MD_WORKFLOW_ID,
     ORGANIC_TRAFFIC_SYSTEM,
+    OUTREACH_SYSTEM,
     SCAN_REPORT_WORKFLOW_ID,
     START_HERE_SYSTEM,
     VISIBILITY_AUDIT_WORKFLOW_ID,
@@ -680,8 +680,8 @@ def test_registry_system_assignments_are_manifest_metadata_only() -> None:
     assert definitions["site.health_improve"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["visibility.audit"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["content.answer_page"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["outreach.email_shortlist"]["system"] == COLD_OUTREACH_SYSTEM
-    assert definitions["outreach.email_campaign"]["system"] == COLD_OUTREACH_SYSTEM
+    assert definitions["outreach.email_shortlist"]["system"] == OUTREACH_SYSTEM
+    assert definitions["outreach.email_campaign"]["system"] == OUTREACH_SYSTEM
     assert "system" not in definitions["research.deep_dive"]
     assert definitions["content.public_article"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["style.capture"]["system"] == ORGANIC_TRAFFIC_SYSTEM

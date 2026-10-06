@@ -238,8 +238,8 @@ def test_manifest_declares_every_resource_and_a_valid_prerequisite():
         (None, "style.capture", "recommended"),
     ]
     assert procedure["output"]["path_template"] == "reports/outreach/marketplaces/{run_id}.md"
-    # Listing a product in a partner's store is not cold outreach; no system fits.
-    assert "system" not in definition
+    # The group is now "Outreach", not just cold outreach, so marketplace listings belong in it.
+    assert definition["system"] == "cold-outreach"
     for name, spec in definition["input_schema"]["properties"].items():
         if spec.get("type") == "string" and name != "project_id":
             assert "maxLength" in spec, name

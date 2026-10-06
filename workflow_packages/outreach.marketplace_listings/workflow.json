@@ -5,6 +5,7 @@
     "title": "Get listed where your integrations' users already shop",
     "description": "Reads the integrations in your Code map, checks each partner's app marketplace for you and your competitors, tests its listing rules against your site, and names the one to three listings to submit this week with the form filled in, in your voice. Never repeats a listing an earlier run prepared, and never submits anything.",
     "executor": "codex.procedure",
+    "system": "cold-outreach",
     "version": "1.1.0",
     "schedule_modes": ["on_demand", "weekly"],
     "input_schema": {

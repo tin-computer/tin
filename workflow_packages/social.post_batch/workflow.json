@@ -6,7 +6,7 @@
     "description": "Draft reviewable X and LinkedIn posts from an editable weekly plan and current source notes, or repurpose an article. Nothing is posted or scheduled.",
     "version": "3.0.0",
     "executor": "workflow.code",
-    "system": "organic-traffic",
+    "system": "x",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,

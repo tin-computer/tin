@@ -6,7 +6,7 @@
     "description": "Use current project context to make an editable social content plan with pillars, a weekly calendar, and a routine sized to available time.",
     "version": "1.0.0",
     "executor": "workflow.code",
-    "system": "organic-traffic",
+    "system": "x",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,
