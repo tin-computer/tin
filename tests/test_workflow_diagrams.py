@@ -16,7 +16,6 @@ from tin_lite.procedures import PinnedCodexProcedure, validate_procedure_artifac
 from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 from tin_lite.workflow_creator import creator_files
 from tin_lite.workflow_diagrams import (
-    PRESENTATION_PENDING,
     check_presentation,
     diagram_for_saved_workflow,
     validate_presentation,
@@ -34,29 +33,18 @@ def test_every_saveable_builtin_draws_how_it_runs_top_to_bottom() -> None:
     for workflow in BUILTIN_WORKFLOWS:
         if not saveable(workflow):
             continue
-        if workflow.key in PRESENTATION_PENDING:
-            assert workflow.presentation is None, f"{workflow.key} is drawn; drop it from pending"
-            continue
         assert workflow.presentation is not None, f"{workflow.key} needs a presentation"
         flow = workflow.definition["presentation"]["flow"]
         validate_workflow_diagram(flow)
         assert flow["direction"] == "TD", workflow.key
 
 
-def test_every_package_draws_how_it_runs_or_waits_for_the_backfill() -> None:
+def test_every_package_draws_how_it_runs() -> None:
     for package in discover():
         manifest = json.loads((package.path / "workflow.json").read_text())
         definition = manifest["definition"]
-        if package.key in PRESENTATION_PENDING:
-            assert "presentation" not in definition, f"{package.key} is drawn; drop it from pending"
-            continue
         validate_presentation(definition["presentation"])
         assert definition["presentation"]["flow"]["direction"] == "TD", package.key
-
-
-def test_presentation_pending_names_only_real_workflows() -> None:
-    keys = {workflow.key for workflow in BUILTIN_WORKFLOWS} | {item.key for item in discover()}
-    assert PRESENTATION_PENDING <= keys
 
 
 def test_the_organic_system_draws_every_step_it_runs() -> None:
@@ -95,7 +83,6 @@ def test_a_drawing_is_required_where_tin_controls_the_authoring() -> None:
     with pytest.raises(ValueError, match="presentation is required"):
         check_presentation({"key": "custom.new_report"}, required=True)
     check_presentation({"key": "custom.new_report"}, required=False)
-    check_presentation({"key": next(iter(PRESENTATION_PENDING))}, required=True)
     with pytest.raises(ValueError):
         check_presentation(
             {"key": "custom.new_report", "presentation": {"flow": {}}}, required=False

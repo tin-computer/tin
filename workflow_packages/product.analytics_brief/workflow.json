@@ -120,6 +120,28 @@
         "validator": "analytics-brief.v1"
       }
     },
-    "system": "product-qa"
+    "system": "product-qa",
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "posthog", "kind": "surface", "label": "PostHog project", "fact": "at most 8 read-only queries"},
+          {"id": "context", "kind": "store", "label": "Event docs and the last brief", "fact": "reuses a complete brief's mapping"},
+          {"id": "inventory", "kind": "step", "label": "Discover events and exclusions", "fact": "up to 200 event types by volume"},
+          {"id": "plan", "kind": "step", "label": "Choose the funnel and keys", "fact": "2 to 6 steps, up to 4 key events"},
+          {"id": "nothing", "kind": "ghost", "label": "Brief measured nothing", "fact": "run fails, the diagnostic stays readable"},
+          {"id": "calculate", "kind": "step", "label": "Calculate with fixed code", "fact": "Fisher exact and Holm, 20 actors per arm"},
+          {"id": "receipt", "kind": "receipt", "label": "Analytics brief", "fact": "five sections and JSON evidence"}
+        ],
+        "edges": [
+          {"from": "posthog", "to": "inventory", "kind": "call"},
+          {"from": "context", "to": "inventory", "kind": "call"},
+          {"from": "inventory", "to": "plan", "kind": "call", "label": "events found"},
+          {"from": "inventory", "to": "nothing", "kind": "call", "label": "no events"},
+          {"from": "plan", "to": "calculate", "kind": "call"},
+          {"from": "calculate", "to": "receipt", "kind": "call"}
+        ]
+      }
+    }
   }
 }

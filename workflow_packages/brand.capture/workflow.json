@@ -71,6 +71,27 @@
         "apply_on_approval": {"primary": "brand/BRAND.md", "companion": "DESIGN.md"},
         "agent_revision": "capture-revision.v1"
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "site", "kind": "surface", "label": "Your website", "fact": "two pages, at 1440 and 390 wide"},
+          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "read only, if connected and turned on"},
+          {"id": "write", "kind": "step", "label": "Write the brand and design pair", "fact": "Codex, one evidence set, 15 minutes"},
+          {"id": "proposals", "kind": "store", "label": "Proposals in project Files", "fact": "brand/proposals, existing kept unchanged"},
+          {"id": "review", "kind": "gate", "label": "Review brand and design", "fact": "nothing becomes active until you approve"},
+          {"id": "active", "kind": "receipt", "label": "Brand guide in use", "fact": "brand/BRAND.md and DESIGN.md applied"}
+        ],
+        "edges": [
+          {"from": "site", "to": "write", "kind": "call"},
+          {"from": "repo", "to": "write", "kind": "call"},
+          {"from": "write", "to": "proposals", "kind": "call"},
+          {"from": "proposals", "to": "review", "kind": "call"},
+          {"from": "review", "to": "active", "kind": "signal", "label": "approved"},
+          {"from": "review", "to": "proposals", "kind": "signal", "label": "your agent revises"}
+        ]
+      }
     }
   }
 }

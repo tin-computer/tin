@@ -92,6 +92,28 @@
         "media_type": "text/markdown",
         "max_bytes": 150000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Feature map, plan and voice", "fact": "the one story your business can tell"},
+          {"id": "venues", "kind": "surface", "label": "Conferences, meetups, podcasts", "fact": "open call checked on each venue's page"},
+          {"id": "rank", "kind": "step", "label": "Rank with the fixed scorer", "fact": "soonest deadline first, 10 by default"},
+          {"id": "draft", "kind": "step", "label": "Draft one pitch per venue", "fact": "its format and length limit, your voice"},
+          {"id": "report", "kind": "store", "label": "Shortlist in project Files", "fact": "reports/outreach/speaking"},
+          {"id": "receipt", "kind": "receipt", "label": "Pitches ready to submit", "fact": "you submit each one, Tin sends nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "venues", "kind": "call"},
+          {"from": "venues", "to": "rank", "kind": "call"},
+          {"from": "rank", "to": "draft", "kind": "call"},
+          {"from": "rank", "to": "report", "kind": "call", "label": "none verified"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"},
+          {"from": "report", "to": "rank", "kind": "signal", "label": "next run skips these"}
+        ]
+      }
     }
   }
 }
