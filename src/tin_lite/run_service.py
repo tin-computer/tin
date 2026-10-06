@@ -121,6 +121,21 @@ async def start_workflow_run(
             # already-selected revision. create_run still checks actor, inputs and lineage.
             if definition_commit_sha is None:
                 definition_commit_sha = existing.definition_commit_sha
+    if (
+        workflow.key == technical_fix.KEY
+        and existing is None
+        and retry_of_run_id is None
+        and project_workflow_id is None
+        and _organic_parent_run_id is None
+    ):
+        # Retired for new work: website.change (source audit) runs the same repair with a
+        # founder decision per fix. Retries, saved schedules and older organic system runs
+        # keep their pinned technical fix.
+        raise WorkflowInputError(
+            "organic.technical_fix is retired. Fix an audit's findings with website.change: "
+            "call preflight_website_change (source audit), let the founder approve the "
+            "changes, then start website.change with source audit."
+        )
     workflow = await resolve_execution_contract(
         storage=getattr(runtime, "storage", None),
         workflow=workflow,

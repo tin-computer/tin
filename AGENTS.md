@@ -213,9 +213,9 @@ outside marketing, or were written without ever being run. Full rules:
   it clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
   Email-send approval, recipients and pacing are a separate contract.
 - `website.change` puts approved changes on a founder's site: approved pages, the technical
-  fixes the latest audit found (`source: audit`; organic.technical_fix is hidden and kept only
-  for pinned runs), planned redirects and noindex changes (`planned`) and the blog index plan
-  (`blog_index`, applied without Codex). Deleting a page stays with the founder. Change rows
+  fixes the latest audit found (`source: audit`; organic.technical_fix refuses new starts and
+  is kept only for pinned runs, retries and saved schedules), planned redirects and noindex
+  changes (`planned`) and the blog index plan (`blog_index`, applied without Codex). Deleting a page stays with the founder. Change rows
   are decided in Decisions or over MCP. It merges its own PR only for a change with a recorded
   approval in Postgres (a page's review that names its approver, with commit to main, or an
   approved `website_changes` row), never one read from a project file, and never for a

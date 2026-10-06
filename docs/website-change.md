@@ -307,9 +307,10 @@ and stops a fortnight after the merge.
 It stays registered for pinned site-fix-v5 runs and saved schedules, byte for byte as on main
 except its catalog flag: 0.6.1 sets `public_discovery: false`, so new setups don't see it, and
 it left the growth plan's program lists and onboarding copy. The public ChatGPT plugin no
-longer starts, stops or lists technical fixes; `preflight_technical_fix` keeps working there
-and in Tin's MCP for older clients. The organic traffic system's technical step still starts
-it on its pinned definition.
+longer starts, stops or lists technical fixes. New starts are refused (retries, saved
+schedules and traffic system runs on v5 or earlier keep their pinned technical fix), and its
+preview tools are gone from both MCP servers: use `preflight_website_change`. The traffic
+system's v6 recipe starts website.change instead.
 
 ## Phase 3: planned URL changes and the blog index
 
