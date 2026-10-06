@@ -1371,7 +1371,8 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=AUDIT_KEY,
         # 0.9.1: the same organic-audit-v13 run, now also on a monthly or quarterly schedule.
-        version_label="0.9.1",
+        # 0.10.0: organic-audit-v14 follows links when the site has no sitemap.
+        version_label="0.10.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,

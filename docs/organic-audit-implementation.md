@@ -681,3 +681,39 @@ questions on six answer engines through DataForSEO ([AI answers](ai-answers-data
   that fits no question is reported as not measured with its reason. A measurement that
   fails leaves the audit to publish without it, and the report says it did not finish;
   answers already bought stay in receipts and are billed.
+
+## 0.10 — follow links when there is no sitemap (organic-audit-v14)
+
+v9 onward asks the provider crawl to respect the sitemap. When a site has no sitemap, or an
+empty or unreadable one, the provider then crawls only the homepage instead of following
+links, and since Tin reads the pages it selected plus the pages the crawl returns, the whole
+audit covers one page. v13 is on main and may deploy at any time, so the fix is a new pinned
+policy, `organic-audit-v14` (catalog organic.audit 0.10.0). It keeps v13 and adds
+`follow_links_without_sitemap`. A run pinned to v13 or earlier sends exactly the crawl
+request it did before; tests freeze v13's policy and the files a synthetic v13 run writes.
+
+### The rule
+
+- A v14 crawl request sends `respect_sitemap: true` only when the run's saved `site_files`
+  list at least one sitemap URL that is HTTPS and on the audited site (the same URLs the
+  page selection uses). Otherwise it sends `respect_sitemap: false`, and the provider follows
+  links from the homepage up to the run's page cap.
+- The decision reads only the `site_files` receipt saved before submission, never the site
+  again, so a retry or `recover()` rebuilds the request it submitted and the saved request
+  fingerprint still matches.
+- An answer completion reuses its source crawl and reads no site files, so it keeps the
+  policy's `respect_sitemap`; its crawl receipt is already complete and nothing is sent.
+- `follow_links_without_sitemap` is a crawl setting in `SITE_EVIDENCE_POLICY_KEYS`, so an
+  answer completion may cross v13 and v14.
+
+### What the report says
+
+- `evidence.json`'s crawl records `crawl_mode` (`sitemap` or `links`), and its note says why:
+  with no sitemap, "No sitemap URL on this site was found, so the provider followed links
+  from the homepage up to the page cap." AUDIT.md shows the note under Evidence and limits,
+  and Pages inspected says the crawl followed links from the homepage rather than the
+  sitemap. A crawl stopped at its time limit keeps the same mode and note.
+- Each page's `provider_context.respect_sitemap` is what the request sent, not the policy's
+  value. The orphan-page check needs the sitemap, so in a links crawl it is unknown rather
+  than a pass or a problem. Technical fix and website change sources read the same context
+  key, a boolean either way, so v14 evidence verifies unchanged.
