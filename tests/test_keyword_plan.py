@@ -845,3 +845,14 @@ def test_maximum_unicode_and_long_urls_remain_readable_with_explicit_omissions()
     assert "further groups" in next(
         value.decode() for path, value in documents.items() if path.endswith("PLAN.md")
     )
+
+
+def test_markdown_url_keeps_http_urls_literal_and_escapes_everything_else() -> None:
+    from tin_lite.keyword_plan import markdown_url
+
+    assert markdown_url("https://rewrite-photo-text.pdffiller.com/a_b?x=1&y=2") == (
+        "<https://rewrite-photo-text.pdffiller.com/a_b?x=1&y=2>"
+    )
+    assert markdown_url(" https://example.com/​ ") == "<https://example.com/>"
+    assert markdown_url("javascript:alert(1)") == "javascript:alert\\(1\\)"
+    assert markdown_url("https://example.com/<b>") == "https://example\\.com/&lt;b&gt;"
