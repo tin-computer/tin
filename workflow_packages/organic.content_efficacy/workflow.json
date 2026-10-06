@@ -119,6 +119,27 @@
         "media_type": "text/markdown",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "snapshot", "kind": "store", "label": "Traffic snapshot in Files", "fact": "no merge or retirement without it"},
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "two 28-day windows, at most 3 calls"},
+          {"id": "audit", "kind": "store", "label": "Audit and positioning in Files", "fact": "LATEST.json, BRAND.md, wiki, context/"},
+          {"id": "judge", "kind": "step", "label": "Judge intent and positioning", "fact": "one model call, retried once if invalid"},
+          {"id": "decide", "kind": "step", "label": "Decide what each page needs", "fact": "keep, refresh, rewrite, merge or retire"},
+          {"id": "receipt", "kind": "receipt", "label": "Page decisions", "fact": "content/efficacy.md, edits nothing"}
+        ],
+        "edges": [
+          {"from": "snapshot", "to": "search_console", "kind": "call", "label": "missing or older"},
+          {"from": "snapshot", "to": "audit", "kind": "call", "label": "14 days or newer"},
+          {"from": "search_console", "to": "audit", "kind": "call"},
+          {"from": "audit", "to": "judge", "kind": "call"},
+          {"from": "judge", "to": "decide", "kind": "call"},
+          {"from": "decide", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }

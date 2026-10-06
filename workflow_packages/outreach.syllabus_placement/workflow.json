@@ -105,6 +105,29 @@
         "media_type": "text/markdown",
         "max_bytes": 200000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Feature map, plan and voice", "fact": "the job a student does, hard no's"},
+          {"id": "fit", "kind": "step", "label": "Check courses teach the job", "fact": "3 to 5 searches before the long search"},
+          {"id": "search", "kind": "surface", "label": "Public course documents", "fact": "40 searches, 30 documents, no logins"},
+          {"id": "score", "kind": "step", "label": "Score and time each course", "fact": "tools chosen 120 to 21 days before term"},
+          {"id": "draft", "kind": "step", "label": "Draft kit and notes", "fact": "one kit per slot, notes under 120 words"},
+          {"id": "report", "kind": "store", "label": "Plan in project Files", "fact": "reports/outreach/syllabus, send calendar"},
+          {"id": "receipt", "kind": "receipt", "label": "Dated plan to act on", "fact": "you reach instructors, Tin sends nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "fit", "kind": "call"},
+          {"from": "fit", "to": "search", "kind": "call"},
+          {"from": "fit", "to": "report", "kind": "call", "label": "not a fit"},
+          {"from": "search", "to": "score", "kind": "call"},
+          {"from": "score", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }

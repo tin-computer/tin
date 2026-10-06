@@ -317,10 +317,9 @@ not an executable graph: the System page draws it top to bottom in the workflow 
 (`static/workflow-spine.js`), opened from a workflow's row or template card. A saved workflow is
 drawn from its pinned revision, or from today's definition when the pin predates its drawing
 (`GET /api/projects/{id}/workflows/{project_workflow_id}/diagram` says which). Every built-in a
-person can save, every public package and every creator candidate carries one;
-`PRESENTATION_PENDING` in `workflow_diagrams.py` lists the workflows still waiting for theirs.
-They share seven node meanings and two edge meanings so the visual language stays recognizable
-as the catalog grows. See [Draw how it runs](adding-a-workflow.md#draw-how-it-runs).
+person can save, every public package and every creator candidate carries one. They share seven
+node meanings and two edge meanings so the visual language stays recognizable as the catalog
+grows. See [Draw how it runs](adding-a-workflow.md#draw-how-it-runs).
 
 `content.diagram` uses the same vocabulary to create a reviewed, editable Mermaid source artifact
 at `diagrams/{slug}.mmd`. Tin validates a deliberately small Mermaid dialect before publication;

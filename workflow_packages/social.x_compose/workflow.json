@@ -37,6 +37,28 @@
         "media_type": "application/json",
         "max_bytes": 24000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "sources", "kind": "store", "label": "Your direction and project files", "fact": "notes, one context file, up to 4 more"},
+          {"id": "style", "kind": "store", "label": "X writing style guide", "fact": "voice only, when its account matches"},
+          {"id": "pick", "kind": "step", "label": "Pick the relevant statements", "fact": "up to 90, ranked by your direction"},
+          {"id": "compose", "kind": "step", "label": "Compose the posts", "fact": "one model call, 1 to 6 posts"},
+          {"id": "check", "kind": "step", "label": "Check each post", "fact": "280 weighted chars, every number cited"},
+          {"id": "drafts", "kind": "store", "label": "Drafts in project Files", "fact": "social/x-drafts, one JSON per run"},
+          {"id": "receipt", "kind": "receipt", "label": "Drafts to review and edit", "fact": "posts only after you preview and confirm"}
+        ],
+        "edges": [
+          {"from": "sources", "to": "pick", "kind": "call"},
+          {"from": "style", "to": "pick", "kind": "call"},
+          {"from": "pick", "to": "compose", "kind": "call"},
+          {"from": "compose", "to": "check", "kind": "call"},
+          {"from": "check", "to": "drafts", "kind": "call"},
+          {"from": "drafts", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }
