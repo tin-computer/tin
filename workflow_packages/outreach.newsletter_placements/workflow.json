@@ -5,6 +5,7 @@
     "title": "Get featured in the newsletters and communities your buyers read",
     "description": "Finds newsletters and communities your buyers read that have a written way in, such as a featured-tool slot, reader submissions, a showcase thread or a sponsorship, verifies each one's rules, and drafts one submission per placement in your voice. Skips placements drafted in earlier runs; never submits, pays or contacts anyone.",
     "executor": "codex.procedure",
+    "system": "cold-outreach",
     "version": "2.0.0",
     "schedule_modes": ["on_demand"],
     "input_schema": {

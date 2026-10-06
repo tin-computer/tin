@@ -6,6 +6,7 @@
     "description": "Weekly or on demand: find a nearby tool that is shutting down, dropping its free plan, repricing or relicensing, check that your product can honestly take its users, and get a dated migration kit with their export mapped to your product, the import gap, and ready inputs for the migration page and the importer. Quiet weeks end with a short watch list.",
     "version": "2.0.0",
     "executor": "codex.procedure",
+    "system": "competitors",
     "schedule_modes": ["on_demand", "weekly"],
     "prerequisites": [
       {

@@ -132,11 +132,14 @@ from tin_lite.writing_style import STYLE_PATH
 REGISTRY_REPO_ID = "registry/workflows"
 START_HERE_SYSTEM = "start-here"
 ORGANIC_TRAFFIC_SYSTEM = "organic-traffic"
-COLD_OUTREACH_SYSTEM = "cold-outreach"
+# The stored system ID stays "cold-outreach"; only its name changed.
+OUTREACH_SYSTEM = "cold-outreach"
 PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
-X_SYSTEM = "x"
+# The stored system ID stays "x"; only its name changed.
+SOCIAL_SYSTEM = "x"
+COMPETITORS_SYSTEM = "competitors"
 REVENUE_SYSTEM = "revenue"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
@@ -200,8 +203,8 @@ WORKFLOW_SYSTEMS = (
         display_order=1,
     ),
     WorkflowSystem(
-        id=COLD_OUTREACH_SYSTEM,
-        name="Cold outreach system",
+        id=OUTREACH_SYSTEM,
+        name="Outreach",
         display_order=2,
     ),
     WorkflowSystem(
@@ -219,8 +222,9 @@ WORKFLOW_SYSTEMS = (
         name="Paid ads system",
         display_order=5,
     ),
-    WorkflowSystem(id=X_SYSTEM, name="X", display_order=6),
-    WorkflowSystem(id=REVENUE_SYSTEM, name="Revenue system", display_order=7),
+    WorkflowSystem(id=SOCIAL_SYSTEM, name="Social", display_order=6),
+    WorkflowSystem(id=COMPETITORS_SYSTEM, name="Competitors", display_order=7),
+    WorkflowSystem(id=REVENUE_SYSTEM, name="Revenue system", display_order=8),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -1052,7 +1056,7 @@ BUILTIN_WORKFLOWS = (
         description="Revise an X draft and remember clear writing preferences from feedback.",
         executor=x_feedback.KEY,
         version_label="1.2.0",
-        system=X_SYSTEM,
+        system=SOCIAL_SYSTEM,
         schedule_modes=("on_demand",),
         agent_only=True,
         input_schema=x_feedback.INPUT_SCHEMA,
@@ -1067,7 +1071,7 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=x_draft.KEY,
         version_label="1.0.0",
-        system=X_SYSTEM,
+        system=SOCIAL_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=x_draft.INPUT_SCHEMA,
     ),
@@ -1083,7 +1087,7 @@ BUILTIN_WORKFLOWS = (
         executor=x_style.KEY,
         version_label="1.2.0",
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
-        system=X_SYSTEM,
+        system=SOCIAL_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=x_style.ROUTE,
         input_schema={
@@ -1148,7 +1152,7 @@ BUILTIN_WORKFLOWS = (
         executor=x_posts.KEY,
         version_label="1.0.0",
         schedule_modes=("on_demand",),
-        system=X_SYSTEM,
+        system=SOCIAL_SYSTEM,
         agent_only=True,
         input_schema=x_posts.INPUT_SCHEMA,
     ),
@@ -1939,7 +1943,7 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.0.0",
-        system=COLD_OUTREACH_SYSTEM,
+        system=OUTREACH_SYSTEM,
         input_schema={
             "type": "object",
             "additionalProperties": False,
@@ -2022,7 +2026,7 @@ BUILTIN_WORKFLOWS = (
                 reason="The campaign sends only to rows marked selected in the shortlist.",
             ),
         ),
-        system=COLD_OUTREACH_SYSTEM,
+        system=OUTREACH_SYSTEM,
         review_policy=EMAIL_CAMPAIGN_REVIEW_POLICY,
         schedule_modes=("on_demand",),
         presentation=WorkflowDiagram(
@@ -2836,6 +2840,7 @@ BUILTIN_WORKFLOWS = (
         executor=awesome_submit.KEY,
         version_label="1.0.0",
         review_policy=AWESOME_SUBMIT_REVIEW_POLICY,
+        system=OUTREACH_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=awesome_submit.INPUT_SCHEMA,
         integration_requirements=(
