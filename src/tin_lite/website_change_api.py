@@ -108,7 +108,7 @@ class TechnicalPreflight(BaseModel):
     """What to preview: the latest audit's fixes, the planned URL changes, or the blog index."""
 
     model_config = ConfigDict(extra="forbid")
-    source: Literal["audit", "planned", "blog_index"] = "audit"
+    source: Literal["audit", "planned"] = "audit"
     expected_repository: str = Field(min_length=3, max_length=140)
     repository_serves_site: bool
     finding_ids: list[str] = Field(default_factory=list, max_length=30)

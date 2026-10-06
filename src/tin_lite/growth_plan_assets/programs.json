@@ -32,8 +32,7 @@
           "style.capture",
           "content.generate",
           "content.public_article",
-          "competitor.watch",
-          "content.blog_index"
+          "competitor.watch"
         ],
         "integrations": [
           "analytics.gsc"
@@ -66,8 +65,7 @@
         "coverage": "full",
         "workflows": [
           "organic.audit",
-          "website.change",
-          "organic.site_architecture"
+          "website.change"
         ],
         "integrations": [
           "infra.github",
@@ -620,9 +618,7 @@
     "social.x_draft": "Draft for X",
     "social.x_revise": "Revise X writing",
     "organic.traffic_snapshot": "Take a weekly traffic snapshot and growth readout",
-    "organic.content_efficacy": "Decide what each page needs",
-    "organic.site_architecture": "Plan the site's page tree and redirects",
-    "content.blog_index": "Plan the blog index"
+    "organic.content_efficacy": "Decide what each page needs"
   },
   "workflow_scope": {
     "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
@@ -682,8 +678,6 @@
     "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
     "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation.",
     "organic.traffic_snapshot": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly data file per landing page from Search Console, and PostHog when it is connected (read-only): clicks, impressions and top searches, the audit's findings and, with PostHog, sessions by channel, first-touch signups and activation and reading depth, read by page decisions, the page tree and the blog index; the same file carries the weekly growth readout (channels and named AI assistants, search with a brand split, content, landing pages and first-touch activation, changes called only by an exact test with Holm's correction, each decision routed to the workflow that acts on it; search only without PostHog); no model calls.",
-    "organic.content_efficacy": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; website.change reads its URL changes and asks before it changes the site, and pages to refresh are listed; edits nothing itself.",
-    "organic.site_architecture": "Page tree, URL and navigation rules from live data only: the organic audit's summary (click depth, inbound links and checks per crawled page), a year of Search Console clicks, the traffic snapshot's visits and Page decisions (Search Console connection, read-only); one model call names and groups the sections; when URLs change, the exact redirects for website.change, which asks before it changes the site; follow-ups against a saved baseline; does not read the repository; changes nothing itself.",
-    "content.blog_index": "For a site with a blog in the connected repository, read without changing it: a plan with the exact files (at most five) for an index that lists every eligible post within two clicks from the post source, with categories from existing tags, an RSS feed and per-post sitemap dates, at the founder's article route; asks for the route once when none exists; opens no pull request, since website.change builds the index from the plan after the founder approves it."
+    "organic.content_efficacy": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; website.change reads its URL changes and asks before it changes the site, and pages to refresh are listed; edits nothing itself."
   }
 }

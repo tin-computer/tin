@@ -100,8 +100,8 @@ Subsequent catalog additions remain outside this release's reviewed tool set:
 `website.change`, `content.refresh`, `social.x_revise`, `social.x_draft`,
 `social.x_style`, `social.x_publish`, `social.x_compose`, `competitor.sunset_rescue`,
 `growth.framework_starter` and the organic loop's five packages (`organic.traffic_snapshot`,
-`organic.content_efficacy`, `organic.site_architecture`, `content.blog_index` and
-`organic.prompt_panel`). They keep their ordinary Tin registration. Adding
+`organic.content_efficacy`, `organic.prompt_panel`, and the retired `organic.site_architecture`
+and `content.blog_index`). They keep their ordinary Tin registration. Adding
 ChatGPT tools for them requires an explicit review of their effects and controls.
 
 Every start takes a project UUID and required request UUID. Choose exactly one form:

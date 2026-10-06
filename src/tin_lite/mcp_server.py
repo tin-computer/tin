@@ -1365,7 +1365,7 @@ def create_mcp_app(
         project_id: str,
         expected_repository: str,
         repository_serves_site: StrictBool,
-        source: Literal["audit", "planned", "blog_index"] = "audit",
+        source: Literal["audit", "planned"] = "audit",
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         protected_paths: list[str] | None = None,
@@ -1375,8 +1375,7 @@ def create_mcp_app(
         Decisions. No run, paid compute, branch or pull request is created.
 
         source audit: the technical fixes the latest audit found. planned: the redirects and
-        noindex changes page decisions and the site architecture plan made. blog_index: the
-        newest content.blog_index plan, one change applied as it is.
+        noindex changes page decisions made.
 
         plan.repairs is what the next run makes, decisions_needed the judgment calls, and
         plan.left_out the rest (copy, manual steps such as deleting a page, declined rows,
@@ -4222,10 +4221,10 @@ def create_mcp_app(
                     "pages in preparation.protected_paths, the PR waits for the founder. To "
                     "protect more pages, such as ones another app shares, ask the founder and "
                     "call set_protected_paths. Never approve a draft just to publish it. For "
-                    "the technical fixes the latest audit found (source audit), the URL "
-                    "changes page decisions and the site plan made (planned) or the blog index "
-                    "plan (blog_index), call preflight_website_change first, then start "
-                    "website.change with that source, repository_serves_site and any answered "
+                    "the technical fixes the latest audit found (source audit) or the URL "
+                    "changes page decisions made (planned), call preflight_website_change "
+                    "first, then start website.change with that source, "
+                    "repository_serves_site and any answered "
                     "decisions; changes the founder approved (in Decisions, or "
                     "approve_website_change) publish, the rest open a PR. Deleting a page stays "
                     "with the founder.",
