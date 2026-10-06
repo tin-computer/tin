@@ -35,6 +35,7 @@ from test_website_change_audit import fixture as audit_fixture
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import planned_url_changes as planned
 from tin_lite import (
+    run_service,
     website_change,
     website_change_audit,
     website_change_blog_index,
@@ -286,6 +287,13 @@ async def blog_index_run(f, text=None):
 BI_INPUTS = {"source": "blog_index"}
 
 
+async def start_pinned(f, monkeypatch, **inputs):
+    """The blog_index source refuses new starts (run_service.RETIRED_WEBSITE_SOURCES); a
+    retry or saved schedule that pinned it still applies the plan, which these tests cover."""
+    monkeypatch.setattr(run_service, "RETIRED_WEBSITE_SOURCES", {})
+    return await start(f, **BI_INPUTS, **inputs)
+
+
 async def apply(f, run):
     assert await f.activities.prepare_codex_procedure(str(run.id)) is True
     receipt = await f.db.get_effect(delivery.merge_key(run.id))
@@ -296,8 +304,10 @@ async def test_without_a_blog_index_run_the_source_says_so(publication_db, monke
     f = await fixture(publication_db, monkeypatch)
     found = await preview(f, "blog_index")
     assert found["changes"] == [] and found["note"] == website_change_blog_index.NONE_YET
-    with pytest.raises(WorkflowInputError, match="No blog index plan yet"):
+    with pytest.raises(WorkflowInputError, match="content.blog_index is retired"):
         await start(f, **BI_INPUTS)
+    with pytest.raises(WorkflowInputError, match="No blog index plan yet"):
+        await start_pinned(f, monkeypatch)
 
 
 async def test_the_blog_index_plan_is_one_row_applied_as_it_is(publication_db, monkeypatch):
@@ -311,7 +321,7 @@ async def test_the_blog_index_plan_is_one_row_applied_as_it_is(publication_db, m
     assert (row["source"], row["kind"], row["paths"]) == ("blog_index", "index", ["/blog"])
     assert row["detail"]["plan_run_id"] == str(plan_run.id)
     assert found["next_run"]["mode"] == "pull_request"
-    run = await start(f, **BI_INPUTS)
+    run = await start_pinned(f, monkeypatch)
     integrations = mergeable(f)
     merge = await apply(f, run)
     # No Codex session: Tin opened the PR with exactly the plan's files.
@@ -339,7 +349,7 @@ async def test_an_approved_blog_index_publishes_once_required_checks_pass(
     await approve(f, row["change_id"])
     found = await preview(f, "blog_index")
     assert found["next_run"]["mode"] == "direct"
-    run = await start(f, **BI_INPUTS)
+    run = await start_pinned(f, monkeypatch)
     integrations = mergeable(f, "unstable")
     merge = await apply(f, run)
     integrations.github_merge_pull_request.assert_awaited_once()
@@ -361,7 +371,7 @@ async def test_a_stale_blog_index_plan_is_left_and_says_why(publication_db, monk
     assert "src/lib/posts.ts changed on main since the plan read it" in found["next_run"]["reason"]
     assert found["changes"][0]["status"] == "pending"
     with pytest.raises(WorkflowInputError, match="changed on main since the plan read it"):
-        await start(f, **BI_INPUTS)
+        await start_pinned(f, monkeypatch)
     # When only other files moved upstream, the plan still applies.
     integrations.github_changed_paths.return_value = {"paths": ["README.md"], "complete": True}
     assert (await preview(f, "blog_index"))["next_run"]["mode"] == "pull_request"
@@ -436,10 +446,9 @@ async def test_decisions_read_pending_rows_with_protection_and_open_judgment_cal
         [call] = (await client.get(f"{base}/questions")).json()["questions"]
         assert call["id"] == ai_search and call["source"] == "audit"
         assert call["suggestion"] == "allow" and len(call["options"]) == 2
+        # The blog index source is retired: the preview offers only audit and planned.
         shown = await client.post(f"{base}/preflight", json={"source": "blog_index", **INPUTS})
-        assert (
-            shown.status_code == 200 and shown.json()["note"] == website_change_blog_index.NONE_YET
-        )
+        assert shown.status_code == 422
     # Once the coding agent answers, the question leaves Decisions.
     await preview(f, "audit", decisions=[f"{ai_search}=allow"])
     assert await website_change_audit.judgment_calls(f.db, f.project.id) == []
@@ -472,7 +481,7 @@ async def test_a_blog_index_that_cannot_apply_ends_failed_and_names_the_file(
 
     f = await fixture(publication_db, monkeypatch)
     await blog_index_run(f)
-    run = await start(f, **BI_INPUTS)
+    run = await start_pinned(f, monkeypatch)
     integrations = f.runtime.integrations
     integrations.github_create_pull_request.side_effect = IntegrationAuthorizationError(
         "An open GitHub pull request already changes src/lib/posts.ts; resolve it or choose a "
