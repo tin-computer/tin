@@ -40,7 +40,9 @@ controls and enclosing panels. Inspect repeated surfaces, not just the hero CTA.
 role, source and meaningful exceptions; a visual estimate is not a measured CSS value.
 For type, record each repeated role (page title, section heading, subheading, body, numbers,
 labels, code): family, weight, size range and line height from computed CSS, and any declared
-font smoothing. Name a family only for the roles you saw it in. When the site or source
+font smoothing. Name a family only for the roles you saw it in, and record the paths of the
+font files the site itself serves for it (from the resource transfers or `@font-face`), so pieces
+published on the same site can use them. When the site or source
 declares a dark theme (a `prefers-color-scheme` query, a theme attribute or class, a toggle),
 render it if the page offers a toggle; otherwise read its values from the source.
 Use `camoufox.set_viewport(1440, 900)` and
@@ -110,8 +112,8 @@ medium, texture/material, light, perspective, crop and density where supported. 
 art-direction sentence when useful. References need a concrete contribution, not just a brand
 name. Avoid empty adjectives such as “premium” without instructions an image model can use.
 When the product has recurring subjects (characters, mascots, animals, devices, game pieces),
-record how the product itself draws each one: shape, colours, viewpoint and distinguishing
-marks, from its renderer, sprites or illustrations. Figures and interactive pieces then draw
+record how the product itself draws each one: shape, exact colours (the hex values its
+renderer, sprites or CSS use), viewpoint and distinguishing marks. Figures and interactive pieces then draw
 them the same way, never as a labelled placeholder shape.
 
 Use the existing optional `shape` token to summarize a supported corner treatment, explained

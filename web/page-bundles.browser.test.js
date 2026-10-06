@@ -22,6 +22,12 @@ const embed = `<!doctype html><html><body><p id="state">ready</p><script>
     parent.postMessage({ embed: { ...result, fetched } }, "*");
   });
 </script></body></html>`;
+// A tall piece that reports the theme Tin gives it, now and after a switch.
+const tall = `<!doctype html><html><body style="margin:0"><div style="height:700px"></div><script>
+  const say = () => parent.postMessage({ tall: document.documentElement.dataset.theme }, "*");
+  say();
+  new MutationObserver(say).observe(document.documentElement, { attributes: true });
+</script></body></html>`;
 
 function documentData() {
   return {
@@ -32,6 +38,7 @@ function documentData() {
       "<h1>Filming the trailers</h1>",
       `<p><img class="md-asset" data-asset="${folder}/flow.svg" alt="How a shot is made" data-fallback-name="flow.svg" title="Each shot follows recorded game events" /></p>`,
       `<figure class="md-embed" data-asset="${folder}/field.html" data-height="300" data-title="Move the dog"></figure>`,
+      `<figure class="md-embed" data-asset="${folder}/tall.html" data-height="300" data-title="A tall piece"></figure>`,
       `<figure class="md-video" data-url="https://www.youtube.com/watch?v=dQw4w9WgXcQ" data-title="The standoff"><a href="https://www.youtube.com/watch?v=dQw4w9WgXcQ" rel="noreferrer">The standoff</a></figure>`,
       `<figure class="md-video" data-url="https://media.sheepdogs.io/trailers/sheepdogs-standoff.mp4" data-title="The film"><a href="https://media.sheepdogs.io/trailers/sheepdogs-standoff.mp4" rel="noreferrer">The film</a></figure>`,
       `<figure class="md-video" data-url="https://example.com/watch/1" data-title="Elsewhere"><a href="https://example.com/watch/1" rel="noreferrer">Elsewhere</a></figure>`,
@@ -41,6 +48,7 @@ function documentData() {
     assets: [
       { path: `${folder}/flow.svg`, media_type: "image/svg+xml" },
       { path: `${folder}/field.html`, media_type: "text/html" },
+      { path: `${folder}/tall.html`, media_type: "text/html" },
     ],
     asset_notes: ["unsafe.svg was left out: the SVG contains script, event handlers or outside references."],
   };
@@ -90,7 +98,11 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
       });
     }, {
       data: documentData(),
-      files: { [`${folder}/flow.svg`]: svg, [`${folder}/field.html`]: embed.replaceAll("{ORIGIN}", origin) },
+      files: {
+        [`${folder}/flow.svg`]: svg,
+        [`${folder}/field.html`]: embed.replaceAll("{ORIGIN}", origin),
+        [`${folder}/tall.html`]: tall,
+      },
     });
 
     // The figure becomes an inert data: image with its caption; a left-out one shows its name.
@@ -103,14 +115,29 @@ test("page bundles: figures load inert, embeds are walled off, videos are allow-
     assert.ok(await page.evaluate(() => document.querySelector("h1").nextElementSibling.matches(".md-asset-notes")));
 
     // The embed runs, but in an opaque origin with no network.
-    const frame = page.locator("iframe.md-embed-frame");
+    const frame = page.locator('figure[data-title="Move the dog"] iframe.md-embed-frame');
     await frame.waitFor();
     assert.equal(await frame.getAttribute("sandbox"), "allow-scripts");
     assert.match(await frame.getAttribute("srcdoc"), /Content-Security-Policy/);
-    await page.waitForFunction(() => window.embedReports.length > 0);
-    const [{ embed: report }] = await page.evaluate(() => window.embedReports);
+    await page.waitForFunction(() => window.embedReports.some((data) => data.embed));
+    const { embed: report } = await page.evaluate(() => window.embedReports.find((data) => data.embed));
     assert.deepEqual(report, { parent: "denied", cookie: "denied", storage: "denied", fetched: "blocked" });
     assert.ok(!requests.some((url) => url.startsWith("/track")), `the embed reached the server: ${requests}`);
+
+    // No card around a piece, and its frame grows to the piece's own height.
+    const tallFrame = page.locator('figure[data-title="A tall piece"] iframe.md-embed-frame');
+    await page.waitForFunction(() => document.querySelector('figure[data-title="A tall piece"] iframe')?.offsetHeight === 700);
+    assert.deepEqual(await tallFrame.evaluate((node) => {
+      const style = getComputedStyle(node);
+      return [style.borderTopWidth, style.backgroundColor, style.colorScheme];
+    }), ["0px", "rgba(0, 0, 0, 0)", "light"]);
+    // The piece takes the reader's theme, and follows a switch.
+    await page.waitForFunction(() => window.embedReports.some((data) => data.tall === "light"));
+    await page.evaluate(() => { document.documentElement.dataset.theme = "dark"; });
+    await page.waitForFunction(() => window.embedReports.some((data) => data.tall === "dark"));
+    assert.equal(await tallFrame.evaluate((node) => getComputedStyle(node).colorScheme), "dark");
+    assert.equal(await figure.evaluate((node) => getComputedStyle(node).colorScheme), "dark");
+    await page.evaluate(() => { delete document.documentElement.dataset.theme; });
 
     // Videos: an allow-listed provider plays in its privacy mode, a file loads only on play,
     // and anything else stays a link.

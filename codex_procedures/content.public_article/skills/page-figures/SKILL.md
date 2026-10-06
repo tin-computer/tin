@@ -12,23 +12,37 @@ Your output instructions name the article's assets folder. Write each file direc
 refer to it from the article with a path that starts `./<folder name>/`. Tin keeps only the files
 the article refers to, and the founder approves them with the words.
 
-## Diagram
+## The project's look
 
-A `mermaid` block for a flow, a sequence, a hierarchy or a timeline. Tin draws it in the
-project's brand colours, so don't set colours or styles in it. Keep it to the few nodes the point
-needs.
+Everything you draw should look like it belongs on the founder's site. When `brand/BRAND.md` and
+`DESIGN.md` exist, read them first and follow them: the token palette in light and dark, the type
+family, weight and size for each role, the corner radii and how the site frames figures, the
+founder's written rules, and the way the product draws its recurring subjects (characters,
+animals, devices) in their own colours, never as a labelled placeholder shape. Name the brand's
+font families with their fallbacks. Without brand files, keep a plain look: system fonts and a
+quiet neutral palette that reads on light and dark pages.
 
-## Figure
+Every figure and piece works in light and dark. Leave its background transparent so the page shows
+through, and give its colours a dark variant (the brand's dark tokens when there are any).
 
-An SVG file in the assets folder:
+## Figure and diagram
+
+An SVG file in the assets folder, for a flow, a structure, a comparison, a timeline or a measured
+result:
 
 ```markdown
 ![What the figure shows](./<folder name>/<file>.svg "What the reader should notice")
 ```
 
 The alt text says what the figure shows; the caption says what to notice. Draw it plainly, with
-real labels and the article's own numbers. The SVG must have no script, no event handlers, no
-`foreignObject` and no links or images from elsewhere; Tin leaves out an SVG that has any.
+real labels and the article's own numbers, in the site's diagram style when DESIGN.md describes
+one. Use a `viewBox` and no fixed pixel width. Put colours in a `<style>` inside the SVG: the light
+values first, then the dark ones in `@media (prefers-color-scheme: dark)`. The SVG must have no
+script, no event handlers, no `foreignObject` and no links, images or fonts from elsewhere; Tin
+leaves out an SVG that has any.
+
+Use a `mermaid` block instead only when the site's own pages already render Mermaid. Tin then
+shows its source for review, and the site draws it.
 
 ## Interactive piece
 
@@ -43,9 +57,18 @@ title: What the reader can do with it
 ```
 ````
 
-Inline its CSS and JavaScript. It runs with no network access: no requests, no outside fonts,
-libraries or images. Keep it small, give it a sensible default state, and make it work with a
-mouse, a keyboard and a touch screen.
+Inline its CSS and JavaScript. It runs with no network access: no requests, no outside
+libraries or images. When DESIGN.md records the font files the site itself serves, you may point
+`@font-face` at those site paths: they load on the site, and Tin's preview uses the fallbacks.
+Keep it small, give it a sensible default state, and make it work with a mouse, a keyboard and a
+touch screen.
+
+Draw no panel, card, border or background around the piece: the page is its background. Frame
+only the surface the reader plays with, the way the site frames figures. Set colours as CSS
+variables, light on `:root` with `color-scheme: light`, and the dark values with
+`color-scheme: dark` in both `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }`
+and `:root[data-theme="dark"] { … }`; Tin sets `data-theme` to match its reader. Let the content
+set its height: Tin fits the frame to it, so `height` is only a first guess.
 
 ## Video
 
