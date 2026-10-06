@@ -455,6 +455,14 @@ def markdown_text(value) -> str:
     return re.sub(r"([\\`*_\[\]{}()#+.!|>~-])", r"\\\1", html.escape(text, quote=False))
 
 
+def markdown_url(value) -> str:
+    """An http(s) URL as a Markdown autolink, which keeps it literal; anything else as text."""
+    text = "".join(c for c in str(value).strip() if unicodedata.category(c) not in {"Cc", "Cf"})
+    if re.fullmatch(r"https?://[^\s<>\\]+", text):
+        return f"<{text}>"
+    return markdown_text(value)
+
+
 def build_documents(
     *,
     run_id: str,
@@ -524,7 +532,7 @@ def build_documents(
     lines = [
         "# Keyword opportunity plan",
         "",
-        f"Website: {markdown_text(scope['url'])}",
+        f"Website: {markdown_url(scope['url'])}",
         "",
         f"Market: {scope['market']} · English · Observed: {scope['started_at']}",
         "",
@@ -599,7 +607,7 @@ def build_documents(
         ]
         if group["existing_page_candidates"]:
             lines += ["Existing pages to inspect (not a confirmed editing assignment):", ""]
-            lines += [f"- {markdown_text(url)}" for url in group["existing_page_candidates"][:5]]
+            lines += [f"- {markdown_url(url)}" for url in group["existing_page_candidates"][:5]]
             lines += [""]
         examples = []
         for key in group["keyword_ids"]:
@@ -607,7 +615,7 @@ def build_documents(
         if examples:
             lines += ["Sampled search results (URLs retained in evidence.json):", ""]
             lines += [
-                f"- {markdown_text(item['title'])}: {markdown_text(item['url'])}"
+                f"- {markdown_text(item['title'])}: {markdown_url(item['url'])}"
                 for item in examples[:3]
             ]
             lines += [""]

@@ -339,7 +339,7 @@ def render_plan(
     plan: dict, *, label: str, batch_id: str | None = None, editorial=None, pages=None
 ) -> str:
     # Escape data used as Markdown headings/labels; never inject arbitrary HTML.
-    from tin_lite.keyword_plan import markdown_text
+    from tin_lite.keyword_plan import markdown_text, markdown_url
 
     lines = [
         f"# {label}",
@@ -425,7 +425,7 @@ def render_plan(
             lines += ["### Already on the site", ""]
             lines += [
                 f"- {markdown_text(entry['title'])}: left out, the site has "
-                f"{markdown_text(entry['page'])} ({entry['match']} match)."
+                f"{markdown_url(entry['page'])} ({entry['match']} match)."
                 for entry in editorial["already_on_site"]
             ] + [""]
         decisions = {d["item_id"]: d for d in editorial["decisions"]}

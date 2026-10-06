@@ -347,3 +347,19 @@ async def test_task_approval_returns_an_explicit_applying_projection() -> None:
     assert response.json()["status"] == "running"
     assert response.json()["task_phase"] == "applying"
     assert handle.signals == ["approve"]
+
+
+def test_bare_urls_drop_markdown_escapes_from_address_and_text() -> None:
+    html = render_markdown(
+        "- Title: https://rewrite\\-photo\\-text\\.pdffiller\\.com/\n\n"
+        "Website: https://imagetextedit\\.com/.\n\n"
+        "Plain: <https://example.com/a-b?x=1&y=2>\n"
+    ).html
+
+    assert "\\" not in html and "%5C" not in html
+    assert (
+        '<a href="https://rewrite-photo-text.pdffiller.com/" rel="noreferrer">'
+        "https://rewrite-photo-text.pdffiller.com/</a>"
+    ) in html
+    assert 'href="https://imagetextedit.com/"' in html and "</a>.</p>" in html
+    assert 'href="https://example.com/a-b?x=1&amp;y=2"' in html

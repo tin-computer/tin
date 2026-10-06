@@ -15,7 +15,7 @@ from test_procedure_publication import publication_db as publication_db
 from tin_lite import content_plan as legacy
 from tin_lite import content_plan_editorial as editorial
 from tin_lite import content_plan_sources as sources
-from tin_lite.keyword_plan import markdown_text
+from tin_lite.keyword_plan import markdown_url
 from tin_lite.model_providers import ModelUsage
 from tin_lite.organic_audit import canonical_json
 
@@ -315,7 +315,7 @@ async def test_the_planner_saves_the_whole_list_and_plans_around_it(publication_
     assert [i["id"] for b in plan["batches"] for i in b["items"]] == ["tools"]
     report = (await read(legacy.paths(str(run.id))["PLAN.md"])).decode()
     assert "The site's page list holds 6 pages" in report
-    assert markdown_text(f"{HOST}/learn/ai-visibility-audit") + " (topic match)" in report
+    assert markdown_url(f"{HOST}/learn/ai-visibility-audit") + " (topic match)" in report
 
 
 async def test_published_pages_are_the_live_ones_in_this_project(publication_db, monkeypatch):

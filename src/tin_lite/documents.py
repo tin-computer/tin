@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 import mistune
 from mistune.renderers.html import HTMLRenderer
 from mistune.util import escape as escape_text
-from mistune.util import safe_entity, striptags
+from mistune.util import escape_url, safe_entity, striptags
 
 WORDS_PER_MINUTE = 220
 _WORD = re.compile(r"[\w]+(?:['’\-][\w]+)*", re.UNICODE)
@@ -37,6 +37,10 @@ class RenderedMarkdown:
 _CALLOUT = re.compile(r"\s*<p>\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\][ \t]*(?:<br />)?\n?")
 _ASSET_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.(?:svg|html)")
 _FIELD = re.compile(r"([a-z]+)[ \t]*:[ \t]*(.+)")
+# Mistune's bare-URL pattern, except a URL never ends in a backslash. Backslash escapes inside a
+# bare URL are Markdown, not part of the address: older plans escaped every dot and hyphen.
+_BARE_URL = r"""https?:\/\/[^\s<]+[^<.,:;"')\]\s\\]"""
+_URL_ESCAPE = re.compile(r"\\([!-/:-@\[-`{-~])")
 
 
 class _TinHTMLRenderer(HTMLRenderer):
@@ -169,13 +173,32 @@ class _VisibleText(HTMLParser):
         self.parts.append(data)
 
 
+def _parse_bare_url(inline, match, state) -> int:
+    text = _URL_ESCAPE.sub(r"\1", match.group(0))
+    if state.in_link:
+        inline.process_text(text, state)
+    else:
+        state.append_token(
+            {
+                "type": "link",
+                "children": [{"type": "text", "raw": text}],
+                "attrs": {"url": escape_url(text)},
+            }
+        )
+    return match.end()
+
+
+def _bare_urls(md) -> None:
+    md.inline.register("url_link", _BARE_URL, _parse_bare_url)
+
+
 def render_markdown(markdown: str, *, asset_folder: str | None = None) -> RenderedMarkdown:
     """Safe HTML for the reader. With an article's `asset_folder`, its figures, embeds and
     videos render as placeholders the reader fills in; otherwise as ordinary Markdown."""
     renderer = _TinHTMLRenderer(asset_folder)
     parser = mistune.create_markdown(
         renderer=renderer,
-        plugins=["strikethrough", "table", "task_lists", "url"],
+        plugins=["strikethrough", "table", "task_lists", _bare_urls],
     )
     # Plain scalar frontmatter is source metadata, not article copy. Keep it accessible
     # without a workflow-specific reader or interpreting YAML tags/objects. Unsupported
