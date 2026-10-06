@@ -174,7 +174,7 @@ test("social code workflow uses ordinary project file or text inputs without sou
     const page=await context.newPage(); page.setDefaultTimeout(10000);
     page.on("pageerror",error=>errors.push(error.message));
     await page.goto(`${base}/?project=project#workflows`);
-    await page.getByRole("button",{name:"Add workflows"}).click();
+    await page.getByRole("button",{name:"Workflows",exact:true}).click();
     await page.getByRole("button",{name:"Set up",exact:true}).click();
     assert.equal(await page.locator("[data-approved-source-picker]").count(),0);
     assert.equal(await page.locator("[name='input:article_path']").count(),1);
