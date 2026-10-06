@@ -134,7 +134,8 @@ before release; never silently move a saved configuration to a newer revision.
 Style capture takes an existing, explicitly user-selected sample packet in project Files.
 organic.technical_fix is hidden (Emre, 10/1: technical fixes go through website.change, which
 this plugin does not expose), so the plugin has no tool that starts, stops or lists technical
-fixes. `preflight_technical_fix` stays as a read-only preview for older clients.
+fixes, and `preflight_technical_fix` is gone with organic.technical_fix's retirement for new
+work.
 
 There is no generic `start_workflow` escape hatch, client-selected
 executor or dynamic schema-discovery/execution pair.

@@ -6,8 +6,12 @@
 > approves or declines once, and publishes approved rows. See
 > [website.change, phase 2](website-change.md#phase-2-technical-changes-from-the-latest-audit).
 > `organic.technical_fix` 0.6.1 stays registered, hidden from discovery (`public_discovery:
-> false`), for pinned runs, saved schedules and the traffic system's current recipe; its
-> behaviour below is unchanged.
+> false`), for pinned runs, saved schedules, retries and older traffic system recipes (v5 and
+> earlier); its behaviour below is unchanged for them. New starts are refused with a pointer to
+> website.change, and its preview tools (`list_technical_fix_sources`,
+> `get_technical_fix_source`, `preflight_technical_fix`) and the technical-fixes sources and
+> preflight routes are gone: `preflight_website_change` previews the same repairs. The tool
+> names below describe how pinned runs were prepared.
 
 `organic.technical_fix` reads an organic audit's findings, checks them on the live site
 again, and proposes an unmerged GitHub PR that fixes every one it can. It does not merge

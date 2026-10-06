@@ -141,9 +141,10 @@ bound repository and the exact proposed branch contents.
 Use normal `get_workflow` / `start_workflow` for either registry key. Standalone
 `organic.audit`, `organic.keyword_plan`, and saved `content.plan` remain unchanged.
 
-Existing source discovery tools are `list_technical_fix_sources`,
-`get_technical_fix_source`, and `preflight_technical_fix`. The preview itself is read-only;
-execution independently resolves and pins its own trusted binding.
+The technical fix's discovery tools (`list_technical_fix_sources`,
+`get_technical_fix_source`, `preflight_technical_fix`) are retired; `preflight_website_change`
+previews the audit's repairs for the v6 recipe. Execution independently resolves and pins its
+own trusted binding.
 
 `get_run` now includes the parent's `system.steps` facts, read only from Postgres.
 The equivalent read is:

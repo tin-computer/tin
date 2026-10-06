@@ -1,37 +1,15 @@
-"""Membership-gated technical-fix preparation and organic-system controls."""
+"""Membership-gated controls for technical-fix runs that exist and for organic-system runs."""
 
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from tin_lite.auth import AuthContext, require_user
-from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
+from tin_lite.technical_fix_sources import TechnicalFixSources
 
 router = APIRouter(prefix="/api/projects/{project_id}/technical-fixes")
 system_router = APIRouter(prefix="/api/projects/{project_id}/organic-system")
 USER = Depends(require_user)
-
-
-class TechnicalFixSelection(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    audit_run_id: UUID
-    audit_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
-    finding_id: str = Field(pattern=r"^oa_[0-9a-f]{20}$")
-    expected_repository: str = Field(min_length=3, max_length=140)
-    repository_serves_site: StrictBool
-
-
-class BatchPreview(BaseModel):
-    """site-fix-v5: the whole audit, or one finding, with the answers given so far."""
-
-    model_config = ConfigDict(extra="forbid")
-    audit_run_id: UUID
-    audit_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
-    finding_id: str = Field(default="", pattern=r"^(|oa_[0-9a-f]{20})$")
-    expected_repository: str = Field(min_length=3, max_length=140)
-    repository_serves_site: StrictBool
-    decisions: list[str] = Field(default_factory=list, max_length=30)
 
 
 async def service(request, project_id, user):
@@ -112,53 +90,5 @@ async def stop_recipe(project_id: UUID, run_id: UUID, request: Request, user: Au
     return await stop_control(request, project_id, run_id, user, stop_system)
 
 
-def http_error(exc):
-    return HTTPException(
-        status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)}
-    )
-
-
-@router.get("/sources")
-async def sources(project_id: UUID, request: Request, offset: int = 0, user: AuthContext = USER):
-    preparation = await service(request, project_id, user)
-    try:
-        return await preparation.list_sources(project_id=project_id, offset=offset)
-    except TechnicalFixError as exc:
-        raise http_error(exc) from exc
-
-
-@router.get("/sources/{audit_run_id}")
-async def inspect(project_id: UUID, audit_run_id: UUID, request: Request, user: AuthContext = USER):
-    preparation = await service(request, project_id, user)
-    try:
-        return await preparation.inspect(project_id=project_id, audit_run_id=audit_run_id)
-    except TechnicalFixError as exc:
-        raise http_error(exc) from exc
-
-
-@router.post("/preflight")
-async def preflight(
-    project_id: UUID, payload: BatchPreview, request: Request, user: AuthContext = USER
-):
-    preparation = await service(request, project_id, user)
-    try:
-        if preparation.batch_mode:
-            values = payload.model_dump()
-            finding_id = values.pop("finding_id")
-            return await preparation.batch(
-                project_id=project_id,
-                finding_ids=[finding_id] if finding_id else [],
-                check_repository=True,
-                **values,
-            )
-        if not payload.finding_id:
-            raise TechnicalFixError(
-                "invalid_selection", "Choose an exact audit finding.", status_code=422
-            )
-        return await preparation.preflight(
-            project_id=project_id,
-            check_repository=True,
-            **payload.model_dump(exclude={"decisions"}),
-        )
-    except TechnicalFixError as exc:
-        raise http_error(exc) from exc
+# The sources and preview routes went with organic.technical_fix's retirement for new work;
+# website.change (source audit) previews the same repairs.
