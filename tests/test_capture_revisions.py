@@ -586,6 +586,27 @@ async def test_agent_revises_the_brand_pair_and_approval_applies_that_version(pu
     assert done.canonical_commit_sha == result["project_revision"]
 
 
+async def test_a_long_change_note_is_shortened_not_refused(publication_db):
+    f = await waiting_brand(publication_db)
+    # Agents list every change they made; the documents, not the note, are the revision.
+    note = "Fixed the title weights everywhere they appeared, " * 40
+    result = await f.revisions.revise(
+        run_id=f.run.id,
+        actor=ACTOR,
+        review_token=(await f.reviews.view(f.run.id, ACTOR))["review_token"],
+        request_id=uuid4(),
+        files=[{"path": f.paths[1], "content": REVISED_DESIGN.decode()}],
+        note=f"{note}\n\nand the colours.",
+        source="mcp",
+        client="claude_code",
+    )
+    assert result["revision_number"] == 1 and head(f, f.paths[1]) == REVISED_DESIGN
+    [row] = await rows(f)
+    kept = row["note"].removesuffix("…")
+    assert len(row["note"]) <= 500 and kept != row["note"]
+    assert note.startswith(kept + " ")  # One line, cut between words.
+
+
 async def test_a_brand_revision_must_pass_the_capture_validators(publication_db):
     f = await waiting_brand(publication_db)
     writes = f.storage.repo.writes
