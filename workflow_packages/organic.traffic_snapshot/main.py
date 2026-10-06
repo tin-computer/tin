@@ -55,6 +55,9 @@ SHORT = [
     "first_seen",
 ]
 TIMEZONE = "America/Los_Angeles"
+# Page × search rows in G4. About 200 bytes a row with long URLs, so 1000 rows fit the gsc
+# binding's 256000-byte bound; 500 rows used to overflow its old 64000 and come back cut.
+G4_ROWS = 1000
 DEADLINE_SECONDS = 40
 ENGAGED = 0.5
 # Signup-source answers that name an AI assistant, matched in PostHog.
@@ -75,14 +78,28 @@ def number(value):
 
 
 def page_key(url):
-    """host/path without a trailing slash: one page whatever the scheme or slash."""
+    """host/path without www. or a trailing slash: one page whatever the scheme, www. or slash."""
     if not url:
         return None
     text = str(url)
     parts = urlsplit(text if "://" in text else "https://" + text)
     if not parts.hostname:
         return None
-    return parts.hostname.lower() + (parts.path.rstrip("/") or "/")
+    return parts.hostname.lower().removeprefix("www.") + (parts.path.rstrip("/") or "/")
+
+
+def month_start(month):
+    return dt.date.fromisoformat(month + "-01")
+
+
+def month_end(month):
+    first = month_start(month)
+    return (first.replace(day=28) + dt.timedelta(days=4)).replace(day=1) - dt.timedelta(days=1)
+
+
+def compact(text):
+    """Lowercase text without spaces, dots, hyphens or underscores: "Acme Photo-Edit.com"."""
+    return re.sub(r"[\s._-]+", "", str(text).lower())
 
 
 def metric(rows):
@@ -194,7 +211,14 @@ def queries(windows_, hosts, excluded, signup, activation, paid, days):
             f"{on} BETWEEN toDate('{prior[0]}') AND toDate('{prior[1]}'), 'p', '')"
         )
 
-    scope = "(" + " OR ".join(f"lowerUTF8(toString(properties.$host)) = {quote(h)}" for h in hosts)
+    # Page keys drop www., and a host found in Search Console has lost it, so scope to both.
+    spelled = []
+    for host in hosts:
+        bare = host.removeprefix("www.")
+        spelled += [bare, "www." + bare]
+    scope = "lowerUTF8(toString(properties.$host)) IN (" + ", ".join(
+        quote(h) for h in dict.fromkeys(spelled)
+    )
     scope += ")"
     span = f"{day('timestamp')} BETWEEN toDate('{prior[0]}') AND toDate('{current[1]}')"
     channel = hogql("um", "rd", "us", hosts)
@@ -651,11 +675,12 @@ async def run(ctx, inputs):
         "branded_scope": "listed pages",
     }
     weeks, months = [], []
+    read_from = today - dt.timedelta(days=365)
     daily = await call(
         "G1",
         "gsc",
         "search_analytics.read",
-        search(["date"], [str(today - dt.timedelta(days=365)), str(today - dt.timedelta(days=1))]),
+        search(["date"], [str(read_from), str(today - dt.timedelta(days=1))]),
     )
     dated = []
     if daily:
@@ -705,6 +730,17 @@ async def run(ctx, inputs):
                 {
                     "month": month,
                     "days": len(rows),
+                    # A month the read only partly covers: it began after the 1st or the
+                    # newest final day falls before the month's end.
+                    "partial": (
+                        "start"
+                        if read_from > month_start(month)
+                        else "end"
+                        if last < month_end(month)
+                        else None
+                    ),
+                    "from": str(max(read_from, month_start(month))),
+                    "to": str(min(last, month_end(month))),
                     "clicks": value[0] if not daily[1] else None,
                     "impressions": value[1] if ok and not daily[1] else None,
                     "reliable": ok,
@@ -763,6 +799,21 @@ async def run(ctx, inputs):
         except re.error:
             reasons.append("step 2: an invalid brand pattern was left out.")
     brands = valid
+    # Searchers space and punctuate a name freely ("acme photo edit.com"), so a plain-word
+    # brand also matches a search with spaces, dots and hyphens removed.
+    squeezed = []
+    if brand_source == "host":
+        for host in hosts:
+            parts = host.removeprefix("www.").split(".")
+            squeezed.append(parts[0] if len(parts[0]) >= 5 else "".join(parts[:2]))
+    else:
+        squeezed = [compact(t) for t in brands if re.fullmatch(r"[\w .'&-]+", t)]
+    squeezed = list(dict.fromkeys(t for t in squeezed if len(t) >= 4))
+
+    def branded(query):
+        if any(re.search(t, query, re.IGNORECASE) for t in brands if len(t) < 200):
+            return True
+        return any(t in compact(query) for t in squeezed)
 
     pinned = {
         page_key(host + str(path))
@@ -816,10 +867,17 @@ async def run(ctx, inputs):
     # G4: queries for every listed page with impressions, clicked pages first.
     shown = [k for k in detail if current.get(k, [0, 0])[1] > 0]
     shown.sort(key=lambda k: current[k][0] == 0)
-    expression = "|".join(re.escape("https://" + k) for k in shown)
+
+    def pages_regex(keys):
+        # Keys drop www. and the trailing slash, so match either spelling of the host and end
+        # each page at its path: unanchored, the home page would match every URL on the site.
+        alternatives = "|".join(re.escape(k.rstrip("/")) for k in keys)
+        return r"^https?://(www\.)?(" + alternatives + r")/?([?#].*)?$"
+
+    expression = pages_regex(shown)
     while shown and len(expression) > 4096:
         shown.pop()
-        expression = "|".join(re.escape("https://" + k) for k in shown)
+        expression = pages_regex(shown)
     read = None
     if shown:
         filters = [{"dimension": "page", "operator": "includingRegex", "expression": expression}]
@@ -827,7 +885,7 @@ async def run(ctx, inputs):
             "G4",
             "gsc",
             "search_analytics.read",
-            search(["page", "query"], window["current"], filters, limit=500),
+            search(["page", "query"], window["current"], filters, limit=G4_ROWS),
         )
     else:
         calls.append(
@@ -841,7 +899,7 @@ async def run(ctx, inputs):
                 continue
             key, query = page_key(parts[0]), str(parts[1])
             if key in objects:
-                named = any(re.search(t, query, re.IGNORECASE) for t in brands if len(t) < 200)
+                named = branded(query)
                 by_page.setdefault(key, []).append(
                     [
                         query,
@@ -1173,7 +1231,7 @@ async def run(ctx, inputs):
             "signups_week": signups_week,
             "answers": answers,
             "search": {
-                "weeks": [w for w in weeks if w["clicks"] is not None][:6]
+                "weeks": [w for w in weeks if w["clicks"] is not None]
                 if len(weeks) > 1
                 and weeks[0]["clicks"] is not None
                 and weeks[1]["clicks"] is not None
@@ -1210,6 +1268,7 @@ async def run(ctx, inputs):
             "website_hosts_source": host_source,
             "brand_terms": brands,
             "brand_source": brand_source,
+            "brand_compact": squeezed,
             "signup_event": signup,
             "activation_event": activation,
             "activation_window_days": days,

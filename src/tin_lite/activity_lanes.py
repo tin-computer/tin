@@ -123,6 +123,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "organic_start_crawl",
         "organic_system_failure",
         "organic_system_finish",
+        "organic_system_measurement",
         "organic_system_prepare",
         "organic_system_progress",
         "organic_system_refresh",

@@ -159,19 +159,52 @@ def top_searches(evidence: dict, key: str) -> list[dict[str, Any]]:
     return found[:MAX_SEARCHES]
 
 
-def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict | None:
-    """The eligible page with the most search impressions at stake, or None."""
+def choose(
+    findings_document: dict,
+    evidence: dict,
+    blocked: set[str],
+    *,
+    decisions: dict | None = None,
+) -> dict | None:
+    """The page to refresh this week, or None.
+
+    With a current Page decisions file (`decisions`, as content_plan_sources.page_decisions
+    reads it), the first page it marks for a refresh that is not waiting, in its own order,
+    and never a page it keeps, merges or retires. Otherwise, or when none of its pages is due,
+    the eligible audit page with the most search impressions at stake, as in 1.0.0.
+    """
     rows = page_rows(evidence)
+    pages = candidates(findings_document)
+    decided = decisions if (decisions or {}).get("status") == "used" else {}
+    skip = {url_key(path) for path in [*(decided.get("cut") or {}), *(decided.get("keep") or [])]}
+    host = (evidence.get("scope") or {}).get("host")
+    # Page decisions lists paths without a trailing slash; keep the spelling search shows.
+    spelled = {
+        url_key(row["url"]): row["url"]
+        for row in (((evidence.get("search_console") or {}).get("value")) or {}).get("pages") or []
+        if isinstance(row, dict) and str(row.get("url") or "").startswith("https://")
+    }
+    planned = []
+    for path, decision in (decided.get("refresh") or {}).items() if host else ():
+        key = url_key(path)
+        url = spelled.get(key) or f"https://{host}{path}"
+        entry = pages.setdefault(key, {"url": url, "checks": set()})
+        entry["checks"] |= set(decision.get("checks") or []) & REFRESH_CHECKS
+        entry["planned"] = True
+        if key not in blocked and key not in planned:
+            planned.append(key)
     ranked = []
-    for key, entry in candidates(findings_document).items():
-        if key in blocked:
+    for key, entry in pages.items():
+        if key in blocked or key in skip or key in planned:
             continue
         row = rows.get(key, {"clicks": 0.0, "impressions": 0.0, "position": 0.0})
         ranked.append((-row["impressions"], key, entry, row))
-    if not ranked:
-        return None
     ranked.sort(key=lambda item: (item[0], item[1]))
-    _, key, entry, row = ranked[0]
+    order = [(key, pages[key]) for key in planned] + [(key, entry) for _, key, entry, _ in ranked]
+    if not order:
+        return None
+    key, entry = order[0]
+    row = rows.get(key, {"clicks": 0.0, "impressions": 0.0, "position": 0.0})
     ctr = row["clicks"] / row["impressions"] if row["impressions"] else 0.0
     return {
         "url": entry["url"],
@@ -180,6 +213,7 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
         "metrics": {**row, "ctr": round(ctr, 4)},
         "searches": top_searches(evidence, key),
         "body_allowed": bool(entry["checks"] & BODY_CHECKS),
+        **({"planned_by": "organic.content_efficacy"} if entry.get("planned") else {}),
     }
 
 
@@ -194,7 +228,8 @@ def choose(findings_document: dict, evidence: dict, blocked: set[str]) -> dict |
 #   far              beyond position 30. Far pages come last, so one is planned only when no
 #                    better candidate is left.
 # content.plan's refresh candidates and content.generate's refresh items use this rule.
-# content.refresh's own weekly pick (`choose`) keeps sorting by impressions, as it did in 1.0.0.
+# content.refresh's own weekly pick (`choose`) takes Page decisions' refresh rows first, in their
+# order, then sorts the audit's pages by impressions, as it did in 1.0.0.
 WEAK_CONVERSION = "traffic.weak_conversion"
 UPSIDE_CHECKS = {
     "search.near_page_one": "it ranks just below the top results",

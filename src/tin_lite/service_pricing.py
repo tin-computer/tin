@@ -90,6 +90,9 @@ TRAFFIC_SYSTEM_POOL_USD = 10
 # most 32,000 tokens (content-editorial-v8; v7 wrote 16,000): $0.088 even at long-context
 # rates, under $0.10. Standalone plans keep the $2 native ceiling.
 CONTENT_PLAN_SHARE_USD = 1
+# Page decisions' share inside the organic parent (organic-traffic-v7): at most two GPT-6 Luna
+# calls of 30,000 input bytes and 2,048 output tokens each, a few cents even at the bound.
+PAGE_DECISIONS_SHARE_USD = 1
 
 
 def amount_nanos(value):
@@ -140,6 +143,7 @@ def service_terms(definition, *, inputs=None):
                 "organic-traffic-v4",
                 "organic-traffic-v5",
                 "organic-traffic-v6",
+                "organic-traffic-v7",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -148,7 +152,7 @@ def service_terms(definition, *, inputs=None):
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
             pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
-            if version in {"organic-traffic-v5", "organic-traffic-v6"}:
+            if version in {"organic-traffic-v5", "organic-traffic-v6", "organic-traffic-v7"}:
                 # v5's first page refresh is a child run; later weekly refreshes are ordinary
                 # scheduled runs with their own funding. The pool grows by the refresh's own
                 # ceiling, since a production run has not measured one yet. v6 keeps v5's
@@ -158,6 +162,10 @@ def service_terms(definition, *, inputs=None):
 
                 maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]
                 pool += PROCEDURE_MAXIMUMS["content-refresh.v1"]
+            if version == "organic-traffic-v7":
+                # v7's first traffic snapshot (no model call) and Page decisions run as children.
+                maximum += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
+                pool += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
             # The children's ceilings add up to more than a run spends; the pool bounds the run.
             maximum = min(maximum, pool)
         kinds = []  # The parent itself never buys a model call.

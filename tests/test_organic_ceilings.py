@@ -108,15 +108,15 @@ def test_content_plan_share_covers_its_one_model_call():
     ("inputs", "dollars"),
     [
         # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 + first
-        # refresh $2.50 = $17.50 ($22.50 with a technical fix); the pool caps the run at the
-        # keyword limit + $10 + the refresh's $2.50.
-        ({}, 14.5),
-        ({"content_delivery": "draft_only"}, 12.5),  # $12.50 of children, under the pool
+        # refresh $2.50 + Page decisions $1 = $18.50 ($23.50 with a technical fix); the pool
+        # caps the run at the keyword limit + $10 + the refresh's $2.50 + Page decisions' $1.
+        ({}, 15.5),
+        ({"content_delivery": "draft_only"}, 13.5),  # $13.50 of children, under the pool
         (
             {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
-            14.5,
+            15.5,
         ),
-        ({"keyword_max_cost_usd": 9}, 21.5),  # a founder's higher keyword limit raises the pool
+        ({"keyword_max_cost_usd": 9}, 22.5),  # a founder's higher keyword limit raises the pool
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):

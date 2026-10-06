@@ -574,12 +574,18 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
 
 @pytest.mark.asyncio
 async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -> None:
-    # Include the package child published atomically with the native X parent.
+    # Include the package children published atomically with the X parent and the organic
+    # system.
+    from tin_lite.organic_system import MEASURE_STEPS
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS, load_public_workflows
 
     monkeypatch.setattr(
         "tin_lite.public_workflows.PUBLIC_WORKFLOWS",
-        tuple(item for item in PUBLIC_WORKFLOWS if item.key == "social.x_compose"),
+        tuple(
+            item
+            for item in PUBLIC_WORKFLOWS
+            if item.key in {"social.x_compose", *MEASURE_STEPS.values()}
+        ),
     )
     packages = await load_public_workflows()
     _, workflow, _ = fixture_state()
