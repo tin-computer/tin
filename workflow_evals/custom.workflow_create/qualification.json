@@ -23,7 +23,8 @@
           "tin-workflow-candidate-v1",
           "product.analytics_brief",
           "qualification",
-          "analytics.posthog"
+          "analytics.posthog",
+          "presentation"
         ]
       }
     }

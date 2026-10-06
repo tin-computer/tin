@@ -54,6 +54,88 @@ class WorkflowDiagram:
         return value
 
 
+# Workflows that still wait for their diagram. The backfill empties this set; until then a
+# definition that is neither here nor drawn fails its catalog or contribution check.
+PRESENTATION_PENDING = frozenset(
+    {
+        # Built-ins
+        "ads.assessment",
+        "ads.launch",
+        "ads.monitor",
+        "content.answer_page",
+        "content.design_md",
+        "content.diagram",
+        "content.public_article",
+        "creative.character",
+        "creative.product_demo",
+        "outreach.awesome_submit",
+        "outreach.email_shortlist",
+        "product.code_map",
+        "product.deep_dive",
+        "project.memory",
+        "qa.product_audit",
+        "qa.signup_walkthrough",
+        "research.deep_dive",
+        "scan.report",
+        "social.x_draft",
+        "social.x_style",
+        "visibility.audit",
+        # Packages
+        "brand.capture",
+        "competitor.sunset_rescue",
+        "competitor.watch",
+        "content.blog_index",
+        "content.release_announce",
+        "example.project_files",
+        "growth.framework_starter",
+        "growth.free_tool",
+        "growth.score_quiz",
+        "growth.signup_source",
+        "organic.content_efficacy",
+        "organic.error_surface",
+        "organic.mention_backlinks",
+        "organic.prompt_panel",
+        "organic.site_architecture",
+        "organic.traffic_snapshot",
+        "outreach.awesome_lists",
+        "outreach.campus_events",
+        "outreach.marketplace_listings",
+        "outreach.newsletter_placements",
+        "outreach.paying_segment",
+        "outreach.podcast_guest",
+        "outreach.speaking_shortlist",
+        "outreach.syllabus_placement",
+        "product.analytics_brief",
+        "qa.buyer_trust",
+        "social.content_plan",
+        "social.post_batch",
+        "social.x_compose",
+    }
+)
+
+PRESENTATION_REQUIRED = (
+    "workflow presentation is required: draw how the run goes as a top-to-bottom flow "
+    "(see docs/adding-a-workflow.md, Draw how it runs)"
+)
+
+
+def validate_presentation(value: object) -> None:
+    """A definition's presentation: one flow, for reading a run, never for running it."""
+    if not isinstance(value, dict) or set(value) != {"flow"}:
+        raise ValueError("workflow presentation must contain only a flow")
+    validate_workflow_diagram(value["flow"])
+
+
+def check_presentation(definition: dict[str, Any], *, required: bool) -> None:
+    """Validate a definition's diagram, and insist on one where Tin controls the authoring."""
+    value = definition.get("presentation")
+    if value is None:
+        if required and definition.get("key") not in PRESENTATION_PENDING:
+            raise ValueError(PRESENTATION_REQUIRED)
+        return
+    validate_presentation(value)
+
+
 def validate_workflow_diagram(value: object) -> None:
     """Validate the deliberately small visual vocabulary stored in a workflow definition."""
     if not isinstance(value, dict) or set(value) != {"direction", "nodes", "edges"}:
@@ -135,3 +217,31 @@ def _validate_text(
         return
     if not value or not _SAFE_TEXT.fullmatch(value):
         raise ValueError(f"workflow diagram {field} is invalid")
+
+
+def diagram_for_saved_workflow(
+    *, current: dict[str, Any], pinned: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Which drawing a saved workflow shows: its own revision's, or today's.
+
+    A schedule pinned before its workflow was drawn has no drawing of its own. When today's
+    definition differs from the pinned one only by that drawing, today's drawing is exact for
+    it; otherwise it is today's workflow, and the panel says which version the schedule runs.
+    """
+
+    def body(definition: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in definition.items() if key != "presentation"}
+
+    if pinned is not None and pinned.get("presentation"):
+        return {
+            "flow": pinned["presentation"]["flow"],
+            "version": pinned.get("version"),
+            "pinned_version": pinned.get("version"),
+            "exact": True,
+        }
+    return {
+        "flow": (current.get("presentation") or {}).get("flow"),
+        "version": current.get("version"),
+        "pinned_version": pinned.get("version") if pinned is not None else None,
+        "exact": pinned is not None and body(pinned) == body(current),
+    }

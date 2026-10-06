@@ -565,8 +565,9 @@ async def test_an_approved_refresh_applies_only_the_exact_replacements(
 
 # The retired entry points: hidden from discovery, still runnable for pinned runs and schedules.
 
-# Digests of each retired definition (without its version, description and discovery flag)
-# and its procedure files, as content.refresh 1.0.0 and content.answer_page 1.6.0 shipped.
+# Digests of each retired definition (without its version, description, discovery flag and
+# drawing, none of which changes a run) and its procedure files, as content.refresh 1.0.0 and
+# content.answer_page 1.6.0 shipped.
 RETIRED = {
     "content.refresh": (
         "1.1.0",
@@ -584,7 +585,7 @@ def contract_digest(key):
     kept = {
         k: v
         for k, v in definition.items()
-        if k not in {"version", "description", "public_discovery"}
+        if k not in {"version", "description", "public_discovery", "presentation"}
     }
     return hashlib.sha256(
         json.dumps(

@@ -31,6 +31,22 @@
         "kind": "project.artifact", "path": "reports/custom/ORDER_CLASSIFICATION.md",
         "media_type": "text/markdown", "max_bytes": 8000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "filter", "kind": "step", "label": "Keep the larger orders", "fact": "fixture orders at or above your minimum"},
+          {"id": "classify", "kind": "step", "label": "Classify each order", "fact": "one model call: small, medium or large"},
+          {"id": "check", "kind": "step", "label": "Check every label", "fact": "same orders back, and the amount rule holds"},
+          {"id": "report", "kind": "receipt", "label": "Classified orders in Files", "fact": "reports/custom/ORDER_CLASSIFICATION.md"}
+        ],
+        "edges": [
+          {"from": "filter", "to": "classify", "kind": "call"},
+          {"from": "classify", "to": "check", "kind": "call"},
+          {"from": "check", "to": "report", "kind": "call"}
+        ]
+      }
     }
   }
 }

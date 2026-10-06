@@ -20,6 +20,7 @@ from typing import Any
 from tin_lite.integrations import parse_integration_requirements
 from tin_lite.procedures import load_pinned_codex_procedure
 from tin_lite.workflow_code import load_code_package
+from tin_lite.workflow_diagrams import check_presentation
 from tin_lite.workflow_packages import (
     MAX_DEFINITION_BYTES,
     MAX_PACKAGE_FILES,
@@ -137,6 +138,8 @@ def _validate_metadata(definition: dict[str, Any]) -> None:
     parse_workflow_prerequisites(
         definition.get("prerequisites"), input_schema=definition["input_schema"]
     )
+    # Every contribution and creator candidate shows how it runs.
+    check_presentation(definition, required=True)
 
 
 def _check_files(package: ContributedPackage, *, root: Path) -> str:

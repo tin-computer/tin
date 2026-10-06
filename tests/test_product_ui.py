@@ -446,8 +446,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert ".workflow-config-row" in stylesheet
     assert 'script.src = "/assets/diagram-renderer.js"' in diagram_loader
     assert "window.TinDiagramLoader.load()" in script
-    assert "derived from the pinned definition" in script
-    assert "data-workflow-diagram" in script
+    assert "data-show-workflow-diagram" in script
+    assert "/diagram`" in script
+    assert "has-diagram-panel" in script
     assert "data-project-diagram" in script
     assert "TinDiagramRenderer" in diagram_script
     assert "var(--diagram-edge)" in diagram_script

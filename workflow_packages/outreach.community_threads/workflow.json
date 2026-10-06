@@ -107,6 +107,28 @@
         "media_type": "text/markdown",
         "max_bytes": 120000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Plan, feature map and voice", "fact": "read from project Files"},
+          {"id": "search", "kind": "surface", "label": "Reddit, HN, GitHub, forums", "fact": "unresolved asks, active in the last 14 days"},
+          {"id": "draft", "kind": "step", "label": "Draft one reply per thread", "fact": "answers first, discloses you as founder"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "up to 5 threads, never padded"},
+          {"id": "review", "kind": "gate", "label": "Review the replies", "fact": "no deadline, weekly runs skip until then"},
+          {"id": "done", "kind": "receipt", "label": "Replies ready to post", "fact": "you post each one, Tin posts nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "search", "kind": "call"},
+          {"from": "search", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "report", "to": "review", "kind": "call"},
+          {"from": "review", "to": "done", "kind": "signal", "label": "approved"},
+          {"from": "report", "to": "search", "kind": "signal", "label": "next run skips these"},
+          {"from": "context", "to": "report", "kind": "call", "label": "not a fit, or no problem named"}
+        ]
+      }
     }
   }
 }

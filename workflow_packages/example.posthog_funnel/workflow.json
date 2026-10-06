@@ -82,6 +82,22 @@
         "media_type": "text/markdown",
         "max_bytes": 32000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "define", "kind": "step", "label": "Define the funnel", "fact": "a UTC window and at most three stages"},
+          {"id": "posthog", "kind": "surface", "label": "PostHog, read only", "fact": "definitions and HogQL, eight calls at most"},
+          {"id": "calculate", "kind": "step", "label": "Calculate conversion", "fact": "ordered stages per actor, checked in SQL"},
+          {"id": "report", "kind": "receipt", "label": "Funnel report in Files", "fact": "queries, counts and data limitations"}
+        ],
+        "edges": [
+          {"from": "define", "to": "posthog", "kind": "call"},
+          {"from": "posthog", "to": "calculate", "kind": "call"},
+          {"from": "calculate", "to": "report", "kind": "call"}
+        ]
+      }
     }
   }
 }
