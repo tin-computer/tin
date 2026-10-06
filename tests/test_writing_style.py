@@ -73,7 +73,7 @@ async def test_style_guide_http_mcp_parity_and_no_run(publication_db, monkeypatc
 
 def test_new_public_article_prompt_reads_optional_project_guide():
     article = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.public_article")
-    assert article.version_label == "1.10.0"
+    assert article.version_label == "1.11.0"
     assert article.system == "organic-traffic"
     assert article.prerequisites[0].producer == "style.capture"
     assert article.procedure.project_skills[0].path == STYLE_PATH

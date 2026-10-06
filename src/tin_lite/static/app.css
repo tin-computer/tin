@@ -8363,7 +8363,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   display: block;
   padding: 8px 0 0;
   color: var(--on-dark-code);
-  content: "Tin could not render this diagram; the source remains available.";
+  content: "Shown as source: Tin previews only its own diagram format.";
   font-family: var(--sans);
   font-size: 11px;
   line-height: 16px;

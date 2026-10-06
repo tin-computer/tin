@@ -29,11 +29,9 @@ file's project path, and diagram, video and callout blocks in `article`. Your pr
 checkout is at the approved revision: copy each asset from `/home/user/state/<path>` into the
 place this site keeps such files, and show it the way the site shows media. An SVG becomes an
 image or the site's figure component, with its alt text and caption. An interactive piece
-becomes an iframe or an inline component, with its script and data unchanged. Turn each
-`mermaid` block into SVG with
-`node /opt/tin-lite/diagram/scripts/check_diagram.mjs check <file>.mmd --out <empty absolute directory> --no-previews`,
-which writes `light.svg` and `dark.svg`; use the site's own diagram support instead when it
-has one. Show each `tin-video` block with the site's video component or the provider's embed
+becomes an iframe or an inline component, with its script and data unchanged. Show each
+`mermaid` block with the site's own Mermaid support, or draw it as an SVG figure in the site's
+style when the site has none. Show each `tin-video` block with the site's video component or the provider's embed
 code, linking a video file rather than copying it, and each `> [!NOTE]`-style callout with
 the site's own note style, or a plain aside. Every approved asset, diagram and video has to
 appear on the page.
