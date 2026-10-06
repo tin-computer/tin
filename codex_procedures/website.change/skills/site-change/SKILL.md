@@ -21,7 +21,9 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    approved, `page_metadata.slug`, when it is given. Otherwise make `{slug}` three to five
    lowercase, hyphenated words from the title that name its main search term, without
    filler words. Publish at exactly that route. A new page must not overwrite an
-   existing one; add a short suffix instead.
+   existing one: when that address already holds a different page, add a short suffix to
+   the new page's slug and say so in the PR body. Never move, rename or remove an existing
+   page to make room for it.
 4. Put the page where the site keeps pages of that kind, never under `content/answers/`,
    which is Tin's draft folder and not a page on the site. Build it the way the site builds
    such pages: a Markdown or MDX file, a component, a typed page registry, plain HTML or
@@ -31,6 +33,8 @@ instead: the change is the audit's technical fixes or planned URL changes, not a
    `page_metadata` onto the site's own fields (for example `title` and `description`);
    leave out any field the site does not read. Avoid a duplicate visible H1. The page must
    actually be served, not left in a comment, an unused constant or a folder nothing reads.
+   Hold its content the way the site's other pages do, and add no code that checks or
+   enforces the approved copy or files; Tin checks them itself.
    Match the site's other pages of that kind: the same header, footer, links back into the
    site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
    the site already loads; never add web fonts or other outside resources.

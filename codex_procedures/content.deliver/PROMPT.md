@@ -38,7 +38,7 @@ appear on the page.
 
 If the site does not serve the page's route yet, add the smallest route that fits how its
 other pages are served. Change what the page needs (the page, its route, and any index or
-sitemap the site keeps) and nothing else.
+sitemap the site keeps) and nothing else. Never move, rename or remove another page.
 
 Run available relevant checks. Never claim a full build succeeded if dependencies,
 network access, configuration or services prevent it. The mandatory Tin check is
