@@ -960,11 +960,16 @@ function systemTemplateCard(workflow, query) {
       <span class="system-template-description">${escapeHtml(workflow.description)}</span>
       <code>${workflowSearchMatch(workflow.key, query, "workflow-search-id-match")}${contextLabel ? ` · ${escapeHtml(contextLabel)}` : ""}</code>
     </span>
-    <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
-      ${saved
-        ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
-        : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
-      <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
+    <span class="system-template-side">
+      <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
+        ${saved
+          ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
+          : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
+        <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
+      </span>
+      ${workflow.last_run_id && workflow.last_run_at
+        ? `<button class="system-last-run" type="button" data-template-last-run="${escapeHtml(workflow.last_run_id)}">Last run ${escapeHtml(dayLabel(workflow.last_run_at))}, ${escapeHtml(ledgerTime(workflow.last_run_at))}</button>`
+        : ""}
     </span>
   </article>`;
 }
@@ -1840,6 +1845,9 @@ function bindWorkflowResultControls(root) {
   root.querySelectorAll("[data-save-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.saveTemplate, true, button));
   });
+  root.querySelectorAll("[data-template-last-run]").forEach((button) => {
+    button.addEventListener("click", () => openTemplateLastRun(button.dataset.templateLastRun));
+  });
   root.querySelectorAll("[data-remove-saved-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.removeSavedTemplate, false, button));
   });
@@ -2066,7 +2074,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
     </header>
     <div class="workflow-sections system-sections" aria-label="System sections">
       <button class="workflow-section ${state.workflowSection === "yours" ? "is-active" : ""}" type="button" data-workflow-section="yours">My system ${runningCount ? `<i aria-hidden="true"></i><span>${runningCount}</span>` : ""}</button>
-      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Add workflows</button>
+      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Workflows</button>
       <button class="workflow-section ${state.workflowSection === "activity" ? "is-active" : ""}" type="button" data-workflow-section="activity">Activity</button>
       <span class="system-pace">${escapeHtml(state.workflowSection === "activity" ? systemActivityPace() : systemPaceLine())}</span>
     </div>
@@ -5083,16 +5091,50 @@ function activityAction(event) {
   }
   const run = state.runs.find((item) => item.id === event.run_id);
   if (!run) return "";
-  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) {
+  const target = runOpenTarget(run);
+  if (target === "task") {
     return `<button class="open-button" type="button" data-activity-task="${escapeHtml(run.id)}">Open</button>`;
   }
-  if (run.retained_output && !run.canonical_commit_sha) {
+  if (target === "retained") {
     return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
   }
-  if (!availableRunOutput(run)) {
+  if (target === "details") {
     return `<button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Open</button>`;
   }
   return `<button class="open-button" type="button" data-activity-artifact="${escapeHtml(run.id)}" title="${escapeHtml(run.artifact_path)}">Open</button>`;
+}
+
+// What Open does for a run, shared by Activity rows and the Workflows tab's last-run link.
+function runOpenTarget(run) {
+  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) return "task";
+  if (run.retained_output && !run.canonical_commit_sha) return "retained";
+  if (!availableRunOutput(run)) return "details";
+  return "artifact";
+}
+
+// The Workflows tab's "Last run" link opens the run as Activity's Open button would. The run
+// may be older than the recent runs the dashboard holds, so it is fetched when missing. A run
+// without output expands its details in Activity, where they render.
+async function openTemplateLastRun(runId) {
+  let run = state.runs.find((item) => item.id === runId);
+  if (!run) {
+    try {
+      run = await api(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
+    if (!state.runs.some((item) => item.id === runId)) state.runs.push(run);
+  }
+  const target = runOpenTarget(run);
+  if (target === "task") { openTask(run.id); return; }
+  if (target !== "details") { openRunArtifact(run.id, "workflows"); return; }
+  const event = state.activity.find((item) => item.run_id === run.id);
+  if (!event) { openRunArtifact(run.id, "workflows"); return; }
+  state.workflowSection = "activity";
+  state.workflowEditor = null;
+  state.expandedRun = null;
+  await toggleRunDetails(run.id, event.id);
 }
 
 function safeHttpsUrl(value) {

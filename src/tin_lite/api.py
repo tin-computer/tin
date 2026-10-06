@@ -776,6 +776,8 @@ class WorkflowView(BaseModel):
     forked_from_commit_sha: str | None
     saved: bool = False
     project_workflow_count: int = 0
+    last_run_id: UUID | None = None
+    last_run_at: datetime | None = None
     scope: str = "builtin"
     source: dict = Field(default_factory=dict)
     definition_revision: str | None = None

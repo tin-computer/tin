@@ -1697,15 +1697,25 @@ class Database:
                    (saved.workflow_id IS NOT NULL) AS saved,
                    count(configured.id) FILTER (
                        WHERE configured.status <> 'archived'
-                   )::integer AS project_workflow_count
+                   )::integer AS project_workflow_count,
+                   latest.id AS last_run_id,
+                   latest.finished_at AS last_run_at
             FROM workflows AS workflow
             LEFT JOIN saved_workflow_templates AS saved
               ON saved.workflow_id = workflow.id AND saved.clerk_user_id = $2
             LEFT JOIN project_workflows AS configured
               ON configured.workflow_id = workflow.id AND configured.project_id = $1
+            LEFT JOIN LATERAL (
+                SELECT id, finished_at
+                FROM workflow_runs
+                WHERE project_id = $1 AND workflow_id = workflow.id
+                  AND finished_at IS NOT NULL
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) AS latest ON true
             WHERE workflow.status <> 'archived'
               AND (workflow.project_id IS NULL OR workflow.project_id = $1)
-            GROUP BY workflow.id, saved.workflow_id
+            GROUP BY workflow.id, saved.workflow_id, latest.id, latest.finished_at
             """,
             project_id,
             clerk_user_id,
@@ -1714,6 +1724,8 @@ class Database:
             row["id"]: {
                 "saved": bool(row["saved"]),
                 "project_workflow_count": int(row["project_workflow_count"] or 0),
+                "last_run_id": row["last_run_id"],
+                "last_run_at": row["last_run_at"],
             }
             for row in rows
         }

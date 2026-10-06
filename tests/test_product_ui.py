@@ -314,7 +314,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'data-workflow-section="registry"' in script
     assert 'placeholder="Search…"' in script
     assert 'data-workflow-section="yours">My system' in script
-    assert 'data-workflow-section="registry">Add workflows' in script
+    assert 'data-workflow-section="registry">Workflows' in script
     assert "function systemMySystemHtml()" in script
     # The week ahead (Paper SYS-V3) sits above the Scheduled cards.
     assert "function systemWeekAheadHtml()" in script

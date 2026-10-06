@@ -4374,6 +4374,29 @@ html[data-theme="dark"] .markdown-logo::before {
   align-items: center;
 }
 
+.system-template-side {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.system-last-run {
+  padding: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.system-last-run:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+
 .system-template-actions {
   flex-shrink: 0;
   gap: 8px;
@@ -7727,7 +7750,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     padding: 13px 14px;
   }
 
-  .system-template-card:not(.is-open) > .system-template-actions {
+  .system-template-card:not(.is-open) > .system-template-side {
     align-self: flex-end;
   }
 
