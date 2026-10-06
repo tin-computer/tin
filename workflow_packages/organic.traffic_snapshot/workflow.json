@@ -201,6 +201,27 @@
         "media_type": "application/json",
         "max_bytes": 64000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "a year of days, pages, queries, 4 reads"},
+          {"id": "posthog", "kind": "surface", "label": "PostHog", "fact": "sessions, signups, reading, 4 queries"},
+          {"id": "pages", "kind": "step", "label": "Build a row per landing page", "fact": "top 30 in detail, audit checks added"},
+          {"id": "test", "kind": "step", "label": "Test each weekly change", "fact": "exact test with Holm's correction"},
+          {"id": "kept", "kind": "ghost", "label": "Previous snapshot stays", "fact": "no provider read returned data"},
+          {"id": "receipt", "kind": "receipt", "label": "Snapshot with weekly readout", "fact": "decisions name the workflow that acts"}
+        ],
+        "edges": [
+          {"from": "search_console", "to": "posthog", "kind": "call", "label": "if connected"},
+          {"from": "search_console", "to": "pages", "kind": "call", "label": "without PostHog"},
+          {"from": "posthog", "to": "pages", "kind": "call"},
+          {"from": "pages", "to": "test", "kind": "call"},
+          {"from": "pages", "to": "kept", "kind": "call", "label": "nothing read"},
+          {"from": "test", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }

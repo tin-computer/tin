@@ -65,11 +65,17 @@
     const column = new Map();
     const rows = [];
     for (const layer of layers.filter(Boolean)) {
-      // Keep a branch on the side its parent sits.
+      // Keep a branch on the side its parent sits. A skip comes down the rail on its
+      // source's side (the right, from the spine), so the node it enters sits on that side.
       layer.sort((a, b) => {
         const lean = (item) => {
           const parents = forward.filter((edge) => edge.to === item.node.id && column.has(edge.from));
-          return parents.length ? parents.reduce((sum, edge) => sum + column.get(edge.from), 0) / parents.length : 0;
+          if (!parents.length) return 0;
+          const side = parents.reduce((sum, edge) => sum + column.get(edge.from), 0) / parents.length;
+          const rail = parents
+            .filter((edge) => depth.get(item.node.id) - depth.get(edge.from) > 1)
+            .reduce((sum, edge) => sum + (column.get(edge.from) < 0 ? -0.5 : 0.5), 0);
+          return side + rail;
         };
         return lean(a) - lean(b) || a.index - b.index;
       });
@@ -231,14 +237,14 @@
       const from = box(root, edge.from, origin);
       const to = box(root, edge.to, origin);
       if (!from || !to) continue;
-      const dashed = edge.kind === "signal" ? ' stroke-dasharray="3 4"' : "";
+      const attributes = `${edge.kind === "signal" ? ' stroke-dasharray="3 4"' : ""} data-from="${escapeHtml(edge.from)}" data-to="${escapeHtml(edge.to)}"`;
       const sourceRow = rowIndex(edge.from);
       const targetRow = rowIndex(edge.to);
       if (edge.loop) {
         // Back up the left rail into the left side of the earlier node.
         const startY = from.y;
         const endY = to.y;
-        paths += `<path d="${route([[from.left - SOURCE_GAP, startY], [leftRail, startY], [leftRail, endY], [to.left - TARGET_GAP, endY]])}"${dashed} />`;
+        paths += `<path d="${route([[from.left - SOURCE_GAP, startY], [leftRail, startY], [leftRail, endY], [to.left - TARGET_GAP, endY]])}"${attributes} />`;
         heads += `<path d="${arrow(to.left - TARGET_GAP, endY, "right")}" />`;
         label(edge.label, leftRail, (startY + endY) / 2, "rail");
         continue;
@@ -250,7 +256,7 @@
         const rail = onLeft ? leftRail - (hasLoops ? 8 : 0) : rightRail;
         const startX = onLeft ? from.left - SOURCE_GAP : from.textRight + SOURCE_GAP;
         const endX = onLeft ? to.left - TARGET_GAP : to.textRight + TARGET_GAP;
-        paths += `<path d="${route([[startX, from.y], [rail, from.y], [rail, to.y], [endX, to.y]])}"${dashed} />`;
+        paths += `<path d="${route([[startX, from.y], [rail, from.y], [rail, to.y], [endX, to.y]])}"${attributes} />`;
         heads += `<path d="${arrow(endX, to.y, onLeft ? "right" : "left")}" />`;
         label(edge.label, rail, (from.y + to.y) / 2, "skip");
         continue;
@@ -261,7 +267,7 @@
       const points = Math.abs(from.x - to.x) < 1
         ? [[from.x, startY], [to.x, endY]]
         : [[from.x, startY], [from.x, middle], [to.x, middle], [to.x, endY]];
-      paths += `<path d="${route(points)}"${dashed} />`;
+      paths += `<path d="${route(points)}"${attributes} />`;
       heads += `<path d="${arrow(to.x, endY, "down")}" />`;
       const top = Math.max(startY, middle);
       const bottom = Math.min(endY, to.textTop - 4);

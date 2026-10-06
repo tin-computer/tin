@@ -110,6 +110,30 @@
         "media_type": "text/markdown",
         "max_bytes": 200000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Your profile, Feature map, plan", "fact": "hard no's bind, earlier picks not repeated"},
+          {"id": "arenas", "kind": "step", "label": "Choose the audiences", "fact": "3 to 6: buyers, craft, home country, topic"},
+          {"id": "search", "kind": "surface", "label": "Podscan and the web", "fact": "at most 30 Podscan calls, 2 methods an arena"},
+          {"id": "verify", "kind": "step", "label": "Verify each finalist", "fact": "active, listened to, hosted guests like you"},
+          {"id": "plan", "kind": "step", "label": "Balance the picks in code", "fact": "10 by default, skips shows pitched before"},
+          {"id": "draft", "kind": "step", "label": "Draft one pitch per show", "fact": "in its language, or a first step to get in"},
+          {"id": "report", "kind": "receipt", "label": "Pitches to send yourself", "fact": "reports/outreach/podcasts, Tin sends nothing"},
+          {"id": "thin", "kind": "ghost", "label": "Needs more about you", "fact": "a profile with no role or background"}
+        ],
+        "edges": [
+          {"from": "context", "to": "arenas", "kind": "call"},
+          {"from": "arenas", "to": "search", "kind": "call"},
+          {"from": "search", "to": "verify", "kind": "call"},
+          {"from": "verify", "to": "plan", "kind": "call"},
+          {"from": "plan", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "context", "to": "thin", "kind": "call", "label": "too little"}
+        ]
+      }
     }
   }
 }

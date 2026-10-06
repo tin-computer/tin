@@ -85,6 +85,28 @@
         "media_type": "text/markdown",
         "max_bytes": 48000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Growth plan, Feature map, voice", "fact": "students, place, budget, hard no's"},
+          {"id": "events", "kind": "surface", "label": "Event pages or your briefs", "fact": "next 120 days, 12 searches, 20 pages"},
+          {"id": "score", "kind": "step", "label": "Score and rank events", "fact": "audience, reason, feasibility, 0-2 each"},
+          {"id": "draft", "kind": "step", "label": "Draft one activation", "fact": "best event, with a permission checklist"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "reports/outreach/campus-events"},
+          {"id": "receipt", "kind": "receipt", "label": "Activation to pitch", "fact": "you ask organizers, Tin contacts no one"}
+        ],
+        "edges": [
+          {"from": "context", "to": "events", "kind": "call"},
+          {"from": "events", "to": "score", "kind": "call"},
+          {"from": "score", "to": "draft", "kind": "call"},
+          {"from": "score", "to": "report", "kind": "call", "label": "no event scores 4"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"},
+          {"from": "context", "to": "report", "kind": "call", "label": "not students"}
+        ]
+      }
     }
   }
 }
