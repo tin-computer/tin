@@ -836,6 +836,7 @@ class ProjectWorkflowView(BaseModel):
     workflow_key: str
     workflow_title: str
     workflow_description: str
+    workflow_drawn: bool = False
     version_label: str
     definition_commit_sha: str
     name: str

@@ -37,8 +37,10 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
   const modes = ["on_demand", "weekly"];
   const drawn = {id: "article", key: "content.generate", title: "Draft planned content", description: "Fixture", version_label: "1.10.0", status: "active", executor: "codex.procedure", allowed_actions: ["start", "save"], definition: {input_schema: schema, schedule_modes: modes, presentation: {flow}}};
   const plain = {id: "report", key: "custom.report", title: "Order report", description: "Fixture", version_label: "1.0", status: "active", executor: "workflow.code", allowed_actions: ["start", "save"], definition: {input_schema: schema, schedule_modes: modes}};
-  const saved = (id, workflow, name) => ({id, project_id: "project", workflow_id: workflow.id, workflow_key: workflow.key, workflow_title: workflow.title, name, version_label: workflow.version_label, definition_commit_sha: "a".repeat(40), inputs: {}, input_schema: schema, status: "active", settings_revision: 1, created_at: "2026-09-16T00:00:00Z", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "10:00", timezone: "UTC", start_at: "2026-09-16T00:00:00Z", end_at: null}, next_run_at: "2026-10-06T10:00:00Z", run_count: 0, done_count: 0});
-  const configured = [saved("weekly", drawn, "Weekly article"), saved("orders", plain, "Order report")];
+  // content.refresh is hidden from the catalog but still saved and drawn.
+  const hidden = {id: "refresh", key: "content.refresh", title: "Refresh a page", version_label: "1.2.0"};
+  const saved = (id, workflow, name, extra = {}) => ({...extra, id, project_id: "project", workflow_id: workflow.id, workflow_key: workflow.key, workflow_title: workflow.title, name, version_label: workflow.version_label, definition_commit_sha: "a".repeat(40), inputs: {}, input_schema: schema, status: "active", settings_revision: 1, created_at: "2026-09-16T00:00:00Z", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "10:00", timezone: "UTC", start_at: "2026-09-16T00:00:00Z", end_at: null}, next_run_at: "2026-10-06T10:00:00Z", run_count: 0, done_count: 0});
+  const configured = [saved("weekly", drawn, "Weekly article"), saved("orders", plain, "Order report"), saved("refresh", hidden, "Weekly page refresh", {workflow_drawn: true})];
   const errors = [];
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
@@ -68,6 +70,9 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
     // The schedule is pinned to an older version than today's drawing.
     if (url.pathname === "/api/projects/project/workflows/weekly/diagram") {
       return send({flow, version: "1.15.0", pinned_version: "1.10.0", exact: false});
+    }
+    if (url.pathname === "/api/projects/project/workflows/refresh/diagram") {
+      return send({flow, version: "1.2.0", pinned_version: "1.2.0", exact: true});
     }
     if (url.pathname.endsWith("/system")) return send({workflow_count: 2, running_count: 0, waiting_count: 0, runs_this_month: 0});
     if (url.pathname.startsWith("/api/")) return send([]);
@@ -183,6 +188,16 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
     await panel.getByRole("button", {name: "Close the workflow diagram", exact: true}).click();
     await panel.waitFor({state: "detached"});
     assert.equal(await page.evaluate(() => document.body.classList.contains("has-diagram-panel")), false);
+
+    // A saved workflow the catalog hides still opens its drawing, from its own endpoint.
+    await page.getByRole("button", {name: "Workflow diagram for Weekly page refresh", exact: true}).click();
+    await panel.waitFor();
+    await panel.locator(".diagram-panel-canvas:not(.is-loading)").waitFor();
+    assert.equal(await panel.getByRole("heading", {name: "Weekly page refresh", exact: true}).isVisible(), true);
+    assert.equal(await panel.locator("header code").innerText(), "content.refresh · v1.2.0");
+    assert.equal(await panel.locator(".spine-node").count(), 7);
+    await page.keyboard.press("Escape");
+    await panel.waitFor({state: "detached"});
 
     // A template in Workflows opens today's drawing, with no version note.
     await page.getByRole("button", {name: "Workflows", exact: true}).click();

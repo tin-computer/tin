@@ -629,7 +629,7 @@ BUILTIN_WORKFLOWS = (
                     "technical",
                     "step",
                     "Fix what the audit found",
-                    "website.change, up to 30 fixes in one PR",
+                    "website.change, up to 30, each waits for you",
                 ),
                 DiagramNode(
                     "content", "step", "Plan the content", "roadmap saved, weekly drafts scheduled"
