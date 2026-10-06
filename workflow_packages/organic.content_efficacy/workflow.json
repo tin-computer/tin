@@ -4,7 +4,7 @@
     "key": "organic.content_efficacy",
     "title": "Decide what each page needs",
     "description": "Each week, judge every page the site shows in search from its clicks, visits, signups and audit findings: keep it, refresh it, rewrite it, merge it into a stronger page or retire it. Merges and retirements are held back whenever paid visits, links or a safe redirect target are unknown. website.change reads each URL change and asks you before it changes the site; pages to refresh or rewrite are listed. Edits nothing itself.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": [
@@ -60,7 +60,7 @@
           "maxItems": 10,
           "items": {"type": "string", "minLength": 1, "maxLength": 150},
           "title": "Ad landing page paths",
-          "description": "Defaults to /offer/, /lp/ and URLs with utm_."
+          "description": "Path fragments such as /offer/; defaults to /offer/ and /lp/. Query strings such as ?utm_ are folded into their page."
         },
         "links_file": {
           "type": "string",

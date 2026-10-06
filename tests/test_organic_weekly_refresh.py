@@ -52,9 +52,13 @@ async def refresh_runs(f):
 
 def test_the_v5_recipe_refreshes_pages_and_older_recipes_do_not():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY).definition
-    # New runs pin v6, which keeps v5's page refresh.
-    assert recipe["organic_system_policy"]["version"] == "organic-traffic-v6"
-    for policy in (organic_system.REFRESH_POLICY, organic_system.POLICY):
+    # New runs pin v7, which keeps v5's page refresh.
+    assert recipe["organic_system_policy"]["version"] == "organic-traffic-v7"
+    for policy in (
+        organic_system.REFRESH_POLICY,
+        organic_system.WEBSITE_POLICY,
+        organic_system.POLICY,
+    ):
         assert organic_system.refreshes_pages(policy)
         assert organic_system.schedules_articles(policy)
     assert not organic_system.refreshes_pages(organic_system.FALLBACK_POLICY)

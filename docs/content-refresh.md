@@ -16,7 +16,11 @@ new pages.
    Console evidence, then chooses one page:
    - It considers pages the audit flagged with `search.low_ctr` or `search.near_page_one`, plus
      `search.decay` and `aeo.answer_structure` when the audit reports them.
-   - It picks the page with the most impressions at stake. (content.plan's refresh candidates
+   - With a current Page decisions file (`content/efficacy.md`, from organic.content_efficacy,
+     which the traffic system runs weekly an hour before the refresh), it takes the first page
+     the file marks for a refresh, in the file's order, and never a page the file keeps,
+     merges or retires.
+   - Otherwise it picks the page with the most impressions at stake. (content.plan's refresh candidates
      and content.generate's refresh items rank by realistic upside instead: pages near the top
      results first, pages beyond position 30 last. See
      [one content.generate](one-content-generate.md).)

@@ -619,11 +619,13 @@ BUILTIN_WORKFLOWS = (
             "pass when you approved it with commit to main, and otherwise leaves the PR for "
             "you; without GitHub its Markdown stays in Tin. Then draft the next planned "
             "article each week, one review at a time. Before new articles, refresh one "
-            "existing page now and again each week. Optionally fix what the audit found "
-            "through website.change; each fix waits for your approval. Never sends outreach."
+            "existing page now and again each week. Each week, take a traffic snapshot and "
+            "decide what every page needs before the refresh picks one. Optionally fix what "
+            "the audit found through website.change; each fix waits for your approval. "
+            "Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.6.0",
+        version_label="0.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -2908,7 +2910,12 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
     x_draft.KEY: tuple(x_draft.STEPS.values()),
     # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
-    organic_system.KEY: (*organic_system.STEPS.values(), organic_system.REFRESH_KEY),
+    organic_system.KEY: (
+        *organic_system.STEPS.values(),
+        organic_system.REFRESH_KEY,
+        # v7 pins the two weekly measurement packages, with their code, beside the steps.
+        *organic_system.MEASURE_STEPS.values(),
+    ),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
 

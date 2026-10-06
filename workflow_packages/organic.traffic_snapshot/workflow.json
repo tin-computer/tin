@@ -4,7 +4,7 @@
     "key": "organic.traffic_snapshot",
     "title": "Take a weekly traffic snapshot and growth readout",
     "description": "Each week, read Search Console, and PostHog when it is connected, once into one file. Per landing page it holds clicks, impressions and top searches, the latest audit's checks and, with PostHog, sessions by channel, first-touch signups and activation and reading depth; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages (search only without PostHog), with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": [
@@ -187,7 +187,7 @@
         "gsc": {
           "provider_key": "analytics.gsc",
           "max_calls": 4,
-          "max_response_bytes": 64000
+          "max_response_bytes": 256000
         },
         "posthog": {
           "provider_key": "analytics.posthog",

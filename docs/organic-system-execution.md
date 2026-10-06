@@ -40,6 +40,21 @@ recipe. Old revisions retain their original children and resources.
 
 ### `organic.traffic_system`
 
+**v7 (0.7.0): the system measures the site each week.** After the audit, the parent runs
+`organic.traffic_snapshot` and then `organic.content_efficacy` (Page decisions) as child runs,
+and waits for both before the content plan, which reads `analytics/traffic-snapshot.json` and
+`content/efficacy.md`. Each is saved as a weekly configuration on the weekly page refresh's
+day: the snapshot two hours before the refresh, Page decisions one hour before, so the
+refresh reads this week's decisions and the decisions this week's snapshot. An earlier
+saved schedule of either is kept, with its inputs, and still runs once now. Both need Search
+Console; without it nothing is saved and the report names the reason. A measurement that
+cannot start never fails the recipe. `content.refresh` now picks the first page Page decisions
+marks for a refresh that is not waiting, in its order, never a page it keeps, merges or
+retires, and falls back to the audit's pick when the file is missing or older than its window.
+Onboarding no longer installs the two workflows on their own; the system sets them up. Runs
+pinned to `organic-traffic-v6` keep their steps; a test pins v6's policy digest. The parent's
+spending pool grows by $1 for Page decisions' bounded model call; the snapshot makes none.
+
 **v6 (0.6.0): both writer steps go through website.change** (Emre, 10/1). The technical step
 starts website.change `source: audit` instead of organic.technical_fix, and the delivery step
 starts website.change for the approved draft (its page source) instead of content.deliver:

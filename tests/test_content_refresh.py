@@ -74,6 +74,46 @@ def test_the_page_with_most_impressions_at_stake_is_chosen_and_blocked_pages_wai
     assert refresh.choose(decayed, EVIDENCE, set())["body_allowed"] is True
 
 
+def test_page_decisions_name_the_page_first_and_hold_the_ones_they_keep():
+    findings = audit(
+        finding("search.low_ctr", "/pricing"),
+        finding("search.near_page_one", "/guides/setup/"),
+    )
+    decisions = {
+        "status": "used",
+        "refresh": {
+            "/blog/old": {"checks": ["search.decay"], "rule": "decline", "reason": "Fell."},
+            "/pricing": {"checks": ["search.low_ctr"], "rule": "low_ctr", "reason": "Low."},
+        },
+        "cut": {},
+        "keep": ["/guides/setup"],
+        "rewrite": {},
+    }
+    # Its first refresh row comes first, though the audit's page has more impressions.
+    chosen = refresh.choose(findings, EVIDENCE, set(), decisions=decisions)
+    assert chosen["path"] == "/blog/old" and chosen["url"] == f"{HOST}/blog/old"
+    assert chosen["checks"] == ["search.decay"] and chosen["body_allowed"] is True
+    assert chosen["planned_by"] == "organic.content_efficacy"
+    # A waiting page passes its turn to the next row; a kept page is never picked.
+    assert refresh.choose(findings, EVIDENCE, {"/blog/old"}, decisions=decisions)["path"] == (
+        "/pricing"
+    )
+    assert refresh.choose(findings, EVIDENCE, {"/blog/old", "/pricing"}, decisions=decisions) is (
+        None
+    )
+    # A slashless decisions path keeps the spelling search shows for the page.
+    slash = {**decisions, "refresh": {"/guides/setup": {"checks": [], "rule": "", "reason": ""}}}
+    slash["keep"] = []
+    assert refresh.choose(findings, EVIDENCE, set(), decisions=slash)["url"] == (
+        f"{HOST}/guides/setup/"
+    )
+    # A missing or stale file leaves the audit's own pick.
+    for unused in (None, {"status": "none saved yet"}):
+        assert refresh.choose(findings, EVIDENCE, set(), decisions=unused)["path"] == (
+            "/guides/setup"
+        )
+
+
 def test_the_page_text_is_what_a_reader_sees():
     text = refresh.page_text(PAGE)
     assert text["title"] == "Setup & configuration | Example"

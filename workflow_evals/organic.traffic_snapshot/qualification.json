@@ -7,7 +7,7 @@
     "PostHog is optional. Every case here runs with it connected; the search-only run without it is covered offline in tests/test_traffic_snapshot.py, since a case cannot set a connection's state."
   ],
   "cost_drivers": [
-    "No model calls and no Tin credits. At most four Search Console and four PostHog reads, each capped at 64000 bytes; provider quotas and latency are unmeasured."
+    "No model calls and no Tin credits. At most four Search Console reads, each capped at 256000 bytes, and four PostHog reads capped at 64000 bytes; provider quotas and latency are unmeasured."
   ],
   "effects": [
     "Replaces analytics/traffic-snapshot.json in the project when at least one provider read returned data. No send, post, spend, edit or provider change."
@@ -74,7 +74,7 @@
       "expected_status": "succeeded",
       "expect": {
         "contains": ["too little data", "Organic audit: no audit found", "no signup event is set"],
-        "excludes": ["change (up)", "change (down)"]
+        "excludes": ["change (up)", "change (down)", "more than normal weekly variation"]
       }
     },
     {

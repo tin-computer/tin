@@ -152,6 +152,8 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
     if recipe == "weekly":
         # The v5 recipe's first page refresh runs as a child the system waits for.
         ids["refresh"] = str(uuid4())
+        # v7 measures after the audit: the snapshot, then Page decisions, before the plan.
+        ids["snapshot"], ids["decisions"] = str(uuid4()), str(uuid4())
     implementation = RECIPES[recipe]
     started, finished, calls, dispatches = set(), set(), [], {}
     research_started = asyncio.Event()
@@ -170,6 +172,11 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
             assert "audit" in finished
         if step == "content":
             assert {"audit", "keywords"} <= finished
+            assert {"snapshot", "decisions"} <= finished or recipe != "weekly"
+        if step == "snapshot":
+            assert "audit" in finished
+        if step == "decisions":
+            assert "snapshot" in finished
         if step == "draft":
             assert "content" in finished
         if step == "delivery":
@@ -205,6 +212,15 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
                 # Saved once the plan step is accounted for, beside the first draft.
                 assert argument == run_id and "content" in accounted
                 return {"status": "skipped" if keyword_fails else "succeeded"}
+            if name == "organic_system_measurement":
+                step = argument["step"]
+                assert argument["run_id"] == run_id and "audit" in finished
+                return {
+                    "status": "succeeded",
+                    "run_id": ids[step],
+                    "executor": "recipe-test-child",
+                    "temporal_workflow_id": f"child:{ids[step]}",
+                }
             if name == "organic_system_refresh":
                 assert argument == run_id
                 return {
@@ -232,6 +248,7 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
         "organic_system_weekly_articles",
         "organic_system_weekly_articles_failure",
         "organic_system_refresh",
+        "organic_system_measurement",
     ]
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=binary, dev_server_log_level="error"
@@ -258,7 +275,8 @@ async def test_parallel_research_exact_dependencies_and_replay(keyword_fails, re
             history = await handle.fetch_history()
         # Every older recipe history replays through the current code's patch boundaries.
         await Replayer(workflows=[OrganicTrafficSystemWorkflow]).replay_workflow(history)
-    refreshed = {"refresh"} if recipe == "weekly" else set()
+    # The refresh and the measurement do not depend on the keyword research.
+    refreshed = {"refresh", "snapshot", "decisions"} if recipe == "weekly" else set()
     assert finished == (
         {"audit", "keywords", "technical"} | refreshed if keyword_fails else set(ids)
     )
@@ -307,6 +325,7 @@ async def test_weekly_schedule_failure_is_recorded_without_failing_the_recipe():
         "organic_system_weekly_articles",
         "organic_system_weekly_articles_failure",
         "organic_system_refresh",
+        "organic_system_measurement",
     ]
     async with await WorkflowEnvironment.start_local(
         dev_server_existing_path=binary, dev_server_log_level="error"

@@ -505,6 +505,7 @@ class BillingService:
                         "organic-traffic-v4",
                         "organic-traffic-v5",
                         "organic-traffic-v6",
+                        "organic-traffic-v7",
                     }
                 ):
                     raise BillingError(
@@ -1000,13 +1001,26 @@ class BillingService:
             )
         if parent["executor"] == "organic.traffic_system":
             from tin_lite.organic_system import (
+                MEASURE_STEPS,
                 REFRESH_KEY,
                 STEPS,
+                measures_pages,
                 policy_steps,
                 refreshes_pages,
                 writes_with_website_change,
             )
 
+            if definition["key"] in MEASURE_STEPS.values():
+                # v7's weekly snapshot and Page decisions, pinned at preparation like its steps.
+                step = next(s for s, child in MEASURE_STEPS.items() if child == definition["key"])
+                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+                return bool(
+                    key == f"system:{parent_id}:{step}"
+                    and prepared
+                    and prepared.status == "completed"
+                    and measures_pages(prepared.result.get("policy"))
+                    and prepared.result["definitions"].get(step) == definition
+                )
             if definition["key"] == REFRESH_KEY:
                 # The v5 recipe's first page refresh, pinned at preparation like its steps.
                 prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)

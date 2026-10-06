@@ -1418,13 +1418,42 @@ class OrganicTrafficSystemWorkflow:
                 # A refresh never fails the recipe; its own run records why it stopped.
                 return
 
+        async def measure(name):
+            try:
+                child = await call("organic_system_measurement", {"run_id": run_id, "step": name})
+                if child.get("temporal_workflow_id"):
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+            except Exception:
+                # A measurement never fails the recipe; its receipt or run records why.
+                return
+
+        async def measurement():
+            # v7: the traffic snapshot, then Page decisions, which reads it. A pinned v6 or
+            # earlier recipe answers skipped and starts nothing.
+            for name in ("snapshot", "decisions"):
+                await measure(name)
+
         try:
             await call("organic_system_prepare", run_id)
             audit = asyncio.create_task(step("audit"))
             keywords = asyncio.create_task(step("keywords"))
             await audit
             technical = asyncio.create_task(step("technical"))
+            measured = None
+            if workflow.patched("organic-measurement-v1"):
+                # After the audit, whose summary both read, and before the content plan, which
+                # reads the snapshot and the decisions.
+                measured = asyncio.create_task(measurement())
             await keywords
+            if measured is not None:
+                await measured
             await step("content")
             await technical
             if workflow.patched("organic-content-continuation-v1"):

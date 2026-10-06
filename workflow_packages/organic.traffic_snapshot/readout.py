@@ -2,8 +2,11 @@
 
 It reads nothing itself. main.py passes the week's counts from the same Search Console and
 PostHog reads the snapshot makes, so no query runs twice. A change is called only above
-`min_count`, with an exact binomial test and Holm's correction across every row tested. Each
-decision comes from a fixed rule and names the workflow that acts on it. There is no model call.
+`min_count`, with an exact binomial test and Holm's correction across every row tested. Weekly
+counts swing more than chance alone (launches, posts, seasons), so each count is first divided
+by a dispersion factor estimated from its own earlier weeks (quasi-Poisson); a channel borrows
+the factor of its total. Each decision comes from a fixed rule and names the workflow that acts
+on it. There is no model call.
 """
 
 import datetime as dt
@@ -41,6 +44,35 @@ def binomial_p(x1, x2):
     return min(1.0, 2 * min(low, high))
 
 
+def dispersion(values):
+    """Extra-Poisson variation c² from earlier weekly counts, or None below four weeks.
+
+    The variance comes from successive differences, so a steady trend does not read as noise;
+    a count at level L then has variance L(1 + c²L), and dividing by φ = 1 + c²L makes the
+    exact test fair.
+    """
+    values = [v for v in values if v is not None]
+    if len(values) < 4:
+        return None
+    mean = statistics.mean(values)
+    if mean <= 0:
+        return 0.0
+    variance = sum((values[i] - values[i - 1]) ** 2 for i in range(1, len(values))) / (
+        2 * (len(values) - 1)
+    )
+    return max(0.0, (variance - mean) / mean**2)
+
+
+def said(row):
+    """A test row's call in the founder's words."""
+    call, now, before = row.get("call"), row.get("current"), row.get("prior")
+    if call in ("change (up)", "change (down)"):
+        word = "up" if call == "change (up)" else "down"
+        size = f" {abs(round(100 * (now - before) / before))}%" if before else " from 0"
+        return f"{word}{size}, more than normal weekly variation"
+    return call or "not tested"
+
+
 def holm(ps):
     order = sorted(range(len(ps)), key=lambda i: ps[i])
     adjusted, floor, m = [1.0] * len(ps), 0.0, len(ps)
@@ -69,6 +101,17 @@ def span(pair):
     return f"{first.strftime('%-d %b')}–{end.strftime('%-d %b')}"
 
 
+def covered(month):
+    """How much of a partly read month the count covers, or nothing for a whole month."""
+    first, end = (dt.date.fromisoformat(month[k]) for k in ("from", "to"))
+    if month.get("partial") == "end":
+        days = (end - first).days + 1
+        return f" ({span([first, end])}, {days} day{'s' if days != 1 else ''} so far)"
+    if month.get("partial") == "start":
+        return f" (from {first.strftime('%-d %b')})"
+    return ""
+
+
 def community(host):
     return any(host == c or host.endswith("." + c) for c in COMMUNITY)
 
@@ -87,15 +130,37 @@ def build(d):
     posthog = d.get("posthog", "connected")
     measured = posthog == "connected"
     tests = []
+    history = previous.get("history") if isinstance(previous.get("history"), dict) else {}
 
-    def test(key, x1, x2):
+    def earlier(name):
+        # Stored weeks before this one; a rerun in the same week does not count itself.
+        return [v for week, v in history.get(name, []) if week != weeks["current"][0]]
+
+    search_weeks = d["search"]["weeks"]
+    spread = {
+        "total signups": (dispersion(earlier("signups")), len(earlier("signups"))),
+        "total sessions": (dispersion(earlier("sessions")), len(earlier("sessions"))),
+        "search clicks": (
+            dispersion([w["clicks"] for w in search_weeks[1:]]),
+            len(search_weeks[1:]),
+        ),
+    }
+
+    def test(key, x1, x2, like=None):
         row = {"key": key, "current": x1, "prior": x2}
         if x1 is None or x2 is None:
             row["call"] = "unknown"
         elif max(x1, x2) < min_count:
             row["call"] = "too little data"
         else:
-            row["p"] = binomial_p(x1, x2)
+            c2, weeks_seen = spread.get(like or key, (None, 0))
+            row["phi"] = round(1 + c2 * (x1 + x2) / 2, 2) if c2 is not None else 1.0
+            row["phi_from"] = (
+                f"{weeks_seen} earlier weeks" + (f" of {like}" if like else "")
+                if c2 is not None
+                else f"fewer than 4 earlier weeks{' of ' + like if like else ''}; φ = 1"
+            )
+            row["p"] = binomial_p(round(x1 / row["phi"]), round(x2 / row["phi"]))
             if row["p"] is None:
                 row["call"] = "too little data"
             else:
@@ -111,10 +176,9 @@ def build(d):
         if name == "Internal":
             continue
         channel_tests[name] = (
-            test(f"{name} sessions", cell[0], cell[1]),
-            test(f"{name} signups", cell[2], cell[3]),
+            test(f"{name} sessions", cell[0], cell[1], like="total sessions"),
+            test(f"{name} signups", cell[2], cell[3], like="total signups"),
         )
-    search_weeks = d["search"]["weeks"]
     week_now = search_weeks[0] if search_weeks else None
     week_before = search_weeks[1] if len(search_weeks) > 1 else None
     t_clicks = test(
@@ -129,7 +193,6 @@ def build(d):
         else:
             row["call"] = "within normal variation"
 
-    history = previous.get("history") if isinstance(previous.get("history"), dict) else {}
     series_now = {
         "signups": signups[0] if signups else None,
         "sessions": sessions_now,
@@ -271,7 +334,7 @@ def build(d):
             head.append(
                 f"{week_now['clicks']} search clicks this week against {week_before['clicks']} "
                 f"the week before (Search Console, {span([week_now['start'], week_now['end']])}; "
-                f"{t_clicks.get('call')})."
+                f"{said(t_clicks)})."
             )
         else:
             head.append("Search clicks are unknown this week.")
@@ -279,8 +342,7 @@ def build(d):
     elif signups is not None:
         head.append(
             f"{signups[0]} people signed up this week against {signups[1]} the week before "
-            f"(PostHog, {now_span} vs {before_span}; n = {signups[0] + signups[1]}; "
-            f"{t_total.get('call')})."
+            f"(PostHog, {now_span} vs {before_span}; {said(t_total)})."
         )
     else:
         head.append(
@@ -289,19 +351,20 @@ def build(d):
         )
     if called:
         head.append(
-            "Changes called: "
-            + "; ".join(
-                f"{t['key']} {t['current']} vs {t['prior']} (adjusted p {t['adj']:.3f})"
-                for t in called
-            )
+            "Beyond normal variation: "
+            + "; ".join(f"{t['key']} {t['current']} vs {t['prior']} ({said(t)})" for t in called)
             + "."
         )
+    elif tests:
+        head.append("Nothing moved beyond normal weekly variation.")
     else:
-        head.append("No change was called after correcting for the rows tested.")
+        head.append("No count was large enough to test for a change.")
     count = len(decisions)
     head.append(
-        f"{count} thing{'s' if count != 1 else ''} need{'s' if count == 1 else ''} a decision"
-        + (f", starting with: {decisions[0][0].lower()}." if decisions else ".")
+        f"{count} thing{'s' if count != 1 else ''} need{'s' if count == 1 else ''} a decision, "
+        f"starting with: {decisions[0][0].lower()}."
+        if decisions
+        else "Nothing needs a decision this week."
     )
     if launch_now or launch_prior:
         which = "this week" if launch_now else "the week before"
@@ -346,7 +409,7 @@ def build(d):
                 verdict = (
                     "not tested (internal)"
                     if name == "Internal"
-                    else channel_tests.get(name, ({}, {}))[0].get("call", "not tested")
+                    else said(channel_tests.get(name, ({}, {}))[0])
                 )
                 lines.append(
                     f"| {name} | {cell[0]} vs {cell[1]} | {cell[2]} vs {cell[3]} | "
@@ -374,7 +437,7 @@ def build(d):
         lines.append(
             f"Clicks {span([week_now['start'], week_now['end']])} (Search Console, final data): "
             f"{week_now['clicks']} against {week_before['clicks']} the week before; "
-            f"{t_clicks.get('call')}."
+            f"{said(t_clicks)}."
         )
         if (
             week_now["impressions"]
@@ -419,6 +482,7 @@ def build(d):
             "By month: "
             + ", ".join(
                 f"{m['month']} {m['clicks']} clicks"
+                + covered(m)
                 + ("" if m["reliable"] else f" (impressions unreliable before {reliable_from})")
                 for m in sorted(months, key=lambda m: m["month"])[-6:]
             )
@@ -600,6 +664,12 @@ def build(d):
         f"Calls that ran: {', '.join(d['calls']) or 'none'}; no model call. Rows tested: m = "
         f"{len(tests)} (Holm correction).",
     ]
+    for t in tests:
+        p = "p < 0.001" if t["adj"] < 0.001 else f"p = {t['adj']:.3f}"
+        lines.append(
+            f"- {t['key']} {t['current']} vs {t['prior']}: dispersion φ = {t['phi']:g} "
+            f"({t['phi_from']}); {p} after Holm; {said(t)}."
+        )
     if measured:
         lines += [
             f"Exclusions: {d['exclusions']}.",

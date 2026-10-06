@@ -52,6 +52,20 @@
         "contains": ["Model: skipped.", "\"url\":\"/sign-in\",\"decision\":\"retire\""],
         "excludes": ["\"decision\":\"rewrite\""]
       }
+    },
+    {
+      "id": "brand_searches",
+      "description": "Two pages show only for the brand, one spelled with a space and a domain; neither is queued for a title refresh, paired as duplicates or sent to the intent judgment.",
+      "inputs": {},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "\"url\":\"/about\",\"decision\":\"keep\",\"action\":\"none\"",
+          "\"rule\":\"brand_search\"",
+          "Shows mainly for brand searches"
+        ],
+        "excludes": ["\"url\":\"/about\",\"decision\":\"refresh\"", "impressions for tallyfox"]
+      }
     }
   ],
   "rubric": [

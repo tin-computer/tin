@@ -328,10 +328,31 @@ async def parent_fixture(db, monkeypatch):
             "e" * 40,
             json.dumps(definition),
         )
+    # v7's measurement packages, whose manifests sit in their own folders.
+    from tin_lite.public_workflows import load_public_workflows
+
+    packages = {}
+    for package in await load_public_workflows():
+        if package.key not in organic_system.MEASURE_STEPS.values():
+            continue
+        packages.update(package.files)
+        await db.pool.execute(
+            "INSERT INTO workflows (id,key,title,executor,definition_repo_id,definition_path,"
+            "current_commit_sha,version_label,definition) "
+            "VALUES ($1,$2,$2,$3,'registry/workflows',$4,$5,'1',$6::jsonb)",
+            uuid4(),
+            package.key,
+            package.executor,
+            package.definition_path,
+            "e" * 40,
+            json.dumps(package.definition),
+        )
     monkeypatch.setattr(db, "has_project_access", AsyncMock(return_value=True))
 
     async def read(**kwargs):
         assert kwargs["commit_sha"] == run.definition_commit_sha
+        if kwargs["path"] in packages:
+            return packages[kwargs["path"]]
         return json.dumps(definitions[kwargs["path"][10:-5]]).encode()
 
     monkeypatch.setattr(storage, "read_canonical_artifact", read)
