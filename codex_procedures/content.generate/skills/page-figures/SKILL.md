@@ -17,14 +17,16 @@ the article refers to, and the founder approves them with the words.
 Everything you draw should look like it belongs on the founder's site. When `brand/BRAND.md` and
 `DESIGN.md` exist, read them first and follow them: the token palette in light and dark, the type
 family, weight and size for each role, the corner radii and how the site frames figures, the
-founder's written rules, and the way the product draws its recurring subjects (characters,
-animals, devices) in their own colours, never as a labelled placeholder shape. Name the brand's
-font families with their fallbacks. Without brand files, keep a plain look: system fonts and a
-quiet neutral palette that reads on light and dark pages.
+founder's written rules, and the way the product draws its recurring subjects (a mascot,
+characters, its own objects or screens) in their own colours, never as a labelled placeholder
+shape. Name the brand's font families with their fallbacks. Without brand files, keep a plain
+look: system fonts and a quiet neutral palette.
 
-Every figure and piece works in light and dark. Leave its background transparent so the page shows
-through, and give its colours a dark variant (the brand's dark tokens when there are any); in an
-SVG, a `prefers-color-scheme: dark` block in its `<style>` does it.
+Follow the site's theming. When the site has a dark theme (the brand has dark tokens, or DESIGN.md
+describes one), leave the background transparent so the page shows through and give the colours a
+dark variant; in an SVG, a `prefers-color-scheme: dark` block in its `<style>` does it. When the
+site is light only, or you can't tell, keep it light: `color-scheme: light` and the site's paper
+colour as its own background, so it reads on any page.
 
 ## Figures and diagrams
 
@@ -59,12 +61,12 @@ libraries or images. When DESIGN.md records the font files the site itself serve
 Keep it small, give it a sensible default state, and make it work with a mouse, a keyboard and a
 touch screen.
 
-Draw no panel, card, border or background around the piece: the page is its background. Frame
-only the surface the reader plays with, the way the site frames figures. Set colours as CSS
-variables, light on `:root` with `color-scheme: light`, and the dark values with
-`color-scheme: dark` in both `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }`
-and `:root[data-theme="dark"] { … }`; Tin sets `data-theme` to match its reader. Let the content
-set its height: Tin fits the frame to it, so `height` is only a first guess.
+Draw no panel, card or border around the piece; frame only the surface the reader plays with,
+the way the site frames figures. Set colours as CSS variables, light on `:root` with
+`color-scheme: light`. For a site with a dark theme, add the dark values with `color-scheme: dark`
+in both `@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { … } }` and
+`:root[data-theme="dark"] { … }`; Tin sets `data-theme` to match its reader. Let the content set
+its height: Tin fits the frame to it, so `height` is only a first guess.
 
 ## Look at it before you finish
 
