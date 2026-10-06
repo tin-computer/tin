@@ -45,6 +45,9 @@ first. Workflow pull requests that don't meet it are closed automatically.
   truncated read or a missing selection. Check with `uv run tin-lite validate-community`.
   Copy from `example.csv_summary` and `example.feedback_digest`; `example.*` and
   `custom.*` keys are reserved.
+- Every workflow draws how it runs as a top-to-bottom `presentation.flow` in its definition
+  (see [Draw how it runs](docs/adding-a-workflow.md#draw-how-it-runs)). Draw what the code
+  does, and change the drawing in the same pull request as the steps.
 - Respect the package boundary: no `pip`, raw credentials or direct network access, and
   bounded runtime and model calls; see [code execution](docs/code-workflows.md) and
   [model steps](docs/code-model-workflows.md). Longer durable orchestration is a native

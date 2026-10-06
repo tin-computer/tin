@@ -656,7 +656,9 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
     f = await fixture(publication_db, monkeypatch)
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
     definition, files = spec.definition_and_resource_files()
-    digest = hashlib.sha256(canonical_json(definition))
+    # The drawing is display-only; a run never reads it.
+    pinned = {k: v for k, v in definition.items() if k != "presentation"}
+    digest = hashlib.sha256(canonical_json(pinned))
     for path in sorted(files):
         digest.update(path.encode())
         digest.update(files[path])

@@ -27,6 +27,20 @@
         "media_type": "text/markdown",
         "max_bytes": 2000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "read", "kind": "step", "label": "Read the CSV", "fact": "unique columns, including amount_cents"},
+          {"id": "check", "kind": "step", "label": "Check every row", "fact": "whole cents, at most 10 digits"},
+          {"id": "report", "kind": "receipt", "label": "Summary in Files", "fact": "reports/CSV_SUMMARY.md, rows and total"}
+        ],
+        "edges": [
+          {"from": "read", "to": "check", "kind": "call"},
+          {"from": "check", "to": "report", "kind": "call"}
+        ]
+      }
     }
   }
 }

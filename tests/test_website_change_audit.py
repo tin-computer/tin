@@ -611,9 +611,13 @@ def test_the_technical_fix_is_hidden_but_pinned_v5_runs_are_unchanged():
     definition, files = spec.definition_and_resource_files()
     assert spec.version_label == "0.6.1" and definition["public_discovery"] is False
     assert technical_fix.definition_policy(definition) == "site-fix-v5"
-    # Everything a pinned run reads besides the version label and the catalog flag is main's
-    # 0.6.0: inputs, procedure, prompt and skills, byte for byte.
-    pinned = {k: v for k, v in definition.items() if k not in {"version", "public_discovery"}}
+    # Everything a pinned run reads besides the version label, the catalog flag and the drawing
+    # is main's 0.6.0: inputs, procedure, prompt and skills, byte for byte.
+    pinned = {
+        k: v
+        for k, v in definition.items()
+        if k not in {"version", "public_discovery", "presentation"}
+    }
     digest = hashlib.sha256(canonical_json(pinned))
     for path in sorted(files):
         digest.update(path.encode())

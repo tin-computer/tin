@@ -21,6 +21,22 @@
       "services": {"crm": {"provider_key": "custom.api.crm", "max_calls": 1, "max_response_bytes": 8000}},
       "model_routes": {"classification": {"provider": "openai", "model": "gpt-6-luna", "max_calls": 1, "max_input_bytes": 4096, "max_output_tokens": 512}},
       "output": {"kind": "project.artifact", "path": "reports/custom/CONNECTED_ACCOUNTS.md", "media_type": "text/markdown", "max_bytes": 8000}
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "fetch", "kind": "surface", "label": "Your accounts API", "fact": "three accounts through Tin's gateway"},
+          {"id": "filter", "kind": "step", "label": "Keep the larger accounts", "fact": "checked records, at or above your minimum"},
+          {"id": "classify", "kind": "step", "label": "Classify each account", "fact": "one model call: small or midmarket"},
+          {"id": "report", "kind": "receipt", "label": "Account report in Files", "fact": "reports/custom/CONNECTED_ACCOUNTS.md"}
+        ],
+        "edges": [
+          {"from": "fetch", "to": "filter", "kind": "call"},
+          {"from": "filter", "to": "classify", "kind": "call"},
+          {"from": "classify", "to": "report", "kind": "call"}
+        ]
+      }
     }
   }
 }

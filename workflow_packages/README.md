@@ -168,10 +168,27 @@ This one validates. Copy it and change the parts that describe your workflow.
         "media_type": "text/markdown",
         "max_bytes": 250000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          { "id": "context", "kind": "store", "label": "Project evidence", "fact": "context files and the optional focus" },
+          { "id": "recommend", "kind": "step", "label": "Recommend one next action", "fact": "cites the project paths behind it" },
+          { "id": "report", "kind": "receipt", "label": "Report in Files", "fact": "reports/EXAMPLE_PLAY.md" }
+        ],
+        "edges": [
+          { "from": "context", "to": "recommend", "kind": "call" },
+          { "from": "recommend", "to": "report", "kind": "call" }
+        ]
+      }
     }
   }
 }
 ```
+
+`presentation` draws how the run goes for the workflow's diagram panel; see
+[Draw how it runs](../docs/adding-a-workflow.md#draw-how-it-runs).
 
 Every text input needs a `maxLength`, every array a `maxItems`, and `project_id` stays as it is.
 A `"format": "uri"` input accepts only an http(s) URL with a host, and no input may contain NUL.

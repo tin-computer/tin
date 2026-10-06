@@ -36,6 +36,11 @@ Maintainer invited to the project: <!-- yes / no -->
 <!-- Onboarding context, Code map, style guide, connected integrations. List any input the
      founder still has to type, and why Tin can't know it. -->
 
+### How it runs
+
+<!-- The manifest's presentation.flow draws the run. Confirm each node and fact matches the
+     code or prompt, and name the approval node if there is one. -->
+
 ### How you tested it
 
 <!-- What the private run produced, what was wrong with it and what you changed. Include

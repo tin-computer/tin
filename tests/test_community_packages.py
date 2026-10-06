@@ -22,6 +22,17 @@ from tin_lite.community import (
 from tin_lite.workflow_packages import export_workflow_package
 
 KEY = "research.deep_dive"
+# A new contribution draws how it runs; the exported built-in may still wait for its drawing.
+DRAWING = {
+    "flow": {
+        "direction": "TD",
+        "nodes": [
+            {"id": "question", "kind": "step", "label": "Test the question", "fact": "evidence"},
+            {"id": "report", "kind": "receipt", "label": "Report in Files", "fact": "one file"},
+        ],
+        "edges": [{"from": "question", "to": "report", "kind": "call"}],
+    }
+}
 
 
 def stage(root: Path, key: str = KEY) -> Path:
@@ -32,6 +43,7 @@ def stage(root: Path, key: str = KEY) -> Path:
     if key != KEY:
         manifest = json.loads(files[f"workflow_packages/{KEY}/workflow.json"])
         manifest["definition"]["key"] = key
+        manifest["definition"].setdefault("presentation", DRAWING)
         files = {path.replace(f"/{KEY}/", f"/{key}/"): value for path, value in files.items()}
         files[f"workflow_packages/{key}/workflow.json"] = json.dumps(manifest).encode()
     for path, content in files.items():
@@ -70,6 +82,17 @@ async def test_two_contributions_are_reported_separately(tmp_path):
     results = {package.key: error for package, error in await validate_all(tmp_path)}
     assert results[KEY] is None
     assert isinstance(results["growth.example_play"], ValueError)
+
+
+async def test_a_new_contribution_without_a_drawing_is_refused(tmp_path):
+    package_path = stage(tmp_path, key="growth.example_play")
+    manifest = json.loads((package_path / "workflow.json").read_text())
+    del manifest["definition"]["presentation"]
+    (package_path / "workflow.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="presentation is required"):
+        await validate(
+            ContributedPackage(key="growth.example_play", path=package_path), root=tmp_path
+        )
 
 
 @pytest.mark.parametrize(

@@ -40,6 +40,22 @@
         "kind": "project.artifact", "path": "reports/FEEDBACK_DIGEST.md",
         "media_type": "text/markdown", "max_bytes": 8000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "classify", "kind": "step", "label": "Classify the feedback", "fact": "one model call: bug, request, praise, other"},
+          {"id": "validate", "kind": "step", "label": "Check the labels", "fact": "every ID once, known categories only"},
+          {"id": "summarize", "kind": "step", "label": "Summarize what was said", "fact": "one model call, at most five points"},
+          {"id": "digest", "kind": "receipt", "label": "Digest in Files", "fact": "reports/FEEDBACK_DIGEST.md with counts"}
+        ],
+        "edges": [
+          {"from": "classify", "to": "validate", "kind": "call"},
+          {"from": "validate", "to": "summarize", "kind": "call"},
+          {"from": "summarize", "to": "digest", "kind": "call"}
+        ]
+      }
     }
   }
 }
