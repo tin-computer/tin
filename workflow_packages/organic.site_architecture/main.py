@@ -354,7 +354,7 @@ async def run(ctx, inputs):
         }
 
     # G1: the last complete date. Search Console dates are final three days back at most.
-    dates = await call("G1_dates", search(["date"], today - dt.timedelta(days=370), today, 400))
+    dates = await call("G1_dates", search(["date"], today - dt.timedelta(days=366), today, 400))
     days = []
     for row in (dates or ([], False))[0]:
         try:
