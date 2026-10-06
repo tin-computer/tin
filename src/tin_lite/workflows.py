@@ -1256,9 +1256,9 @@ class KeywordPlanWorkflow:
             for name in ("keyword_prepare", "keyword_collect"):
                 if self._stopped:
                     return
-                # Screening may wait ten minutes a call: two rounds of batches, each with
-                # one retry, after research.
-                await execute(name, minutes=60 if name == "keyword_collect" else 5)
+                # Screening may wait ten minutes a call: v9 runs up to four rounds of
+                # batches, each with one retry, after research.
+                await execute(name, minutes=90 if name == "keyword_collect" else 5)
             count = await execute("keyword_sample_count")
             if workflow.patched("keyword-inspect-batch-v1"):
                 # One activity inspects the samples a few at a time. Each sample keeps its own

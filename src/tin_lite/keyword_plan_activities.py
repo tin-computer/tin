@@ -21,6 +21,7 @@ from tin_lite import keyword_plan_v5 as v5
 from tin_lite import keyword_plan_v6 as v6
 from tin_lite import keyword_plan_v7 as v7
 from tin_lite import keyword_plan_v8 as v8
+from tin_lite import keyword_plan_v9 as v9
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -67,9 +68,9 @@ STAGE_NAMES = {"seeds": "seed proposal", "triage": "keyword screening", "review"
 # How many provider lookups one activity keeps in flight. Each holds one database connection
 # for its receipt lock (the pool allows ten), and DataForSEO's live endpoints accept far more.
 LOOKUP_CONCURRENCY = 4
-# Screening batches in flight (v7). Each holds a connection for the whole model call, and
-# two rounds of three, each with a retry at the full wait (2 x 2 x 630 seconds, 42 minutes),
-# still finish inside keyword_collect's 60 minutes.
+# Screening batches in flight (v7). Each holds a connection for the whole model call. v9's
+# twelve batches run as four rounds of three; each with a retry at the full wait
+# (4 x 2 x 630 seconds, 84 minutes) still finishes inside keyword_collect's 90 minutes.
 TRIAGE_CONCURRENCY = 3
 # The lowest ceiling any supported policy accepts; the pinned policy may require more.
 MINIMUM_CEILING = Decimal(v8.POLICY["minimum_ceiling_usd"])
@@ -83,6 +84,7 @@ CONTRACTS = {
     v6.POLICY["version"]: (v6.POLICY, v6.INSTRUCTIONS, v6.SCHEMAS),
     v7.POLICY["version"]: (v7.POLICY, v7.INSTRUCTIONS, v7.SCHEMAS),
     v8.POLICY["version"]: (v8.POLICY, v8.INSTRUCTIONS, v8.SCHEMAS),
+    v9.POLICY["version"]: (v9.POLICY, v9.INSTRUCTIONS, v9.SCHEMAS),
 }
 # Research and seed contracts shared by later policies; v6 only resizes reservations.
 BUYER_JOB_SEEDS = {
@@ -90,9 +92,12 @@ BUYER_JOB_SEEDS = {
     v6.POLICY["version"],
     v7.POLICY["version"],
     v8.POLICY["version"],
+    v9.POLICY["version"],
 }
 # Policies that screen in batches and save their research before screening.
-BATCHED_TRIAGE = {v7.POLICY["version"], v8.POLICY["version"]}
+BATCHED_TRIAGE = {v7.POLICY["version"], v8.POLICY["version"], v9.POLICY["version"]}
+# Policies that screen a larger pool and then select the candidates to review (v9).
+SCREEN_THEN_SELECT = {v9.POLICY["version"]}
 
 
 def modern_scope(scope):
@@ -104,7 +109,14 @@ def modern_scope(scope):
         v6.POLICY["version"],
         v7.POLICY["version"],
         v8.POLICY["version"],
+        v9.POLICY["version"],
     }
+
+
+def screen_batches(policy: dict) -> int:
+    """The most screening calls a run can need."""
+    pool = policy.get("screen_candidates", policy["max_candidates"])
+    return -(-pool // policy["triage_batch_size"])
 
 
 def triage_reservations(policy: dict) -> list[tuple[str, str]]:
@@ -112,9 +124,23 @@ def triage_reservations(policy: dict) -> list[tuple[str, str]]:
     if policy["version"] in BATCHED_TRIAGE:
         return [
             (v7.batch_stage(index), policy["triage_reservation_usd"])
-            for index in range(v7.batch_count(policy))
+            for index in range(screen_batches(policy))
         ]
     return [("triage", policy["triage_reservation_usd"])]
+
+
+def usable_sources(sources: dict) -> dict[str, list[dict]]:
+    """The observation rows research selected from, in the order it selected them."""
+    usable = {
+        name: source["value"].get("rows", [])
+        for name, source in sources.items()
+        if name != "seed_proposals"
+        and source.get("status") == "completed"
+        and "rows" in source["value"]
+    }
+    if "seed_proposals" in sources:
+        usable = {"seed_proposals": sources["seed_proposals"]["value"]["rows"], **usable}
+    return usable
 
 
 class ScreeningStopped(Exception):
@@ -408,6 +434,11 @@ class KeywordPlanActivities:
                     if domain not in domains and domain != scope["host"].removeprefix("www."):
                         domains.append(domain)
                 compact = {"domains": domains[:5]}
+            elif kind == "competitors_wide":
+                domains, dropped = v9.competitor_domains(
+                    raw["items"], target=scope["host"], limit=5
+                )
+                compact = {"domains": domains, "dropped": dropped}
             else:
                 compact = {
                     "rows": keyword_rows(
@@ -787,9 +818,9 @@ class KeywordPlanActivities:
         async def discover():
             if supplied:
                 return None
-            return await self._query(
-                run_id, "competitors", "competitors", scope["host"], scope=scope
-            )
+            # v9 asks for more domains and keeps only credible competitors among them.
+            kind = "competitors_wide" if "competitor_discovery_rows" in policy else "competitors"
+            return await self._query(run_id, "competitors", kind, scope["host"], scope=scope)
 
         seeds, target, discovered, gsc = await self._bounded(
             [
@@ -873,7 +904,22 @@ class KeywordPlanActivities:
                     "note": "Proposed queries, not measured search demand.",
                 },
             }
-        candidates, coverage = select_candidates(usable, limit=POLICY["max_candidates"])
+        policy = self._policy(scope)
+        if policy["version"] in SCREEN_THEN_SELECT:
+            # Only keywords are screened; the reviewed candidates and their observations are
+            # chosen from these sources once screening has labelled them.
+            candidates, collected = v9.screening_pool(usable, limit=policy["screen_candidates"])
+            # Until screening selects, nothing is retained for review.
+            coverage = {
+                "unique_collected": collected,
+                "screened": len(candidates),
+                "selected": 0,
+                "omitted": collected,
+                "selection": "screened before selection",
+                "observations_omitted": 0,
+            }
+        else:
+            candidates, coverage = select_candidates(usable, limit=POLICY["max_candidates"])
         notes = [
             "Provider lookups are capped; this is not an exhaustive keyword inventory.",
             "Search competitors are overlap-based suggestions, "
@@ -896,6 +942,11 @@ class KeywordPlanActivities:
                 "Buyer relevance is model-assessed before choosing search-result samples; "
                 "it is not proven demand.",
             ]
+        if policy["version"] in SCREEN_THEN_SELECT:
+            notes.append(
+                f"Up to {policy['screen_candidates']} collected keywords are screened for "
+                f"buyer fit; the {POLICY['max_candidates']} reviewed are chosen best fit first."
+            )
         coverage["notes"] = notes
         return {
             "seeds": seeds,
@@ -1028,6 +1079,13 @@ class KeywordPlanActivities:
                     run_id, scope, policy, candidates
                 )
                 screening["triage_stages"] = stages
+                if policy["version"] in SCREEN_THEN_SELECT:
+                    candidates, selected = v9.select_screened(
+                        usable_sources(sources),
+                        {row["id"]: row["buyer_fit"] for row in candidates},
+                        limit=POLICY["max_candidates"],
+                    )
+                    coverage.update(selected)
             elif candidates:
                 labels = await self._model(
                     run_id,
@@ -1042,9 +1100,10 @@ class KeywordPlanActivities:
                     raise ApplicationError(
                         "The saved keyword screening failed validation.", non_retryable=True
                     ) from None
-            coverage["buyer_fit"] = {
-                fit: sum(row["buyer_fit"] == fit for row in candidates) for fit in v2.FIT
-            }
+            if "screened" not in coverage or not candidates:
+                coverage["buyer_fit"] = {
+                    fit: sum(row["buyer_fit"] == fit for row in candidates) for fit in v2.FIT
+                }
         await self._save(
             run_id,
             "collection",
@@ -1162,7 +1221,8 @@ class KeywordPlanActivities:
             summary="Reviewing keyword intent, buyer fit, and evidence gaps.",
         )
         modern = modern_scope(scope)
-        data = (v2.review_input if modern else review_input)(
+        measured = self._policy(scope).get("high_priority") == v9.POLICY["high_priority"]
+        data = (v9.review_input if measured else v2.review_input if modern else review_input)(
             scope=scope, candidates=candidates, samples=samples, coverage=collection["coverage"]
         )
         eligible = (
@@ -1178,13 +1238,20 @@ class KeywordPlanActivities:
             if eligible
             else {"groups": [], "excluded": []}
         )
+        lowered = []
         try:
-            validated = (v2.expand_review if modern else validate_review)(value, candidates)
+            if measured:
+                validated, lowered = v9.expand_review(value, candidates)
+            else:
+                validated = (v2.expand_review if modern else validate_review)(value, candidates)
         except ValueError:
             await self._save(run_id, "failure", {"code": "validation", "stage": "review"})
             raise ApplicationError(
                 "The saved keyword review failed validation.", non_retryable=True
             ) from None
+        if lowered:
+            # Saved before the review: a repeated activity finds the review and returns.
+            await self._save(run_id, "review_priority", {"lowered": lowered})
         await self._save(run_id, "review_validated", validated)
 
     @activity.defn
@@ -1202,6 +1269,16 @@ class KeywordPlanActivities:
                 scope = await self._result(run_id, "scope")
                 samples, receipts = await self._samples(run_id, collection["candidates"])
                 budget = await self.db.get_effect(self.key(run_id, "budget"))
+                coverage = collection["coverage"]
+                if lowered := (await self._result(run_id, "review_priority") or {}).get("lowered"):
+                    coverage = {
+                        **coverage,
+                        "notes": [
+                            *coverage.get("notes", []),
+                            f"{len(lowered)} group(s) proposed as high priority are medium: "
+                            "no member has measured search volume or Search Console impressions.",
+                        ],
+                    }
                 docs = build_documents(
                     run_id=run_id,
                     project_id=str(run.project_id),
@@ -1210,7 +1287,7 @@ class KeywordPlanActivities:
                     candidates=collection["candidates"],
                     samples=samples,
                     review=review,
-                    coverage=collection["coverage"],
+                    coverage=coverage,
                     evidence={
                         **(
                             {"reused_research_from_run_id": collection["reused_from_run_id"]}

@@ -185,6 +185,36 @@ v7 with larger screening caps and nothing else:
   for two rounds of three batches that each need a retry at the full wait.
 - Runs pinned to v2-v7 send exactly the requests they did.
 
+## Policy v9: screen before selecting — October 6, 2026
+
+A review of all 36 production runs found no new failures but three faults in what the
+succeeded runs produced. New definitions pin `keyword-plan-v9` (catalog
+`organic.keyword_plan` 0.9.0); runs pinned to v2-v8 send exactly the requests they did.
+
+- **Competitors.** Discovery returned general platforms (youtube.com, facebook.com,
+  reddit.com, linkedin.com) in most runs and namesakes or lookalikes for small sites
+  (the same name on another TLD). Each got an equal share of the candidate slots. v9 asks
+  Competitors Domain for 20 domains instead of 5 and drops general platforms (matched on the
+  domain's first label), the target's namesakes, and domains sharing fewer than three ranked
+  keywords. It keeps the first three, as before. Dropped domains stay in `evidence.json` with
+  their reason. Without a credible competitor no footprint is bought.
+- **Screening before selection.** Candidates were capped at 300 in provider order before
+  screening, so one run kept 2 direct keywords of 817 collected and left 517 unscreened. v9
+  screens up to 600 collected keywords (one per source in turn, as before), then reviews 300
+  chosen direct first, then adjacent, then the rest. Coverage records `screened`,
+  `buyer_fit` across everything screened and `selected_buyer_fit`.
+- **Priorities.** 22 of 69 high-priority groups had no measured demand in any member. The
+  review now sees `measured_demand` per candidate (provider volume or Search Console
+  impressions above zero) and may rate a group high only when a member has it. A high group
+  without it is published as medium and the report says how many were lowered. The run never
+  fails over this.
+
+Twelve screening batches fit the $2 floor because their caps follow the largest output seen
+in production (2,320 tokens per 50 keywords): 12,000 tokens, then 24,000 on the one retry,
+with a 52,000-byte request bound. That reserves $0.014 per batch and $0.02 per retry. A full
+run's worst case is $1.958. `keyword_collect` may run for 90 minutes: four rounds of three
+batches, each with a retry at the full wait.
+
 ## Concurrent lookups — September 29, 2026
 
 Research buys the same calls as before, but no longer one at a time. Policies, seed counts,

@@ -20,6 +20,8 @@ ENDPOINTS = {
     "ranked": "dataforseo_labs/google/ranked_keywords/live",
     "ranked_relevant": "dataforseo_labs/google/ranked_keywords/live",
     "competitors": "dataforseo_labs/google/competitors_domain/live",
+    # v9 asks for more domains so filtering out platforms and namesakes still leaves three.
+    "competitors_wide": "dataforseo_labs/google/competitors_domain/live",
     "ideas": "dataforseo_labs/google/keyword_ideas/live",
     "suggestions": "dataforseo_labs/google/keyword_suggestions/live",
     "related": "dataforseo_labs/google/related_keywords/live",
@@ -65,6 +67,8 @@ def request_for(kind: str, *, market: str, value, tag: str) -> dict:
         )
     elif kind == "competitors":
         request.update(target=host(value).removeprefix("www."), limit=5)
+    elif kind == "competitors_wide":
+        request.update(target=host(value).removeprefix("www."), limit=20)
     elif kind == "ideas":
         request.update(keywords=[phrase(value)], limit=POLICY["idea_rows"])
     elif kind == "related":
