@@ -569,7 +569,8 @@ configured with `TIN_LITE_GITHUB_OAUTH_CLIENT_ID` and `TIN_LITE_GITHUB_OAUTH_CLI
 narrowest classic scope that can open a pull request on someone else's public repository, and
 stores that user token encrypted. Only `outreach.awesome_submit` uses it, after the founder
 approves the exact changes: fork the list, commit one file change to a branch in the fork, open
-one pull request, or open one issue. Disconnecting revokes the grant in GitHub. All provider
+one pull request, or open one issue. Disconnecting revokes that project's token in GitHub, not
+the founder's whole grant, which their other projects share. All provider
 credentials remain on the trusted switchboard and are explicitly rejected from E2B sandbox
 environments.
 

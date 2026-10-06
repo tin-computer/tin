@@ -477,3 +477,54 @@ async def test_partial_delivery_configuration_records_each_actual_destination(mo
     assert "private provider payload" not in str(outcomes)
     assert outcomes[1]["delivery_mode"] == "github_pr"
     assert result["configured_programs"] == [outcomes[1]["project_workflow_id"]]
+
+
+def live_connection(provider_key, **configuration):
+    return SimpleNamespace(
+        provider_key=provider_key, status="connected", configuration=configuration
+    )
+
+
+async def test_access_needs_counts_only_a_connection_whose_site_or_repository_is_chosen():
+    from tin_lite.onboarding_experience import access_needs
+
+    db = db_fixture()
+    db.list_integration_connections = AsyncMock(
+        return_value=[
+            live_connection("analytics.gsc", selected_site_url=None),
+            live_connection("infra.github", selected_repository="acme/site"),
+            # A personal GitHub account is set up by the workflows that need it; the plan may
+            # still list it, and that must not break the access list.
+            live_connection("infra.github_user"),
+        ]
+    )
+    needs = await access_needs(
+        database=db,
+        project_id=uuid4(),
+        inputs={"product_url": "https://acme.example"},
+        actions=[],
+        connections={"infra.github_user": {"state": "connected", "note": ""}},
+        initial=True,
+    )
+    by_provider = {n["provider"]: n for n in needs}
+
+    assert set(by_provider) == {"analytics.gsc", "infra.github"}
+    assert by_provider["infra.github"]["status"] == "connected"
+    assert by_provider["infra.github"]["next_action"] is None
+    assert by_provider["analytics.gsc"]["status"] == "needs_selection"
+    assert "Choose the Search Console property" in by_provider["analytics.gsc"]["next_action"]
+
+
+async def test_a_signed_in_connection_is_not_sent_back_to_sign_in():
+    db = db_fixture()
+    db.list_integration_connections = AsyncMock(
+        return_value=[live_connection("analytics.gsc", selected_site_url=None)]
+    )
+    view = await onboarding_experience(
+        database=db, storage=None, settings=SETTINGS, project_id=uuid4()
+    )
+    gsc = next(n for n in view["access_needs"] if n["provider"] == "analytics.gsc")
+
+    assert gsc["status"] == "needs_selection"
+    # Signed in already: the batch sign-in link is for providers that are not connected.
+    assert "analytics.gsc" not in view["connection_batch"]["arguments"]["providers"]

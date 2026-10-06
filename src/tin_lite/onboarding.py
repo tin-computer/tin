@@ -26,7 +26,11 @@ from tin_lite.executor_gates import (
     organic_system_gate,
     paid_ads_gate,
 )
-from tin_lite.integrations import parse_integration_requirements, registered_integrations
+from tin_lite.integrations import (
+    connection_readiness,
+    parse_integration_requirements,
+    registered_integrations,
+)
 from tin_lite.keyword_plan import KEY as KEYWORD_KEY
 from tin_lite.managed_services import configured, is_managed, not_configured
 from tin_lite.organic_audit import AUDIT_KEY
@@ -47,7 +51,9 @@ def tin_state(
     readiness: dict | None = None,
     billing_restrictions: dict | None = None,
 ) -> dict[str, Any]:
-    connected = {item.provider_key for item in connections if item.status == "connected"}
+    # Signed in with nothing chosen (no Search Console property, repository or PostHog project)
+    # is not connected: work that reads the provider cannot use it yet.
+    connected = {item.provider_key for item in connections if connection_readiness(item)["ready"]}
     integrations = [
         {"provider_key": item.key, "name": item.name, "connected": item.key in connected}
         for item in registered_integrations()

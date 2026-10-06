@@ -247,6 +247,8 @@ class GitHub:
         if path == "/user":
             return httpx.Response(200, json={"id": 4242, "login": self.login})
         if method == "DELETE" and path.startswith("/applications/"):
+            # Only this token, never the account's whole grant to Tin's app.
+            assert path.endswith("/token"), path
             self.revoked = True
             return httpx.Response(204)
         parts = path.split("/")

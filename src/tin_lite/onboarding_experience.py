@@ -24,7 +24,7 @@ from tin_lite.growth_onboarding import (
     ui_links,
 )
 from tin_lite.growth_onboarding_activities import repaired_action_inputs
-from tin_lite.integrations import registered_integrations
+from tin_lite.integrations import connection_readiness, registered_integrations
 from tin_lite.product_urls import dashboard_url
 from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
 from tin_lite.workflow_definitions import ensure_schedule_allowed
@@ -263,17 +263,27 @@ async def access_needs(
     }
     needs = []
     for provider in registered_integrations():
-        if provider.key not in relevant:
+        # Only the providers onboarding describes; others (a personal GitHub account, X)
+        # are set up by the workflows that need them.
+        if provider.key not in relevant or provider.key not in benefits:
             continue
         connection = live.get(provider.key)
-        connected = connection is not None and connection.status == "connected"
+        readiness = connection_readiness(connection, site_url=inputs.get("product_url") or None)
+        if readiness["ready"]:
+            status = "connected"
+        elif readiness["reason"] == "not_connected":
+            status = "not_connected"
+        else:
+            # Signed in, but the site, repository or project is not chosen (or is another one).
+            status = "needs_selection"
         decision = connections.get(provider.key, {})
         benefit, selection = benefits[provider.key]
         needs.append(
             {
                 "provider": provider.key,
                 "name": provider.name,
-                "status": "connected" if connected else "not_connected",
+                "status": status,
+                "next_action": readiness["next_action"],
                 "decision": decision.get("state", "open"),
                 "reason": decision.get("note", ""),
                 "requirement": "required" if provider.key in required else "recommended",
@@ -528,7 +538,8 @@ async def onboarding_experience(
             "providers": [
                 n["provider"]
                 for n in view["access_needs"]
-                if n["status"] != "connected" and n["decision"] != "declined"
+                # A signed-in connection needs its choice on Integrations, not another sign-in.
+                if n["status"] == "not_connected" and n["decision"] != "declined"
             ],
         },
         "requires_founder_choice": True,

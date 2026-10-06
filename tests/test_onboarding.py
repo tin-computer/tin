@@ -35,7 +35,9 @@ def _workflow(builtin) -> Workflow:
     )
 
 
-def _connection(provider_key: str, status: str = "connected") -> IntegrationConnection:
+def _connection(
+    provider_key: str, status: str = "connected", configuration: dict | None = None
+) -> IntegrationConnection:
     now = datetime.now(UTC)
     return IntegrationConnection(
         id=uuid4(),
@@ -44,7 +46,7 @@ def _connection(provider_key: str, status: str = "connected") -> IntegrationConn
         status=status,
         external_account_id="acct",
         external_account_label="acct",
-        configuration={},
+        configuration=configuration or {},
         credential_ciphertext=None,
         credential_key_version=None,
         connected_by_clerk_user_id="user",
@@ -179,7 +181,10 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         keyword_plan_max_cost_usd=9,
         content_plan_max_cost_usd=1,
     )
-    connections = [_connection("infra.github"), _connection("workspace.google", status="attention")]
+    connections = [
+        _connection("infra.github", configuration={"selected_repository": "acme/site"}),
+        _connection("workspace.google", status="attention"),
+    ]
     state = tin_state(settings=settings, workflows=WORKFLOWS, connections=connections)
     rows = _rows(state)
 
@@ -199,6 +204,17 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         "social.x": False,
         "infra.github_user": False,
     }
+
+
+def test_tin_state_counts_a_signed_in_connection_without_its_choice_as_not_connected() -> None:
+    settings = _Settings(dataforseo_login="login", dataforseo_password="secret")  # noqa: S106
+    connections = [_connection("infra.github"), _connection("analytics.gsc")]
+    state = tin_state(settings=settings, workflows=WORKFLOWS, connections=connections)
+    connected = {item["provider_key"]: item["connected"] for item in state["integrations"]}
+
+    # Signed in, but no repository or Search Console property chosen: nothing can read them.
+    assert connected["infra.github"] is False and connected["analytics.gsc"] is False
+    assert _rows(state)["website.change"]["runnable"] is False
 
 
 def test_tin_state_orders_by_system_then_key_and_skips_private_workflows() -> None:
