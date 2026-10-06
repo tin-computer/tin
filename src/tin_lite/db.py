@@ -51,6 +51,7 @@ from tin_lite.domain import (
 from tin_lite.projects import ProjectCreationConflictError
 from tin_lite.rollouts import RolloutFile
 from tin_lite.usage_capture import borrowed_connection, effect_connection
+from tin_lite.workflow_order import WORKFLOW_DISPLAY_ORDER
 
 logger = logging.getLogger(__name__)
 _warned_unknown_workflow_system_ids: set[str] = set()
@@ -1648,8 +1649,10 @@ class Database:
                 LEFT JOIN workflow_systems AS system
                   ON system.id = workflow.definition ->> 'system'
                 WHERE workflow.project_id IS NULL AND workflow.status <> 'archived'
-                ORDER BY (system.id IS NULL), system.display_order, system.name, workflow.key
-                """
+                ORDER BY (system.id IS NULL), system.display_order, system.name,
+                         array_position($1::text[], workflow.key) NULLS LAST, workflow.key
+                """,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         else:
             rows = await self.pool.fetch(
@@ -1664,9 +1667,11 @@ class Database:
                 WHERE (workflow.project_id IS NULL OR workflow.project_id = $1)
                   AND workflow.status <> 'archived'
                 ORDER BY workflow.project_id NULLS FIRST,
-                         (system.id IS NULL), system.display_order, system.name, workflow.key
+                         (system.id IS NULL), system.display_order, system.name,
+                         array_position($2::text[], workflow.key) NULLS LAST, workflow.key
                 """,
                 project_id,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         workflows = [_workflow(row) for row in rows]
         for workflow in workflows:
