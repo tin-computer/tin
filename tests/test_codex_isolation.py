@@ -240,6 +240,38 @@ def test_a_no_change_outcome_needs_no_pull_request_title():
     assert bridge._pull_request_text(result, {}) == ("", "")
 
 
+def test_an_empty_note_or_pr_title_never_discards_a_finished_patch():
+    # 2026-10-06: a website.change patch was finished and verified, then discarded because the
+    # model returned "message": "". Empty fields are filled from the others instead.
+    bridge = load_sandbox_module("procedure_app_server")
+    pull_request = {"kind": "github.pull_request"}
+    result = {"summary": "Added canonicals.", "message": "", "title": "Fix", "body": "## Fixed"}
+    assert bridge._result_text(result, pull_request) == (
+        "Added canonicals.",
+        "## Fixed",
+        "Fix",
+        "## Fixed",
+    )
+    # 2026-10-01: a technical fix with no pull-request title or body.
+    bare = {"summary": "Fixed titles.", "message": "Shortened two titles.", "title": "", "body": ""}
+    assert bridge._result_text(bare, pull_request) == (
+        "Fixed titles.",
+        "Shortened two titles.",
+        "Fixed titles.",
+        "Shortened two titles.",
+    )
+    # An artifact procedure has no pull request; its message falls back to the summary.
+    assert bridge._result_text({"summary": "Wrote the report.", "message": " "}, {}) == (
+        "Wrote the report.",
+        "Wrote the report.",
+        "",
+        "",
+    )
+    # No text at all is still no result.
+    empty = {"summary": "", "message": "", "title": "", "body": ""}
+    assert bridge._result_text(empty, pull_request)[0] == ""
+
+
 def test_a_task_that_pauses_without_a_question_asks_a_plain_one():
     # Two tasks failed on 2026-10-02 with "Codex requested input without a question".
     bridge = load_sandbox_module("task_app_server")

@@ -445,6 +445,25 @@ def _pull_request_text(result, output):
     return title, body
 
 
+def _text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _result_text(result, output):
+    """Summary, message, pull-request title and body, each filled from the others when the
+    model left it empty. The run already paid for its work; an empty note for the founder or
+    an empty PR title never discards a finished patch. Only a result with no text at all
+    fails (as no summary)."""
+    title, body = (_text(value) for value in _pull_request_text(result, output))
+    summary, message = _text(result.get("summary")), _text(result.get("message"))
+    summary = summary or title or message[:1000] or body[:1000]
+    message = message or body or summary
+    if output.get("kind") == "github.pull_request" or "title" in result or "body" in result:
+        title = title or summary[:200]
+        body = body or message
+    return summary, message, title, body
+
+
 def _content_draft_instruction(context):
     draft = context.get("content_draft")
     if draft is None:
@@ -878,13 +897,9 @@ def execute() -> int:
         result = json.loads(last_agent_message)
         if not isinstance(result, dict):
             raise RuntimeError("Codex procedure result is invalid")
-        summary = result.get("summary")
-        message = result.get("message")
-        if not isinstance(summary, str) or not summary.strip():
+        summary, message, title, body = _result_text(result, context.get("output", {}))
+        if not summary:
             raise RuntimeError("Codex procedure result has no summary")
-        if not isinstance(message, str) or not message.strip():
-            raise RuntimeError("Codex procedure result has no message")
-        title, body = _pull_request_text(result, context.get("output", {}))
         if output_kind == "github.pull_request" and (
             not isinstance(title, str)
             or not title.strip()
