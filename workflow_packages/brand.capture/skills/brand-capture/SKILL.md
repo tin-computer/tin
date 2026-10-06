@@ -44,7 +44,8 @@ font smoothing. Name a family only for the roles you saw it in, and record the p
 font files the site itself serves for it (from the resource transfers or `@font-face`), so pieces
 published on the same site can use them. When the site or source
 declares a dark theme (a `prefers-color-scheme` query, a theme attribute or class, a toggle),
-render it if the page offers a toggle; otherwise read its values from the source.
+render it if the page offers a toggle; otherwise read its values from the source. Record how the
+site switches themes, or that it is light only, since new figures must follow the same rule.
 Use `camoufox.set_viewport(1440, 900)` and
 `camoufox.set_viewport(390, 844)`, verify the returned dimensions, and inspect
 `camoufox.screenshot()` at both sizes. Scroll and capture a representative lower section when
@@ -111,7 +112,7 @@ product design. Follow the four sections in CONTRACT.md. Include compact imagery
 medium, texture/material, light, perspective, crop and density where supported. Give one reusable
 art-direction sentence when useful. References need a concrete contribution, not just a brand
 name. Avoid empty adjectives such as “premium” without instructions an image model can use.
-When the product has recurring subjects (characters, mascots, animals, devices, game pieces),
+When the product has recurring subjects (a mascot, characters, its own objects or screens),
 record how the product itself draws each one: shape, exact colours (the hex values its
 renderer, sprites or CSS use), viewpoint and distinguishing marks. Figures and interactive pieces then draw
 them the same way, never as a labelled placeholder shape.
