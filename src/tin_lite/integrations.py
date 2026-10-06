@@ -3936,7 +3936,6 @@ class IntegrationService:
                     item["patch"] = bounded_patch
                     if bounded_patch != patch:
                         item["patch_truncated"] = "true"
-                        truncated = True
                 files.append(item)
                 file_count += 1
             head = raw_pull.get("head")

@@ -521,7 +521,8 @@ def validate_document(content: bytes, context: dict) -> list[dict[str, str]]:
         if not item["reason"].strip():
             raise ValueError(f"Say why the {field} changes.")
         # The reviewer sees each change outside the machine-readable block.
-        prose = text[:start] + text[end:]
+        # A Markdown table cell writes "|" as "\|".
+        prose = (text[:start] + text[end:]).replace("\\|", "|")
         if old not in prose or new not in prose:
             raise ValueError(f"Show the current and proposed {field} in the review table.")
     if paragraphs > MAX_PARAGRAPHS:

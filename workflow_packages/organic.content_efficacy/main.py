@@ -254,6 +254,9 @@ def add_snapshot(inventory, snapshot):
         search = row.get("search") or {}
         now = search.get("current") or [0, 0, 0, 0]
         before = search.get("prior") or [0, 0, 0, 0]
+        # www. and the bare host share a path; keep the spelling search shows more.
+        if integer(now[1]) < page["impressions"][0]:
+            continue
         page["clicks"] = [integer(now[0]), integer(before[0])]
         page["impressions"] = [integer(now[1]), integer(before[1])]
         page["position"] = [number(now[3]), number(before[3])]
@@ -342,6 +345,9 @@ async def read_search_console(ctx, inventory, windows, notes):
             if not url:
                 continue
             page = inventory.setdefault(url, blank(url))
+            # www. and the bare host share a path; keep the spelling search shows more.
+            if integer(row.get("impressions")) < page["impressions"][slot]:
+                continue
             page["clicks"][slot] = integer(row.get("clicks"))
             page["impressions"][slot] = integer(row.get("impressions"))
             page["position"][slot] = number(row.get("position"))
