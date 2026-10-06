@@ -3,10 +3,11 @@
 ## In plain English
 
 `website.change` is meant to become the one workflow in the organic traffic system that writes
-to the founder's website: content drafts, page decisions (URL changes), the page tree, the
-blog index and technical fixes would all reach the site through it, after the founder approves
-them. Today it makes four kinds of change: approved pages, the technical fixes the latest
-audit found, the URL changes page decisions and the site plan made, and the blog index plan.
+to the founder's website: content drafts, page decisions (URL changes) and technical fixes
+all reach the site through it, after the founder approves them. Today it makes three kinds of
+change: approved pages, the technical fixes the latest audit found and the URL changes page
+decisions made. organic.site_architecture and content.blog_index are retired for new work
+(see [Retired](#retired-the-page-tree-and-the-blog-index)).
 content.deliver still opens its own pull requests for pages its approval starts.
 
 A change the founder approved publishes: Tin opens the pull request and merges it once the
@@ -144,7 +145,7 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | read one | `GET /api/projects/{id}/website-changes/{change_id}` | |
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
-| preview a source's changes (`source`: `audit`, `planned`, `blog_index`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
+| preview a source's changes (`source`: `audit`, `planned`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
 | open judgment calls | `GET /api/projects/{id}/website-changes/questions` | (in `preflight_website_change`) |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
@@ -311,6 +312,22 @@ longer starts, stops or lists technical fixes. New starts are refused (retries, 
 schedules and traffic system runs on v5 or earlier keep their pinned technical fix), and its
 preview tools are gone from both MCP servers: use `preflight_website_change`. The traffic
 system's v6 recipe starts website.change instead.
+
+## Retired: the page tree and the blog index
+
+`organic.site_architecture` and `content.blog_index` refuse new starts, and website.change
+refuses a new run with `source: blog_index` (`run_service.RETIRED`); the preflight tools offer
+only `audit` and `planned`. Retries, saved schedules and organic system runs that pinned them
+keep running. Both are hidden from discovery and new setups.
+
+- The page tree's triggers repeated the audit's orphan, depth and competing-page checks, and
+  no workflow read its page tree, URL rules or navigation. Its redirects needed the founder to
+  type every move. Page decisions plan the redirects and noindex changes `planned` makes.
+- The blog index planner ran a Codex session to plan an index most sites already have;
+  website.change adds each new article to the site's own index, and the audit reports posts
+  nothing links to.
+
+The sections below describe what pinned runs still do.
 
 ## Phase 3: planned URL changes and the blog index
 

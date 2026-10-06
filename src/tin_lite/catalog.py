@@ -843,9 +843,9 @@ BUILTIN_WORKFLOWS = (
                     "title": "Change source",
                     "description": "content_draft: one approved page (source_run_id). audit: "
                     "the technical fixes the latest organic audit found. planned: the "
-                    "redirects and noindex changes page decisions and the site architecture "
-                    "plan made. blog_index: the newest content.blog_index plan. Preview the "
-                    "last three with preflight_website_change.",
+                    "redirects and noindex changes page decisions made. blog_index: retired; "
+                    "kept for runs that pinned it. Preview audit and planned with "
+                    "preflight_website_change.",
                 },
                 "source_run_id": {
                     "type": "string",

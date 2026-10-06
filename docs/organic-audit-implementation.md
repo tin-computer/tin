@@ -603,7 +603,7 @@ The weekly loop reads `LATEST.json` (or a named run's `SUMMARY.json`) and never 
 `reports/organic-audit/*/findings.json`, which can pass 64 KB. Each checks the summary's
 `host` against its own site and sets a mismatch aside:
 
-- The page tree (`organic.site_architecture`) shows each page's click depth, exact or "at
+- The page tree (`organic.site_architecture`, retired for new work) shows each page's click depth, exact or "at
   most" as `links.depth` says, and inbound links. Possible orphans are pages the orphan
   check names or that no read page links to; a key page more than three clicks deep fires
   its trigger only on an exact depth.

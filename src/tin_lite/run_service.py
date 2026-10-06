@@ -69,6 +69,42 @@ class TemporalStartError(RuntimeError):
         self.run_id = run_id
 
 
+# Workflows retired for new work, with where the work goes instead.
+RETIRED = {
+    # website.change (source audit) runs the same repair with a founder decision per fix.
+    technical_fix.KEY: (
+        "organic.technical_fix is retired. Fix an audit's findings with website.change: "
+        "call preflight_website_change (source audit), let the founder approve the changes, "
+        "then start website.change with source audit."
+    ),
+    # Its triggers repeated the audit's orphan and competing-page checks, and nothing read
+    # its page tree, URL rules or navigation; page decisions plan redirects and noindex.
+    "organic.site_architecture": (
+        "organic.site_architecture is retired. The organic audit reports orphaned, deep and "
+        "competing pages, and page decisions (organic.content_efficacy) plan the redirects "
+        "and noindex changes website.change makes with source planned."
+    ),
+    # website.change adds each new article to the site's own index.
+    "content.blog_index": (
+        "content.blog_index is retired. website.change adds each published article to the "
+        "site's own index, and the organic audit reports posts nothing links to."
+    ),
+}
+RETIRED_WEBSITE_SOURCES = {
+    "blog_index": (
+        "website.change no longer builds blog index plans: content.blog_index is retired. "
+        "Use source audit or planned."
+    ),
+}
+
+
+def retired_for_new_work(key: str, inputs: dict[str, Any] | None) -> str | None:
+    """Why a new run of this workflow (or website.change source) is refused, if it is."""
+    if key == organic_system.WEBSITE_KEY:
+        return RETIRED_WEBSITE_SOURCES.get(str((inputs or {}).get("source") or ""))
+    return RETIRED.get(key)
+
+
 async def start_workflow_run(
     *,
     runtime: RuntimeServices,
@@ -121,21 +157,16 @@ async def start_workflow_run(
             # already-selected revision. create_run still checks actor, inputs and lineage.
             if definition_commit_sha is None:
                 definition_commit_sha = existing.definition_commit_sha
+    retired = retired_for_new_work(workflow.key, input_payload)
     if (
-        workflow.key == technical_fix.KEY
+        retired
         and existing is None
         and retry_of_run_id is None
         and project_workflow_id is None
         and _organic_parent_run_id is None
     ):
-        # Retired for new work: website.change (source audit) runs the same repair with a
-        # founder decision per fix. Retries, saved schedules and older organic system runs
-        # keep their pinned technical fix.
-        raise WorkflowInputError(
-            "organic.technical_fix is retired. Fix an audit's findings with website.change: "
-            "call preflight_website_change (source audit), let the founder approve the "
-            "changes, then start website.change with source audit."
-        )
+        # Retries, saved schedules and older organic system runs keep what they pinned.
+        raise WorkflowInputError(retired)
     workflow = await resolve_execution_contract(
         storage=getattr(runtime, "storage", None),
         workflow=workflow,
