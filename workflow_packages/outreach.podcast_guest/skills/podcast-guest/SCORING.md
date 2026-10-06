@@ -266,10 +266,15 @@ def plan(
             merged[key] = row
             continue
         duplicates += 1
-        keep = row if (row["rank"], order.index(row["arena"])) < (
-            known["rank"],
-            order.index(known["arena"]),
-        ) else known
+        keep = (
+            row
+            if (row["rank"], order.index(row["arena"]))
+            < (
+                known["rank"],
+                order.index(known["arena"]),
+            )
+            else known
+        )
         keep["found_by"] = sorted(set(known["found_by"]) | set(row["found_by"]))
         merged[key] = keep
 
@@ -313,7 +318,9 @@ def plan(
         for row in eligible[arena]:
             if row["key"] not in chosen:
                 excluded.append(dict(row, reason="over max_pitches; eligible next run"))
-    ladder.sort(key=lambda r: (r.get("deadline") or "9999-12-31", order.index(r["arena"]), r["rank"]))
+    ladder.sort(
+        key=lambda r: (r.get("deadline") or "9999-12-31", order.index(r["arena"]), r["rank"])
+    )
 
     outcomes = []
     for name in include_shows:
