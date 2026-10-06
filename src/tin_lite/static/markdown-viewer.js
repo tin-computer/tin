@@ -205,8 +205,10 @@
           frame.setAttribute("sandbox", "allow-scripts");
           frame.setAttribute("referrerpolicy", "no-referrer");
           frame.title = title || "Interactive piece";
-          frame.style.height = `${Number(figure.dataset.height) || 420}px`;
-          frame.srcdoc = embedDocument(new TextDecoder().decode(bytes));
+          // The article's height is a first guess; the piece then reports its own.
+          frame.style.height = `${embedHeight(Number(figure.dataset.height) || 420)}px`;
+          frame.srcdoc = embedDocument(new TextDecoder().decode(bytes), readerTheme());
+          watchEmbed(frame);
           figure.prepend(frame);
           if (title) figure.append(makeElement("figcaption", "", title));
         })
@@ -244,11 +246,67 @@
     });
   }
 
-  function embedDocument(html) {
+  function embedDocument(html, theme) {
     const policy = `<meta http-equiv="Content-Security-Policy" content="${EMBED_POLICY}">`;
+    const head = policy + embedBridge(theme);
     const doctype = html.match(/^\s*<!doctype[^>]*>/i);
-    return doctype ? doctype[0] + policy + html.slice(doctype[0].length) : policy + html;
+    return doctype ? doctype[0] + head + html.slice(doctype[0].length) : head + html;
   }
+
+  // Runs first in every embed: it takes the reader's theme as `data-theme` on its root and
+  // reports the piece's height. The piece only ever sends a number; the reader, a theme name.
+  function embedBridge(theme) {
+    return `<script>(() => {
+  const root = document.documentElement;
+  root.dataset.theme = ${JSON.stringify(theme)};
+  addEventListener("message", (event) => {
+    const theme = event.source === parent && event.data ? event.data.tinTheme : null;
+    if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  });
+  let reported = 0;
+  const report = () => {
+    const height = Math.ceil(root.getBoundingClientRect().height);
+    if (height && height !== reported) parent.postMessage({ tinEmbedHeight: (reported = height) }, "*");
+  };
+  addEventListener("load", report);
+  new ResizeObserver(report).observe(root);
+})();</script>`;
+  }
+
+  function readerTheme() {
+    return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  }
+
+  function embedHeight(height) {
+    return Math.min(1600, Math.max(120, Math.ceil(height)));
+  }
+
+  const embedFrames = new Set();
+
+  function watchEmbed(frame) {
+    if (!embedFrames.size) {
+      window.addEventListener("message", resizeEmbed);
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    }
+    embedFrames.add(frame);
+  }
+
+  function resizeEmbed(event) {
+    const height = event.data?.tinEmbedHeight;
+    if (typeof height !== "number" || !Number.isFinite(height)) return;
+    for (const frame of embedFrames) {
+      if (!frame.isConnected) embedFrames.delete(frame);
+      else if (frame.contentWindow === event.source) frame.style.height = `${embedHeight(height)}px`;
+    }
+  }
+
+  const themeObserver = new MutationObserver(() => {
+    const theme = readerTheme();
+    for (const frame of embedFrames) {
+      if (!frame.isConnected) embedFrames.delete(frame);
+      else frame.contentWindow?.postMessage({ tinTheme: theme }, "*");
+    }
+  });
 
   // Players from a short list of hosts; a video file plays in place and loads only on play.
   function videoPlayer(url, poster, title) {

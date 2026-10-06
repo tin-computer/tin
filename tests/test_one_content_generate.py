@@ -268,7 +268,7 @@ def connected(f, monkeypatch):
 
 def test_the_definition_drafts_three_kinds_with_a_review_policy_each():
     definition = spec(content_draft.KEY).definition
-    assert definition["version"] == "1.10.0"
+    assert definition["version"] == "1.11.0"
     assert content_draft.supported_kinds(definition) == ("article", "answer", "refresh")
     assert definition["human_review"]["review_label"] == "Review article"
     kinds = definition["human_review_kinds"]
@@ -652,8 +652,9 @@ def test_versions_on_main_are_unchanged():
 
 # The versions #267 introduced, none of them on main yet.
 # content.plan 0.9.0 (content-editorial-v8) raised 0.8.0's output cap and changed nothing else.
-# content.generate 1.10.0 lets an article carry figures and embeds (page bundles).
-RELEASED = {"content.generate": "1.10.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
+# content.generate 1.10.0 lets an article carry figures and embeds (page bundles); 1.11.0 draws
+# them in the project's look, in light and dark.
+RELEASED = {"content.generate": "1.11.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(

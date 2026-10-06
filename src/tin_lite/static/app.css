@@ -8396,6 +8396,8 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   max-width: 100%;
   height: auto;
   margin: 0 auto;
+  /* A figure's own prefers-color-scheme rules follow the reader's theme. */
+  color-scheme: light;
 }
 
 .md-figure figcaption,
@@ -8408,12 +8410,19 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   text-align: center;
 }
 
+/* No card around a piece: the page is its background, and it frames its own surface. A
+   matching color-scheme keeps the frame transparent. */
 .md-embed-frame {
   display: block;
   width: 100%;
-  background: var(--paper-card);
-  border: 1px solid var(--paper-border);
-  border-radius: var(--radius-card);
+  background: transparent;
+  border: 0;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] .md-figure img,
+html[data-theme="dark"] .md-embed-frame {
+  color-scheme: dark;
 }
 
 .md-video-frame,
