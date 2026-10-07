@@ -3419,6 +3419,34 @@ class Database:
         )
         return [_run(row) for row in rows]
 
+    async def list_runs_between(
+        self, *, project_id: UUID, start: datetime, end: datetime, limit: int = 500
+    ) -> list[tuple[WorkflowRun, str, str]]:
+        """Runs that started in [start, end), oldest first, with their workflow's key and title.
+
+        Chat tasks have their own transcript, and a superseded run is an earlier version of
+        a review the founder already sees, so neither belongs on the calendar.
+        """
+        rows = await self.pool.fetch(
+            """
+            SELECT runs.*, workflows.key AS workflow_key, workflows.title AS workflow_title
+            FROM workflow_runs AS runs
+            JOIN workflows ON workflows.id = runs.workflow_id
+            WHERE runs.project_id = $1
+              AND runs.executor <> 'project.task'
+              AND runs.status <> 'superseded'
+              AND COALESCE(runs.started_at, runs.created_at) >= $2
+              AND COALESCE(runs.started_at, runs.created_at) < $3
+            ORDER BY COALESCE(runs.started_at, runs.created_at), runs.id
+            LIMIT $4
+            """,
+            project_id,
+            start,
+            end,
+            limit,
+        )
+        return [(_run(row), row["workflow_key"], row["workflow_title"]) for row in rows]
+
     async def list_product_activity(
         self, *, project_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[ActivityEvent]:

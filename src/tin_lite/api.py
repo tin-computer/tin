@@ -5,12 +5,13 @@ import logging
 import mimetypes
 import re
 import secrets
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from urllib.parse import quote
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -49,6 +50,7 @@ from tin_lite.domain import (
     Workspace,
 )
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
+from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
 from tin_lite.integrations import (
     ADS_PROVIDER,
@@ -117,6 +119,7 @@ from tin_lite.run_service import (
     start_workflow_run as dispatch_workflow_run,
 )
 from tin_lite.schedules import WorkflowSchedule, next_run_after
+from tin_lite.system_week import upcoming_occurrences, week_window
 from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
 from tin_lite.website_change_api import router as website_change_router
@@ -161,6 +164,7 @@ router.include_router(protected_paths_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)
+WEEK_START = Query(description="The first of seven local days, usually a Monday.")
 
 
 @router.post("/api/events/lock-page", status_code=204)
@@ -417,9 +421,11 @@ ASSET_VERSION = hashlib.sha256(
             "output-comparison.css",
             "output-comparison.js",
             "pierre-trees.js",
+            "system-week.js",
             "theme.js",
             "tin-favicon.svg",
             "viewer-page.js",
+            "workflow-spine.js",
         )
     )
 ).hexdigest()[:12]
@@ -881,6 +887,37 @@ class ProjectSystemView(BaseModel):
     timezone: str
     last_mcp_used_at: datetime | None = None
     last_mcp_tool_name: str | None = None
+
+
+class WeekRunView(BaseModel):
+    id: UUID
+    project_workflow_id: UUID | None
+    workflow_key: str
+    workflow_title: str
+    status: RunStatus
+    trigger_source: str
+    at: datetime
+    finished_at: datetime | None
+    title: str | None
+    summary: str | None
+    progress_current: int | None
+    progress_total: int | None
+
+
+class WeekOccurrenceView(BaseModel):
+    project_workflow_id: UUID
+    name: str
+    workflow_key: str
+    at: datetime
+    state: Literal["planned", "paused", "held", "skipped"]
+    lands: str
+
+
+class ProjectWeekView(BaseModel):
+    start: date
+    timezone: str
+    runs: list[WeekRunView]
+    occurrences: list[WeekOccurrenceView]
 
 
 class DecisionView(BaseModel):
@@ -2940,6 +2977,64 @@ async def get_project_system(
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return ProjectSystemView.model_validate(summary)
+
+
+@router.get("/api/projects/{project_id}/week", response_model=ProjectWeekView)
+async def get_project_week(
+    project_id: UUID,
+    request: Request,
+    response: Response,
+    start: date = WEEK_START,
+    timezone: str = Query(default="UTC", min_length=1, max_length=100),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> ProjectWeekView:
+    """A week of the System calendar in the viewer's time zone: runs, then what is to come."""
+    await _require_project_access(project_id, request, user)
+    try:
+        begin, end = week_window(start, timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="timezone must be an IANA name") from exc
+    database = request.app.state.runtime.database
+    runs = await database.list_runs_between(project_id=project_id, start=begin, end=end)
+    configured = await database.list_project_workflows(project_id=project_id)
+    by_id = {item.id: item for item in configured}
+    occurrences = upcoming_occurrences(configured, start=begin, end=end, now=datetime.now(UTC))
+    response.headers["X-Tin-Read-Source"] = "postgres"
+    return ProjectWeekView(
+        start=start,
+        timezone=timezone,
+        runs=[
+            WeekRunView(
+                id=run.id,
+                project_workflow_id=run.project_workflow_id,
+                workflow_key=key,
+                workflow_title=title,
+                status=run.status,
+                trigger_source=run.trigger_source,
+                at=run.started_at or run.created_at,
+                finished_at=run.finished_at,
+                title=run.artifact_title,
+                summary=run.result_summary,
+                progress_current=run.progress_current,
+                progress_total=run.progress_total,
+            )
+            for run, key, title in runs
+        ],
+        occurrences=[
+            WeekOccurrenceView(
+                project_workflow_id=item.project_workflow_id,
+                name=by_id[item.project_workflow_id].name,
+                workflow_key=by_id[item.project_workflow_id].workflow_key,
+                at=item.at,
+                state=item.state,
+                # "Files, the audit report" -> "Files": where the result appears.
+                lands=workflow_expectation(by_id[item.project_workflow_id].workflow_key)[
+                    "lands"
+                ].split(",")[0],
+            )
+            for item in occurrences
+        ],
+    )
 
 
 @router.get(

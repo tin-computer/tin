@@ -287,6 +287,8 @@ const state = {
   chatDrafts: new Map(),
   sending: false,
   pendingReviewRunIds: new Set(),
+  // The System calendar: the week on screen and the weeks already read (see ensureWeek).
+  week: null,
   deferredReviewRunIds: [],
   pollTimer: null,
   pollInFlight: false,
@@ -2100,7 +2102,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
       <button class="workflow-section ${state.workflowSection === "yours" ? "is-active" : ""}" type="button" data-workflow-section="yours">My system ${runningCount ? `<i aria-hidden="true"></i><span>${runningCount}</span>` : ""}</button>
       <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Workflows</button>
       <button class="workflow-section ${state.workflowSection === "activity" ? "is-active" : ""}" type="button" data-workflow-section="activity">Activity</button>
-      <span class="system-pace">${state.workflowSection === "activity" ? escapeHtml(systemActivityPace()) : `<span class="system-pace-long">${escapeHtml(systemPaceLine())}</span><span class="system-pace-short">${escapeHtml(systemPaceShort())}</span>`}</span>
+      ${state.workflowSection === "activity" ? `<span class="system-pace">${escapeHtml(systemActivityPace())}</span>` : state.workflowSection === "yours" ? systemWeekNavHtml() : ""}
     </div>
     ${sectionContent}
   </section>`;
@@ -2160,44 +2162,20 @@ function systemActivityHtml() {
     <p class="activity-boundary">${state.activityLoading ? "loading earlier activity…" : state.activityHasMore ? "scroll for earlier activity" : "30-day activity boundary"}</p>`;
 }
 
-function systemPaceLine() {
-  const summary = state.systemSummary;
-  const workflowCountValue = summary?.workflow_count ?? state.projectWorkflows.length;
-  const runningCount = summary?.running_count ?? state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-  const runsThisMonth = summary?.runs_this_month ?? state.runs.filter(
-    (run) => run.workflow_name !== "project.task" && new Date(run.created_at) >= monthStart,
-  ).length;
-  const nextRunAt = summary?.next_run_at || state.projectWorkflows
-    .map((item) => item.next_run_at)
-    .filter(Boolean)
-    .sort()[0];
-  const next = nextRunAt ? `next ${systemDateTime(nextRunAt)}` : "nothing scheduled";
-  const setUpAt = summary?.set_up_at ? new Date(summary.set_up_at) : null;
-  const justSetUp = setUpAt && Date.now() - setUpAt.getTime() < 24 * 60 * 60 * 1000;
-  const firstRun = justSetUp
-    ? `Set up today: ${workflowCountValue} ${workflowCountValue === 1 ? "role" : "roles"}. First results ${nextRunAt ? systemDateTime(nextRunAt) : "within the hour"}. · `
-    : "";
-  return `${firstRun}${workflowCountValue} saved ${workflowCountValue === 1 ? "workflow" : "workflows"} · ${runningCount} running · ${runsThisMonth} runs this month · ${next}`;
-}
-
-// Beside the diagram panel the pace line keeps only the count and the next run.
-function systemPaceShort() {
-  const summary = state.systemSummary;
-  const workflowCountValue = summary?.workflow_count ?? state.projectWorkflows.length;
-  const nextRunAt = summary?.next_run_at || state.projectWorkflows
-    .map((item) => item.next_run_at)
-    .filter(Boolean)
-    .sort()[0];
-  return `${workflowCountValue} saved · ${nextRunAt ? `next ${systemDateTime(nextRunAt)}` : "nothing scheduled"}`;
+// The System page shows times in the viewer's own time zone, as its calendar does. A
+// project's stored zone defaults to UTC, which put 10:00 schedules at 17:00.
+function viewerTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 function systemDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "later";
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
+  const timeZone = viewerTimeZone();
   try {
     const weekday = date.toLocaleDateString(undefined, { weekday: "short", timeZone }).toLowerCase();
     const time = date.toLocaleTimeString([], {
@@ -2219,7 +2197,7 @@ function systemShortDate(value) {
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      timeZone: state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: viewerTimeZone(),
     }).toLowerCase();
   } catch {
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" }).toLowerCase();
@@ -2332,7 +2310,7 @@ function systemRunningSentence(run, title) {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: viewerTimeZone(),
     });
   } catch {
     // The Postgres projection is authoritative; local time is a safe display fallback.
@@ -2364,13 +2342,13 @@ function systemRunDetailTime(value, timeZone = null) {
     const day = date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      timeZone: timeZone || state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: timeZone || viewerTimeZone(),
     }).toLowerCase();
     const time = date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: timeZone || state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: timeZone || viewerTimeZone(),
     });
     return `${day} ${time}`;
   } catch {
@@ -2604,7 +2582,7 @@ function systemMySystemHtml() {
     )
     .map((run) => systemRunCard(run));
   const content = `${systemWorkflowGroup("Running", runningCards)}${systemWorkflowGroup("Scheduled", scheduledCards)}${systemWorkflowGroup("Available", availableCards)}`;
-  const week = query ? "" : systemWeekAheadHtml();
+  const week = query ? "" : systemWeekHtml();
   if (!content) {
     return query
       ? '<div class="empty-list workflow-empty"><strong>No workflows match this search.</strong><button class="button-quiet" type="button" data-clear-workflow-search>Clear search</button></div>'
@@ -2613,106 +2591,153 @@ function systemMySystemHtml() {
   return `${week}${content}<button class="system-add-workflow" type="button" data-browse-registry>Add workflows →</button>`;
 }
 
-// The week ahead, as on Paper board SYS-V3: seven columns from today, what runs each day and
-// where it lands, then the weekly rhythm in one sentence. Static; the cards below carry actions.
-function systemWeekAheadHtml() {
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone || undefined;
-  const scheduled = state.projectWorkflows.filter(
-    (item) => item.schedule && item.status !== "paused" && item.status !== "archived",
-  );
-  const setUpAt = state.systemSummary?.set_up_at ? new Date(state.systemSummary.set_up_at) : null;
-  const recentlySetUp = Boolean(setUpAt) && Date.now() - setUpAt.getTime() < 7 * 86400000;
-  if (!scheduled.length && !recentlySetUp) return "";
-  const format = (date, options) => {
-    try {
-      return date.toLocaleDateString("en-US", { ...options, timeZone });
-    } catch (_error) {
-      return date.toLocaleDateString("en-US", options);
-    }
-  };
-  const clock = (date) => {
-    try {
-      return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone });
-    } catch (_error) {
-      return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-    }
-  };
-  const dayKey = (date) => format(date, { year: "numeric", month: "numeric", day: "numeric" });
-  const now = new Date();
-  const days = Array.from({ length: 7 }, (_, index) => new Date(now.getTime() + index * 86400000));
-  const runsOn = (configured, date) => {
-    const schedule = configured.schedule;
-    if (schedule.end_at && new Date(schedule.end_at) <= date) return false;
-    if (schedule.cadence === "daily") return true;
-    if (schedule.cadence === "monthly") {
-      const day = Number(format(date, { day: "numeric" }));
-      const month = Number(format(date, { month: "numeric" }));
-      return day === schedule.day_of_month && (!(schedule.months || []).length || schedule.months.includes(month));
-    }
-    const weekday = format(date, { weekday: "long" }).toLowerCase();
-    return (schedule.weekdays || []).some((day) => String(day).toLowerCase() === weekday);
-  };
-  const lands = (configured) => {
-    if (configured.last_run_status === "failed") return "last run failed; retry below";
-    return String(configured.workflow_key || "").startsWith("content.") ? "in Decisions" : "in Files";
-  };
-  const columns = days.map((date, index) => {
-    const label = `${format(date, { weekday: "short" }).toLowerCase()} ${format(date, { day: "numeric" })}`;
-    const entries = [];
-    if (index === 0 && setUpAt && dayKey(setUpAt) === dayKey(date)) {
-      const firstRuns = state.runs.filter(
-        (run) => run.workflow_name !== "project.task" && new Date(run.created_at) >= setUpAt,
-      );
-      const results = firstRuns.filter((run) => run.status === "succeeded").length;
-      const running = firstRuns.filter((run) => RUNNING_STATES.has(run.status)).length;
-      const waiting = firstRuns.filter((run) => run.status === "needs_input" || run.status === "failed").length;
-      const parts = [];
-      if (results) parts.push(`${results} ${results === 1 ? "result" : "results"}`);
-      if (running) parts.push(`${running} running`);
-      if (waiting) parts.push(`${waiting} waiting`);
-      entries.push(
-        `<span>${escapeHtml(clock(setUpAt))} · set up by your coding agent</span>` +
-        `<small>${firstRuns.length} first ${firstRuns.length === 1 ? "run" : "runs"}${parts.length ? ` · ${escapeHtml(parts.join(", "))}` : ""}</small>`,
-      );
-    }
-    const nowClock = clock(now);
-    for (const configured of scheduled) {
-      if (!runsOn(configured, date)) continue;
-      // Today: what already ran is in the setup line or the cards below, not the week ahead.
-      if (index === 0 && (entries.length || (configured.schedule.local_time || "09:00") <= nowClock)) continue;
-      entries.push(
-        `<span>${escapeHtml(configured.schedule.local_time || "09:00")} · ${escapeHtml(configured.name)}</span><small>${escapeHtml(lands(configured))}</small>`,
-      );
-    }
-    const body = entries.length ? entries.join("") : '<span class="is-quiet">quiet</span>';
-    return `<div class="system-week-day ${index === 0 ? "is-today" : ""}"><code>${escapeHtml(label)}${index === 0 ? " · today" : ""}</code>${body}</div>`;
+// The System calendar (Paper WK-N6 and WK-N5b): a week of runs and of what is still to come,
+// in the viewer's time zone. Weeks load on demand; polling refreshes the week on screen.
+function currentWeekStart() {
+  return window.TinSystemWeek.weekStart(new Date(), viewerTimeZone());
+}
+
+function ensureWeek() {
+  if (!state.project || !window.TinSystemWeek) return null;
+  if (state.week?.projectId !== state.project.id) {
+    state.week = { projectId: state.project.id, start: currentWeekStart(), views: new Map(), openDay: null, loading: null, failed: null };
+  }
+  const week = state.week;
+  if (!week.views.has(week.start) && week.loading !== week.start && week.failed !== week.start) {
+    window.setTimeout(loadWeek, 0);
+  }
+  return week;
+}
+
+async function loadWeek() {
+  const week = state.week;
+  if (!week || !state.project || week.loading === week.start) return;
+  const start = week.start;
+  const context = currentProjectContext();
+  week.loading = start;
+  try {
+    const query = new URLSearchParams({ start, timezone: viewerTimeZone() });
+    const view = await api(`/api/projects/${encodeURIComponent(context.projectId)}/week?${query}`);
+    if (!isCurrentProjectContext(context) || state.week !== week) return;
+    week.views.set(start, { start, runs: view?.runs || [], occurrences: view?.occurrences || [] });
+    week.failed = null;
+    if (week.start === start) renderWeek();
+  } catch (error) {
+    if (!isCurrentProjectContext(context) || state.week !== week) return;
+    // A refresh that fails keeps the week already on screen; a first read says so once.
+    if (week.views.has(start)) return;
+    week.failed = start;
+    if (week.start === start) renderWeek();
+    showToast(`Could not load this week: ${error.message}`);
+  } finally {
+    if (state.week === week && week.loading === start) week.loading = null;
+  }
+}
+
+function systemWeekHtml() {
+  const week = ensureWeek();
+  if (!week) return "";
+  const timeZone = viewerTimeZone();
+  const view = week.views.get(week.start);
+  return window.TinSystemWeek.render(view || { start: week.start, runs: [], occurrences: [] }, {
+    today: window.TinSystemWeek.localDay(new Date(), timeZone),
+    timeZone,
+    needsYou: new Set(state.decisions.map((decision) => decision.run_id)),
+    names: new Map(state.projectWorkflows.map((item) => [item.id, item.name])),
+    openDay: week.openDay,
+    loading: !view && week.failed !== week.start,
   });
-  const weekdayName = (day) => `${String(day).charAt(0).toUpperCase()}${String(day).slice(1)}s`;
-  const WEEK = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-  const firstDay = (configured) => Math.min(...(configured.schedule.weekdays || []).map((day) => WEEK.indexOf(String(day).toLowerCase())), 7);
-  const isMonthly = (configured) => configured.schedule.cadence === "monthly";
-  const rhythm = [...scheduled].filter((item) => !isMonthly(item)).sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
-    const schedule = configured.schedule;
-    if (schedule.cadence === "daily") return `${configured.name} every day`;
-    return `${configured.name} ${(schedule.weekdays || []).map(weekdayName).join(" and ") || "weekly"}`;
-  });
-  const monthly = scheduled.filter(isMonthly).map((configured) => `${configured.name} on ${monthlyWords(configured.schedule)}`);
-  const nextRunAt = scheduled.map((item) => item.next_run_at).filter(Boolean).sort()[0];
-  const nextConfigured = scheduled.find((item) => item.next_run_at === nextRunAt);
-  const cadences = [
-    rhythm.length ? `Then every week: ${rhythm.join(", ")}.` : "",
-    monthly.length ? `${rhythm.length ? "And" : "Then"} ${monthly.join(", ")}.` : "",
-  ].filter(Boolean).join(" ");
-  const footer = cadences
-    ? `${cadences}${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
-    : "Nothing is on the calendar yet; the runs above were one-offs.";
-  const city = timeZone ? String(timeZone).split("/").pop().replace(/_/g, " ") : "";
-  const range = `${format(days[0], { month: "short" }).toLowerCase()} ${format(days[0], { day: "numeric" })} – ${format(days[6], { day: "numeric" })}`;
-  return `<section class="system-week" aria-label="This week">
-    <header><strong>This week</strong><code>${escapeHtml(range)}${city ? ` · ${escapeHtml(city)}` : ""}</code></header>
-    <div class="system-week-days">${columns.join("")}</div>
-    <p>${escapeHtml(footer)}</p>
-  </section>`;
+}
+
+function systemWeekNavHtml() {
+  const away = Boolean(state.week && window.TinSystemWeek && state.week.start !== currentWeekStart());
+  return `<span id="system-week-nav" class="system-week-nav">
+    ${away ? '<button class="system-week-today" type="button" data-week-nav="today">Today</button>' : ""}
+    <button type="button" data-week-nav="-7" aria-label="Previous week"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M7.5 2.5 4 6l3.5 3.5" /></svg></button>
+    <button type="button" data-week-nav="7" aria-label="Next week"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M4.5 2.5 8 6l-3.5 3.5" /></svg></button>
+  </span>`;
+}
+
+// Redraw the calendar and its arrows in place, leaving the cards below and any open editor.
+function renderWeek() {
+  const calendar = document.getElementById("system-week");
+  if (calendar) calendar.outerHTML = systemWeekHtml();
+  const nav = document.getElementById("system-week-nav");
+  if (nav) nav.outerHTML = systemWeekNavHtml();
+}
+
+function moveWeek(step) {
+  const week = state.week;
+  if (!week) return;
+  week.start = step === "today" ? currentWeekStart() : window.TinSystemWeek.addDays(week.start, Number(step));
+  week.openDay = null;
+  week.failed = null;
+  renderWeek();
+}
+
+function openWeekDay(day) {
+  const week = state.week;
+  if (!week) return;
+  week.openDay = week.openDay === day ? null : day;
+  renderWeek();
+  document.querySelector(".system-week-sheet")?.focus({ preventScroll: true });
+}
+
+function closeWeekSheet({ focus = true } = {}) {
+  const day = state.week?.openDay;
+  if (!day) return;
+  state.week.openDay = null;
+  renderWeek();
+  if (focus) document.querySelector(`[data-week-more="${CSS.escape(day)}"]`)?.focus({ preventScroll: true });
+}
+
+// A review opens its decision; a finished run opens its output. Work still running, failed
+// or stopped, or a run without output, is told in Activity.
+async function openWeekRun(runId) {
+  closeWeekSheet({ focus: false });
+  const decision = state.decisions.find((item) => item.run_id === runId);
+  if (decision) {
+    openDecisionReview(decision);
+    return;
+  }
+  let run = state.runs.find((item) => item.id === runId);
+  if (!run) {
+    const context = currentProjectContext();
+    try {
+      run = await api(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+    } catch (error) {
+      showToast(`Could not open this run: ${error.message}`);
+      return;
+    }
+    if (!isCurrentProjectContext(context)) return;
+    upsertRun(run);
+  }
+  if (run.status === "succeeded" && availableRunOutput(run)) {
+    openRunArtifact(run.id, "workflows");
+    return;
+  }
+  const event = state.activity.find((item) => item.run_id === run.id);
+  state.activityFilter = "all";
+  state.expandedRun = event ? { runId: run.id, eventId: event.id } : null;
+  navigate("activity");
+}
+
+// A slot still to come opens its saved workflow's settings.
+function openWeekSlot(projectWorkflowId) {
+  const configured = state.projectWorkflows.find((item) => item.id === projectWorkflowId);
+  if (!configured) return;
+  closeWeekSheet({ focus: false });
+  openSavedWorkflowSettings(configured);
+}
+
+// A saved workflow's settings, opened on My system and brought into view.
+function openSavedWorkflowSettings(configured) {
+  state.workflowSection = "yours";
+  state.expandedRun = null;
+  state.workflowEditor = { workflowId: configured.workflow_id, projectWorkflowId: configured.id, runId: null, field: null };
+  renderWorkflows();
+  main.querySelector(`.system-config-form[data-project-workflow-id="${CSS.escape(configured.id)}"], .workflow-config-ledger[data-project-workflow-id="${CSS.escape(configured.id)}"]`)
+    ?.scrollIntoView({ block: "nearest" });
 }
 
 function systemProjectWorkflowEditor(workflow, configured, run = null) {
@@ -3717,14 +3742,7 @@ function renderDiagramPanel() {
   if (!existing) document.body.append(panel);
   window.requestAnimationFrame(() => diagramSpine?.redraw());
   panel.querySelector("[data-close-workflow-diagram]").addEventListener("click", () => closeWorkflowDiagram());
-  panel.querySelector("[data-diagram-workflow-settings]")?.addEventListener("click", () => {
-    state.workflowSection = "yours";
-    state.expandedRun = null;
-    state.workflowEditor = { workflowId: configured.workflow_id, projectWorkflowId: configured.id, runId: null, field: null };
-    renderWorkflows();
-    main.querySelector(`.system-config-form[data-project-workflow-id="${CSS.escape(configured.id)}"], .workflow-config-ledger[data-project-workflow-id="${CSS.escape(configured.id)}"]`)
-      ?.scrollIntoView({ block: "nearest" });
-  });
+  panel.querySelector("[data-diagram-workflow-settings]")?.addEventListener("click", () => openSavedWorkflowSettings(configured));
 }
 
 function syncDiagramButtons() {
@@ -6880,6 +6898,7 @@ async function pollRuns() {
       state.activity = activity;
       state.projectWorkflows = projectWorkflows;
       state.activityHasMore = state.activity.length === 100;
+      if (state.week && state.view === "workflows" && state.workflowSection === "yours") loadWeek();
     }
     renderPolledRuns({ collectionsChanged, summaryChanged });
   } catch (error) {
@@ -7825,6 +7844,29 @@ copyAgentCommand?.addEventListener("click", async () => {
 projectSwitcher.addEventListener("click", () => {
   if (projectMenu.hidden) openProjectMenu();
   else closeProjectMenu();
+});
+
+// The calendar redraws itself, so one listener serves every render of it. A click anywhere
+// outside an opened day closes it.
+document.addEventListener("click", (event) => {
+  if (!state.week) return;
+  const target = event.target.closest?.("[data-week-nav], [data-week-more], [data-week-close], [data-week-run], [data-week-slot]");
+  const ours = Boolean(target && main.contains(target));
+  if (state.week.openDay && !event.target.closest?.(".system-week-sheet, [data-week-more]")) {
+    closeWeekSheet({ focus: false });
+  }
+  if (!ours) return;
+  if (target.dataset.weekNav) moveWeek(target.dataset.weekNav);
+  else if (target.dataset.weekMore) openWeekDay(target.dataset.weekMore);
+  else if (target.hasAttribute("data-week-close")) closeWeekSheet();
+  else if (target.dataset.weekRun) openWeekRun(target.dataset.weekRun);
+  else if (target.dataset.weekSlot) openWeekSlot(target.dataset.weekSlot);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !state.week?.openDay) return;
+  event.preventDefault();
+  closeWeekSheet();
 });
 
 document.addEventListener("keydown", (event) => {
