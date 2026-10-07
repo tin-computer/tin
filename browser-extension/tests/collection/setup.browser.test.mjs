@@ -10,7 +10,7 @@ import {selection,profileHTML} from "./fixtures.mjs";
 test("MV3 prepares a reusable session once, keeps cookies local and honors saved permission", {timeout:45000}, async t=>{
   const dir=await mkdtemp(join(tmpdir(),"tin-setup-mv3-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const key="tin.linkedin.collection.v3", project="00000000-0000-4000-8000-000000000002";
-  let transfers=0,checks=0;
+  let transfers=0,checks=0,rejections=0,rejectRefresh=false;
   const status={permission:{version:1,mode:"local_only"},cloud_available:true,session_available:false,session_generation:null};
   const server=createServer(async(req,res)=>{
     res.setHeader("Content-Type","application/json");res.setHeader("Access-Control-Allow-Origin","*");
@@ -20,6 +20,7 @@ test("MV3 prepares a reusable session once, keeps cookies local and honors saved
     if(req.url.endsWith("/pending")){res.end("null");return;}
     if(req.url.endsWith("/session")){
       let raw="";for await(const chunk of req)raw+=chunk;const body=JSON.parse(raw);
+      if(rejectRefresh){rejections++;res.writeHead(409).end(JSON.stringify({detail:"challenge"}));return;}
       assert.equal(status.permission.mode,"cloud_preferred");
       assert.equal(body.actor_key,selection.actor.key);
       assert.equal(body.expected_generation,null);
@@ -66,4 +67,12 @@ test("MV3 prepares a reusable session once, keeps cookies local and honors saved
   const storage=await worker.evaluate(()=>chrome.storage.local.get(null));
   assert.equal(JSON.stringify(storage).includes("fixture-li_at"),false,"raw session is not persisted in extension state");
   assert.equal(context.pages().length,2,"setup with current context does not create a popup");
+  rejectRefresh=true;status.session_available=false;
+  await worker.evaluate(key=>chrome.alarms.create(key,{when:Date.now()+100}),key);
+  await wait(()=>rejections===1);
+  const checked=checks;
+  await worker.evaluate(key=>chrome.alarms.create(key,{when:Date.now()+100}),key);
+  await wait(()=>checks>checked);
+  assert.equal(rejections,1,"a challenge waits for the user instead of repeating transfers");
+  assert.equal((await worker.evaluate(key=>chrome.storage.local.get(key),key))[key].refresh_blocked,true);
 });

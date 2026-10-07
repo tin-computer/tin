@@ -74,7 +74,10 @@ async def default_inputs(database, project_id, inputs):
 
 
 class CollectionConnection:
-    def __init__(self, store, cipher=None):
+    def __init__(self, store, cipher=None, *, verify=None):
+        from tin_lite.linkedin_session import check_account
+
+        self.verify = verify or check_account
         self.store, self.db, self.settings, self.cipher = store, store.db, store.settings, cipher
 
     async def device_status(self, project_id, bearer):
@@ -149,6 +152,9 @@ class CollectionConnection:
                 row["id"],
             ):
                 raise CollectionError("collection_active")
+            # This fixed read checks the transferred login, not a submitted account label.
+            # Keep the connection lock until storage commits so replacement cannot race it.
+            await self.verify(session, device["actor"])
             generation = str(uuid4())
             sealed = {
                 "version": 2,
@@ -165,6 +171,7 @@ class CollectionConnection:
                     "session_expires_at": expiry.isoformat(),
                     "session_state": "available",
                     "session_refreshed_at": now.isoformat(),
+                    "session_verified_at": datetime.now(UTC).isoformat(),
                 }
             )
             config.pop("cloud_run_id", None)
@@ -211,6 +218,7 @@ class CollectionConnection:
                     "session_generation",
                     "session_expires_at",
                     "session_refreshed_at",
+                    "session_verified_at",
                     "cloud_run_id",
                 ):
                     config.pop(key, None)

@@ -6,11 +6,12 @@ This is a candidate adapter: deployment qualification is separate from fixture c
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
 import secrets
-from urllib.parse import quote, unquote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 
@@ -341,6 +342,25 @@ def resolved_source(payload, source, keywords):
         raise CollectionError("browser_preparation_required")
     if distance != "DISTANCE_1":
         raise CollectionError("friend_not_connected")
+    # A relationship alone does not establish that the friend exposes their list.
+    # Require a connections-view link within this exact profile's own evidence.
+    values, visible = [profile], False
+    while values:
+        value = values.pop()
+        if isinstance(value, dict):
+            values.extend(value.values())
+        elif isinstance(value, list):
+            values.extend(value)
+        elif isinstance(value, str) and value.startswith("https://www.linkedin.com/"):
+            url = urlsplit(value)
+            if url.path.rstrip("/") == "/search/results/people":
+                links = parse_qs(url.query).get("connectionOf", [])
+                try:
+                    visible |= len(links) == 1 and json.loads(links[0]) == [urn.rsplit(":", 1)[1]]
+                except ValueError:
+                    pass
+    if not visible:
+        raise CollectionError("browser_preparation_required")
     name = " ".join(
         value
         for value in (profile.get("firstName", ""), profile.get("lastName", ""))
@@ -365,44 +385,63 @@ def resolved_source(payload, source, keywords):
     return result.model_dump()
 
 
+async def _get(client, session, path, params=None):
+    async with client.stream(
+        "GET",
+        "https://www.linkedin.com" + path,
+        params=params,
+        headers=headers(session, search=params is not None),
+        follow_redirects=False,
+    ) as response:
+        if response.status_code == 429:
+            raise CollectionError("rate_limited")
+        if response.status_code == 403:
+            raise CollectionError("access_denied")
+        if response.status_code == 401:
+            raise CollectionError("session_expired")
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location", "")
+            raise CollectionError(
+                "challenge"
+                if any(v in location for v in ("checkpoint", "challenge"))
+                else "session_expired"
+            )
+        if 400 <= response.status_code < 500 or response.status_code == 999:
+            raise CollectionError("access_denied")
+        if response.status_code != 200:
+            raise CollectionError("cloud_failed")
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > 2_000_000:
+                raise CollectionError("unsupported_search_contract")
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise CollectionError("unsupported_search_contract") from None
+
+
+async def check_account(session, actor, *, client=None):
+    """One bounded, read-only identity check before marking saved access ready."""
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=False)
+    try:
+        async with asyncio.timeout(10):
+            if not identity_matches(await _get(client, session, "/voyager/api/me"), actor):
+                raise CollectionError("account_changed")
+    except (httpx.HTTPError, TimeoutError):
+        raise CollectionError("cloud_unavailable") from None
+    finally:
+        if own:
+            await client.aclose()
+
+
 async def read_page(session, source, keywords, page, *, client=None):
     own = client is None
     client = client or httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False)
 
     async def get(path, params=None):
-        async with client.stream(
-            "GET",
-            "https://www.linkedin.com" + path,
-            params=params,
-            headers=headers(session, search=params is not None),
-            follow_redirects=False,
-        ) as response:
-            if response.status_code == 429:
-                raise CollectionError("rate_limited")
-            if response.status_code == 403:
-                raise CollectionError("access_denied")
-            if response.status_code == 401:
-                raise CollectionError("session_expired")
-            if 300 <= response.status_code < 400:
-                location = response.headers.get("location", "")
-                raise CollectionError(
-                    "challenge"
-                    if any(v in location for v in ("checkpoint", "challenge"))
-                    else "session_expired"
-                )
-            if 400 <= response.status_code < 500 or response.status_code == 999:
-                raise CollectionError("access_denied")
-            if response.status_code != 200:
-                raise CollectionError("cloud_failed")
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > 2_000_000:
-                    raise CollectionError("unsupported_search_contract")
-            try:
-                return json.loads(body)
-            except ValueError:
-                raise CollectionError("unsupported_search_contract") from None
+        return await _get(client, session, path, params)
 
     try:
         if not identity_matches(await get("/voyager/api/me"), source["actor"]):

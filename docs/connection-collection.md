@@ -86,7 +86,9 @@ The source includes a dedicated read-only HTTP adapter. It reproduces the publis
 extension's cookie allowlist, user agent, language and LinkedIn request context. It does not
 launch a browser, run website JavaScript, follow authentication redirects, write cookies back,
 or call a logout endpoint. The extension uploads this material after the user enables cloud collection during setup.
-Tin encrypts it with the existing integration cipher and binds it to the project, account,
+The trusted service checks the transferred account with one bounded read of `/voyager/api/me`
+before reporting cloud access ready. Every E2B page checks it again. Tin encrypts the session
+with the existing integration cipher and binds it to the project, account,
 permission and paired device. Retention is at most seven days, capped by the login-cookie
 and device expiry; a session cookie without a declared expiry is kept for at most one day.
 The extension refreshes access within a day of expiry while Chrome is open. Raw credentials
@@ -102,7 +104,8 @@ cloud/local retry.
 
 During setup the extension observes a supported search query and matching client context.
 With a valid session, cloud execution resolves each newly selected friend using a fixed
-read-only request, requiring exact profile identity and linked first-degree evidence.
+read-only request, requiring exact profile identity, linked first-degree evidence and a connections-view link
+inside that profile. A relationship badge alone does not establish list visibility.
 Unsupported evidence waits for Chrome to prepare that friend, preserving the same checkpoint.
 This provider response shape is fixture-tested; live qualification is still required. No
 cloud browser login screen is part of setup.

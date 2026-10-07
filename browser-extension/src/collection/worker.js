@@ -95,7 +95,7 @@ importScripts("collection/core.js");
     if (state.bearer) {
       try { await connection(state); projectId = state.project_id; } catch { /* Re-pair an expired device. */ }
     }
-    return { version: chrome.runtime.getManifest().version, protocol: 4, account, reason, project_id:projectId,
+    return { version: chrome.runtime.getManifest().version, protocol: 4, account, reason:reason || (state.refresh_blocked ? state.reason : ""), project_id:projectId,
       cloud_available: state.connection?.cloud_available === true, session_available:state.connection?.session_available === true };
   }
   async function connection(state) {
@@ -130,6 +130,7 @@ importScripts("collection/core.js");
   async function refreshSession(state) {
     const current = state.connection || await connection(state);
     if (!current.permission?.version || current.permission.mode === "local_only" || !current.cloud_available) return;
+    if (state.refresh_blocked) return;
     if (state.refresh_after && Date.now() < state.refresh_after) return;
     const untilExpiry = Date.parse(current.session_expires_at || "") - Date.now();
     if (current.session_available && untilExpiry > 86400000) return;
@@ -237,7 +238,9 @@ importScripts("collection/core.js");
         // Never refresh a session while this worker owns a collection attempt.
         try { await refreshSession(state); }
         catch (error) {
-          if (error.message === "account_changed") throw error;
+          if (["account_changed","session_expired","challenge","rate_limited","access_denied","unsupported_identity"].includes(error.message)) {
+            throw error;
+          }
           state.reason = error.message; state.refresh_after = Date.now() + 300000; await save(state);
         }
         if (pending && pending.run_id !== state.stopped_run_id) {
@@ -319,6 +322,7 @@ importScripts("collection/core.js");
       await save(state); schedule();
     } catch (error) {
       if (!state) return;
+      if (["account_changed","session_expired","challenge","rate_limited","access_denied","unsupported_identity"].includes(error.message)) state.refresh_blocked = true;
       const transient = ["Failed to fetch", "fetch failed", "backend_unavailable", "The operation was aborted due to timeout"].some(c => error.message.includes(c));
       if (transient) { schedule(); return; }
       const reason = stopReason(error.message);
@@ -333,7 +337,7 @@ importScripts("collection/core.js");
       const origin = sender.url ? new URL(sender.url).origin : "";
       if (!sender.tab || !origins.has(origin) || message.base !== origin) throw Error("untrusted_origin");
       if (message.type === "DISCOVER") return discover();
-      if (message.type === "WAKE") { const state = await load();delete state.refresh_after;state.refresh_requested=true;await save(state);schedule();return publicState(state); }
+      if (message.type === "WAKE") { const state = await load();delete state.refresh_after;delete state.refresh_blocked;state.refresh_requested=true;await save(state);schedule();return publicState(state); }
       return pair(origin, message.grant);
     }
     if (sender.url !== chrome.runtime.getURL("popup/collection.html")) throw Error("untrusted_sender");

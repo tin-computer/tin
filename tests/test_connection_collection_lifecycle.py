@@ -31,6 +31,10 @@ def choice(mode="cloud_preferred"):
     return {"actor": ACTOR, "mode": mode, "consent_version": 1}
 
 
+async def verified(*_):
+    return None
+
+
 async def prepared(db):
     f = await cloud_fixture(db)
     await db.pool.execute(
@@ -39,7 +43,7 @@ async def prepared(db):
     await db.pool.execute(
         "DELETE FROM connection_collection_account_leases WHERE run_id=$1", f.run.id
     )
-    f.connection = CollectionConnection(f.store, f.cipher)
+    f.connection = CollectionConnection(f.store, f.cipher, verify=verified)
     await f.connection.preferences(f.project.id, USER, choice())
     envelope = session_envelope()
     envelope["cookies"][0]["expiration_date"] = (datetime.now(UTC) + timedelta(days=3)).timestamp()
@@ -204,6 +208,7 @@ def profile_response():
                 "firstName": "Test",
                 "lastName": "Friend",
                 "*memberRelationship": "urn:relation:1",
+                "connectionsUrl": source()["collection_url"],
             },
             {"entityUrn": "urn:relation:1", "distance": "DISTANCE_1"},
         ]
@@ -218,6 +223,10 @@ def test_profile_resolver_requires_evidence_linked_to_exact_friend():
     raw = profile_response()
     result = resolved_source(raw, unresolved(), "founder")
     assert "keywords=founder" in result["collection_url"] and result["first_degree"]
+    hidden = profile_response()
+    hidden["included"].append({"connectionsUrl": hidden["included"][0].pop("connectionsUrl")})
+    with pytest.raises(CollectionError, match="browser_preparation_required"):
+        resolved_source(hidden, unresolved(), "")
     raw["included"][0]["*memberRelationship"] = "urn:missing"
     with pytest.raises(CollectionError, match="browser_preparation_required"):
         resolved_source(raw, unresolved(), "")
@@ -325,7 +334,9 @@ async def test_reusable_session_rejects_wrong_account_and_expired_auth_cookie(co
         await f.connection.save_session(f.project.id, TOKEN, packet)
 
 
-async def test_connection_endpoints_keep_user_device_and_project_authority_separate(collection_db):
+async def test_connection_endpoints_keep_user_device_and_project_authority_separate(
+    collection_db, monkeypatch
+):
     from types import SimpleNamespace
 
     from fastapi import FastAPI
@@ -335,6 +346,7 @@ async def test_connection_endpoints_keep_user_device_and_project_authority_separ
     from tin_lite.project_connections_api import setup_user
 
     f = await prepared(collection_db)
+    monkeypatch.setattr("tin_lite.linkedin_session.check_account", verified)
     f.store.settings.linkedin_extension_ids = ["fixture-extension"]
     app = FastAPI()
     app.include_router(router)
@@ -446,3 +458,68 @@ async def test_cloud_dispatch_rechecks_revocation_before_purchasing_compute(coll
     # page checks authority before entering the receipt / E2B purchase path.
     with pytest.raises(CollectionError, match="cloud_permission_required"):
         await runtime.page(job, session_envelope(), source())
+
+
+@pytest.mark.parametrize(
+    ("status_code", "payload", "expected"),
+    [
+        (200, {"miniProfile": {"publicIdentifier": "owner"}}, None),
+        (200, {"miniProfile": {"publicIdentifier": "someone-else"}}, "account_changed"),
+        (200, {"included": []}, "unsupported_identity"),
+        (401, {}, "session_expired"),
+        (403, {}, "access_denied"),
+        (429, {}, "rate_limited"),
+        (302, {}, "challenge"),
+    ],
+)
+async def test_setup_checks_the_transferred_account_without_following_redirects(
+    status_code, payload, expected
+):
+    from tin_lite.linkedin_session import check_account, validate_session
+
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        assert request.method == "GET" and request.url.path == "/voyager/api/me"
+        assert request.url.host == "www.linkedin.com"
+        assert request.headers["x-li-track"] and request.headers["csrf-token"]
+        return httpx.Response(
+            status_code,
+            json=payload,
+            headers={"location": "https://www.linkedin.com/checkpoint/private-token"},
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+        if expected:
+            with pytest.raises(CollectionError, match=expected):
+                await check_account(validate_session(session_envelope()), ACTOR, client=client)
+        else:
+            await check_account(validate_session(session_envelope()), ACTOR, client=client)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("existing", [False, True])
+async def test_failed_setup_check_cannot_mark_a_session_ready(collection_db, existing):
+    f = await prepared(collection_db)
+    if not existing:
+        await f.connection.preferences(f.project.id, USER, choice("local_only"))
+        await f.connection.preferences(f.project.id, USER, choice())
+    before = await config(f)
+
+    async def rejected(*_):
+        raise CollectionError("account_changed")
+
+    f.connection.verify = rejected
+    with pytest.raises(CollectionError, match="account_changed"):
+        await f.connection.save_session(
+            f.project.id,
+            TOKEN,
+            {
+                **f.upload,
+                "expected_generation": f.status["session_generation"] if existing else None,
+            },
+        )
+    after = await config(f)
+    assert after["credential_ciphertext"] == before["credential_ciphertext"]
+    assert after["configuration"] == before["configuration"]

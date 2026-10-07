@@ -6700,7 +6700,7 @@ function linkedInHealth(integration) {
   if (!permission) return "finish setup";
   if (permission.mode === "local_only") return "keep Chrome open while collecting";
   if (config.session_state === "reconnect") return "reconnect LinkedIn";
-  if (config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now()) return "cloud access enabled";
+  if (config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now()) return `cloud access enabled${config.session_verified_at ? ` · checked ${timeLabel(config.session_verified_at)}` : ""}`;
   return "open Chrome to finish cloud setup";
 }
 
@@ -6725,6 +6725,11 @@ function linkedInSetupError(code) {
     open_linkedin_tab:"Open LinkedIn and sign in, then check again.",
     account_unavailable:"Sign in to LinkedIn in this Chrome profile, then check again.",
     account_changed:"The LinkedIn account changed. Check again before connecting.",
+    session_expired:"LinkedIn needs you to sign in again. Open LinkedIn, then try connecting again.",
+    challenge:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
+    rate_limited:"LinkedIn asked us to wait. Try connecting again later.",
+    access_denied:"LinkedIn did not allow this connection. Check your account on LinkedIn before trying again.",
+    unsupported_identity:"Tin could not confirm the LinkedIn account. Refresh LinkedIn and try again.",
     account_owner_required:"Only the person who connected this LinkedIn account can change its settings.",
     collection_active:"A collection is running. Stop it or let it finish before reconnecting.",
     pairing_expired:"Setup timed out. Check again to continue.",
@@ -6813,7 +6818,7 @@ async function confirmLinkedInConnection() {
       if (paired?.project_id !== choice.context.projectId) throw new Error("account_changed");
     }
     await linkedInMessage("WAKE");
-    let ready = choice.mode === "local_only";
+    let ready = choice.mode === "local_only", cloudAvailable = true;
     if (!ready) {
       confirm.textContent = "Preparing cloud access…";
       integrationProjectOptions.querySelector("[data-linkedin-account]").textContent = "Keep LinkedIn open for a moment while Tin finishes connecting.";
@@ -6822,14 +6827,16 @@ async function confirmLinkedInConnection() {
         let status;
         try { status = await linkedInMessage("DISCOVER", {}, 35000); } catch { break; }
         if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity"].includes(status.reason)) throw new Error(status.reason);
         ready = status.session_available === true;
-        if (ready || !status.cloud_available) break;
+        cloudAvailable = status.cloud_available === true;
+        if (ready || !cloudAvailable) break;
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
     if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
     integrationProjectDialog.close();
-    showToast(ready ? "LinkedIn connected. Start collections from Tin." : "LinkedIn connected. Keep Chrome open while cloud setup finishes.");
+    showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
     await bootstrap();
   } catch (error) {
     if (state.linkedInChoice !== choice) return;
