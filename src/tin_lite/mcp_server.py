@@ -1249,7 +1249,9 @@ def create_mcp_app(
         they confirm: a site path ending in {slug}, such as /answers/{slug}. Later approvals
         tell the adaptation to publish at that route, adding a minimal route once if the site
         has none. With delivery set to commit to main, Tin merges a pull request that adds the
-        page at this route when GitHub reports it clean. Reuse request_id when retrying.
+        page at this route once the repository's required checks pass. An approved page that
+        waited for this route publishes after retry_content_delivery. Reuse request_id when
+        retrying.
         """
         from tin_lite.page_routes import PageRouteService
         from tin_lite.project_files import ProjectFileError
@@ -1488,8 +1490,8 @@ def create_mcp_app(
 
         Does not approve a draft, change article bytes, merge, or publish. It runs no model,
         except for an answer page or public article whose adaptation could not start (for
-        example, too few credits): then it tries that metered adaptation again. Read
-        get_run.content_delivery for status and the confirmed PR link.
+        example, too few credits, or no chosen route yet): then it tries that metered
+        adaptation again. Read get_run.content_delivery for status and the confirmed PR link.
         """
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -3698,24 +3700,20 @@ def create_mcp_app(
             + (f", up to {about}, charged on actual usage." if about else ".")
         ]
         route = chosen.get("route")
-        if chosen_mode(chosen) == "github_commit":
+        if not route:
             words.append(
-                "Tin merges its pull request into main when it adds only the page, or the page "
-                f"at your chosen route {route}, and GitHub reports it clean; otherwise the pull "
-                "request stays open and get_run says why."
-                if route
-                else "Tin merges its pull request into main when it adds only the page and "
-                "GitHub reports it clean; otherwise the pull request stays open and get_run "
-                "says why."
+                "No one has chosen where these pages live on the site yet, and Tin does not "
+                "guess, so the adaptation waits. Ask the founder now, with ask_the_founder, "
+                "save their answer with save_page_route, then call retry_content_delivery."
+            )
+        elif chosen_mode(chosen) == "github_commit":
+            words.append(
+                f"Tin merges its pull request into main once the repository's required checks "
+                f"pass, when it adds only the page at your chosen route {route}; a protected "
+                "page, or anything else, leaves the pull request open and get_run says why."
             )
         else:
             words.append("It opens a pull request; merge it when you like.")
-        if not route:
-            words.append(
-                "No one has chosen where these pages live on the site yet, so this adaptation "
-                "picks a route itself. Ask the founder now, with ask_the_founder, so later "
-                "pages use the route they choose."
-            )
         return words, cost
 
     @server.tool()
@@ -3768,10 +3766,11 @@ def create_mcp_app(
 
         An answer page or public article with a GitHub repository is not committed as-is:
         approving with github_pr or github_commit starts a separately metered adaptation
-        (content.deliver, charged on actual usage; `delivery_cost` is its configured
-        preview) that fits the page into the site's own format and opens a pull request.
-        With github_commit, Tin then merges that pull request itself when it adds only the
-        page and GitHub reports it clean; otherwise it stays open and get_run says why.
+        (website.change, charged on actual usage; `delivery_cost` is its configured
+        preview) that fits the page into the site's own format at the route the founder
+        chose and opens a pull request. With github_commit, Tin then merges that pull
+        request once the repository's required checks pass, unless the page is protected;
+        otherwise it stays open and get_run says why.
         get_run.delivery_preview shows what Publish does before you approve.
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
@@ -4163,31 +4162,7 @@ def create_mcp_app(
             else {}
         )
         draft_preparation = {}
-        if (
-            parsed_project_id is not None
-            and workflow.key == "content.deliver"
-            and workflow.project_id is None
-        ):
-            from tin_lite.content_repository_delivery import discover
-
-            draft_preparation = {
-                "preparation": {
-                    **await discover(runtime().database, parsed_project_id),
-                    "instruction": "Choose an approved article, answer page or public article "
-                    "by title from preparation.articles in this response. If empty, ask the "
-                    "user to review an existing draft in "
-                    "Decisions first; do not generate another article just to deliver it. "
-                    "Use get_run to check the selected approval, and get_integration(infra.github) "
-                    "to confirm the website repository; never infer it from the product name. "
-                    "Start content.deliver with source_run_id and expected_repository "
-                    "through the ordinary quote/start flow. Do not approve an existing draft "
-                    "merely to test delivery. No format choice is needed. "
-                    "This adapts the approved copy, not a new draft, and opens an unmerged PR. "
-                    "If delivery fails, retry_content_delivery reconciles a saved patch without "
-                    "another model purchase; reuse request_id for ambiguous starts. "
-                    "WordPress/CMS publication is not part of this GitHub workflow.",
-                }
-            }
+        # content.deliver is retired for new work: website.change's preparation covers pages.
         if (
             parsed_project_id is not None
             and workflow.key == "website.change"

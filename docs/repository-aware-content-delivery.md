@@ -1,5 +1,13 @@
 # Repository-aware article delivery
 
+> **Retired for new work.** Approvals and **Prepare PR** now start `website.change`
+> (`source: content_draft`), which adapts the page with the same machinery and adds protected
+> pages and the required-checks merge rule; see
+> [How content.deliver relates](website-change.md#how-content-deliver-relates).
+> `content.deliver` stays registered, hidden from discovery, for its existing runs, retries,
+> saved schedules and traffic system runs pinned to v5 or earlier; its behaviour below is
+> unchanged for them.
+
 ## In plain English
 
 The article remains a Markdown document in Tin. Once the founder approves it, **Prepare

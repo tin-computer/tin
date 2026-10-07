@@ -876,12 +876,13 @@ async def test_short_listing_names_only_what_an_agent_needs_to_choose(publicatio
     assert deep_dive["blocked_because"] and "\n" not in deep_dive["blocked_because"]
     assert "blocked_because" not in by_key["qa.signup_walkthrough"]
     # Required connections show up before a start fails on them.
-    assert "github" in " ".join(by_key["content.deliver"]["needs"])
+    assert "github" in " ".join(by_key["website.change"]["needs"])
     assert deep_dive["schedule_modes"] == next(
         row["schedule_modes"] for row in full_rows if row["key"] == "product.deep_dive"
     )
     # Workflows hidden from discovery are not listed; their saved configurations still run.
     assert "visibility.audit" not in by_key and "organic.technical_fix" not in by_key
+    assert "content.deliver" not in by_key
     descriptions = [row["description"] for row in short_rows]
     assert all("\n" not in text and len(text) <= 160 for text in descriptions)
     assert len(json.dumps(short_rows)) * 5 < len(json.dumps(full_rows))

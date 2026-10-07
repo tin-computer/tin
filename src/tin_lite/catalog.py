@@ -583,10 +583,12 @@ class BuiltinWorkflow:
             SITE_HEALTH_WORKFLOW_NAME,
             VISIBILITY_AUDIT_WORKFLOW_NAME,
             technical_fix.KEY,
+            content_repository_delivery.KEY,
         }:
-            # Site health is folded into the technical fix, and the technical fix into
-            # website.change (its audit source): saved configurations and schedules keep
-            # running at their pinned revision, but new setups use the newer workflow.
+            # Site health is folded into the technical fix, and the technical fix and
+            # content.deliver into website.change (its audit and content_draft sources): saved
+            # configurations and schedules keep running at their pinned revision, but new
+            # setups use the newer workflow.
             # The AI visibility audit is folded into the organic audit's buyer questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
@@ -697,6 +699,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
+        # Hidden (public_discovery: false): approvals start website.change instead.
         title="Prepare article PR",
         description="Put an approved article, answer page or public article on the connected "
         "website repository in the site's own format (Markdown, a component, plain HTML or "

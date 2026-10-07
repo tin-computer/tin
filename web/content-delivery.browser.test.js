@@ -108,8 +108,9 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await page.getByText("Drafts and pull requests · 3", {exact: true}).click();
     await page.getByRole("button", {name: "Prepare PR →", exact: true}).click();
     const prepared = await page.evaluate(() => writes.at(-1));
-    assert.equal(prepared.path, "/api/workflows/00000000-0000-4000-8000-000000000036/runs");
-    assert.deepEqual(JSON.parse(prepared.body), {project_id: "project", inputs: {source_run_id: "draft-one", expected_repository: "owner/site", direction: ""}});
+    // Prepare PR starts website.change (content.deliver is retired for new work).
+    assert.equal(prepared.path, "/api/workflows/00000000-0000-4000-8000-000000000045/runs");
+    assert.deepEqual(JSON.parse(prepared.body), {project_id: "project", inputs: {source: "content_draft", source_run_id: "draft-one", expected_repository: "owner/site"}});
     assert.equal(await page.locator("[data-prepare-article-pr]").count(), 0);
     assert.equal(await page.getByLabel("New article files", {exact: true}).inputValue(), "future/{slug}.md");
     await page.evaluate(() => {draftsFixture.first.repository_delivery = {run_id: "failed-adaptation", status: "failed", repository: "owner/site", has_checkpoint: false};});
@@ -120,7 +121,10 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     assert.equal(await retryAdaptation.textContent(), "Retry");
     await retryAdaptation.click();
     const retried = await page.evaluate(() => writes.at(-1));
-    assert.equal(JSON.parse(retried.body).inputs.retry_run_id, "failed-adaptation");
+    // A failed adaptation with nothing delivered is replaced by a fresh website.change run.
+    assert.equal(retried.path, "/api/workflows/00000000-0000-4000-8000-000000000045/runs");
+    assert.equal(JSON.parse(retried.body).inputs.source_run_id, "draft-one");
+    assert.match(retried.headers["Idempotency-Key"], /:failed-adaptation$/);
     assert.notEqual(retried.headers["Idempotency-Key"], prepared.headers["Idempotency-Key"]);
     assert.equal(await page.locator("[data-prepare-article-pr]").count(), 0);
     for (const width of [1280, 768, 390]) {

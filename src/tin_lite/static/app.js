@@ -4748,8 +4748,8 @@ function isProposal(decision) {
   return decision.kind === "review" && PROPOSAL_WORKFLOWS.has(decision.workflow_key);
 }
 
-// Answer pages and public articles that Tin adapts to the site (a metered content.deliver or
-// website.change run) get one Publish button. The server says whether adaptation applies (for
+// Answer pages and public articles that Tin adapts to the site (a metered website.change run)
+// get one Publish button. The server says whether adaptation applies (for
 // content.generate, only its answer pages) and, from the saved delivery setting and the cost
 // preview, the footer line: what Publish does and about what it costs. Everything about that
 // card lives here so its wording and layout stay easy to change.
