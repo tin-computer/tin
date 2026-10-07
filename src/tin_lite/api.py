@@ -3165,10 +3165,15 @@ async def create_project_workflow(
         )
     try:
         _ensure_workflow_schedule_allowed(workflow.definition, payload.schedule)
+        supplied_inputs = payload.inputs
+        if workflow.executor == "connections.collect":
+            from tin_lite.connection_collection_connection import default_inputs
+
+            supplied_inputs = await default_inputs(database, project_id, supplied_inputs)
         inputs = normalize_workflow_inputs(
             schema=schema,
             project_id=project_id,
-            inputs=payload.inputs,
+            inputs=supplied_inputs,
         )
         if workflow.executor == "connections.collect":
             inputs = validate_collection_inputs(project_id, inputs)

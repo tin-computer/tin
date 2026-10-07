@@ -25,15 +25,16 @@
           <div class="content-fields" data-github-settings ${saved.mode === "github_pr" ? "" : "hidden"}>
           ${field("Repository", input("repository", saved.repository, "Repository"))}
           <p class="system-config-note">Use the repository selected in <a href="/integrations?project=${encodeURIComponent(context.projectId)}" class="system-action">Integrations</a>. Pull-request access must be enabled.</p>
-          ${field("New article files", input("path_pattern", saved.path_pattern, "New article files"))}
-          <p class="system-config-note">For example: content/blog/{slug}.md. Markdown only; no website is published.</p>
-          <details class="content-disclosure"><summary>Site frontmatter and existing-page files</summary><div class="content-fields">
+          <p class="system-config-note">Tin adapts each approved article to your site's own format and route through website.change and opens a pull request for you to merge.</p>
+          <details class="content-disclosure"><summary>Markdown files for drafts started before site adaptation</summary><div class="content-fields">
+          ${field("Markdown file pattern", input("path_pattern", saved.path_pattern, "Markdown file pattern"))}
+          <p class="system-config-note">For example: content/blog/{slug}.md. Only drafts pinned before Tin adapted articles to your site use these.</p>
           ${field("Frontmatter for new files", `<textarea class="workflow-inline-input workflow-inline-textarea" data-frontmatter rows="4" aria-label="Frontmatter for new files">${esc(state.frontmatter)}</textarea>`)}
           <p class="system-config-note">Optional JSON fields, for example {"title":"{title}","date":"{date}"}. Existing files keep their frontmatter.</p>
           ${items.filter(item => item.action === "update_page" || saved.item_paths[item.id]).map(item => field(item.title, `<input class="workflow-inline-input" data-item-path="${esc(item.id)}" value="${esc(saved.item_paths[item.id] || "")}" placeholder="Exact repository file, such as content/docs/setup.md" aria-label="File for ${esc(item.title)}">`)).join("")}
-          <p class="system-config-note">Map each existing-page update to its actual Markdown file before drafting for PR delivery.</p>
+          <p class="system-config-note">Older drafts that update an existing page map it to its Markdown file here.</p>
           </div></details></div>
-          <p class="system-config-note">Applies to new drafts only. Their review action will say “Approve & open PR”. Existing drafts keep their original review behavior. Nothing is merged.</p>
+          <p class="system-config-note">Applies to new drafts only. Existing drafts keep their original review behavior.</p>
           <footer class="system-config-footer content-plan-actions"><button class="button-secondary" type="submit" data-save-delivery ${state.dirty ? "" : "disabled"}>Save delivery</button><button class="button-quiet" type="button" data-reload-delivery>Reload saved settings</button></footer>
           <p class="system-config-note" role="status" data-delivery-message></p>
           </form></details>

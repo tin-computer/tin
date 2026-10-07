@@ -45,6 +45,7 @@ test("collection setup keeps cloud choices and recovers a saved workflow after s
     }
     if (url.pathname === "/api/projects") return send([project]);
     if (url.pathname === "/api/workflows") return send([workflow]);
+    if (url.pathname.endsWith("/integrations")) return send([{key:"network.linkedin",name:"LinkedIn",status:"connected",configured:true,configuration:{collection_permission:{version:1,mode:"cloud_preferred"}}}]);
     if (url.pathname === "/api/projects/project/workflows") return send(saved?[saved]:[]);
     if (url.pathname.endsWith("/system")) return send({workflow_count:saved?1:0,running_count:0,waiting_count:0,runs_this_month:0});
     if (url.pathname.startsWith("/api/")) return send([]);
@@ -66,7 +67,8 @@ test("collection setup keeps cloud choices and recovers a saved workflow after s
     await setup.getByLabel("Friends' LinkedIn profile URLs",{exact:true}).fill("https://www.linkedin.com/in/example-person");
     await setup.getByLabel("Keywords (optional)",{exact:true}).fill("founder");
     assert.match(await setup.locator("#template-input-keywords-help").innerText(),/Leave blank/);
-    assert.match(await setup.locator("#template-input-execution-help").innerText(),/Cloud preferred and Local only will use your signed-in Chrome/);
+    assert.match(await setup.locator("#template-input-execution-help").innerText(),/Browser collection needs Chrome open and awake/);
+    assert.equal(await setup.locator('[name="input:execution"]').inputValue(),"cloud_preferred");
     await setup.getByRole("button",{name:"Collection mode",exact:true}).click();
     assert.equal(await setup.getByRole("option",{name:"Cloud only",exact:true}).isEnabled(),true);
     await setup.getByRole("option",{name:"Cloud preferred",exact:true}).click();

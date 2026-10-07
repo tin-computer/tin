@@ -312,3 +312,51 @@ async def test_older_saved_inputs_keep_their_pin_while_job_normalizes_them(
         job = await f.store.prepare(run, POLICY)
         assert job["inputs"]["friends"] == [FRIEND]
         assert job["inputs"]["keywords"] == "founder"
+
+
+@pytest.mark.parametrize("surface", ["http", "mcp"])
+async def test_new_saved_configuration_uses_connection_choice_and_preserves_explicit_mode(
+    collection_db, monkeypatch, surface
+):
+    from tin_lite.connection_collection_connection import CollectionConnection
+
+    f = await harness(collection_db, monkeypatch)
+    await CollectionConnection(f.store).preferences(
+        f.project.id, USER, {"actor": ACTOR, "mode": "cloud_preferred", "consent_version": 1}
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=f.app), base_url="https://tin.test"
+    ) as client:
+        saved = await save(f, surface, client, {"friends": [FRIEND]})
+        assert saved["inputs"]["execution"] == "cloud_preferred"
+        explicit = await save(f, surface, client, {"friends": [FRIEND], "execution": "local_only"})
+        assert explicit["inputs"]["execution"] == "local_only"
+
+
+async def test_direct_run_remembers_choice_and_retry_keeps_original_mode(
+    collection_db, monkeypatch
+):
+    from tin_lite.connection_collection_connection import CollectionConnection
+    from tin_lite.run_service import start_workflow_run
+
+    f = await harness(collection_db, monkeypatch)
+    connection = CollectionConnection(f.store)
+    await connection.preferences(
+        f.project.id, USER, {"actor": ACTOR, "mode": "cloud_preferred", "consent_version": 1}
+    )
+    arguments = dict(
+        runtime=f.runtime,
+        settings=f.settings,
+        workflow=await f.db.get_workflow(f.builtin.id),
+        project_id=f.project.id,
+        started_by_clerk_user_id=USER,
+        start_idempotency_key="same-request",
+        input_payload={"friends": [FRIEND]},
+    )
+    first = await start_workflow_run(**arguments)
+    assert first.input["execution"] == "cloud_preferred"
+    await connection.preferences(
+        f.project.id, USER, {"actor": ACTOR, "mode": "local_only", "consent_version": 1}
+    )
+    retry = await start_workflow_run(**arguments)
+    assert retry.id == first.id and retry.input == first.input

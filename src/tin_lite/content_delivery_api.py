@@ -85,8 +85,8 @@ async def delivery_cost(*, runtime, settings, run, actor, repository):
 async def publish_preview(*, runtime, settings, run, actor):
     """What Publish does for a page Tin adapts to the site, before the founder presses it.
 
-    `adapt` is False where approval keeps today's choices: no selected repository, no
-    Codex API execution, or a run that is not an answer page or public article. `mode` is
+    `adapt` is False where approval keeps today's choices: no selected repository, a page
+    refresh, or an answer page or public article without Codex API execution. `mode` is
     the delivery the founder saved (commit to main, else a pull request); `footer` is the
     card's one line, with the configured cost preview when billing is on.
     """
@@ -100,13 +100,19 @@ async def publish_preview(*, runtime, settings, run, actor):
         if connection and connection.status == "connected"
         else None
     )
-    # A content.generate answer page always goes to the site through website.change.
-    answer = await delivery_service(runtime).plan_kind(run) == "answer"
-    if not repository or not (answer or adapt_on_approval(settings, run)):
+    # A content.generate article or answer page always goes to the site through
+    # website.change; a refresh changes its lines in place instead.
+    from tin_lite.content_delivery import DRAFT_WORKFLOW_ID
+
+    kind = await delivery_service(runtime).plan_kind(run)
+    generated = run.workflow_id == DRAFT_WORKFLOW_ID and kind != "refresh"
+    if not repository or not (generated or adapt_on_approval(settings, run)):
         return {"adapt": False}
     from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
 
-    kind = "answer_page" if answer else page_type(run)
+    # Answer pages and public articles live at a route the founder chooses; a planned
+    # article names its own address in the plan.
+    page = "answer_page" if kind == "answer" else None if generated else page_type(run)
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
         runtime=runtime,
@@ -115,10 +121,14 @@ async def publish_preview(*, runtime, settings, run, actor):
         actor=actor,
         repository=repository,
     )
-    route = await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
-        run, page_type=kind
+    route = (
+        await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
+            run, page_type=page
+        )
+        if page
+        else None
     )
-    sentence = publish_sentence(mode, route_missing=route is None)
+    sentence = publish_sentence(mode, route_missing=page is not None and route is None)
     # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
     about = about_usd(cost["estimated_usd"]) if cost else None
     preview = {
@@ -131,11 +141,11 @@ async def publish_preview(*, runtime, settings, run, actor):
         "cost": cost,
         "footer": f"{sentence} · up to {about}" if about else sentence,
     }
-    if route is None:
+    if page and route is None:
         # Before the first page of this type publishes, the coding agent asks the founder.
-        page = await page_url_service(runtime, settings).view(run, None)
-        host = urlsplit(page["url"]).hostname if page and page.get("url") else None
-        preview["ask_the_founder"] = ask_the_founder(kind, host)
+        address = await page_url_service(runtime, settings).view(run, None)
+        host = urlsplit(address["url"]).hostname if address and address.get("url") else None
+        preview["ask_the_founder"] = ask_the_founder(page, host)
     return preview
 
 

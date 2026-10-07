@@ -220,6 +220,21 @@ async def start_workflow_run(
     if workflow.executor == "social.x_revise" and not getattr(settings, "luna_api_key", None):
         raise WorkflowExecutorUnavailableError("X feedback requires the native model service.")
     schema = workflow.definition["input_schema"]
+    if (
+        workflow.executor == "connections.collect"
+        and "execution" not in (input_payload or {})
+        and project_workflow_id is None
+        and retry_of_run_id is None
+    ):
+        from tin_lite.connection_collection_connection import default_inputs
+
+        if existing is not None:
+            input_payload = {
+                **(input_payload or {}),
+                "execution": existing.input.get("execution", "local_only"),
+            }
+        else:
+            input_payload = await default_inputs(runtime.database, project_id, input_payload or {})
     normalized_inputs = normalize_workflow_inputs(
         schema=schema,
         project_id=project_id,

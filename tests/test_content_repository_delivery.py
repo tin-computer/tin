@@ -138,23 +138,18 @@ async def test_approval_and_project_boundary_before_dispatch(publication_db, mon
     )
 
 
-async def test_article_delivered_by_its_approval_choice_is_not_adapted_again(
+async def test_an_article_approved_for_a_pull_request_is_adapted_not_published_as_markdown(
     publication_db, monkeypatch
 ):
     f = await prepared(publication_db, monkeypatch, approved=False)
-    # No pinned delivery: the reviewer picks a PR for this one article at approval.
-    await f.delivery.choose(run=f.source, mode="github_pr", actor=ACTOR)
+    # No pinned delivery: the reviewer picks a PR for this one article at approval. A planned
+    # article goes to the site through website.change, like an answer page.
+    chosen = await f.delivery.choose(run=f.source, mode="github_pr", actor=ACTOR)
+    assert chosen["adapter"] == "repository" and chosen["via"] == "website.change"
+    assert chosen["path"] is None and chosen["settings"]["mode"] == "github_pr"
     f.source = await approve(f, f.source)
-    await f.delivery.deliver(f.source.id)
-    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
-    facts = await f.service.programs.facts(f.configured.id)
-    assert facts["drafts"][f.context["item"]["id"]]["delivery"]["pull_request"]["number"] == 42
-    with pytest.raises(WorkflowInputError, match="already has automatic delivery"):
-        await deliver_start(f)
-    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
-    assert not await f.db.pool.fetchval(
-        "SELECT id FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
-    )
+    await f.delivery.deliver(f.source.id)  # The Markdown publisher leaves it alone.
+    f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
 async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypatch):

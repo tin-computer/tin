@@ -4333,9 +4333,9 @@ class TinActivities:
             raise ValueError("Saved assets differ from the article they belong to.")
         from tin_lite import content_draft
         from tin_lite.content_editorial_judgment import (
-            LABELS,
             NO_DRAFT,
             covering_page,
+            no_draft_summary,
             validate_pair,
         )
 
@@ -4417,11 +4417,8 @@ class TinActivities:
                         )
                         if covered:
                             result["covered_by"] = covered
-                        result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}"
-                            + (f" by {covered}" if covered else "")
-                            + f": {procedure.content_draft_context['item']['title']}. "
-                            "No article drafted."
+                        result["summary"] = no_draft_summary(
+                            editorial, procedure.content_draft_context["item"], covered
                         )
                 if analytics is not None and analytics_brief.summary(analytics):
                     result["summary"] = analytics_brief.summary(analytics)

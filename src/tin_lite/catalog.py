@@ -499,7 +499,7 @@ class BuiltinWorkflow:
             }
         resources: dict[str, bytes] = {}
         if self.key == connection_collection.KEY:
-            definition["collection_policy"] = dict(connection_collection.POLICY)
+            definition["collection_policy"] = dict(connection_collection.POLICY_V2)
         if self.key == style_capture.KEY:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
@@ -4520,13 +4520,16 @@ BUILTIN_WORKFLOWS = (
                     "Up to 3 friends, second-degree only",
                 ),
                 DiagramNode(
-                    "ready", "wait", "Wait for Chrome", "Pairing and cloud consent, when selected"
+                    "ready",
+                    "wait",
+                    "Check LinkedIn connection",
+                    "Use the saved permission and session",
                 ),
                 DiagramNode(
                     "read",
                     "surface",
                     "Read a result page",
-                    "Local Chrome or qualified cloud adapter",
+                    "Cloud session or connected Chrome",
                 ),
                 DiagramNode(
                     "save",
@@ -4552,7 +4555,7 @@ BUILTIN_WORKFLOWS = (
             ),
             edges=(
                 DiagramEdge("scope", "ready"),
-                DiagramEdge("ready", "read", "signal", "Continue collection"),
+                DiagramEdge("ready", "read", label="Ready to collect"),
                 DiagramEdge("read", "save"),
                 DiagramEdge("save", "read", label="Next page"),
                 DiagramEdge("read", "backup", label="Recoverable cloud failure"),
@@ -4564,7 +4567,7 @@ BUILTIN_WORKFLOWS = (
         ),
         description="Collect visible second-degree connections through selected friends.",
         executor=connection_collection.KEY,
-        version_label="v1",
+        version_label="v2",
         input_schema=connection_collection.INPUT_SCHEMA,
         schedule_modes=("on_demand",),
         integration_requirements=(

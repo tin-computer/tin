@@ -1785,9 +1785,18 @@ class ConnectionCollectionWorkflow:
         try:
             await call("collection_prepare")
             # The activity reads the pinned absolute deadline. Sleep uses no worker slot.
+            bounded_history = workflow.patched("collection-bounded-wait-history-v1")
+            polls = 0
             while not await call("collection_poll", 150):
                 await workflow.sleep(timedelta(seconds=15))
+                polls += 1
+                if bounded_history and polls >= 500:
+                    # A day waiting for Chrome must not exhaust Temporal's history limit.
+                    # Preparation recovers the same Postgres job and absolute deadlines.
+                    workflow.continue_as_new(run_id)
             await call("collection_publish", 180)
+        except workflow.ContinueAsNewError:
+            raise
         except BaseException:
             await asyncio.shield(call("collection_failure"))
             raise
