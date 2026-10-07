@@ -60,8 +60,10 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await page.getByRole("button", {name: "After approval", exact: true}).click();
     await page.locator('[data-tin-select-value="github_pr"]').click();
     assert.equal(await page.locator("[data-github-settings]").isVisible(), true);
-    await page.getByLabel("New article files", {exact: true}).fill("posts/{slug}.md");
-    await page.getByText("Site frontmatter and existing-page files", {exact: true}).click();
+    // New articles are adapted through website.change; the Markdown pattern serves older drafts.
+    assert.match(await page.locator("[data-github-settings]").innerText(), /through website\.change/);
+    await page.getByText("Markdown files for drafts started before site adaptation", {exact: true}).click();
+    await page.getByLabel("Markdown file pattern", {exact: true}).fill("posts/{slug}.md");
     await page.getByLabel("Frontmatter for new files", {exact: true}).fill('{"title":"{title}","date":"{date}"}');
     await page.getByLabel("File for Set up your webhook", {exact: true}).fill("docs/webhooks.md");
     await page.getByRole("button", {name: "Save delivery", exact: true}).click();
@@ -82,7 +84,9 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     await retryDelivery.click();
     assert.match(await page.evaluate(() => writes.at(-1).path), /\/content-drafts\/draft-three\/delivery\/retry$/);
     if (!await page.locator("[data-delivery-disclosure]").evaluate(d => d.open)) await page.getByText("Article delivery · GitHub PR", {exact: true}).click();
-    await page.getByLabel("New article files", {exact: true}).fill("future/{slug}.md");
+    const older = page.getByText("Markdown files for drafts started before site adaptation", {exact: true});
+    if (!await page.getByLabel("Markdown file pattern", {exact: true}).isVisible()) await older.click();
+    await page.getByLabel("Markdown file pattern", {exact: true}).fill("future/{slug}.md");
     await page.evaluate(() => {failSave = true;});
     await page.getByRole("button", {name: "Save delivery", exact: true}).click();
     assert.match(await page.locator("[data-delivery-message]").innerText(), /unsaved settings are still here/);
@@ -91,7 +95,7 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
       document.querySelector("#panel").outerHTML = '<div id="panel" data-content-delivery-program="program"></div>';
       await TinContentDelivery.mount(document.body, contextFixture, {plan: planFixture, drafts: draftsFixture});
     });
-    assert.equal(await page.getByLabel("New article files", {exact: true}).inputValue(), "future/{slug}.md");
+    assert.equal(await page.getByLabel("Markdown file pattern", {exact: true}).inputValue(), "future/{slug}.md");
     assert.equal(await page.locator("[data-prepare-article-pr]").count(), 0);
     await page.evaluate(() => {failSave = false; draftsFixture.first.status = "succeeded"; draftsFixture.first.stage = "drafted";});
     await page.evaluate(() => {draftsFixture.first.system_delivery = {mode: "github_pr", binding: {repository: "owner/site"}};});
@@ -112,7 +116,7 @@ for (const theme of ["light", "dark"]) test(`content delivery: ${theme}, scoped 
     assert.equal(prepared.path, "/api/workflows/00000000-0000-4000-8000-000000000045/runs");
     assert.deepEqual(JSON.parse(prepared.body), {project_id: "project", inputs: {source: "content_draft", source_run_id: "draft-one", expected_repository: "owner/site"}});
     assert.equal(await page.locator("[data-prepare-article-pr]").count(), 0);
-    assert.equal(await page.getByLabel("New article files", {exact: true}).inputValue(), "future/{slug}.md");
+    assert.equal(await page.getByLabel("Markdown file pattern", {exact: true}).inputValue(), "future/{slug}.md");
     await page.evaluate(() => {draftsFixture.first.repository_delivery = {run_id: "failed-adaptation", status: "failed", repository: "owner/site", has_checkpoint: false};});
     await page.getByText("Drafts and pull requests · 3", {exact: true}).click();
     await page.getByRole("button", {name: "Refresh delivery status"}).click();

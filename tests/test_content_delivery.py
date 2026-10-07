@@ -26,6 +26,7 @@ from tin_lite.content_delivery import (
     settings_path,
 )
 from tin_lite.content_delivery_api import retry_delivery
+from tin_lite.content_plan import item_kind
 from tin_lite.domain import RunStatus
 from tin_lite.integrations import (
     GitHubCommitResult,
@@ -121,6 +122,23 @@ def test_destination_validation(pattern):
         DeliverySettings(path_pattern=pattern)
 
 
+@pytest.fixture
+def pinned_before_adaptation(monkeypatch):
+    """A draft whose delivery was pinned before planned articles went through website.change:
+    its intent names a Markdown file, so the exact Markdown publisher delivers it."""
+    pin = ContentDelivery.pin
+
+    async def legacy(self, *, project_id, selected):
+        intent = await pin(self, project_id=project_id, selected=selected)
+        if intent and intent.get("via") and item_kind(selected["item"]) == "article":
+            settings = DeliverySettings.model_validate(intent["settings"])
+            intent = {key: value for key, value in intent.items() if key not in {"adapter", "via"}}
+            intent["path"] = destination(settings, selected)[0]
+        return intent
+
+    monkeypatch.setattr(ContentDelivery, "pin", legacy)
+
+
 async def configured(f):
     f.binding = GitHubRepositoryBinding(uuid4(), 123, 456, "owner/site", "main", "9" * 40)
     f.runtime.integrations.github_repository_binding = AsyncMock(return_value=f.binding)
@@ -191,6 +209,7 @@ async def approve(f, run):
     return await f.db.get_run(run.id)
 
 
+@pytest.mark.usefixtures("pinned_before_adaptation")
 async def test_review_then_exact_delivery_is_idempotent_and_pins_settings(
     publication_db, monkeypatch
 ):
@@ -250,6 +269,7 @@ async def test_review_then_exact_delivery_is_idempotent_and_pins_settings(
     )
 
 
+@pytest.mark.usefixtures("pinned_before_adaptation")
 async def test_delivery_failure_retries_without_redrafting_or_retaking_snapshot(
     publication_db, monkeypatch
 ):
@@ -293,6 +313,7 @@ async def test_draft_only_or_old_definition_never_acquires_delivery(
     f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
+@pytest.mark.usefixtures("pinned_before_adaptation")
 async def test_http_mcp_settings_scope_and_reviewed_retry(publication_db, monkeypatch):
     f = await configured(await fixture(publication_db, monkeypatch))
     server = mcp(f, monkeypatch)
@@ -327,6 +348,7 @@ async def test_http_mcp_settings_scope_and_reviewed_retry(publication_db, monkey
     assert result["content_delivery"]["approval_label"] == "Approve & open PR"
 
 
+@pytest.mark.usefixtures("pinned_before_adaptation")
 async def test_changed_github_connection_cannot_redirect_reviewed_draft(
     publication_db, monkeypatch
 ):
@@ -361,6 +383,7 @@ async def commit_configured(f, mode="github_commit", repository="owner/site"):
     return f
 
 
+@pytest.mark.usefixtures("pinned_before_adaptation")
 async def test_github_commit_mode_publishes_the_same_file_without_a_pull_request(
     publication_db, monkeypatch
 ):
@@ -414,22 +437,36 @@ async def test_approval_picks_delivery_for_one_draft_and_can_remember_it(
     assert response.status_code == 202, response.text
     run = await f.db.get_run(run.id)
     assert run.review_decision == "approved"
+    # The article goes to the site through website.change, not as a Markdown file: the pick
+    # pins the repository and asks Tin to merge once the repository's checks pass.
     intent = await f.delivery.intent(run)
+    assert intent["adapter"] == "repository" and intent["via"] == "website.change"
     assert intent["settings"]["mode"] == "github_commit"
     assert intent["settings"]["repository"] == "owner/site"
-    assert intent["path"] == destination(DeliverySettings(**intent["settings"]), ctx)[0]
-    assert intent["repository_id"] == f.binding.repository_id
+    assert intent["path"] is None and intent["repository_id"] == f.binding.repository_id
     remembered = await f.delivery.settings(project_id=f.project.id, program_id=f.configured.id)
     assert remembered["settings"]["mode"] == "github_commit"
     # The approval already happened; a later pick cannot retarget this draft.
     assert (await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR)) == intent
     await f.activities.project_codex_procedure_result(str(run.id))
-    run = await f.db.get_run(run.id)
-    assert run.status == RunStatus.SUCCEEDED
     await f.delivery.deliver(run.id)
-    f.runtime.integrations.github_commit_files.assert_awaited_once()
+    f.runtime.integrations.github_commit_files.assert_not_called()
     f.runtime.integrations.github_create_pull_request.assert_not_called()
-    assert (await f.delivery.status(run))["commit"]["commit"] == COMMIT_SHA
+
+
+async def test_a_new_draft_pins_website_change_for_a_repository_program(
+    publication_db, monkeypatch
+):
+    f = await configured(await fixture(publication_db, monkeypatch))
+    run, _, _ = await publish_draft(f, await start(f))
+    intent = await f.delivery.intent(run)
+    assert intent["adapter"] == "repository" and intent["via"] == "website.change"
+    assert intent["path"] is None and intent["settings"]["mode"] == "github_pr"
+    status = await f.delivery.status(run)
+    assert status["adapter"] == "repository" and status["approval_label"] == "Publish"
+    run = await approve(f, run)
+    await f.delivery.deliver(run.id)  # The Markdown publisher leaves it to website.change.
+    f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
 async def test_approval_can_keep_a_draft_in_tin_or_open_a_pull_request(publication_db, monkeypatch):

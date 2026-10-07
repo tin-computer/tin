@@ -3759,18 +3759,20 @@ def create_mcp_app(
         """Approve one review-gated workflow artifact for an accessible Tin project.
 
         For a content draft (answer page, article, content program draft) `delivery` says how
-        the approved draft ships: github_pr opens a pull request, github_commit publishes to the
-        default branch now, none keeps it in Tin; `remember` makes it the program's default.
-        Without `delivery` the program's setting applies; a page outside a saved workflow
-        stays in Tin, like none. Tell the founder the result's `relay` in your words.
+        the approved draft ships: github_pr opens a pull request, github_commit asks Tin to
+        merge it, none keeps it in Tin; `remember` makes it the program's default. Without
+        `delivery` the program's setting applies; a page outside a saved workflow stays in
+        Tin, like none. Tell the founder the result's `relay` in your words.
 
-        An answer page or public article with a GitHub repository is not committed as-is:
-        approving with github_pr or github_commit starts a separately metered adaptation
-        (website.change, charged on actual usage; `delivery_cost` is its configured
-        preview) that fits the page into the site's own format at the route the founder
-        chose and opens a pull request. With github_commit, Tin then merges that pull
-        request once the repository's required checks pass, unless the page is protected;
-        otherwise it stays open and get_run says why.
+        A planned article, answer page or public article with a GitHub repository is not
+        committed as-is: approving with github_pr or github_commit starts a separately
+        metered adaptation (website.change, charged on actual usage; `delivery_cost` is its
+        configured preview) that fits the page into the site's own format and opens a pull
+        request: an answer page or public article at the route the founder chose, a planned
+        article at the address its plan item names. With github_commit, Tin then merges that
+        pull request once the repository's required checks pass, unless the page is
+        protected; otherwise it stays open and get_run says why. A page refresh changes
+        exactly its approved lines instead.
         get_run.delivery_preview shows what Publish does before you approve.
 
         For reviewed project documents, first get_workflow_review, read both proposed files,

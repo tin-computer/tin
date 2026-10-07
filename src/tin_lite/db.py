@@ -189,6 +189,16 @@ PROJECT_ADMISSION_LOCK = (
 )
 
 
+# A pull request's outcome is written on the change run and on the approved page's run, so
+# each run's own history shows it. The project feeds list it once, on the change run: the
+# page's copy is the one whose run is its own source.
+MIRRORED_ON_PAGE = (
+    "(events.event_type IN ('website_change_merged', 'website_change_left_open', "
+    "'content_delivery_merged', 'content_delivery_left_open') "
+    "AND events.details->>'source_run_id' = events.run_id::text)"
+)
+
+
 class Database:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -3423,7 +3433,7 @@ class Database:
         self, *, project_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[ActivityEvent]:
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT events.*,
                    jsonb_strip_nulls(
                        events.details || jsonb_build_object(
@@ -3439,9 +3449,10 @@ class Database:
             WHERE events.project_id = $1
               AND events.audience = 'product'
               AND events.created_at >= now() - interval '30 days'
+              AND NOT {MIRRORED_ON_PAGE}
             ORDER BY events.created_at DESC, events.id DESC
             LIMIT $2 OFFSET $3
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
             limit,
             offset,
@@ -3843,7 +3854,7 @@ class Database:
         limit: int = 50,
     ) -> list[ActivityEvent]:
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT *
             FROM (
                 SELECT events.*,
@@ -3862,11 +3873,12 @@ class Database:
                 WHERE events.project_id = $1 AND events.audience = 'product'
                   AND events.created_at >= $2 AND events.created_at < $3
                   AND (events.run_id IS NULL OR events.run_id <> $4)
+                  AND NOT {MIRRORED_ON_PAGE}
                 ORDER BY events.created_at DESC, events.id DESC
                 LIMIT $5
             ) AS recent
             ORDER BY created_at, id
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
             period_start,
             period_end,

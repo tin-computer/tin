@@ -161,6 +161,29 @@ def covering_page(judgment, host=None):
     return pages[0] if pages else None
 
 
+def no_draft_summary(judgment, item, covered):
+    """The run's one line for a no-draft judgment. An update the destination already satisfies
+    says no change is needed there, not that the page is covered by itself."""
+    title = item["title"]
+    if (
+        judgment["outcome"] == "already_covered"
+        and covered
+        and item.get("action") == "update_page"
+        and item.get("destination")
+    ):
+        try:
+            same = page_identity(covered) == page_identity(item["destination"])
+        except ValueError:
+            same = False
+        if same:
+            return f"No change needed: {covered} already does what this update asks: {title}."
+    return (
+        LABELS[judgment["outcome"]]
+        + (f" by {covered}" if covered else "")
+        + f": {title}. No article drafted."
+    )
+
+
 async def saved(database, run):
     if str(run.workflow_id) != "00000000-0000-4000-8000-000000000031":
         return None

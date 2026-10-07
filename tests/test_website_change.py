@@ -262,6 +262,10 @@ async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatc
         "SELECT run_id FROM activity_events WHERE event_type='website_change_merged'"
     )
     assert {row["run_id"] for row in events} == {run.id, page.id}
+    # Activity lists the outcome once, on the change run; the page's own history keeps its copy.
+    feed = await f.db.list_product_activity(project_id=f.project.id)
+    merged = [event for event in feed if event.event_type == "website_change_merged"]
+    assert [event.run_id for event in merged] == [run.id]
     status = await f.delivery.status(run)
     assert status["merged"] is True and status["pull_request"]["url"] == PR_URL
     assert status["change_id"] == website_change.page_change_id(page.id)
