@@ -8,13 +8,14 @@ import { chromium } from "playwright";
 import { selection, profileHTML, resultsHTML, person } from "./fixtures.mjs";
 
 const extensionPath = new URL("../..",import.meta.url).pathname;
-for (const mode of ["legacy", "handoff", "automatic"]) test(mode === "automatic" ? "paired MV3 worker collects a queued run without opening the popup" : mode === "handoff" ? "cloud cleanup handoff resumes automatically in Chrome without another transfer" : "real MV3 pairing, popup closure, worker restart and lost page acknowledgement", {timeout:90000}, async t => {
-  const handoff = mode === "handoff", automatic = mode === "automatic";
+for (const mode of ["legacy", "handoff", "automatic", "missing_account"]) test(mode === "missing_account" ? "a missing account on the prepared page pauses without claiming the saved login expired" : mode === "automatic" ? "paired MV3 worker collects a queued run without opening the popup" : mode === "handoff" ? "cloud cleanup handoff resumes automatically in Chrome without another transfer" : "real MV3 pairing, popup closure, worker restart and lost page acknowledgement", {timeout:90000}, async t => {
+  const handoff = mode === "handoff", missingAccount = mode === "missing_account", automatic = mode === "automatic" || missingAccount;
   const dir = await mkdtemp(join(tmpdir(),"tin-collection-mv3-"));
   t.after(() => rm(dir,{recursive:true,force:true}));
   let pages=[], accepted=handoff?1:0, failOnce=!handoff, paired=false;
   const job = {run_id:"00000000-0000-4000-8000-000000000001", inputs:{friends:[selection.friend.profile_url],keywords:"founder",execution:"local_only"}, actor:selection.actor, state:"waiting_browser", generation:1, friend_index:0, next_page:1, cloud_transport:null,execution_mode:"local"};
   if(handoff) Object.assign(job,{state:"handoff_pending",execution_mode:"cloud",cloud_transport:"http_v1",next_page:2,inputs:{...job.inputs,execution:"cloud_preferred"}});
+  if(missingAccount) Object.assign(job,{cloud_transport:"http_v2",reason:"browser_preparation_required",inputs:{...job.inputs,execution:"cloud_preferred"}});
   const server=createServer(async(req,res)=>{
     let raw="";for await(const chunk of req) raw+=chunk;
     const body=raw?JSON.parse(raw):null;
@@ -25,7 +26,7 @@ for (const mode of ["legacy", "handoff", "automatic"]) test(mode === "automatic"
       res.end(JSON.stringify({project_id:"00000000-0000-4000-8000-000000000002"}));return;
     }
     assert.equal(req.headers["authorization"]?.startsWith("Bearer "),true);
-    if(req.url.endsWith("/status")){res.end(JSON.stringify({permission:automatic?{version:1,mode:"local_only"}:null,cloud_available:false}));return;}
+    if(req.url.endsWith("/status")){res.end(JSON.stringify({permission:automatic?{version:1,mode:missingAccount?"cloud_preferred":"local_only"}:null,cloud_available:missingAccount,session_available:missingAccount,session_expires_at:new Date(Date.now()+3*86400000).toISOString()}));return;}
     if(req.url.endsWith("/pending")){res.end(JSON.stringify(job));return;}
     if(req.url.endsWith("/claim")){job.state="collecting";if(handoff){job.cloud_transport="local_backup";job.execution_mode="local";}res.end(JSON.stringify({...job,lease:"synthetic-collection-lease-1234567890123456789"}));return;}
     if(req.url.endsWith("/heartbeat")){res.end(JSON.stringify(job));return;}
@@ -45,7 +46,7 @@ for (const mode of ["legacy", "handoff", "automatic"]) test(mode === "automatic"
   let code=await readFile(workerFile,"utf8");code=code.replace("const origins = new Set([",`const origins = new Set([${JSON.stringify(base)},`);await writeFile(workerFile,code);
   const context=await chromium.launchPersistentContext(join(dir,"profile"),{channel:"chromium",headless:true,args:[`--disable-extensions-except=${fixture}`,`--load-extension=${fixture}`]});
   t.after(()=>context.close());
-  await context.route("https://www.linkedin.com/**",route=>{const url=new URL(route.request().url());const page=Number(url.searchParams.get("page")||1);return route.fulfill({contentType:"text/html; charset=utf-8",body:url.pathname.startsWith("/in/")?profileHTML():resultsHTML(page,[person(page)],page===1?"next":"end")});});
+  await context.route("https://www.linkedin.com/**",route=>{const url=new URL(route.request().url());const page=Number(url.searchParams.get("page")||1);return route.fulfill({contentType:"text/html; charset=utf-8",body:url.pathname.startsWith("/in/")?(missingAccount&&job.state==="collecting"?profileHTML().replace(/<header[\s\S]*?<\/header>/, ""):profileHTML()):resultsHTML(page,[person(page)],page===1?"next":"end")});});
   let worker=context.serviceWorkers()[0]||await context.waitForEvent("serviceworker");
   const runtimeErrors=[];worker.on("console",msg=>{if(msg.type()==="error")runtimeErrors.push(msg.text());});
   const li=await context.newPage();await li.goto(selection.friend.profile_url);
@@ -70,6 +71,18 @@ for (const mode of ["legacy", "handoff", "automatic"]) test(mode === "automatic"
   await popup.locator("#begin:enabled").click();
   await popup.waitForFunction(()=>document.querySelector("#status").textContent.includes("Collecting"));
   await popup.close();
+  }
+  if(missingAccount) {
+    const deadline=Date.now()+35000;
+    while(Date.now()<deadline && job.state!=="paused")await new Promise(resolve=>setTimeout(resolve,100));
+    assert.equal(job.state,"paused");assert.equal(job.reason,"browser_unavailable");assert.equal(accepted,0);
+    const saved=await worker.evaluate(async()=> (await chrome.storage.local.get("tin.linkedin.collection.v3"))["tin.linkedin.collection.v3"]);
+    assert.equal(saved.connection.session_available,true);
+    assert.equal(saved.page_diagnostics.account.ok,false);
+    assert.equal(saved.page_diagnostics.page_kind,"profile");
+    assert.equal(JSON.stringify(saved.page_diagnostics).includes("Test Owner"),false);
+    assert.ok(await li.locator(".global-nav__me-profile-link").isVisible(),"the original signed-in page remains intact");
+    return;
   }
   const firstPageDeadline=Date.now()+30000;
   while(Date.now()<firstPageDeadline&&accepted<1&&job.state!=="paused")await new Promise(resolve=>setTimeout(resolve,100));
