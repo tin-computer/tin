@@ -4601,7 +4601,20 @@ PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
         *organic_system.MEASURE_STEPS.values(),
     ),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
+    # content.plan 1.0.0 starts its planning agent at the plan's own pinned revision.
+    content_plan.KEY: (content_plan_agent.RESEARCH_KEY,),
 }
+
+
+def pinned_children(key: str) -> tuple[str, ...]:
+    """Every workflow a parent's revision must carry: its children and theirs (the organic
+    system runs content.plan, which starts its planning agent at the same revision)."""
+    keys: list[str] = []
+    for child in PARENT_CHILD_KEYS.get(key, ()):
+        for item in (child, *pinned_children(child)):
+            if item not in keys:
+                keys.append(item)
+    return tuple(keys)
 
 
 async def sync_builtin_workflows(
@@ -4656,8 +4669,8 @@ async def sync_builtin_workflows(
         validate_prerequisite_graph(prerequisites)
     except ValueError as exc:
         raise RuntimeError(f"built-in workflow prerequisites are invalid: {exc}") from exc
-    for parent, children in PARENT_CHILD_KEYS.items():
-        if parent in prepared and (missing := set(children) - prepared.keys()):
+    for parent in PARENT_CHILD_KEYS:
+        if parent in prepared and (missing := set(pinned_children(parent)) - prepared.keys()):
             raise RuntimeError(f"workflow {parent} needs selected children: {sorted(missing)}")
     for system in WORKFLOW_SYSTEMS:
         await database.upsert_workflow_system(
@@ -4671,7 +4684,7 @@ async def sync_builtin_workflows(
             # The parent's immutable revision must contain all of its exact child
             # definitions and resources, including on first publication or upgrade.
             files = dict(files)
-            for child_key in PARENT_CHILD_KEYS[builtin.key]:
+            for child_key in pinned_children(builtin.key):
                 files.update(prepared[child_key][2])
         commit_sha = await storage.publish_workflow_files(
             repo_id=REGISTRY_REPO_ID,
