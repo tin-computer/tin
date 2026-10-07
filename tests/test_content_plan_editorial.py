@@ -217,7 +217,7 @@ def test_schema_and_exact_legacy_and_current_policies():
     definition["content_policy"]["max_pages"] += 1
     with pytest.raises(ValueError, match="pinned"):
         editorial.contract(definition)
-    for schema in [editorial.MODEL_SCHEMA, *editorial.MODEL_SCHEMA["$defs"].values()]:
+    for schema in [editorial.V8_SCHEMA, *editorial.V8_SCHEMA["$defs"].values()]:
         assert schema["additionalProperties"] is False
         assert set(schema["required"]) == set(schema["properties"])
 

@@ -317,11 +317,12 @@ def test_new_parent_cost_bounds_leave_historical_definition_unchanged():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     historical = {**definition, "organic_system_policy": organic_system.LEGACY_POLICY}
     # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each and the
-    # first page refresh $2.50 and v7's Page decisions $1 ($25.50 of children); the pool caps
-    # the drafting recipe at the keyword limit plus $10, the refresh's $2.50 and $1 ($22.50).
+    # first page refresh $2.50, v7's Page decisions $1 and v8's planning agent $5 more ($30.50
+    # of children); the pool caps the drafting recipe at the keyword limit plus $10, the
+    # refresh's $2.50, $1 and $5 ($27.50).
     assert service_terms(historical)["maximum_nanos"] == 12_000_000_000
-    assert service_terms(definition)["maximum_nanos"] == 22_500_000_000
+    assert service_terms(definition)["maximum_nanos"] == 27_500_000_000
     assert (
         service_terms(definition, inputs={"content_delivery": "draft_only"})["maximum_nanos"]
-        == 20_500_000_000
+        == 25_500_000_000
     )

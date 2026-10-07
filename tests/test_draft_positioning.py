@@ -19,9 +19,11 @@ NOTE = b"# Positioning\n\nLead with the whole system, not one channel.\n"
 
 
 def test_the_plan_follows_the_projects_positioning_instead_of_setting_it():
-    assert editorial.POLICY["version"] == "content-editorial-v8"
-    assert "Strategy owns product positioning" not in editorial.INSTRUCTIONS
-    assert "Never narrow, downplay or reframe the product" in flat(editorial.INSTRUCTIONS)
+    # v8 is the last contract whose instructions reach a model; v9's planning agent reads the
+    # same rule in its skill.
+    assert editorial.V8_POLICY["version"] == "content-editorial-v8"
+    assert "Strategy owns product positioning" not in editorial.V8_INSTRUCTIONS
+    assert "Never narrow, downplay or reframe the product" in flat(editorial.V8_INSTRUCTIONS)
     # Plans pinned to v5 keep their exact instructions.
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.plan")
     definition, _ = spec.definition_and_resource_files()

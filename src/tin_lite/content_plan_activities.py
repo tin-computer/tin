@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,7 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import content_plan as legacy
+from tin_lite import content_plan_agent as agent
 from tin_lite import content_plan_editorial as editorial
 from tin_lite.content_plan import (
     KEY,
@@ -27,7 +29,14 @@ from tin_lite.content_plan import (
     validate_change,
 )
 from tin_lite.content_plan_sources import (
+    EFFICACY_PATH,
+    LATEST_WATCH_SQL,
+    POSITIONING_CONTEXT_PREFIX,
+    POSITIONING_PATHS,
     SITE_SOURCES,
+    SNAPSHOT_PATH,
+    WATCH_FOLDER,
+    WATCH_MAX_BYTES,
     competitor_rows,
     competitor_watch,
     context_files,
@@ -43,6 +52,13 @@ from tin_lite.organic_audit import canonical_json, digest
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.technical_fix import fetch_page
 from tin_lite.workflow_evidence import integration_inventory
+
+
+def legacy_style_path():
+    from tin_lite.writing_style import STYLE_PATH
+
+    return STYLE_PATH
+
 
 # How long the worker waits for the plan. Kept outside the pinned policy: waiting longer never
 # changes the request. Every contract allows 16,000 output tokens, which at about 55 tokens a
@@ -64,8 +80,9 @@ def plan_kinds(research):
 
 
 class ContentPlanActivities:
-    def __init__(self, *, database, storage, settings, router):
+    def __init__(self, *, database, storage, settings, router, integrations=None):
         self.db, self.storage, self.settings, self.router = database, storage, settings, router
+        self.integrations = integrations
         self.programs = ContentPrograms(database=database, storage=storage)
 
     async def active(self, run_id, *, conn=None):
@@ -272,10 +289,310 @@ class ContentPlanActivities:
             )
             return revision
 
+    async def research_inputs(self, project, context):
+        """The merged competitor list and the project files the planning agent should read."""
+        sources = context["research"].get("sources") or {}
+        revision = context["source_revision"]
+        loaded = {}
+        for kind, name in (("audit", "evidence.json"), ("keyword", "evidence.json")):
+            source = sources.get(kind) or {}
+            path = (source.get("paths") or {}).get(name)
+            raw = (
+                await self.storage.read_canonical_artifact_if_exists(
+                    repo_id=project.state_repo_id, commit_sha=source["revision"], path=path
+                )
+                if path and source.get("revision")
+                else None
+            )
+            try:
+                loaded[kind] = json.loads(raw) if raw else {}
+            except ValueError:
+                loaded[kind] = {}
+        watch_path = watch_text = None
+        row = await self.db.pool.fetchrow(LATEST_WATCH_SQL, project.id)
+        if row is not None and str(row["artifact_path"]).startswith(WATCH_FOLDER):
+            raw = await self.storage.read_canonical_artifact_if_exists(
+                repo_id=project.state_repo_id,
+                commit_sha=row["canonical_commit_sha"],
+                path=row["artifact_path"],
+            )
+            if raw and len(raw) <= WATCH_MAX_BYTES:
+                watch_path, watch_text = row["artifact_path"], raw.decode("utf-8", "replace")
+        competitors, cited = agent.merge_competitors(
+            host=context["plan"]["host"],
+            audit=loaded["audit"],
+            keyword_evidence=loaded["keyword"],
+            watch=context.get("competitor_watch"),
+            watch_report=watch_text,
+        )
+        listed = set(
+            await self.storage.list_canonical_files_at(
+                repo_id=project.state_repo_id, revision=revision
+            )
+        )
+        named = {
+            "Audit report": (sources.get("audit") or {}).get("paths", {}).get("AUDIT.md"),
+            "Audit findings": (sources.get("audit") or {}).get("paths", {}).get("findings.json"),
+            "Audit evidence (buyer questions, AI answers, crawl, Search Console)": (
+                sources.get("audit") or {}
+            )
+            .get("paths", {})
+            .get("evidence.json"),
+            "Keyword plan": (sources.get("keyword") or {}).get("paths", {}).get("PLAN.md"),
+            "Keyword inventory": (sources.get("keyword") or {})
+            .get("paths", {})
+            .get("keywords.json"),
+            "Keyword evidence (search competitors, Search Console)": (sources.get("keyword") or {})
+            .get("paths", {})
+            .get("evidence.json"),
+            "Newest competitor.watch report": watch_path,
+            "Page decisions": EFFICACY_PATH,
+            "Traffic snapshot": SNAPSHOT_PATH,
+            "Project memory and Code map": "wiki/INDEX.md",
+            "Brand guide": POSITIONING_PATHS[0],
+            "Start here plan": "reports/GROWTH_ONBOARDING_PLAN.md",
+            "Writing style": legacy_style_path(),
+        }
+        files = {label: path for label, path in named.items() if path and path in listed}
+        notes = sorted(
+            path
+            for path in listed
+            if path.startswith(POSITIONING_CONTEXT_PREFIX) and path.endswith(".md")
+        )[:20]
+        for path in notes:
+            files[f"Founder note {path.removeprefix(POSITIONING_CONTEXT_PREFIX)}"] = path
+        return competitors, cited, files
+
+    async def publish_brief(self, run, project, documents):
+        key = f"content:{run.id}:brief_publish"
+        async with self.db.effect_lock(key, KEY) as (conn, receipt):
+            if receipt and receipt.status == "completed":
+                return receipt.result["canonical_commit_sha"]
+            await self.db.start_effect(conn, execution_key=key, operation=KEY)
+
+            async def save_intent(intent):
+                await self.db.save_publication_intent(conn, execution_key=key, intent=intent)
+
+            async def validate_active():
+                await self.active(run.id, conn=conn)
+
+            folder = agent.brief_paths(run.id)
+            async with self.db.project_state_lock(conn, project.id):
+                revision = await publish_artifacts(
+                    storage=self.storage,
+                    repo_id=project.state_repo_id,
+                    branch=project.canonical_branch,
+                    documents=documents,
+                    paths=folder,
+                    limits=agent.BRIEF_FILES,
+                    message=f"content.plan {run.id} brief [{key}]",
+                    intent=(receipt.result or {}).get("publication") if receipt else None,
+                    save_intent=save_intent,
+                    validate_active=validate_active,
+                )
+            await self.db.complete_effect(
+                conn,
+                execution_key=key,
+                result={
+                    "canonical_commit_sha": revision,
+                    "documents_sha256": digest(
+                        {path: content.decode() for path, content in documents.items()}
+                    ),
+                },
+            )
+            return revision
+
+    async def start_research(self, run, project, context, pages):
+        """Publish the brief, then prepare the planning agent's run (once per plan run)."""
+        saved = await self.saved(run.id, "research")
+        if saved:
+            return saved
+        brief = await self.saved(run.id, "brief")
+        if not brief:
+            competitors, cited, files = await self.research_inputs(project, context)
+            documents = agent.brief_documents(
+                context,
+                pages,
+                competitors=competitors,
+                sources=files,
+                run_id=run.id,
+                cited_sites=cited,
+            )
+            brief = await self.save(
+                run.id,
+                "brief",
+                {
+                    "documents": {path: content.decode() for path, content in documents.items()},
+                    "competitors": competitors,
+                    "sources": files,
+                },
+            )
+        documents = {path: content.encode() for path, content in brief["documents"].items()}
+        revision = await self.publish_brief(run, project, documents)
+        from tin_lite.billing_contracts import BillingError
+        from tin_lite.run_service import (
+            PrerequisiteError,
+            WorkflowExecutorUnavailableError,
+            WorkflowInputError,
+            start_workflow_run,
+        )
+
+        definition = json.loads(
+            await self.storage.read_canonical_artifact(
+                repo_id="registry/workflows",
+                commit_sha=run.definition_commit_sha,
+                path=f"workflows/{agent.RESEARCH_KEY}.json",
+            )
+        )
+        template = await self.db.get_registry_workflow(agent.RESEARCH_KEY)
+        if template is None or template.executor != definition.get("executor"):
+            raise ValueError("The content planning agent is not available in this release.")
+        template = replace(template, definition=definition)
+        await self.db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            step="plan",
+            current=1,
+            total=3,
+            summary="The planning agent is reading the research and the site",
+        )
+        try:
+            child = await start_workflow_run(
+                runtime=SimpleNamespace(
+                    database=self.db, storage=self.storage, integrations=self.integrations
+                ),
+                settings=self.settings,
+                workflow=template,
+                project_id=run.project_id,
+                started_by_clerk_user_id=run.started_by_clerk_user_id,
+                start_idempotency_key=f"content:{run.id}:research",
+                input_payload={
+                    "plan_run_id": str(run.id),
+                    "brief_folder": agent.BRIEF_FOLDER.replace("{run_id}", str(run.id)),
+                    "brief_revision": revision,
+                    "host": context["plan"]["host"],
+                    "slots": agent.slots(context),
+                },
+                definition_commit_sha=run.definition_commit_sha,
+                input_schema=definition["input_schema"],
+                trigger_source=run.trigger_source,
+                trigger_client=run.trigger_client,
+                started_by_oauth_client_id=run.started_by_oauth_client_id,
+                _prepare_only=True,
+                _billing_parent_run_id=run.id if getattr(self.db, "billing", None) else None,
+            )
+        except (
+            BillingError,
+            PrerequisiteError,
+            WorkflowExecutorUnavailableError,
+            WorkflowInputError,
+            LookupError,
+        ) as exc:
+            raise ValueError(f"The planning agent could not start: {exc}"[:500]) from None
+        return await self.save(
+            run.id,
+            "research",
+            {
+                "run_id": str(child.id),
+                "executor": child.executor,
+                "temporal_workflow_id": child.temporal_workflow_id,
+            },
+        )
+
+    async def agent_plan(self, run, project, context, pages):
+        """Read the agent's portfolio, keep the usable items and fill the weeks."""
+        research = await self.saved(run.id, "research")
+        if not research:
+            raise ValueError("The planning agent never started; start the plan again.")
+        portfolio = await self.saved(run.id, "portfolio")
+        if not portfolio:
+            child = await self.db.get_run(UUID(research["run_id"]))
+            if child is None or child.status.value != "succeeded":
+                reason = (getattr(child, "error_message", None) or "").strip()
+                raise ValueError(
+                    "The planning agent did not finish"
+                    + (
+                        f": {reason}"
+                        if reason
+                        else f" ({child.status.value if child else 'missing'})."
+                    )
+                )
+            raw = await self.storage.read_canonical_artifact(
+                repo_id=project.state_repo_id,
+                commit_sha=child.canonical_commit_sha,
+                path=child.artifact_path,
+            )
+            value = agent.validate(raw.decode("utf-8"))
+            cited = sorted(
+                {
+                    source.removeprefix("file:")
+                    for item in value["opportunities"]
+                    if isinstance(item, dict) and isinstance(item.get("sources"), list)
+                    for source in item["sources"]
+                    if isinstance(source, str)
+                    and (source.startswith("file:") or ("/" in source and "://" not in source))
+                }
+            )[:200]
+            listed = set(
+                await self.storage.list_canonical_files_at(
+                    repo_id=project.state_repo_id, revision=child.canonical_commit_sha
+                )
+            )
+            sizes = {}
+            for path in cited:
+                if path in listed:
+                    content = await self.storage.read_canonical_artifact_if_exists(
+                        repo_id=project.state_repo_id,
+                        commit_sha=child.canonical_commit_sha,
+                        path=path,
+                    )
+                    if content is not None:
+                        sizes[path] = len(content)
+            portfolio = await self.save(
+                run.id,
+                "portfolio",
+                {
+                    "run_id": str(child.id),
+                    "path": child.artifact_path,
+                    "revision": child.canonical_commit_sha,
+                    "sha256": digest(value),
+                    "data": value,
+                    "file_sizes": sizes,
+                },
+            )
+        value = portfolio["data"]
+        kept, left_out = agent.normalize(context, pages, value, file_sizes=portfolio["file_sizes"])
+        kept = agent.with_decision_refreshes(context, kept)
+        plan, backlog = agent.fill(context, kept)
+        plan = validate_change(context["plan"], plan, editable=set(context["editable"]))
+        quality = agent.coverage(context, kept, left_out, backlog, value, plan)
+        plan["strategy"] = agent.strategy(value, quality)
+        plan = validate_change(context["plan"], plan, editable=set(context["editable"]))
+        quality["portfolio"] = {k: portfolio[k] for k in ("run_id", "path", "revision", "sha256")}
+        site = (context["research"] or {}).get("site_pages")
+        if site is not None:
+            quality["site_inventory"] = {
+                "path": legacy.site_pages_path(str(run.id)),
+                "pages": len(site["pages"]),
+                "omitted": site["omitted"],
+                "by_source": site["by_source"],
+                "shown_to_model": len(site["pages"]),
+            }
+        return plan, quality
+
+    @activity.defn
+    async def content_plan_research(self, run_id: str) -> dict:
+        """v9: publish the planning brief and prepare the planning agent's run, for the parent
+        workflow to dispatch. Older contracts, scheduled batches and finished runs answer {}."""
+        return await self.guarded(run_id, research_only=True) or {}
+
     @activity.defn
     async def content_plan_execute(self, run_id: str):
+        await self.guarded(run_id)
+
+    async def guarded(self, run_id, *, research_only=False):
         try:
-            await self.execute(run_id)
+            return await self.execute(run_id, research_only=research_only)
         except ValidationError:
             await self.save(
                 run_id,
@@ -293,10 +610,10 @@ class ContentPlanActivities:
                 "Content planning could not validate or prepare this run.", non_retryable=True
             ) from None
 
-    async def execute(self, run_id):
+    async def execute(self, run_id, *, research_only=False):
         run = await self.active(run_id)
         if run.status.value == "succeeded":
-            return
+            return None
         check_inputs(run.input)
         if not run.project_workflow_id:
             raise ValueError("Save this content program to My system before starting it.")
@@ -518,6 +835,12 @@ class ContentPlanActivities:
                     },
                 )
             plan = context["plan"]
+            planner = getattr(contract, "AGENT", False) and mode in {"initial", "revision"}
+            if research_only:
+                if not planner:
+                    return None
+                pages = await self.page_inventory(run, context, bind_sources=True)
+                return await self.start_research(run, project, context, pages)
             await self.db.project_run_progress(
                 run_id=run.id,
                 mode="steps",
@@ -532,7 +855,11 @@ class ContentPlanActivities:
             normalized_destinations = []
             label = "Content roadmap"
             quality = pages = None
-            if mode in {"initial", "revision"}:
+            if planner:
+                pages = await self.page_inventory(run, context, bind_sources=True)
+                plan, quality = await self.agent_plan(run, project, context, pages)
+                label = "Content revision preview" if amendment else label
+            elif mode in {"initial", "revision"}:
                 if contract.POLICY["live_page_verification"]:
                     readable = contract.POLICY.get("source_aliases") == "readable-v1"
                     pages = await self.page_inventory(run, context, bind_sources=readable)

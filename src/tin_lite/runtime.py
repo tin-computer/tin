@@ -250,7 +250,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
     )
     content_planner = ContentPlanActivities(
-        database=database, storage=storage, settings=settings, router=model_router
+        database=database,
+        storage=storage,
+        settings=settings,
+        router=model_router,
+        integrations=integrations,
     )
     character_designer = (
         CharacterDesigner(router=model_router) if settings.luna_api_key is not None else None
@@ -440,6 +444,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         characters.character_approval,
         characters.character_project,
         characters.character_failure,
+        content_planner.content_plan_research,
         content_planner.content_plan_execute,
         content_planner.content_plan_failure,
         keywords.keyword_prepare,

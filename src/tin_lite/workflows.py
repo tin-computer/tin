@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import timedelta
 
 from temporalio import workflow
@@ -1345,6 +1346,28 @@ class ContentPlanWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            if workflow.patched("content-plan-agent-v1"):
+                # v9 (content-editorial-v9): Tin reads the pages and publishes the brief, then
+                # the planning agent runs as a child; older contracts answer {} and go on.
+                child = await workflow.execute_activity(
+                    "content_plan_research",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=15),
+                    retry_policy=RetryPolicy(
+                        maximum_attempts=3, maximum_interval=timedelta(seconds=10)
+                    ),
+                )
+                if (child or {}).get("temporal_workflow_id"):
+                    # The agent's own run records why it stopped; the plan names it.
+                    with contextlib.suppress(Exception):
+                        await workflow.execute_child_workflow(
+                            child["executor"],
+                            child["run_id"],
+                            id=child["temporal_workflow_id"],
+                            task_queue=workflow.info().task_queue,
+                            parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                            cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                        )
             # Up to 60 page reads (four at a time, 20 s each) and a model wait of five and a
             # half minutes must fit in one attempt; a cut-off model call cannot be bought again.
             await workflow.execute_activity(

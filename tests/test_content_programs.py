@@ -42,6 +42,16 @@ async def setup(database, monkeypatch, *, editorial=False):
     storage = Storage()
     spec = next(spec for spec in BUILTIN_WORKFLOWS if spec.key == KEY)
     definition = deepcopy(spec.definition)
+    if editorial:
+        # The last contract that plans with one model call; v9 plans with an agent
+        # (tests/test_content_plan_agent.py).
+        from tin_lite import content_plan_editorial
+
+        definition.update(
+            content_policy=content_plan_editorial.V8_POLICY,
+            content_instructions=content_plan_editorial.V8_INSTRUCTIONS,
+            content_schema=content_plan_editorial.V8_SCHEMA,
+        )
     if not editorial:
         definition.update(
             version="0.1.0",

@@ -90,6 +90,20 @@ TRAFFIC_SYSTEM_POOL_USD = 10
 # most 32,000 tokens (content-editorial-v8; v7 wrote 16,000): $0.088 even at long-context
 # rates, under $0.10. Standalone plans keep the $2 native ceiling.
 CONTENT_PLAN_SHARE_USD = 1
+# content.plan 1.0.0 (content-editorial-v9) buys no model call itself: its planning agent,
+# content.plan_research, is a Codex procedure child with its own $6 ceiling
+# (codex_api_pricing.PROCEDURE_MAXIMUMS), so the plan is a spending parent of that size, and
+# organic-traffic-v8 sizes the plan's share in the system to match.
+CONTENT_PLAN_AGENT_USD = 6
+
+
+def agent_planner(definition) -> bool:
+    """Whether a content.plan definition plans with the agent (v9 and later)."""
+    return definition.get("executor") == "content.plan" and bool(
+        (definition.get("content_policy") or {}).get("planner")
+    )
+
+
 # Page decisions' share inside the organic parent (organic-traffic-v7): at most two GPT-6 Luna
 # calls of 30,000 input bytes and 2,048 output tokens each, a few cents even at the bound.
 PAGE_DECISIONS_SHARE_USD = 1
@@ -116,7 +130,9 @@ def service_terms(definition, *, inputs=None):
     inputs = inputs or {}
     maximum = 2 * NANOS_PER_DOLLAR
     kinds = ["native_model"]
-    if executor == "organic.audit":
+    if agent_planner(definition):
+        maximum, kinds = CONTENT_PLAN_AGENT_USD * NANOS_PER_DOLLAR, []
+    elif executor == "organic.audit":
         maximum = audit_maximum_nanos(definition.get("audit_policy"))
         kinds = ["native_model", "tool"]
         # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
@@ -144,6 +160,7 @@ def service_terms(definition, *, inputs=None):
                 "organic-traffic-v5",
                 "organic-traffic-v6",
                 "organic-traffic-v7",
+                "organic-traffic-v8",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -152,7 +169,12 @@ def service_terms(definition, *, inputs=None):
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
             pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
-            if version in {"organic-traffic-v5", "organic-traffic-v6", "organic-traffic-v7"}:
+            if version in {
+                "organic-traffic-v5",
+                "organic-traffic-v6",
+                "organic-traffic-v7",
+                "organic-traffic-v8",
+            }:
                 # v5's first page refresh is a child run; later weekly refreshes are ordinary
                 # scheduled runs with their own funding. The pool grows by the refresh's own
                 # ceiling, since a production run has not measured one yet. v6 keeps v5's
@@ -162,10 +184,16 @@ def service_terms(definition, *, inputs=None):
 
                 maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]
                 pool += PROCEDURE_MAXIMUMS["content-refresh.v1"]
-            if version == "organic-traffic-v7":
+            if version in {"organic-traffic-v7", "organic-traffic-v8"}:
                 # v7's first traffic snapshot (no model call) and Page decisions run as children.
                 maximum += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
                 pool += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
+            if version == "organic-traffic-v8":
+                # v8's content plan runs its planning agent: its share grows from the one model
+                # call's $1 to the agent's ceiling.
+                extra = (CONTENT_PLAN_AGENT_USD - CONTENT_PLAN_SHARE_USD) * NANOS_PER_DOLLAR
+                maximum += extra
+                pool += extra
             # The children's ceilings add up to more than a run spends; the pool bounds the run.
             maximum = min(maximum, pool)
         kinds = []  # The parent itself never buys a model call.
@@ -198,7 +226,9 @@ def service_terms(definition, *, inputs=None):
         "service_pricing": deepcopy(CARD),
         "currency": "USD",
         "definition_sha256": digest(definition),
-        "kind": "parent" if executor in PARENT_EXECUTORS else "metered_workflow",
+        "kind": "parent"
+        if executor in PARENT_EXECUTORS or agent_planner(definition)
+        else "metered_workflow",
         "operations": kinds,
         "maximum_nanos": maximum,
         "execution_fee_nanos": 0,

@@ -60,9 +60,17 @@ WEBSITE_POLICY = {
 SNAPSHOT_KEY = "organic.traffic_snapshot"
 DECISIONS_KEY = "organic.content_efficacy"
 MEASURE_STEPS = {"snapshot": SNAPSHOT_KEY, "decisions": DECISIONS_KEY}
-POLICY = {**WEBSITE_POLICY, "version": "organic-traffic-v7", "measurement": "weekly_measurement"}
+MEASUREMENT_POLICY = {
+    **WEBSITE_POLICY,
+    "version": "organic-traffic-v7",
+    "measurement": "weekly_measurement",
+}
+# v8: the content step's plan runs its planning agent (content.plan 1.0.0), so the plan's share
+# of the system's spending pool grows to the agent's ceiling (service_pricing). The steps and
+# their order are v7's.
+POLICY = {**MEASUREMENT_POLICY, "version": "organic-traffic-v8", "content_planner": "agent"}
 DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY)
-WEBSITE_POLICIES = (WEBSITE_POLICY, POLICY)
+WEBSITE_POLICIES = (WEBSITE_POLICY, MEASUREMENT_POLICY, POLICY)
 REFRESH_KEY = "content.refresh"
 # The executor each child must have; any other step's executor is its own key.
 CHILD_EXECUTORS = {
@@ -112,7 +120,7 @@ def refreshes_pages(policy):
 
 def measures_pages(policy):
     """Whether this recipe runs and schedules the traffic snapshot and Page decisions (v7)."""
-    return policy == POLICY
+    return policy in (MEASUREMENT_POLICY, POLICY)
 
 
 INPUT_SCHEMA = {

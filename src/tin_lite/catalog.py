@@ -12,6 +12,7 @@ from tin_lite import (
     connection_collection,
     content_draft,
     content_plan,
+    content_plan_agent,
     content_plan_editorial,
     content_refresh,
     content_repository_delivery,
@@ -177,6 +178,8 @@ PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # Numbers below were used by built-ins that later left the catalog. Their rows still exist in
 # deployed databases, and the boot-time sync refuses to bind a number to a different key, so a
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
+# content.plan 1.0.0's planning agent (content_plan_agent).
+CONTENT_PLAN_RESEARCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000047")
 RETIRED_BUILTIN_WORKFLOW_IDS = {
     UUID("00000000-0000-4000-8000-000000000018"): "strategy.prescribe",
     UUID("00000000-0000-4000-8000-000000000019"): "strategy.wildcards",
@@ -548,6 +551,10 @@ class BuiltinWorkflow:
             definition["human_review_kinds"] = {
                 kind: policy.definition() for kind, policy in CONTENT_KIND_REVIEW_POLICIES.items()
             }
+        if self.key == content_plan_agent.RESEARCH_KEY:
+            # Only content.plan starts it, as its planning step.
+            definition["public_discovery"] = False
+            definition["portfolio_schema"] = content_plan_agent.PORTFOLIO_JSON_SCHEMA
         if self.key == content_plan.KEY:
             definition["content_policy"] = dict(content_plan_editorial.POLICY)
             definition["content_instructions"] = content_plan_editorial.INSTRUCTIONS
@@ -682,7 +689,7 @@ BUILTIN_WORKFLOWS = (
             "Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.7.0",
+        version_label="0.8.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -1598,13 +1605,16 @@ BUILTIN_WORKFLOWS = (
         public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
         title="Plan upcoming content",
         description=(
-            "Turn an audit and keyword research into an editable two-week to six-month roadmap: "
-            "new articles, answer pages for buyer questions AI assistants miss you on, and "
-            "refreshes of existing pages. Save to My system to prepare weekly batches. Does not "
-            "write or publish anything."
+            "Turn your audit, keyword research, competitors and product into an editable two-week "
+            "to six-month roadmap that ships every week: alternatives and comparison pages for "
+            "your real competitors, answer pages for the questions buyers ask search and AI "
+            "assistants, pages for each workflow, integration or use case your product has, "
+            "guides, and refreshes of existing pages. A planning agent researches and proposes; "
+            "Tin checks each piece against your site and fills every week. Save to My system to "
+            "prepare weekly batches. Does not write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.9.0",
+        version_label="1.0.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1627,13 +1637,16 @@ BUILTIN_WORKFLOWS = (
                     "pages", "step", "Read existing pages", "up to 60, four at a time, 20 s each"
                 ),
                 DiagramNode(
-                    "model", "step", "Propose the briefs", "one model call, no paid retries"
+                    "model",
+                    "step",
+                    "Plan the portfolio",
+                    "a planning agent reads the files and searches",
                 ),
                 DiagramNode(
                     "allocate",
                     "step",
-                    "Spread them over the weeks",
-                    "Tin sets dates, at most 3 pieces a week",
+                    "Fill every week",
+                    "Tin checks each piece, then fills weeks in order",
                 ),
                 DiagramNode(
                     "files",
@@ -1683,6 +1696,87 @@ BUILTIN_WORKFLOWS = (
             provider=ProviderName.OPENAI,
             model=content_plan_editorial.POLICY["model"],
             capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=CONTENT_PLAN_RESEARCH_WORKFLOW_ID,
+        key=content_plan_agent.RESEARCH_KEY,
+        title="Research the content plan",
+        description="The planning agent inside Plan upcoming content: reads the brief Tin "
+        "prepared, the audit, keyword research, competitors, Code map and brand files, "
+        "searches where a choice depends on what ranks, and proposes a prioritized portfolio "
+        "of pages for every week. Started by Plan upcoming content, never on its own.",
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "brief", "store", "Tin's planning brief", "program, competitors, pages read"
+                ),
+                DiagramNode(
+                    "read",
+                    "step",
+                    "Read the project",
+                    "audit, keywords, Code map, brand, Page decisions",
+                ),
+                DiagramNode("web", "surface", "Search results", "what ranks, what rivals publish"),
+                DiagramNode(
+                    "choose",
+                    "step",
+                    "Choose and order pages",
+                    "competitors, families, answers, refreshes",
+                ),
+                DiagramNode(
+                    "portfolio",
+                    "store",
+                    "Portfolio in project Files",
+                    "PORTFOLIO.md, checked before it ends",
+                ),
+                DiagramNode(
+                    "receipt", "receipt", "Back to the content plan", "Tin fills every week"
+                ),
+            ),
+            edges=(
+                DiagramEdge("brief", "read"),
+                DiagramEdge("read", "web"),
+                DiagramEdge("web", "choose"),
+                DiagramEdge("read", "choose"),
+                DiagramEdge("choose", "portfolio"),
+                DiagramEdge("portfolio", "receipt"),
+            ),
+        ),
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand",),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "plan_run_id": {"type": "string", "format": "uuid"},
+                "brief_folder": {"type": "string", "maxLength": 200},
+                "brief_revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+                "host": {"type": "string", "maxLength": 253},
+                "slots": {"type": "integer", "minimum": 1, "maximum": 81},
+            },
+            "required": [
+                "project_id",
+                "plan_run_id",
+                "brief_folder",
+                "brief_revision",
+                "host",
+                "slots",
+            ],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2]
+            / "codex_procedures"
+            / content_plan_agent.RESEARCH_KEY,
+            entry_skill="content-portfolio",
+            output_path_template=content_plan_agent.PATH_TEMPLATE,
+            output_validator=content_plan_agent.VALIDATOR,
+            output_max_bytes=content_plan_agent.MAX_PORTFOLIO_BYTES,
+            sandbox=SandboxProfile(timeout_seconds=3600),
         ),
     ),
     BuiltinWorkflow(

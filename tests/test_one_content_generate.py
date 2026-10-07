@@ -652,14 +652,15 @@ def test_versions_on_main_are_unchanged():
 
 
 # The versions #267 introduced, none of them on main yet.
-# content.plan 0.9.0 (content-editorial-v8) raised 0.8.0's output cap and changed nothing else.
+# content.plan 0.9.0 (content-editorial-v8) raised 0.8.0's output cap and changed nothing else;
+# 1.0.0 (content-editorial-v9) plans with an agent and fills every week.
 # content.generate 1.10.0 lets an article carry figures and embeds (page bundles); 1.11.0 draws
 # them in the project's look, in light and dark; 1.12.0 lets the drafting agent choose each
 # diagram's form; 1.13.0 looks at each figure in light and dark before finishing; 1.14.0
 # follows the site's theming, keeping figures light on a light-only site; 1.15.0 makes each
 # draft's figures fresh and checks every mark and label in both themes; 1.16.0 sizes figures
 # for the article column and checks them on a phone.
-RELEASED = {"content.generate": "1.16.0", "content.plan": "0.9.0", "content.refresh": "1.1.0"}
+RELEASED = {"content.generate": "1.16.0", "content.plan": "1.0.0", "content.refresh": "1.1.0"}
 
 
 async def test_retired_workflows_are_hidden_but_saved_configurations_still_run(
