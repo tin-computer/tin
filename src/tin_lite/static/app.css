@@ -3107,18 +3107,9 @@ body.has-diagram-panel .main {
   }
 
   .has-diagram-panel .system-card-state,
-  .has-diagram-panel .system-card-last,
-  .has-diagram-panel .system-pace-long {
+  .has-diagram-panel .system-card-last {
     display: none;
   }
-
-  .has-diagram-panel .system-pace-short {
-    display: inline;
-  }
-}
-
-.system-pace-short {
-  display: none;
 }
 
 .workflow-diagram-panel > header {
@@ -3905,84 +3896,427 @@ body.has-diagram-panel .main {
   flex-direction: column;
 }
 
-/* The week ahead (Paper SYS-V3): seven day columns above the Scheduled cards. */
-.system-week {
+/* The week's arrows sit where the tabs end; the calendar below has no heading of its own. */
+.system-week-nav {
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 2px 0 14px;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-bottom: 4px;
 }
 
-.system-week > header {
+.system-week-nav button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 26px;
+  height: 26px;
+  border: 1px solid var(--card-hairline);
+  border-radius: 4px;
+  background: var(--paper-card);
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.system-week-nav button:hover {
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+
+.system-week-nav svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.system-week-nav .system-week-today {
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+/* Without a calendar on screen (a search, an empty system) the arrows have nothing to move. */
+.system-view:not(:has(#system-week)) .system-week-nav {
+  display: none;
+}
+
+/* The System calendar (Paper WK-N6, WK-N5b): seven days of runs and what is still to come.
+   Cards for what needs a look and for every day from today on; one line for finished history. */
+.system-week {
+  --week-card: var(--paper-card);
+  --week-raised: var(--paper-card);
+  --week-sheet: var(--paper-well);
+  --week-sheet-shadow: 0 16px 40px rgb(var(--ink-rgb) / 16%);
+  padding: 6px 0 26px;
+}
+
+html[data-theme="dark"] .system-week {
+  --week-raised: var(--paper-deep);
+  --week-sheet-shadow: 0 16px 40px rgb(0 0 0 / 50%);
+}
+
+html[data-theme="dark"] .system-week-nav button {
+  border-color: transparent;
+}
+
+.system-week-days {
   display: flex;
-  align-items: baseline;
   gap: 8px;
 }
 
-.system-week > header strong {
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 16px;
+.system-week-day {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--card-border);
 }
 
-.system-week > header code,
-.system-week-day > code {
+.system-week-day.is-today {
+  padding-top: 9px;
+  border-top: 2px solid var(--accent);
+}
+
+.system-week-date {
+  padding-bottom: 2px;
   color: var(--ink-muted);
   font-family: var(--mono);
   font-size: 11px;
   line-height: 14px;
 }
 
-.system-week-days {
-  display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
-  border-top: 1px solid var(--paper-border);
-}
-
-.system-week-day {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 12px 12px 0 0;
-}
-
-.system-week-day.is-today > code {
+.system-week-day.is-today .system-week-date {
   color: var(--accent-text);
   font-weight: 700;
 }
 
-.system-week-day.is-today > code::before {
-  content: "";
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  margin-right: 6px;
-  border-radius: 999px;
-  background: var(--accent-deep);
-  vertical-align: middle;
+.system-week-card {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px 9px;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  background: var(--week-card);
+  text-align: left;
+  cursor: pointer;
 }
 
-.system-week-day span {
+.system-week-card:hover {
+  border-color: var(--paper-border-strong);
+}
+
+.system-week-card strong,
+.system-week-card > span {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.system-week-card strong {
   color: var(--ink);
   font-size: 13px;
-  line-height: 18px;
-}
-
-.system-week-day span.is-quiet {
-  color: var(--ink-muted);
-}
-
-.system-week-day small,
-.system-week > p {
-  margin: 0;
-  color: var(--ink-secondary);
-  font-size: 12.5px;
+  font-weight: 400;
   line-height: 17px;
 }
 
-.system-week-day small {
-  margin-top: -4px;
+.system-week-card > span {
+  color: var(--ink-secondary);
+  font-size: 12px;
+  line-height: 16px;
+}
+
+.system-week-card small {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0 8px;
+  padding-top: 3px;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 14px;
+  white-space: nowrap;
+}
+
+.system-week-card.is-done strong {
+  color: color-mix(in srgb, var(--ink) 86%, transparent);
+}
+
+.system-week-card.is-for-you {
+  border-color: rgb(var(--hot-rgb) / 38%);
+  background: var(--week-raised);
+}
+
+.system-week-card.is-failed {
+  border-color: rgb(var(--danger-rgb) / 38%);
+  background: var(--week-raised);
+}
+
+.system-week-card.is-running {
+  border-color: rgb(var(--accent-deep-rgb) / 30%);
+  background: rgb(var(--accent-deep-rgb) / 9%);
+}
+
+/* Still to come: an outline. Paused and skipped slots, and folded stopped runs, are dashed. */
+.system-week-card.is-planned,
+.system-week-card.is-held {
+  background: transparent;
+}
+
+.system-week-card.is-paused,
+.system-week-card.is-skipped,
+.system-week-card.is-folded {
+  border-style: dashed;
+  border-color: rgb(var(--ink-rgb) / 18%);
+  background: transparent;
+}
+
+.system-week-card.is-paused strong,
+.system-week-card.is-skipped strong,
+.system-week-card.is-folded strong {
+  color: var(--ink-secondary);
+}
+
+.system-week-card.is-paused > span,
+.system-week-card.is-skipped > span,
+.system-week-card.is-folded > span {
+  color: var(--ink-muted);
+}
+
+.system-week-card.is-folded {
+  cursor: default;
+}
+
+.system-week-card.is-for-you .system-week-state {
+  color: var(--bermellon-text);
+}
+
+.system-week-card.is-failed .system-week-state {
+  color: var(--danger);
+}
+
+.system-week-card.is-running .system-week-state,
+.system-week-card.is-done .system-week-state {
+  color: var(--accent-text);
+}
+
+.system-week-card:is(.is-for-you, .is-failed, .is-running) .system-week-state::before {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 5px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: 1px;
+  content: "";
+}
+
+.system-week-card.is-done .system-week-state::before,
+.system-week-chip.is-done::before {
+  content: "✓";
+}
+
+.system-week-card.is-done .system-week-state::before {
+  margin-right: 4px;
+}
+
+/* Finished history: one line, a mark and the title. */
+.system-week-chip {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--card-border);
+  border-radius: 6px;
+  background: var(--week-card);
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-week-chip:hover {
+  border-color: var(--paper-border-strong);
+}
+
+.system-week-chip::before {
+  width: 9px;
+  flex-shrink: 0;
+  color: var(--accent-text);
+  font-size: 11px;
+  line-height: 12px;
+}
+
+.system-week-chip span {
+  overflow: hidden;
+  min-width: 0;
+  color: color-mix(in srgb, var(--ink) 86%, transparent);
+  font-size: 13px;
+  line-height: 16px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.system-week-more {
+  align-self: flex-start;
+  justify-self: start;
+  padding: 3px 2px 0;
+  background: none;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.system-week-more:hover,
+.system-week-more[aria-expanded="true"] {
+  color: var(--ink);
+}
+
+/* An opened day lifts over its neighbours from its own column: its cards start where the
+   column's did, and its header takes the date's place. The last three days open leftward. */
+.system-week-sheet {
+  position: absolute;
+  z-index: 5;
+  top: -3px;
+  left: -13px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 500px;
+  max-width: calc(100cqi - 26px);
+  padding: 12px;
+  border: 1px solid var(--paper-border-strong);
+  border-radius: 10px;
+  background: var(--week-sheet);
+  box-shadow: var(--week-sheet-shadow);
+}
+
+.system-week-sheet:focus {
+  outline: none;
+}
+
+.system-week-day:nth-child(n + 5) .system-week-sheet {
+  right: -13px;
+  left: auto;
+}
+
+.system-week-sheet header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 14px;
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.system-week-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin: -4px -5px -4px 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.system-week-close:hover {
+  background: rgb(var(--ink-rgb) / 6%);
+  color: var(--ink);
+}
+
+.system-week-close svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.4;
+}
+
+.system-week-sheet-cards {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+/* Narrower than a sheet over four columns, the days stack: the Monday, today and the days with
+   something on them, each with its date beside its entries. An opened day takes their place. */
+@container view (max-width: 900px) {
+  .system-week-days {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .system-week-day {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr);
+    gap: 6px 12px;
+    padding-bottom: 12px;
+  }
+
+  .system-week-day > * {
+    grid-column: 2;
+  }
+
+  .system-week-day > .system-week-date {
+    grid-row: 1;
+    grid-column: 1;
+  }
+
+  .system-week-day.is-empty:not(.is-today, :first-child) {
+    display: none;
+  }
+
+  .system-week-day.is-open > :is(.system-week-card, .system-week-chip, .system-week-more) {
+    display: none;
+  }
+
+  .system-week-sheet {
+    position: static;
+    width: auto;
+    max-width: none;
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
+
+  .system-week-sheet-day {
+    display: none;
+  }
+}
+
+@container view (max-width: 560px) {
+  .system-week-day {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .system-week-sheet-cards {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .system-workflow-group + .system-workflow-group {
@@ -7990,10 +8324,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 @media (max-width: 900px) {
   .system-view {
     gap: 18px;
-  }
-
-  .system-week-days {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .system-pace {

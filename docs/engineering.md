@@ -127,6 +127,16 @@ facts; there is no separate run-inspector page. Email campaign runs additionally
 delivery projection for recipient, touch, schedule, send, reply, and failure state. Provider message
 and request identifiers are not returned to the browser.
 
+My system opens on a calendar of one week, Monday to Sunday in the viewer's time zone, read from
+`GET /api/projects/{project_id}/week?start=YYYY-MM-DD&timezone=Area/City`. It returns the runs
+started in those seven local days (project tasks and superseded versions excluded) and every
+scheduled occurrence still to come, computed by `next_run_after`, the same arithmetic as the
+schedule rows. An occurrence is planned, paused, skipped once, or held: Temporal skips overlapping
+occurrences while the configuration's latest run awaits review. Arrows walk to earlier and later
+weeks; polling refreshes the week on screen. A day shows at most three entries. Reviews,
+failures, running work and every day from today on are cards; earlier finished runs are one line,
+and "+N more" opens the whole day over the calendar.
+
 Files requests `GET /api/projects/{project_id}/files?include_modified=true` to show each
 file's last saved change. Dates come from code.storage's per-file commit metadata at the
 same revision as the listing; bulk pages reuse the immutable revision cache. An unrelated
