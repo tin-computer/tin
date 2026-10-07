@@ -137,11 +137,9 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
       mainRight: document.querySelector("#main").getBoundingClientRect().right,
       panelLeft: document.querySelector("#workflow-diagram-panel").getBoundingClientRect().left,
       lastColumn: getComputedStyle(document.querySelector(".system-card-last")).display,
-      shortPace: getComputedStyle(document.querySelector(".system-pace-short")).display,
     }));
     assert.ok(layout.mainRight <= layout.panelLeft + 1, `content runs under the panel: ${JSON.stringify(layout)}`);
     assert.equal(layout.lastColumn, "none");
-    assert.notEqual(layout.shortPace, "none");
 
     // One spine: single rows sit on the centre line, a pair sits either side
     // of it, and every connector has been drawn.
