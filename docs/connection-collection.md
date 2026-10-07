@@ -23,10 +23,12 @@ invalidates the older device. Migration confirms retirement of this browser’s 
 device through its existing endpoint before allowing collection. An uncertain response keeps
 the legacy credential for reconciliation. It does not sign out of LinkedIn or change browser cookies.
 
-Start the workflow through the existing dashboard or MCP run API. Use `local_only` initially.
+Start the workflow through the existing dashboard or MCP run API.
 Enter full LinkedIn profile URLs for the friends, separated by commas in the dashboard.
 Names alone are not supported. Cloud choices remain visible; the form reports whether
-cloud execution is available on the deployment. A saved choice is never silently switched.
+cloud execution is available on the deployment. When it is unavailable, `cloud_preferred`
+starts with the local extension and explains that choice in run progress; `cloud_only`
+cannot start. The saved policy stays unchanged.
 Click **Continue collection** in the extension. It opens a collection tab, validates the
 selected account and friend, applies the second-degree and keyword filters, and collects
 one page at a time. Chrome must remain open and awake. The popup can close.
@@ -73,21 +75,31 @@ checks the cloud-transfer option for a cloud run. Tin encrypts it using the exis
 integration cipher, binds it to that run and deletes the encrypted material after finalization.
 It never enters chat, MCP, Temporal history or project files.
 
-Cloud execution requires an explicit `TIN_LITE_LINKEDIN_TEMPLATE`,
-`TIN_LITE_LINKEDIN_CLOUD_QUALIFIED=true`, the integration encryption key, and a separate
-`TIN_LITE_LINKEDIN_E2B_API_KEY`. Use a dedicated E2B project/account with its own capacity;
-a different key in the same provider project still shares quotas. The adapter refuses the
-ordinary Tin E2B key and never falls back to it. Both are off
-by default. `sandbox/linkedin/` is a separate build context with a separate operator-selected
-alias. Its build script refuses ordinary Tin alias names. Existing Codex, isolated code,
-browser and Studio templates and their selection logic are unchanged. A separate Temporal
-activity queue (`<base>-connections`, capacity 2) keeps these activities out of their slots.
-Operators must provision E2B account capacity for this additional lane before enabling it.
+Cloud execution uses the existing `E2B_API_KEY` with a dedicated
+`TIN_LITE_LINKEDIN_TEMPLATE`, `TIN_LITE_LINKEDIN_CLOUD_ENABLED=true` and the integration
+encryption key. The optional `TIN_LITE_LINKEDIN_E2B_API_KEY` overrides the existing key
+for operators who want a different account; it is not required. The old
+`TIN_LITE_LINKEDIN_CLOUD_QUALIFIED` setting is accepted as a compatibility alias.
+Enabling the runtime permits an operator's designated-project pilot; it does not assert
+that live acceptance has passed.
 
-Do not enable the qualification flag on the strength of fixture tests. Qualification must
-establish a full paginated collection, matching cloud and DOM page boundaries, correct
-identity, preserved normal-browser login through cleanup and later source checks, and
-recovery after worker/sandbox interruption. The current GraphQL parser is deliberately
+Build only the collection image from the repository root:
+
+```sh
+python sandbox/linkedin/template.py --alias tin-linkedin-http-v1
+```
+
+The script accepts the existing E2B key and refuses ordinary Tin image aliases. Its
+build context includes only the explicitly copied collection modules and runner, and
+an import check runs inside the image. Existing Codex, isolated code, browser and Studio
+templates and routing are unchanged. A separate Temporal activity queue
+(`<base>-connections`, capacity 2) bounds collection work without occupying their worker
+slots. The same E2B account still shares its provider quota; a separate image does not
+reserve capacity. Check account headroom before expanding the pilot.
+
+Before wider rollout, verify full pagination, matching cloud and DOM page boundaries,
+correct identity, preserved normal-browser login through cleanup and later source checks,
+and recovery after worker/sandbox interruption. The current GraphQL parser is deliberately
 narrow: unsupported schemas stop collection. An observed query identifier comes from the
 selected browser view, never from an arbitrary user-supplied request URL.
 
@@ -96,7 +108,10 @@ Execution policies are pinned for the run:
 - `local_only`: Chrome performs the collection.
 - `cloud_only`: the extension resolves the selected friends and transfers context; cloud
   failures stop or pause the run.
-- `cloud_preferred`: after the same preparation, a recoverable cloud failure can continue
+- `cloud_preferred`: if cloud is unavailable when the job is prepared, start in Chrome
+  without transferring session data or creating cloud compute. This route stays pinned
+  across preparation retries, even if cloud becomes available later. When cloud is
+  available, after the same preparation, a recoverable cloud failure can continue
   in Chrome with the accepted pages, filters and cumulative limits intact. Cleanup must
   be confirmed first. The extension resumes automatically if it is awake with the correct
   account; otherwise it waits for **Continue collection**.

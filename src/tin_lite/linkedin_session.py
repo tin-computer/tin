@@ -10,7 +10,7 @@ import base64
 import json
 import re
 import secrets
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 import httpx
 
@@ -167,7 +167,7 @@ def headers(session, *, search=False):
     return result
 
 
-def identity(payload):
+def identity_profile(payload):
     if not isinstance(payload, dict):
         raise CollectionError("unsupported_identity")
     data = payload.get("data", payload)
@@ -180,9 +180,48 @@ def identity(payload):
         candidates.append(data["miniProfile"])
     if len(candidates) != 1 or not candidates[0].get("publicIdentifier"):
         raise CollectionError("unsupported_identity")
-    return profile_url(
-        "https://www.linkedin.com/in/" + quote(candidates[0]["publicIdentifier"], safe="-._~")
+    return candidates[0]
+
+
+def identity_matches(payload, actor):
+    profile = identity_profile(payload)
+    url = profile_url(
+        "https://www.linkedin.com/in/" + quote(profile["publicIdentifier"], safe="-._~")
     )
+    if actor.get("profile_url"):
+        return actor["profile_url"] == url and actor["key"] == url
+    # Some current layouts expose the signed-in avatar, but no profile link.
+    # Match that exact marker against the authenticated /me profile only.
+    markers = set()
+    stack = [
+        (profile.get(name), 0) for name in ("picture", "profilePicture", "avatarUrl", "pictureUrl")
+    ]
+    visited = 0
+    while stack:
+        value, depth = stack.pop()
+        visited += 1
+        if visited > 100 or depth > 6:
+            raise CollectionError("unsupported_identity")
+        if isinstance(value, dict):
+            root = value.get("rootUrl")
+            if isinstance(root, str):
+                for artifact in value.get("artifacts", []):
+                    if isinstance(artifact, dict) and isinstance(
+                        artifact.get("fileIdentifyingUrlPathSegment"), str
+                    ):
+                        stack.append((root + artifact["fileIdentifyingUrlPathSegment"], depth + 1))
+            stack.extend((item, depth + 1) for key, item in value.items() if key != "rootUrl")
+        elif isinstance(value, list):
+            stack.extend((item, depth + 1) for item in value)
+        elif isinstance(value, str):
+            parsed = urlsplit(value)
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname == "media.licdn.com"
+                and "/profile-displayphoto" in parsed.path
+            ):
+                markers.add("avatar:" + parsed.path.split("/profile-displayphoto")[0])
+    return len(markers) == 1 and actor["key"] in markers
 
 
 def search_request(source, keywords, page):
@@ -299,8 +338,7 @@ async def read_page(session, source, keywords, page, *, client=None):
                 raise CollectionError("unsupported_search_contract") from None
 
     try:
-        expected = source["actor"].get("profile_url")
-        if not expected or identity(await get("/voyager/api/me")) != expected:
+        if not identity_matches(await get("/voyager/api/me"), source["actor"]):
             raise CollectionError("account_changed")
         return search_page(
             await get("/voyager/api/graphql", search_request(source, keywords, page)), page

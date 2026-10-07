@@ -1044,7 +1044,7 @@ function workflowFieldPresentation(workflow, name, definition) {
   return {...definition,
     title: definition.title || current.title,
     description: name === "execution" && workflow.collection_availability?.cloud_ready === false
-      ? "Cloud collection is not available on this deployment yet. Local only uses your signed-in Chrome browser; keep it open and awake while collecting."
+      ? "Cloud collection is not available on this deployment yet. Cloud preferred and Local only will use your signed-in Chrome browser; keep it open and awake and click Continue collection in the Tin extension. Cloud only cannot start yet."
       : definition.description || current.description,
   };
 }

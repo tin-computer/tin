@@ -92,14 +92,17 @@ async def save(f, surface, client, inputs):
 
 
 @pytest.mark.parametrize("surface", ["http", "mcp"])
+@pytest.mark.parametrize("mode", ["local_only", "cloud_preferred"])
 async def test_saved_local_run_reaches_extension_with_server_bound_project(
-    collection_db, monkeypatch, surface
+    collection_db, monkeypatch, surface, mode
 ):
     f = await harness(collection_db, monkeypatch)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=f.app), base_url="https://tin.test"
     ) as client:
-        saved = await save(f, surface, client, {"friends": [FRIEND], "keywords": " founder "})
+        saved = await save(
+            f, surface, client, {"friends": [FRIEND], "keywords": " founder ", "execution": mode}
+        )
         assert "project_id" not in saved["inputs"]
         assert saved["inputs"]["keywords"] == "founder"
         path = f"/api/projects/{f.project.id}/workflows/{saved['id']}/runs"
@@ -130,6 +133,27 @@ async def test_saved_local_run_reaches_extension_with_server_bound_project(
         )
         job = await f.store.prepare(run, POLICY)
         assert job["inputs"]["project_id"] == str(f.project.id)
+        assert job["inputs"]["execution"] == mode
+        assert job["cloud_template"] is None
+        assert job["cloud_sandbox_id"] is None
+        if mode == "cloud_preferred":
+            assert job["cloud_transport"] == "local_backup"
+            assert job["reason"] == "cloud_unavailable"
+            from tin_lite.connection_collection_activities import CollectionActivities
+
+            progress = AsyncMock()
+            monkeypatch.setattr(f.db, "project_run_progress", progress)
+            activity = CollectionActivities(database=f.db, storage=None, settings=f.settings)
+            assert not await activity.poll(str(run.id))
+            assert "collect in Chrome" in progress.call_args.kwargs["summary"]
+            # Retry never upgrades this run into a session-transfer job.
+            f.settings.linkedin_cloud_enabled = True
+            f.settings.e2b_api_key = "existing-key"
+            f.settings.integration_credential_key = "fixture-cipher"
+            f.settings.linkedin_cloud_template = "fixture-template"
+            repeated = await f.store.prepare(run, POLICY)
+            assert repeated["cloud_transport"] == "local_backup"
+            assert repeated["deadline"] == job["deadline"]
         claim = await f.store.claim(run.id, f.project.id, TOKEN, ACTOR["key"])
         page = batch(claim, more=False)
         page["source"]["collection_url"] += "&keywords=founder"
@@ -193,14 +217,14 @@ async def test_names_rejected_before_saving_without_echoing_inputs(
         assert (await f.db.get_project_workflow(UUID(saved["id"]))).inputs == saved["inputs"]
 
 
-async def test_cloud_choice_remains_saveable_but_reports_unavailable_before_run(
+async def test_cloud_only_remains_saveable_but_reports_unavailable_before_run(
     collection_db, monkeypatch
 ):
     f = await harness(collection_db, monkeypatch)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=f.app), base_url="https://tin.test"
     ) as client:
-        saved = await save(f, "http", client, {"friends": [FRIEND], "execution": "cloud_preferred"})
+        saved = await save(f, "http", client, {"friends": [FRIEND], "execution": "cloud_only"})
         response = await client.post(f"/api/projects/{f.project.id}/workflows/{saved['id']}/runs")
         assert response.status_code == 409
         assert "Cloud collection is not available" in response.json()["detail"]
@@ -238,11 +262,10 @@ async def test_caller_cannot_bind_a_different_project(collection_db, monkeypatch
 @pytest.mark.parametrize("mode", ["cloud_only", "cloud_preferred"])
 async def test_configured_cloud_admission_keeps_selected_policy(collection_db, monkeypatch, mode):
     f = await harness(collection_db, monkeypatch)
-    f.settings.linkedin_e2b_api_key = "fixture-collection-key"
     f.settings.e2b_api_key = "fixture-general-key"
     f.settings.integration_credential_key = "fixture-credential-key"
     f.settings.linkedin_cloud_template = "fixture-collection-template"
-    f.settings.linkedin_cloud_qualified = True
+    f.settings.linkedin_cloud_enabled = True
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=f.app), base_url="https://tin.test"
     ) as client:

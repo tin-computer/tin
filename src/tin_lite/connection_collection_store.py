@@ -19,6 +19,7 @@ from tin_lite.connection_collection import (
     CollectionInputs,
     PageBatch,
     canonical_json,
+    cloud_ready,
     digest,
     failure_transition,
     require_enabled,
@@ -244,12 +245,22 @@ class CollectionStore:
                 deadline,
             )
             if inputs.execution != "local_only":
-                await conn.execute(
-                    "UPDATE connection_collection_jobs SET "
-                    "cloud_template=$2,cloud_transport='http_v1' WHERE run_id=$1",
-                    run.id,
-                    self.settings.linkedin_cloud_template,
-                )
+                if inputs.execution == "cloud_preferred" and not cloud_ready(self.settings):
+                    # The selected policy already permits local collection. Pin that
+                    # route before asking the extension for any session material.
+                    row = await conn.fetchrow(
+                        "UPDATE connection_collection_jobs SET "
+                        "cloud_transport='local_backup',reason='cloud_unavailable' "
+                        "WHERE run_id=$1 RETURNING *",
+                        run.id,
+                    )
+                else:
+                    row = await conn.fetchrow(
+                        "UPDATE connection_collection_jobs SET "
+                        "cloud_template=$2,cloud_transport='http_v1' WHERE run_id=$1 RETURNING *",
+                        run.id,
+                        self.settings.linkedin_cloud_template,
+                    )
             return record(row)
 
     @asynccontextmanager
@@ -556,7 +567,6 @@ class CollectionStore:
             )
 
     async def cloud_session(self, run_id, project_id, bearer, generation, lease, session, cipher):
-        from tin_lite.connection_collection import cloud_ready
         from tin_lite.linkedin_session import validate_session
 
         if not cloud_ready(self.settings) or cipher is None:

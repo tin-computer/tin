@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import quote
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -217,7 +217,13 @@ class Settings(BaseSettings):
         default=None, alias="TIN_LITE_LINKEDIN_E2B_API_KEY"
     )
     linkedin_cloud_template: str | None = Field(default=None, alias="TIN_LITE_LINKEDIN_TEMPLATE")
-    linkedin_cloud_qualified: bool = Field(default=False, alias="TIN_LITE_LINKEDIN_CLOUD_QUALIFIED")
+    linkedin_cloud_enabled: bool = Field(
+        default=False,
+        alias="TIN_LITE_LINKEDIN_CLOUD_ENABLED",
+        validation_alias=AliasChoices(
+            "TIN_LITE_LINKEDIN_CLOUD_ENABLED", "TIN_LITE_LINKEDIN_CLOUD_QUALIFIED"
+        ),
+    )
 
     @property
     def connection_collection_projects(self) -> tuple[str, ...]:

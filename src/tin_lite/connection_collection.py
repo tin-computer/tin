@@ -12,8 +12,6 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-from tin_lite.workflow_inputs import WorkflowInputError
-
 KEY = "connections.collect"
 PROVIDER = "network.linkedin"
 CAPABILITY = "connections.read"
@@ -116,6 +114,8 @@ class CollectionInputs(ClosedModel):
 
 def validate_inputs(project_id: UUID, inputs: dict) -> dict:
     """Validate caller inputs with trusted project context; return caller fields only."""
+    from tin_lite.workflow_inputs import WorkflowInputError
+
     if "project_id" in inputs:
         raise WorkflowInputError("project_id is bound by Tin and cannot be supplied as input")
     try:
@@ -329,16 +329,17 @@ def visible(settings, workflow, project_id):
 
 
 def cloud_ready(settings):
-    # A qualified immutable image is an explicit operator decision, never an existing
-    # general-purpose image alias or an automatic provider fallback.
+    # The image and worker lane are separate; the E2B account need not be.
     return bool(
-        getattr(settings, "linkedin_e2b_api_key", None)
-        and getattr(settings, "linkedin_e2b_api_key", None)
-        != getattr(settings, "e2b_api_key", None)
+        cloud_credential(settings)
         and getattr(settings, "integration_credential_key", None)
         and getattr(settings, "linkedin_cloud_template", None)
-        and getattr(settings, "linkedin_cloud_qualified", False)
+        and getattr(settings, "linkedin_cloud_enabled", False)
     )
+
+
+def cloud_credential(settings):
+    return getattr(settings, "linkedin_e2b_api_key", None) or getattr(settings, "e2b_api_key", None)
 
 
 class LeaseCommand(ClosedModel):
