@@ -80,6 +80,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
 
     assert "growth.onboarding" not in rows
     assert "growth.onboarding_plan" not in rows
+    assert "connections.collect" not in rows
     # The AI visibility audit is folded into the organic audit and left out of discovery.
     assert "visibility.audit" not in rows
     assert rows["project.task"]["runnable"] is True and rows["project.task"]["kind"] == "task"

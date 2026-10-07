@@ -242,9 +242,15 @@
       const targetRow = rowIndex(edge.to);
       if (edge.loop) {
         // Back up the left rail into the left side of the earlier node.
-        const startY = from.y;
+        // A right-hand branch must leave below its row before crossing to the
+        // rail, otherwise it runs through the card on its left.
+        const fromRight = from.x > origin.width / 2 + 1;
+        const startY = fromRight ? rowBoxes[sourceRow].bottom + SOURCE_GAP + 8 : from.y;
         const endY = to.y;
-        paths += `<path d="${route([[from.left - SOURCE_GAP, startY], [leftRail, startY], [leftRail, endY], [to.left - TARGET_GAP, endY]])}"${attributes} />`;
+        const start = fromRight
+          ? [[from.x, from.bottom + SOURCE_GAP], [from.x, startY]]
+          : [[from.left - SOURCE_GAP, startY]];
+        paths += `<path d="${route([...start, [leftRail, startY], [leftRail, endY], [to.left - TARGET_GAP, endY]])}"${attributes} />`;
         heads += `<path d="${arrow(to.left - TARGET_GAP, endY, "right")}" />`;
         label(edge.label, leftRail, (startY + endY) / 2, "rail");
         continue;

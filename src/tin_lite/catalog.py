@@ -614,74 +614,6 @@ class BuiltinWorkflow:
 
 BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
-        id=connection_collection.WORKFLOW_ID,
-        key=connection_collection.KEY,
-        title="Collect connections",
-        presentation=WorkflowDiagram(
-            direction="TD",
-            nodes=(
-                DiagramNode(
-                    "scope",
-                    "step",
-                    "Pin friends and filters",
-                    "Up to 3 friends, second-degree only",
-                ),
-                DiagramNode(
-                    "ready", "wait", "Wait for Chrome", "Pairing and cloud consent, when selected"
-                ),
-                DiagramNode(
-                    "read",
-                    "surface",
-                    "Read a result page",
-                    "Local Chrome or qualified cloud adapter",
-                ),
-                DiagramNode(
-                    "save",
-                    "store",
-                    "Save the accepted page",
-                    "Check account, scope, order and limits",
-                ),
-                DiagramNode(
-                    "backup", "step", "Recover in Chrome", "Cloud-preferred, confirmed cleanup only"
-                ),
-                DiagramNode(
-                    "pause",
-                    "wait",
-                    "Pause for the account owner",
-                    "Challenge, account change or rate limit",
-                ),
-                DiagramNode(
-                    "files",
-                    "receipt",
-                    "Save collection files",
-                    "JSON, CSV and visible-results coverage",
-                ),
-            ),
-            edges=(
-                DiagramEdge("scope", "ready"),
-                DiagramEdge("ready", "read", "signal", "Continue collection"),
-                DiagramEdge("read", "save"),
-                DiagramEdge("save", "read", label="Next page"),
-                DiagramEdge("read", "backup", label="Recoverable cloud failure"),
-                DiagramEdge("backup", "read"),
-                DiagramEdge("read", "pause", label="Account needs attention"),
-                DiagramEdge("pause", "read", "signal", "Resume if permitted"),
-                DiagramEdge("save", "files", label="View exhausted or limit reached"),
-            ),
-        ),
-        description="Collect visible second-degree connections through selected friends.",
-        executor=connection_collection.KEY,
-        version_label="v1",
-        input_schema=connection_collection.INPUT_SCHEMA,
-        schedule_modes=("on_demand",),
-        integration_requirements=(
-            IntegrationRequirement(
-                provider_key=connection_collection.PROVIDER,
-                capabilities=(connection_collection.CAPABILITY,),
-            ),
-        ),
-    ),
-    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000027"),
         key=organic_system.KEY,
         presentation=WorkflowDiagram(
@@ -4474,6 +4406,74 @@ BUILTIN_WORKFLOWS = (
                 GOOGLE_WORKSPACE_PROVIDER,
                 ("gmail.messages.send", "gmail.messages.read"),
                 required=True,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=connection_collection.WORKFLOW_ID,
+        key=connection_collection.KEY,
+        title="Collect connections",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "scope",
+                    "step",
+                    "Pin friends and filters",
+                    "Up to 3 friends, second-degree only",
+                ),
+                DiagramNode(
+                    "ready", "wait", "Wait for Chrome", "Pairing and cloud consent, when selected"
+                ),
+                DiagramNode(
+                    "read",
+                    "surface",
+                    "Read a result page",
+                    "Local Chrome or qualified cloud adapter",
+                ),
+                DiagramNode(
+                    "save",
+                    "store",
+                    "Save the accepted page",
+                    "Check account, scope, order and limits",
+                ),
+                DiagramNode(
+                    "backup", "step", "Recover in Chrome", "Cloud-preferred, confirmed cleanup only"
+                ),
+                DiagramNode(
+                    "pause",
+                    "wait",
+                    "Pause for the account owner",
+                    "Challenge, account change or rate limit",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "Save collection files",
+                    "JSON, CSV and visible-results coverage",
+                ),
+            ),
+            edges=(
+                DiagramEdge("scope", "ready"),
+                DiagramEdge("ready", "read", "signal", "Continue collection"),
+                DiagramEdge("read", "save"),
+                DiagramEdge("save", "read", label="Next page"),
+                DiagramEdge("read", "backup", label="Recoverable cloud failure"),
+                DiagramEdge("backup", "read"),
+                DiagramEdge("read", "pause", label="Account needs attention"),
+                DiagramEdge("pause", "read", "signal", "Resume if permitted"),
+                DiagramEdge("save", "files", label="View exhausted or limit reached"),
+            ),
+        ),
+        description="Collect visible second-degree connections through selected friends.",
+        executor=connection_collection.KEY,
+        version_label="v1",
+        input_schema=connection_collection.INPUT_SCHEMA,
+        schedule_modes=("on_demand",),
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=connection_collection.PROVIDER,
+                capabilities=(connection_collection.CAPABILITY,),
             ),
         ),
     ),

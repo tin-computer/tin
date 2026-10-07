@@ -80,7 +80,6 @@ Tin ships 41 built-in workflows. Every workflow also takes a `project_id`; requi
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
-| Collect connections<br>`connections.collect` | Collect visible second-degree connections through selected friends. | **`friends`**, `keywords`, `execution` | — |
 | Capture writing style (human review)<br>`style.capture` | Use your coding agent to select writing samples, or add samples here. Review the proposed voice guide in Decisions; your coding agent can revise it first. Once you approve it, future content uses it. Nothing is published. | **`source_path`**, `direction` | — |
 | Generate project design<br>`content.design_md` | Analyze a project repository and publish its DESIGN.md. | — | — |
 | Garden project memory<br>`project.memory` | Consolidate durable project outputs into the project wiki. | — | — |
@@ -89,6 +88,7 @@ Tin ships 41 built-in workflows. Every workflow also takes a `project_id`; requi
 | One-off project task (task)<br>`project.task` | Use an isolated Codex task when the founder asks Tin to inspect, research, or change project files and no narrower registered workflow fits. | **`instruction`**, **`title`** | — |
 | Research a question deeply<br>`research.deep_dive` | Test a project question and its upstream assumptions against current, source-backed evidence. | **`question`**, `depth`, `audience`, `known_assumptions`, `constraints` | `reports/RESEARCH_DEEP_DIVE.md` |
 | Create a diagram (human review)<br>`content.diagram` | Turn a process or system into one clear diagram using approved brand guidance. Its source stays editable in project Files. | **`brief`**, **`slug`**, `direction`, `context` | `diagrams/{slug}.mmd` |
+| Collect connections<br>`connections.collect` | Collect visible second-degree connections through selected friends. | **`friends`**, `keywords`, `execution` | — |
 
 # Registry packages
 
