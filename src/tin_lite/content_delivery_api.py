@@ -45,29 +45,30 @@ def page_url_service(runtime, settings=None):
 
 
 def adapt_on_approval(settings, run):
-    """Whether an approval's repository pick for this run starts content.deliver."""
+    """Whether an approval's repository pick for this run starts website.change."""
     from tin_lite.content_delivery import adaptable
 
     return adaptable(settings, run)
 
 
-async def delivery_cost(*, runtime, settings, run, actor, repository, website_change=False):
-    """The configured cost preview of adapting this page, or None where billing is off.
-
-    `website_change` prices website.change, which adapts a content.generate answer page.
-    """
+async def delivery_cost(*, runtime, settings, run, actor, repository):
+    """The configured cost preview of adapting this page with website.change, or None where
+    billing is off."""
     from tin_lite.billing import BillingService
     from tin_lite.billing_contracts import BillingError
-    from tin_lite.content_repository_delivery import WEBSITE_CHANGE_ID, WORKFLOW_ID
+    from tin_lite.content_repository_delivery import WEBSITE_CHANGE_ID
 
-    inputs = {"source_run_id": str(run.id), "expected_repository": repository}
     try:
         preview = await BillingService(database=runtime.database, settings=settings).quote(
             runtime=runtime,
             project_id=run.project_id,
             actor=actor,
-            workflow_id=WEBSITE_CHANGE_ID if website_change else WORKFLOW_ID,
-            inputs={"source": "content_draft", **inputs} if website_change else inputs,
+            workflow_id=WEBSITE_CHANGE_ID,
+            inputs={
+                "source": "content_draft",
+                "source_run_id": str(run.id),
+                "expected_repository": repository,
+            },
             preview_only=True,
         )
     except (BillingError, LookupError, ValueError):
@@ -113,7 +114,6 @@ async def publish_preview(*, runtime, settings, run, actor):
         run=run,
         actor=actor,
         repository=repository,
-        website_change=answer,
     )
     route = await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
         run, page_type=kind

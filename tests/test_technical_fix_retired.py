@@ -36,6 +36,7 @@ async def test_a_new_technical_fix_is_refused_with_the_website_change_route():
         {"retry_of_run_id": uuid4()},
         {"project_workflow_id": uuid4()},
         {"_organic_parent_run_id": uuid4()},
+        {"_system_step": True},
     ],
 )
 async def test_retries_schedules_and_older_traffic_systems_are_not_refused(monkeypatch, pinned):

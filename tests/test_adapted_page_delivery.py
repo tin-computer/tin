@@ -1,8 +1,10 @@
-"""Approved answer pages and public articles become pages on the site through content.deliver.
+"""Approved answer pages and public articles become pages on the site through website.change.
 
 Approval with a GitHub repository (and Codex API execution) starts one metered adaptation,
-never the Markdown publisher. The founder's commit-to-main setting merges a page-only PR once
-GitHub calls it clean; anything else stays an open PR that says why.
+never the Markdown publisher. content.deliver is retired for new work; the merge tests below
+cover the content.deliver runs approvals started before that, which keep its rules: the
+founder's commit-to-main setting merges a page-only PR once GitHub calls it clean, and anything
+else stays an open PR that says why. test_website_change covers website.change's own rules.
 """
 
 import hashlib
@@ -37,9 +39,10 @@ from tin_lite.organic_audit import canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.page_urls import PageUrls, present
 from tin_lite.procedures import procedure_checkpoint_path
+from tin_lite.run_service import RETIRED, start_workflow_run
 from tin_lite.workflow_reviews import WorkflowReviews
 
-KEYS = ("content.answer_page", "content.public_article", "content.deliver")
+KEYS = ("content.answer_page", "content.public_article", "content.deliver", "website.change")
 LISTING = (
     "---\nmeta_title: How to keep AI work reliable\n"
     "meta_description: Keep recurring AI work reliable with durable runs, receipts and "
@@ -56,6 +59,20 @@ ARTICLE_BODY = (
     + "\n"
 )
 PR_URL = "https://github.com/owner/site/pull/42"
+
+
+@pytest.fixture(autouse=True)
+def pinned_content_deliver(monkeypatch):
+    # Approvals start website.change; pinned_adaptation below starts the content.deliver run an
+    # approval started before content.deliver's retirement, which test_content_deliver_retired
+    # otherwise refuses.
+    monkeypatch.delitem(RETIRED, delivery.KEY)
+
+
+def choose_routes(f, **routes):
+    """The founder's saved choices, as save_page_route writes them."""
+    routes = routes or {"answer_page": "/answers/{slug}", "article": "/blog/{slug}"}
+    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": routes})})
 
 
 async def fixture(db, monkeypatch, *, api=True):
@@ -224,13 +241,37 @@ async def approve_article(f, run):
 
 
 async def children(f, source):
+    """The page's adaptations, by website.change or (pinned) content.deliver."""
     return await f.db.pool.fetch(
-        "SELECT r.id, r.status FROM workflow_runs r JOIN effect_receipts s "
+        "SELECT r.id, r.status, r.workflow_id FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
-        "WHERE r.workflow_id=$1 AND s.result->>'source_run_id'=$2",
-        delivery.WORKFLOW_ID,
+        "WHERE r.workflow_id = ANY($1::uuid[]) AND s.result->>'source_run_id'=$2",
+        list(delivery.ADAPTER_WORKFLOW_IDS),
         str(source.id),
     )
+
+
+async def pinned_adaptation(f, run):
+    """The content.deliver run an approval started before content.deliver's retirement."""
+    workflow = await f.db.get_workflow(delivery.WORKFLOW_ID)
+
+    async def start(source, intent):
+        return await start_workflow_run(
+            runtime=f.runtime,
+            settings=f.settings,
+            workflow=workflow,
+            project_id=source.project_id,
+            started_by_clerk_user_id=intent.get("chosen_by") or ACTOR,
+            start_idempotency_key=adaptation_start_key(source.id),
+            input_payload={
+                "source_run_id": str(source.id),
+                "expected_repository": intent["settings"]["repository"],
+                "direction": "",
+            },
+            _approval_delivery=True,
+        )
+
+    await f.delivery.adapt(run.id, start=start)
 
 
 async def select(f, run, **inputs):
@@ -331,6 +372,7 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     publication_db, monkeypatch, surface
 ):
     f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     run = await answer_page(f)
     if surface == "http":
         async with httpx.AsyncClient(
@@ -359,13 +401,15 @@ async def test_approval_starts_one_adaptation_on_both_transports(
     for _ in range(2):
         await f.activities.deliver_content_draft(str(run.id))
     started = await children(f, run)
-    assert len(started) == 1
+    assert len(started) == 1 and started[0]["workflow_id"] == delivery.WEBSITE_CHANGE_ID
     child = await f.db.get_run(started[0]["id"])
     assert child.started_by_clerk_user_id == ACTOR
     assert child.input["source_run_id"] == str(run.id)
+    assert child.input["source"] == "content_draft"
     assert await f.db.run_start_idempotency_key(child.id) == adaptation_start_key(run.id)
     source = await delivery.saved_source(f.db, child.id)
-    assert source["approval"] == {"mode": "github_commit", "requested_by": ACTOR}
+    assert source["change"]["approval"]["by"] == ACTOR
+    assert source["route"] == "/answers/{slug}" and source["publish"]["mode"] == "direct"
     # The Markdown publisher never ran, and its receipt key belongs to the adaptation.
     f.runtime.integrations.github_commit_files.assert_not_called()
     f.runtime.integrations.github_create_pull_request.assert_not_called()
@@ -379,15 +423,16 @@ async def test_approval_starts_one_adaptation_on_both_transports(
 
 async def test_public_article_approval_adapts_and_keeps_its_review(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     run = await public_article(f)
     await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
     run = await approve_article(f, run)
     await f.activities.deliver_content_draft(str(run.id))
     started = await children(f, run)
-    assert len(started) == 1
+    assert len(started) == 1 and started[0]["workflow_id"] == delivery.WEBSITE_CHANGE_ID
     source = await delivery.saved_source(f.db, started[0]["id"])
-    assert source["source_kind"] == "public_article"
-    assert source["approval"]["mode"] == "github_pr"
+    assert source["source_kind"] == "public_article" and source["route"] == "/blog/{slug}"
+    assert source["publish"]["mode"] == "pull_request"
     f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
@@ -515,6 +560,7 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     from tin_lite.billing_contracts import object_value
 
     f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     await billed(f, 20_000_000_000)
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
@@ -534,6 +580,7 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
 
 async def test_insufficient_credits_record_a_failed_delivery_to_retry(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
+    choose_routes(f)
     run = await answer_page(f)
     await billed(f, 0)
     await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR, adapt=True)
@@ -565,7 +612,8 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
     assert (await f.delivery.status(run))["status"] in {"pending", "started"}
 
 
-# After the PR: merge only a page-only PR that GitHub calls clean.
+# After the PR, for a content.deliver run started before its retirement: merge only a
+# page-only PR that GitHub calls clean.
 
 
 async def adapted_pull_request(
@@ -579,7 +627,7 @@ async def adapted_pull_request(
     run = await answer_page(f)
     await f.delivery.choose(run=run, mode=mode, actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
-    await f.activities.deliver_content_draft(str(run.id))
+    await pinned_adaptation(f, run)
     child = await f.db.get_run((await children(f, run))[0]["id"])
     await f.activities.prepare_codex_procedure(str(child.id))
     await f.activities.create_codex_procedure_sandbox(str(child.id))
@@ -843,15 +891,20 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     ask = preview.pop("ask_the_founder")
     assert ask["question"] == "Where on your site should pages that answer buyer questions go?"
+    # website.change never guesses where these pages live, so Publish waits for the route.
+    waits = (
+        "Tin adapts it to your site once you choose where these pages live; "
+        "your coding agent can save that route"
+    )
     assert preview == {
         "adapt": True,
         "label": "Publish",
         "mode": "github_pr",
         "repository": "owner/site",
         "route": None,
-        "sentence": "Tin adapts it to your site and opens a pull request",
+        "sentence": waits,
         "cost": None,
-        "footer": "Tin adapts it to your site and opens a pull request",
+        "footer": waits,
     }
     f.delivery.saved_mode = AsyncMock(return_value="github_commit")
     monkeypatch.setattr(
@@ -859,11 +912,11 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
         AsyncMock(return_value="github_commit"),
     )
     committed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    # With no chosen route, a commit-to-main setting still leaves the first pull request open.
-    assert committed["footer"] == (
-        "Tin adapts it to your site and opens a pull request, "
-        "since you have not chosen where these pages live yet"
-    )
+    assert committed["footer"] == waits
+    choose_routes(f)
+    routed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
+    assert routed["footer"] == "Tin adapts it to your site and commits it to main"
+    assert "ask_the_founder" not in routed
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
@@ -879,7 +932,7 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
         )
     assert denied.status_code == 404
     shown = structured(await mcp(f, monkeypatch).call_tool("get_run", {"run_id": str(run.id)}))
-    assert shown["delivery_preview"]["footer"] == committed["footer"]
+    assert shown["delivery_preview"]["footer"] == routed["footer"]
 
 
 async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypatch):
@@ -895,14 +948,16 @@ async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypat
     assert json.dumps(found)  # Plain data for MCP preparation.
 
 
-def test_publish_says_pull_request_until_the_founder_chooses_a_route():
+def test_publish_waits_for_the_founder_to_choose_a_route():
     from tin_lite.content_delivery import publish_sentence
 
-    # Until the founder chooses where these pages live, a commit-to-main setting still leaves
-    # the first pull request open; a pull-request setting reads the same either way.
+    # website.change never guesses where these pages live, so Publish says so until the founder
+    # chooses, whatever the delivery setting.
     assert publish_sentence("github_commit") == "Tin adapts it to your site and commits it to main"
-    assert publish_sentence("github_commit", route_missing=True) == (
-        "Tin adapts it to your site and opens a pull request, "
-        "since you have not chosen where these pages live yet"
+    assert publish_sentence("github_pr") == "Tin adapts it to your site and opens a pull request"
+    waits = (
+        "Tin adapts it to your site once you choose where these pages live; "
+        "your coding agent can save that route"
     )
-    assert publish_sentence("github_pr", route_missing=True) == publish_sentence("github_pr")
+    assert publish_sentence("github_commit", route_missing=True) == waits
+    assert publish_sentence("github_pr", route_missing=True) == waits

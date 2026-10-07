@@ -4711,7 +4711,7 @@ class TinActivities:
                 runtime=runtime, settings=self._settings, run=source_run, intent=intent
             )
 
-        # An adapted page starts its one content.deliver run; any other approved document
+        # An adapted page starts its one website.change run; any other approved document
         # goes to the Markdown publisher. Each path returns at once for the other's intent.
         try:
             await self._await_with_heartbeats(

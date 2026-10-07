@@ -14,8 +14,15 @@ from tin_lite import content_repository_delivery as delivery
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import canonical_json
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import start_workflow_run
+from tin_lite.run_service import RETIRED, start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
+
+
+@pytest.fixture(autouse=True)
+def pinned_content_deliver(monkeypatch):
+    # content.deliver refuses new starts (test_content_deliver_retired); these tests start it
+    # directly to exercise the machinery its existing runs, retries and v5 pins still use.
+    monkeypatch.delitem(RETIRED, delivery.KEY)
 
 
 def test_repository_workspaces_share_the_gateway_bounds():
@@ -213,9 +220,8 @@ async def test_mcp_contract_and_http_start_share_source_guard(publication_db, mo
             "get_workflow", {"project_id": str(f.project.id), "workflow_key": delivery.KEY}
         )
     )
-    assert "Do not approve" in contract["preparation"]["instruction"]
-    assert "preparation.articles" in contract["preparation"]["instruction"]
-    assert "get_content_draft_sources" not in contract["preparation"]["instruction"]
+    # Retired for new work: no preparation steers an agent to start it.
+    assert "preparation" not in contract
     assert contract["id"] == str(delivery.WORKFLOW_ID)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
