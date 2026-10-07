@@ -184,6 +184,16 @@
       page_kind: /^\/in\/[^/]+\/?$/.test(location.pathname) ? "profile" : location.pathname === "/search/results/people/" ? "people_search" : "other",
       main_elements: document.querySelectorAll('main, [role="main"]').length,
       frames: document.querySelectorAll("iframe").length,
+      navigation: [...document.querySelectorAll('header, [role="banner"], nav, [role="navigation"]')].slice(0, 20).map(node => ({
+        tag: node.tagName, role: safeRole(node), rendered: visible(node),
+        in_main: !!node.closest('main, [role="main"], aside'),
+        profile_links: [...node.querySelectorAll('a[href*="/in/"]')].filter(visible).length,
+        images: [...node.querySelectorAll('img')].filter(visible).length,
+      })),
+      avatar_images: [...document.querySelectorAll('img')].filter(node => /\/profile-displayphoto/.test(node.currentSrc || node.src)).slice(0, 20).map(node => ({
+        rendered: visible(node), in_main: !!node.closest('main, [role="main"], aside'),
+        ancestors: (() => { const nodes = []; for (let parent = node.parentElement; parent && parent !== document.body && nodes.length < 6; parent = parent.parentElement) nodes.push({tag:parent.tagName,role:safeRole(parent)}); return nodes; })(),
+      })),
       headings: [...document.querySelectorAll('h1, h2, [role="heading"]')].slice(0, 20).map(node => ({ tag: node.tagName, role: safeRole(node), rendered: visible(node), aria_hidden: !!node.closest('[aria-hidden="true"]'), in_main: !!node.closest('main, [role="main"]') })),
       account: check(() => ({ source: account().source })),
       selection: check(() => { selectedProfile(); return {}; }),
