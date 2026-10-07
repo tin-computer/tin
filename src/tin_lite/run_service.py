@@ -217,13 +217,16 @@ async def start_workflow_run(
         inputs=input_payload,
     )
     if workflow.executor == "connections.collect":
-        from tin_lite.connection_collection import CollectionInputs, cloud_ready
+        from tin_lite.connection_collection import cloud_ready, validate_inputs
 
-        normalized_inputs = CollectionInputs.model_validate(normalized_inputs).model_dump()
+        # Older saved configurations may contain untrimmed queries/profile URLs.
+        # Keep their pinned input exact; the collection job canonicalizes its copy.
+        validate_inputs(project_id, normalized_inputs)
         # Cloud compute uses a separately qualified, explicitly funded contract.
         if normalized_inputs["execution"] != "local_only" and not cloud_ready(settings):
             raise WorkflowExecutorUnavailableError(
-                "Cloud collection has not been qualified on this deployment. Choose local_only."
+                "Cloud collection is not available on this deployment yet. "
+                "Choose Local only and keep Chrome open and awake while collecting."
             )
         if not await runtime.database.has_project_access(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id

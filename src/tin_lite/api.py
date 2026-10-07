@@ -24,6 +24,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
+from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
 from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.connection_collection_api import router as collection_router
 from tin_lite.content_delivery_api import router as content_delivery_router
@@ -788,6 +789,7 @@ class WorkflowView(BaseModel):
     input_schema: dict = Field(default_factory=dict)
     allowed_actions: list[str] = Field(default_factory=list)
     runtime_available: bool = True
+    collection_availability: dict | None = None
     prerequisites: list = Field(default_factory=list)
     readiness: dict | None = None
 
@@ -3073,6 +3075,8 @@ async def create_project_workflow(
             project_id=project_id,
             inputs=payload.inputs,
         )
+        if workflow.executor == "connections.collect":
+            inputs = validate_collection_inputs(project_id, inputs)
         configured = await database.create_project_workflow(
             project_id=project_id,
             workflow_id=workflow.id,
@@ -3134,6 +3138,8 @@ async def update_project_workflow(
             project_id=project_id,
             inputs=payload.inputs,
         )
+        if workflow.executor == "connections.collect":
+            inputs = validate_collection_inputs(project_id, inputs)
         schedule = payload.schedule.model_dump(mode="json") if payload.schedule else None
         changed_fields = _changed_project_workflow_fields(
             existing=existing,

@@ -24,6 +24,9 @@ device through its existing endpoint before allowing collection. An uncertain re
 the legacy credential for reconciliation. It does not sign out of LinkedIn or change browser cookies.
 
 Start the workflow through the existing dashboard or MCP run API. Use `local_only` initially.
+Enter full LinkedIn profile URLs for the friends, separated by commas in the dashboard.
+Names alone are not supported. Cloud choices remain visible; the form reports whether
+cloud execution is available on the deployment. A saved choice is never silently switched.
 Click **Continue collection** in the extension. It opens a collection tab, validates the
 selected account and friend, applies the second-degree and keyword filters, and collects
 one page at a time. Chrome must remain open and awake. The popup can close.
@@ -31,6 +34,12 @@ one page at a time. Chrome must remain open and awake. The popup can close.
 ![Extension collection controls with a synthetic account](images/connection-extension.png)
 
 The preview uses synthetic account and run state.
+
+Keywords narrow LinkedIn's search within each selected friend's connections. For example,
+enter `founder` to target that term, or leave the field blank for no keyword filter.
+The second-degree filter applies either way.
+
+![Optional keyword filter explained in workflow setup](images/connection-keywords.png)
 
 ## Resume and limits
 

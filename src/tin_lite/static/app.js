@@ -1036,13 +1036,27 @@ function bindXWorkflowFields(root) {
   });
 }
 
+function workflowFieldPresentation(workflow, name, definition) {
+  if (workflow.key !== "connections.collect") return definition;
+  const current = workflow.definition?.input_schema?.properties?.[name] || {};
+  // Add missing explanations to older saved configurations without changing their
+  // defaults, constraints or selected execution policy.
+  return {...definition,
+    title: definition.title || current.title,
+    description: name === "execution" && workflow.collection_availability?.cloud_ready === false
+      ? "Cloud collection is not available on this deployment yet. Local only uses your signed-in Chrome browser; keep it open and awake while collecting."
+      : definition.description || current.description,
+  };
+}
+
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
   const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+    definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
-    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</label>`;
+    return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</div>`;
   }).join("");
   const requirements = workflowRequirementState(workflow);
   const requirementRows = requirements.map(({ requirement, integration, ready }) => `<div class="system-requirement ${ready ? "is-ready" : "is-missing"}">
@@ -2706,10 +2720,11 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
   const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+    definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
-    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}</label>`;
+    return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}${definition.description ? workflowFieldHelp(definition, fieldId) : ""}</div>`;
   }).join("");
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
@@ -4231,9 +4246,10 @@ async function saveProjectWorkflow(event) {
     workflow_id: workflow.id,
     request_id: window.crypto.randomUUID(),
   };
+  let saved = null;
   try {
     const projectId = encodeURIComponent(context.projectId);
-    const saved = await api(
+    saved = await api(
       `/api/projects/${projectId}/workflows`,
       { method: "POST", body: JSON.stringify(payload) },
     );
@@ -4260,6 +4276,14 @@ async function saveProjectWorkflow(event) {
       : schedule ? "Workflow saved and scheduled." : "Workflow saved.");
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
+    if (saved) {
+      state.workflowEditor = {workflowId: workflow.id, projectWorkflowId: saved.id, runId: null, field: null};
+      state.workflowSection = "yours";
+      state.workflowFilter = "all";
+      renderWorkflows();
+      showToast(`Workflow saved, but it could not start: ${error.message}`);
+      return;
+    }
     submit.disabled = false;
     submit.textContent = idleSubmitLabel;
     showToast(`Could not save workflow: ${error.message}`);
