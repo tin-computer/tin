@@ -3059,6 +3059,11 @@ html[data-theme="dark"] .markdown-logo::before {
   color: var(--ink);
 }
 
+/* An empty slot keeps a row's height and lanes; a click on it opens the row like any other. */
+.system-card-diagram.is-empty {
+  pointer-events: none;
+}
+
 .system-card-diagram[aria-pressed="true"] {
   background: var(--paper-well);
   box-shadow: inset 0 0 0 1px var(--paper-border-strong);

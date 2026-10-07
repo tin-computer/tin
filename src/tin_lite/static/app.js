@@ -968,7 +968,7 @@ function systemTemplateCard(workflow, query) {
         ${saved
           ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
           : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
-        ${systemDiagramButton(workflow)}
+        ${systemDiagramSlot(workflow)}
         <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
       </span>
       ${workflow.last_run_id && workflow.last_run_at
@@ -2477,7 +2477,7 @@ function systemRunCard(run, configured = null) {
            <button class="system-card-identity is-toggle" type="button" ${configureAttributes}><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></button>`
         : `<span class="system-card-mark">${systemCardIndicator(run.status)}</span>
            <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></span>`}
-      ${systemDiagramButton(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
+      ${systemDiagramSlot(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
@@ -2513,7 +2513,7 @@ function systemConfiguredCard(configured) {
     <div class="system-card-row is-configurable" data-open-system-workflow data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
       <button class="system-card-mark is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" aria-label="Open ${escapeHtml(configured.name)} settings">${systemCardIndicator(failed ? "failed" : "idle")}</button>
       <button class="system-card-identity is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}"><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
-      ${systemDiagramButton(workflow, configured)}
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2774,7 +2774,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     <div class="system-card-row is-configurable" data-close-system-workflow>
       <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
-      ${systemDiagramButton(workflow, configured)}
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2811,7 +2811,7 @@ function systemContentProgramEditor(workflow, configured, run) {
     <div class="system-card-row is-configurable" data-close-system-workflow>
       <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
-      ${systemDiagramButton(workflow, configured)}
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -3648,6 +3648,12 @@ function systemDiagramButton(workflow, configured = null) {
   const shown = diagramPanelShows(workflow.id, configured?.id);
   const name = configured?.name || workflow.title || workflow.key;
   return `<button class="system-card-diagram" type="button" data-show-workflow-diagram="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured?.id || "")}" aria-pressed="${shown}" aria-label="Workflow diagram for ${escapeHtml(name)}" title="Show workflow diagram">${DIAGRAM_ICON}</button>`;
+}
+
+// In a list row the button keeps its slot when there is nothing to draw (a private package
+// without a flow), so every row has the same height and its columns stay in their lanes.
+function systemDiagramSlot(workflow, configured = null) {
+  return systemDiagramButton(workflow, configured) || '<span class="system-card-diagram is-empty" aria-hidden="true"></span>';
 }
 
 function diagramTrigger(configured) {
