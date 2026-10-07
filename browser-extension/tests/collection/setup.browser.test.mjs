@@ -7,7 +7,8 @@ import {createServer} from "node:http";
 import {chromium} from "playwright";
 import {selection,profileHTML} from "./fixtures.mjs";
 
-for (const embedded of [false, true]) test(embedded ? "fresh MV3 setup reads embedded search metadata without a search request or seeded query" : "MV3 prepares a reusable session once, keeps cookies local and honors saved permission", {timeout:45000}, async t=>{
+for (const mode of ["stored", "embedded", "unavailable"]) test(mode === "embedded" ? "fresh MV3 setup reads embedded search metadata without a search request or seeded query" : mode === "unavailable" ? "setup verifies the login when the initial search has no query and leaves friend preparation to the run" : "MV3 prepares a reusable session once, keeps cookies local and honors saved permission", {timeout:65000}, async t=>{
+  const embedded = mode !== "stored";
   const dir=await mkdtemp(join(tmpdir(),"tin-setup-mv3-"));t.after(()=>rm(dir,{recursive:true,force:true}));
   const key="tin.linkedin.collection.v3", project="00000000-0000-4000-8000-000000000002";
   let transfers=0,checks=0,rejections=0,rejectRefresh=false;
@@ -24,7 +25,7 @@ for (const embedded of [false, true]) test(embedded ? "fresh MV3 setup reads emb
       assert.equal(status.permission.mode,"cloud_preferred");
       assert.equal(body.actor_key,selection.actor.key);
       assert.equal(body.expected_generation,null);
-      assert.match(body.query_id,/^voyagerSearchDashClusters\./);
+      if(mode === "unavailable")assert.equal(body.query_id,null);else assert.match(body.query_id,/^voyagerSearchDashClusters\./);
       assert.deepEqual(body.session.cookies.map(c=>c.name),["JSESSIONID","li_at"]);
       assert.equal(body.session.browser_context.li_track.clientVersion,"fixture-v1");
       assert.match(body.session.user_agent,/Chrome/);
@@ -58,7 +59,7 @@ for (const embedded of [false, true]) test(embedded ? "fresh MV3 setup reads emb
     }
     const track={clientVersion:"fixture-v1",osName:"Mac OS",timezoneOffset:0,timezone:"UTC",deviceFormFactor:"DESKTOP",mpName:"voyager-web"};
     const boot=embedded
-      ? `${url.pathname.startsWith("/search/")?`<code id="bpr-guid-fixture" data-request="/voyager/api/graphql?queryId=voyagerSearchDashClusters.${"a".repeat(32)}" hidden>{"data":"synthetic result data stays in the tab"}</code>`:""}<script>fetch('/voyager/api/me',{headers:{'accept-language':'en-US','x-li-lang':'en_US','x-li-track':${JSON.stringify(JSON.stringify(track))}}})</script>` : "";
+      ? `${mode !== "unavailable" && url.pathname.startsWith("/search/")?`<code id="bpr-guid-fixture" data-request="/voyager/api/graphql?queryId=voyagerSearchDashClusters.${"a".repeat(32)}" hidden>{"data":"synthetic result data stays in the tab"}</code>`:""}<script>fetch('/voyager/api/me',{headers:{'accept-language':'en-US','x-li-lang':'en_US','x-li-track':${JSON.stringify(JSON.stringify(track))}}})</script>` : "";
     return r.fulfill({contentType:"text/html",body:profileHTML()+boot});
   });
   await context.addCookies(["li_at","JSESSIONID","unrelated"].map(name=>({name,value:`fixture-${name}`,domain:".linkedin.com",path:"/",secure:true,httpOnly:true,expires:Date.now()/1000+3*86400})));

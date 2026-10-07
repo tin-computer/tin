@@ -137,11 +137,11 @@ importScripts("collection/core.js");
     if (!current.permission?.version || current.permission.mode === "local_only" || !current.cloud_available) return;
     if (state.refresh_blocked) return;
     if (state.refresh_after && Date.now() < state.refresh_after) return;
+    let query = (await chrome.storage.local.get("tin.linkedin.collection.search"))["tin.linkedin.collection.search"];
     const untilExpiry = Date.parse(current.session_expires_at || "") - Date.now();
-    if (current.session_available && untilExpiry > 86400000) return;
+    if (current.session_available && untilExpiry > 86400000 && (!query || state.session_query_id === query.id)) return;
     const accountTab = await linkedInTab();
     if ((await pageCall(accountTab.id, "account")).key !== state.actor.key) throw Error("account_changed");
-    let query = (await chrome.storage.local.get("tin.linkedin.collection.search"))["tin.linkedin.collection.search"];
     const context = (await chrome.storage.local.get("tin.linkedin.collection.context.v3"))["tin.linkedin.collection.context.v3"];
     let preparedTab;
     try {
@@ -173,12 +173,16 @@ importScripts("collection/core.js");
             break;
           }
         } while (Date.now() < deadline);
-        if (query?.tab_id !== preparedTab.id) throw Error("search_setup_unavailable");
+        // Login verification does not require search results. If this initial view
+        // exposes no search contract, a run prepares its selected friend in Chrome.
+        // The backend already pauses cloud execution until a valid source is ready.
+        if (query?.tab_id !== preparedTab.id) query = null;
       }
-      const session = await capture(state, preparedTab || accountTab);
-      if (query.client_version !== session.browser_context.li_track.clientVersion) throw Error("refresh_linkedin_context");
+      const session = await capture(state, query && preparedTab ? preparedTab : accountTab);
+      if (query && query.client_version !== session.browser_context.li_track.clientVersion) throw Error("refresh_linkedin_context");
       state.connection = await api(state, `${route(state)}/session`, {actor_key:state.actor.key,
-        session, query_id:query.id, expected_generation:current.session_generation || null});
+        session, query_id:query?.id || null, expected_generation:current.session_generation || null});
+      state.session_query_id = query?.id || null;
       state.reason = "";
       delete state.refresh_after;
       delete state.setup_diagnostics;

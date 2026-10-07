@@ -115,6 +115,9 @@ During setup the extension observes a supported search query and matching client
 The first search page may provide that identifier in its embedded data or cached resource
 timings without sending a fresh search request. Context stays bound to the tab that supplied
 it; only the validated identifier and structural diagnostics are retained from page data.
+If the initial view supplies no search identifier, setup still verifies and saves the login.
+The run then waits for Chrome to prepare the selected friend's view before dispatching cloud
+collection. An identifier observed later is saved with a session refresh between attempts.
 With a valid session, cloud execution resolves each newly selected friend using a fixed
 read-only request, requiring exact profile identity, linked first-degree evidence and a connections-view link
 inside that profile. A relationship badge alone does not establish list visibility.
