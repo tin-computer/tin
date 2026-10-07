@@ -92,7 +92,7 @@ publication. No package code runs during discovery, and unregistered folders,
 
 Within the reviewed scope, four catalog entries lack a standalone start: `growth.onboarding`,
 `growth.onboarding_plan` and `project.task` are outside this plugin's scope;
-`content.deliver` is invoked through the existing approval/delivery flow. New entries
+`content.deliver` is retired for new work (approvals start website.change). New entries
 still require explicit reviewed presentation metadata; registration does not silently
 expand the public callable surface.
 

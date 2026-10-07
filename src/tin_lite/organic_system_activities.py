@@ -736,6 +736,8 @@ class OrganicSystemActivities:
                         started_by_oauth_client_id=run.started_by_oauth_client_id,
                         _prepare_only=True,
                         _organic_parent_run_id=run.id if step == "draft" else None,
+                        # The recipe this parent pinned names the step's workflow, retired or not.
+                        _system_step=True,
                         _billing_parent_run_id=(
                             run.id if getattr(self.db, "billing", None) else None
                         ),

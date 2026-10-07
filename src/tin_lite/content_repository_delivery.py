@@ -3,7 +3,7 @@
 The page is immutable input, not an invitation to draft again. Admission, usage,
 execution isolation, checkpoints and GitHub effects remain the existing contracts.
 Sources are approved planned articles (content.generate), answer pages and public
-articles. An approval can start this procedure itself (see ContentDelivery.adapt); when
+articles. An approval used to start this procedure itself (see ContentDelivery.adapt); when
 the founder's delivery setting commits to main, Tin then merges the pull request, but
 only one that adds nothing except the approved page, once GitHub reports it clean.
 
@@ -11,7 +11,8 @@ website.change (website_change.py) adapts pages with this same machinery: source
 the page check, the saved patch, recovery and the merge loop. Its runs keep their pinned
 source under the same receipt key, and their own policy decides whether Tin merges (see
 publish_after_pull_request): website.change merges once the repository's required checks
-pass. content.deliver's own rules are unchanged.
+pass. content.deliver's own rules are unchanged; it is retired for new work, and every new
+approval starts website.change. Its existing runs, retries and saved schedules keep it.
 """
 
 import asyncio
@@ -168,7 +169,8 @@ def binding_from(source):
 
 
 async def adaptation_facts(database, run_ids):
-    """Saved receipts of content.deliver runs, keyed by run; one Postgres read."""
+    """Saved receipts of adaptation runs (website.change, content.deliver), keyed by run; one
+    Postgres read."""
     if not run_ids:
         return {}
     from tin_lite.content_programs import decoded
@@ -539,49 +541,57 @@ async def recover_delivery(*, database, storage, integrations, run):
 async def start_approved_adaptation(*, runtime, settings, run, intent):
     """Admit and dispatch the adaptation an approval asked for, as the approver.
 
-    The ordinary run service does the rest: source pinning, one metered procedure session
-    charged on its actual usage, and an idempotent Temporal start under one start key.
+    Every approved page goes to the site through website.change; content.deliver is retired
+    for new work. The ordinary run service does the rest: source pinning, one metered
+    procedure session charged on its actual usage, and an idempotent Temporal start under
+    one start key.
     """
     from tin_lite.page_routes import direction
     from tin_lite.run_service import start_workflow_run
 
-    if intent.get("via") == "website.change":
-        # A content.generate answer page goes to the site through website.change.
-        workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
+    key = adaptation_start_key(run.id)
+    started_by = intent.get("chosen_by") or run.started_by_clerk_user_id
+    trigger_source = intent.get("trigger_source") or "manual"
+    existing = await runtime.database.get_run_by_start_key(
+        project_id=run.project_id, start_idempotency_key=key
+    )
+    if existing is not None and existing.workflow_id == WORKFLOW_ID:
+        # A start that content.deliver admitted before its retirement, retried: return it.
+        workflow = await runtime.database.get_workflow(WORKFLOW_ID)
         if workflow is None:
-            raise LookupError("website.change is not installed on this Tin.")
+            raise LookupError("Page adaptation is not installed on this Tin.")
+        route = intent.get("route")
         return await start_workflow_run(
             runtime=runtime,
             settings=settings,
             workflow=workflow,
             project_id=run.project_id,
-            started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
-            start_idempotency_key=adaptation_start_key(run.id),
+            started_by_clerk_user_id=started_by,
+            start_idempotency_key=key,
             input_payload={
-                "source": "content_draft",
                 "source_run_id": str(run.id),
                 "expected_repository": intent["settings"]["repository"],
+                "direction": direction(route) if route else "",
             },
-            trigger_source=intent.get("trigger_source") or "manual",
+            trigger_source=trigger_source,
+            _approval_delivery=True,
         )
-    workflow = await runtime.database.get_workflow(WORKFLOW_ID)
+    workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
     if workflow is None:
-        raise LookupError("Page adaptation is not installed on this Tin.")
-    route = intent.get("route")
+        raise LookupError("website.change is not installed on this Tin.")
     return await start_workflow_run(
         runtime=runtime,
         settings=settings,
         workflow=workflow,
         project_id=run.project_id,
-        started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
-        start_idempotency_key=adaptation_start_key(run.id),
+        started_by_clerk_user_id=started_by,
+        start_idempotency_key=key,
         input_payload={
+            "source": "content_draft",
             "source_run_id": str(run.id),
             "expected_repository": intent["settings"]["repository"],
-            "direction": direction(route) if route else "",
         },
-        trigger_source=intent.get("trigger_source") or "manual",
-        _approval_delivery=True,
+        trigger_source=trigger_source,
     )
 
 
@@ -1201,6 +1211,8 @@ def validate_patch(manifest, source):
 
 
 async def delivery_history(executor, *, project_id, source_ids):
+    """Each page's latest adaptation, by website.change or (before its retirement)
+    content.deliver."""
     if not source_ids:
         return {}
     rows = await executor.fetch(
@@ -1210,7 +1222,7 @@ async def delivery_history(executor, *, project_id, source_ids):
         "recovery.result AS recovery, checkpoint.result AS checkpoint "
         "FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
-        "AND s.operation=$3 AND s.status='completed' "
+        "AND s.operation = ANY($3::text[]) AND s.status='completed' "
         "LEFT JOIN effect_receipts p "
         "ON p.execution_key=r.id::text || ':procedure_canonical_commit' "
         "AND p.status='completed' "
@@ -1219,12 +1231,13 @@ async def delivery_history(executor, *, project_id, source_ids):
         "AND recovery.status='completed' "
         "LEFT JOIN effect_receipts checkpoint "
         "ON checkpoint.execution_key=r.id::text || ':procedure_artifact_persist' "
-        "AND checkpoint.status='completed' WHERE r.project_id=$1 AND r.workflow_id=$2 "
+        "AND checkpoint.status='completed' WHERE r.project_id=$1 "
+        "AND r.workflow_id = ANY($2::uuid[]) "
         "AND s.result->>'source_run_id'=ANY($4::text[]) "
         "ORDER BY s.result->>'source_run_id', r.created_at DESC, r.id DESC",
         project_id,
-        WORKFLOW_ID,
-        OPERATION,
+        list(ADAPTER_WORKFLOW_IDS),
+        list(SOURCE_OPERATIONS.values()),
         list(source_ids),
     )
     from tin_lite.content_programs import decoded

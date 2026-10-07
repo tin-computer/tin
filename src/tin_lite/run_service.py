@@ -89,6 +89,12 @@ RETIRED = {
         "content.blog_index is retired. website.change adds each published article to the "
         "site's own index, and the organic audit reports posts nothing links to."
     ),
+    # website.change (source content_draft) adapts the same approved page, with protected
+    # pages and the required-checks merge rule; approvals start it.
+    "content.deliver": (
+        "content.deliver is retired. Put an approved page on the site with website.change: "
+        "start it with source content_draft, source_run_id and expected_repository."
+    ),
 }
 RETIRED_WEBSITE_SOURCES = {
     "blog_index": (
@@ -127,6 +133,7 @@ async def start_workflow_run(
     _billing_parent_run_id: UUID | None = None,
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
+    _system_step: bool = False,
     _approval_delivery: bool = False,
     _x_publication: bool = False,
     _x_feedback: bool = False,
@@ -164,8 +171,10 @@ async def start_workflow_run(
         and retry_of_run_id is None
         and project_workflow_id is None
         and _organic_parent_run_id is None
+        and not _system_step
     ):
-        # Retries, saved schedules and older organic system runs keep what they pinned.
+        # Retries, saved schedules and older organic system runs (`_system_step`: a pinned
+        # recipe's own step) keep what they pinned.
         raise WorkflowInputError(retired)
     workflow = await resolve_execution_contract(
         storage=getattr(runtime, "storage", None),

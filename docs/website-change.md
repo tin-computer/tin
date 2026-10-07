@@ -7,8 +7,9 @@ to the founder's website: content drafts, page decisions (URL changes) and techn
 all reach the site through it, after the founder approves them. Today it makes three kinds of
 change: approved pages, the technical fixes the latest audit found and the URL changes page
 decisions made. organic.site_architecture and content.blog_index are retired for new work
-(see [Retired](#retired-the-page-tree-and-the-blog-index)).
-content.deliver still opens its own pull requests for pages its approval starts.
+(see [Retired](#retired-the-page-tree-and-the-blog-index)). content.deliver is retired for new
+work too: every approval that adapts a page starts website.change
+([How content.deliver relates](#how-content-deliver-relates)).
 
 A change the founder approved publishes: Tin opens the pull request and merges it once the
 repository's required checks pass. For a page, approved means approved with commit to main as
@@ -407,11 +408,24 @@ and detail card:
 
 ## How content.deliver relates
 
-content.deliver stays registered and unchanged. Its definition (1.3.0), inputs, prompt, receipt
-keys, approval start (`approval-delivery:{run}`) and merge rule (the approval's
-`github_commit` pick) are byte for byte what they were; a test pins the definition's digest.
-Its exact-copy proof now refuses the shared dependency list rather than four of its names.
-The organic traffic system still starts it, until the recipe switches later.
+content.deliver is retired for new work. It stays registered, hidden from discovery
+(`public_discovery: false`), for its existing runs, retries, saved schedules and traffic
+system runs pinned to v5 or earlier; its inputs, prompt, receipt keys and merge rule (the
+approval's `github_commit` pick, merging only on `clean` or `has_hooks`) are unchanged for
+them, and a test pins the definition's digest.
+
+- `start_workflow_run` refuses a new content.deliver with a pointer to website.change
+  (`source: content_draft`).
+- The approval of an answer page or public article (`approval-delivery:{run}`) starts
+  website.change, as a content.generate answer page's already did. A start content.deliver
+  admitted under that key before the retirement is returned, never replaced by a second run.
+  Unlike content.deliver, website.change never guesses a route: an approved page whose type
+  has none records a failed delivery that asks the founder, and `retry_content_delivery`
+  starts it once `save_page_route` has saved one.
+- The content program card's **Prepare PR** and **Retry** start website.change, and the card
+  shows the latest adaptation by either workflow (`delivery_history`).
+- `get_workflow` no longer prepares content.deliver; website.change's preparation covers
+  pages.
 
 website.change is built on content.deliver's machinery instead of beside it: the same page
 pinning (`page_source`), approval rechecks (`guard_page`), exact-copy proof, saved patch,
@@ -433,7 +447,7 @@ two never open two pull requests for the same page.
   system's `expected_repository` and `repository_serves_site`, the traffic snapshot, page
   decisions, the page tree, and typed content.generate items. Judgment calls go through
   `preflight_website_change`; approvals come from Decisions or MCP.
-- **Later**: the approval path starts website.change instead of content.deliver.
+- **Done**: the approval path starts website.change instead of content.deliver.
 
 ## Verification limits
 

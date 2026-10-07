@@ -219,7 +219,9 @@ outside marketing, or were written without ever being run. Full rules:
   fixes the latest audit found (`source: audit`; organic.technical_fix refuses new starts and
   is kept only for pinned runs, retries and saved schedules), planned redirects and noindex
   changes (`planned`). organic.site_architecture, content.blog_index and the `blog_index` source
-  refuse new starts and are kept only for pinned runs. Deleting a page stays with the founder. Change rows
+  refuse new starts and are kept only for pinned runs. Approved pages reach it from their
+  approval (content.deliver refuses new starts, the same way). Deleting a page stays with the
+  founder. Change rows
   are decided in Decisions or over MCP. It merges its own PR only for a change with a recorded
   approval in Postgres (a page's review that names its approver, with commit to main, or an
   approved `website_changes` row), never one read from a project file, and never for a

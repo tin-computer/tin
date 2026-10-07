@@ -13,5 +13,4 @@ WORKFLOW_DISPLAY_ORDER: tuple[str, ...] = (
     "organic.content_efficacy",
     "content.plan",
     "content.generate",
-    "content.deliver",
 )
