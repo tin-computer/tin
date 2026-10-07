@@ -2236,7 +2236,7 @@ BUILTIN_WORKFLOWS = (
             "mechanical improvement and opens a pull request for review."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.3.0",
+        version_label="2.4.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         presentation=WorkflowDiagram(
             direction="TD",

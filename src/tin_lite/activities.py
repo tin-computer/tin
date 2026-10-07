@@ -228,6 +228,18 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
     return _TRANSIENT_FAILURE_PATTERN.search(message) is not None
 
 
+NEEDS_YOU_PREFIX = "no change: needs you:"
+
+
+def blocked_by_setup(title) -> str | None:
+    """What the founder must fix, when a no-change result says a setup problem stopped the run
+    (its title starts "No change: needs you:"). Any other no-change is an ordinary quiet week."""
+    text = " ".join(str(title or "").split())
+    if not text.lower().startswith(NEEDS_YOU_PREFIX):
+        return None
+    return text[len(NEEDS_YOU_PREFIX) :].strip()[:500] or None
+
+
 def procedure_project_revision(run, procedure, content_source):
     """The project revision a procedure's checkout pins, or None for the canonical head."""
     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS or (
@@ -3844,6 +3856,28 @@ class TinActivities:
     @activity.defn(name="commit_codex_procedure_artifact")
     async def commit_codex_procedure_artifact(self, run_id_text: str) -> None:
         run_id = UUID(run_id_text)
+        needs_you = await self._commit_codex_procedure_artifact(run_id)
+        if needs_you:
+            await self._pause_blocked_schedule(run_id, needs_you)
+
+    async def _pause_blocked_schedule(self, run_id: UUID, message: str) -> None:
+        """A run stopped by something only the founder can fix pauses its saved schedule, so
+        later runs don't repeat the same no-op; Activity says what to fix. Safe to repeat."""
+        run = await self._require_run(run_id)
+        if run.project_workflow_id is None:
+            return
+        configured = await self._db.get_project_workflow(run.project_workflow_id)
+        if configured is None or configured.schedule is None:
+            return
+        if configured.status == "active" or (
+            configured.status == "paused" and configured.last_error
+        ):
+            from tin_lite.code_schedules import pause_for_issue
+
+            await pause_for_issue(self, configured, configured.last_error or message)
+
+    async def _commit_codex_procedure_artifact(self, run_id: UUID) -> str | None:
+        """Publish the procedure's result; returns what the founder must fix when it says so."""
         execution_key = f"{run_id}:procedure_canonical_commit"
         operation = "procedure_canonical_commit"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
@@ -3863,7 +3897,7 @@ class TinActivities:
                     ),
                 )
                 await self._db.release_lease(run_id)
-                return
+                return existing.result.get("needs_you")
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 run = await self._require_run(run_id)
@@ -4074,11 +4108,15 @@ class TinActivities:
                             }
                         )
                     elif no_change:
+                        needs_you = blocked_by_setup(manifest.get("title"))
                         external_result = {
                             "outcome": "no_change",
                             "repository": str(manifest["repository"]),
-                            "summary": "No change proposed; no pull request was opened.",
+                            "summary": f"Needs you: {needs_you}"
+                            if needs_you
+                            else "No change proposed; no pull request was opened.",
                             "message": receipt.decode(),
+                            **({"needs_you": needs_you} if needs_you else {}),
                         }
                         await self._db.add_activity(
                             run_id=run_id,
@@ -4103,6 +4141,7 @@ class TinActivities:
                     },
                 )
                 await self._db.release_lease(run_id)
+                return external_result.get("needs_you")
             except Exception as exc:
                 await self._db.fail_effect(
                     conn,

@@ -593,7 +593,9 @@ guess in one line; nothing blocks on it.
 Onboarding, part 1: call get_started(project_id) and follow it. Tell the founder you will read the
 codebase for a minute or two, then start Tin's plan. Answer everything yourself, from the
 codebase, your session and the project's rules: the form fields, the notes, the timezone, the
-hard no's its rules imply. Two things you guess rather than ask: how the founder sees this project
+hard no's its rules imply. Leave settings Tin keeps itself, such as the GitHub repository's name,
+out of the notes and any workflow's context: a copy goes stale when the repository moves. Two
+things you guess rather than ask: how the founder sees this project
 (main: every week, some money, results within a month; side: a few hours most weeks, money only
 where it clearly pays, results within a quarter; fun: when they feel like it, no budget, no
 deadline) and what they most want in the next couple of months (paying customers, signups,
