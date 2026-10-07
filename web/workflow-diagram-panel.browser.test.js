@@ -96,6 +96,17 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
     await button.waitFor();
     // Only a workflow whose definition carries a flow gets the button.
     assert.equal(await page.getByRole("button", {name: "Workflow diagram for Order report", exact: true}).count(), 0);
+    // A row without a drawing keeps the button's slot: every row the same height, every
+    // schedule in the same lane.
+    const lanes = await page.evaluate(() => [...document.querySelectorAll(".system-card-row")]
+      .filter((row) => row.querySelector(".system-card-every"))
+      .map((row) => ({
+        height: Math.round(row.getBoundingClientRect().height),
+        every: Math.round(row.querySelector(".system-card-every").getBoundingClientRect().left),
+      })));
+    assert.equal(lanes.length, 3);
+    assert.equal(new Set(lanes.map((lane) => lane.height)).size, 1, JSON.stringify(lanes));
+    assert.equal(new Set(lanes.map((lane) => lane.every)).size, 1, JSON.stringify(lanes));
     assert.equal(await button.getAttribute("aria-pressed"), "false");
 
     await button.click();
