@@ -18,7 +18,7 @@ const backgroundSource = fs.readFileSync(
 
 test("Manifest V3 limits request observation to LinkedIn browser context", () => {
   assert.equal(manifest.manifest_version, 3);
-  assert.equal(manifest.version, "0.3.0");
+  assert.equal(manifest.version, "0.4.0");
   assert.deepEqual(
     [...manifest.permissions].sort(),
     ["alarms", "cookies", "scripting", "storage", "webRequest"],
@@ -64,7 +64,7 @@ test("development host access is limited to Tin APIs, Tin pages, and LinkedIn", 
 
 test("store manifest is an explicit beta with production-only access", () => {
   assert.equal(storeManifest.name, "Tin Computer for LinkedIn BETA");
-  assert.equal(storeManifest.version, "0.3.0");
+  assert.equal(storeManifest.version, "0.4.0");
   assert.equal(
     storeManifest.description.startsWith("THIS EXTENSION IS FOR BETA TESTING."),
     true,

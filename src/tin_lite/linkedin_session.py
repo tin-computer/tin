@@ -6,11 +6,12 @@ This is a candidate adapter: deployment qualification is separate from fixture c
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import re
 import secrets
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 import httpx
 
@@ -298,51 +299,174 @@ def search_page(payload, page):
         raise CollectionError("unsupported_search_contract") from None
 
 
+def resolved_source(payload, source, keywords):
+    """Use only the selected profile and its explicitly linked relationship evidence."""
+    from urllib.parse import urlencode
+
+    expected = profile_url(source["friend_url"])
+    rows, stack = [], [(payload, 0)]
+    while stack:
+        value, depth = stack.pop()
+        if depth > 12 or len(rows) > 2000:
+            raise CollectionError("browser_preparation_required")
+        if isinstance(value, dict):
+            rows.append(value)
+            stack.extend(
+                (item, depth + 1) for item in value.values() if isinstance(item, (dict, list))
+            )
+        elif isinstance(value, list):
+            stack.extend((item, depth + 1) for item in value if isinstance(item, (dict, list)))
+    profiles = {}
+    for row in rows:
+        identifier, urn = row.get("publicIdentifier"), row.get("entityUrn", "")
+        if (
+            isinstance(identifier, str)
+            and isinstance(urn, str)
+            and re.fullmatch(r"urn:li:fsd_profile:[A-Za-z0-9_-]{1,256}", urn)
+        ):
+            if (
+                profile_url("https://www.linkedin.com/in/" + quote(identifier, safe="-._~"))
+                == expected
+            ):
+                profiles[urn] = row
+    if len(profiles) != 1:
+        raise CollectionError("browser_preparation_required")
+    urn, profile = next(iter(profiles.items()))
+    relationship = profile.get("memberRelationship")
+    if not isinstance(relationship, dict):
+        ref = profile.get("*memberRelationship")
+        matches = [row for row in rows if ref and row.get("entityUrn") == ref]
+        relationship = matches[0] if len(matches) == 1 else {}
+    distance = relationship.get("distance", relationship.get("memberDistance"))
+    if distance not in {"DISTANCE_1", "DISTANCE_2", "DISTANCE_3", "OUT_OF_NETWORK"}:
+        raise CollectionError("browser_preparation_required")
+    if distance != "DISTANCE_1":
+        raise CollectionError("friend_not_connected")
+    # A relationship alone does not establish that the friend exposes their list.
+    # Require a connections-view link within this exact profile's own evidence.
+    values, visible = [profile], False
+    while values:
+        value = values.pop()
+        if isinstance(value, dict):
+            values.extend(value.values())
+        elif isinstance(value, list):
+            values.extend(value)
+        elif isinstance(value, str) and value.startswith("https://www.linkedin.com/"):
+            url = urlsplit(value)
+            if url.path.rstrip("/") == "/search/results/people":
+                links = parse_qs(url.query).get("connectionOf", [])
+                try:
+                    visible |= len(links) == 1 and json.loads(links[0]) == [urn.rsplit(":", 1)[1]]
+                except ValueError:
+                    pass
+    if not visible:
+        raise CollectionError("browser_preparation_required")
+    name = " ".join(
+        value
+        for value in (profile.get("firstName", ""), profile.get("lastName", ""))
+        if isinstance(value, str)
+    ).strip()
+    result = CollectionSource(
+        friend_url=expected,
+        friend_name=name[:200],
+        actor=source["actor"],
+        first_degree=True,
+        collection_url="https://www.linkedin.com/search/results/people/?"
+        + urlencode(
+            {
+                "connectionOf": json.dumps([urn.rsplit(":", 1)[1]]),
+                "network": '["S"]',
+                "keywords": keywords,
+            }
+        ),
+        query_id=source["query_id"],
+    )
+    result.scope(keywords=keywords)
+    return result.model_dump()
+
+
+async def _get(client, session, path, params=None):
+    async with client.stream(
+        "GET",
+        "https://www.linkedin.com" + path,
+        params=params,
+        headers=headers(session, search=params is not None),
+        follow_redirects=False,
+    ) as response:
+        if response.status_code == 429:
+            raise CollectionError("rate_limited")
+        if response.status_code == 403:
+            raise CollectionError("access_denied")
+        if response.status_code == 401:
+            raise CollectionError("session_expired")
+        if 300 <= response.status_code < 400:
+            location = response.headers.get("location", "")
+            raise CollectionError(
+                "challenge"
+                if any(v in location for v in ("checkpoint", "challenge"))
+                else "session_expired"
+            )
+        if 400 <= response.status_code < 500 or response.status_code == 999:
+            raise CollectionError("access_denied")
+        if response.status_code != 200:
+            raise CollectionError("cloud_failed")
+        body = bytearray()
+        async for chunk in response.aiter_bytes():
+            body.extend(chunk)
+            if len(body) > 2_000_000:
+                raise CollectionError("unsupported_search_contract")
+        try:
+            return json.loads(body)
+        except ValueError:
+            raise CollectionError("unsupported_search_contract") from None
+
+
+async def check_account(session, actor, *, client=None):
+    """One bounded, read-only identity check before marking saved access ready."""
+    own = client is None
+    client = client or httpx.AsyncClient(timeout=8, follow_redirects=False, trust_env=False)
+    try:
+        async with asyncio.timeout(10):
+            if not identity_matches(await _get(client, session, "/voyager/api/me"), actor):
+                raise CollectionError("account_changed")
+    except (httpx.HTTPError, TimeoutError):
+        raise CollectionError("cloud_unavailable") from None
+    finally:
+        if own:
+            await client.aclose()
+
+
 async def read_page(session, source, keywords, page, *, client=None):
     own = client is None
     client = client or httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False)
 
     async def get(path, params=None):
-        async with client.stream(
-            "GET",
-            "https://www.linkedin.com" + path,
-            params=params,
-            headers=headers(session, search=params is not None),
-            follow_redirects=False,
-        ) as response:
-            if response.status_code == 429:
-                raise CollectionError("rate_limited")
-            if response.status_code == 403:
-                raise CollectionError("access_denied")
-            if response.status_code == 401:
-                raise CollectionError("session_expired")
-            if 300 <= response.status_code < 400:
-                location = response.headers.get("location", "")
-                raise CollectionError(
-                    "challenge"
-                    if any(v in location for v in ("checkpoint", "challenge"))
-                    else "session_expired"
-                )
-            if 400 <= response.status_code < 500 or response.status_code == 999:
-                raise CollectionError("access_denied")
-            if response.status_code != 200:
-                raise CollectionError("cloud_failed")
-            body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > 2_000_000:
-                    raise CollectionError("unsupported_search_contract")
-            try:
-                return json.loads(body)
-            except ValueError:
-                raise CollectionError("unsupported_search_contract") from None
+        return await _get(client, session, path, params)
 
     try:
         if not identity_matches(await get("/voyager/api/me"), source["actor"]):
             raise CollectionError("account_changed")
-        return search_page(
+        resolved = None
+        if "collection_url" not in source:
+            if not source.get("query_id"):
+                raise CollectionError("browser_preparation_required")
+            friend = profile_url(source["friend_url"])
+            identifier = unquote(friend.rsplit("/", 1)[1])
+            resolved = resolved_source(
+                await get(
+                    "/voyager/api/identity/dash/profiles",
+                    {"q": "memberIdentity", "memberIdentity": identifier},
+                ),
+                source,
+                keywords,
+            )
+            source = resolved
+        result = search_page(
             await get("/voyager/api/graphql", search_request(source, keywords, page)), page
         )
+        if resolved is not None:
+            result["source"] = resolved
+        return result
     finally:
         if own:
             await client.aclose()

@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Request
 
 from tin_lite.connection_collection import CollectionError, LeaseCommand
+from tin_lite.connection_collection_connection import CollectionConnection
 from tin_lite.connection_collection_store import CollectionStore
 from tin_lite.project_connections_api import USER, body
 
@@ -44,7 +45,8 @@ async def safe(operation):
 
 @router.post("/api/projects/{project_id}/connection-collection/pairing")
 async def pairing(project_id: UUID, request: Request, user=USER):
-    return await safe(store(request).grant(project_id, user.clerk_user_id))
+    value = await body(request, optional=True)
+    return await safe(store(request).grant(project_id, user.clerk_user_id, value))
 
 
 @router.post("/api/connection-extension/pair")
@@ -60,6 +62,30 @@ async def pair(request: Request):
 async def pending(project_id: UUID, request: Request):
     extension_origin(request)
     return await safe(store(request).pending(project_id, bearer(request)))
+
+
+@router.get("/api/projects/{project_id}/connection-extension/status")
+async def connection_status(project_id: UUID, request: Request):
+    extension_origin(request)
+    return await safe(
+        CollectionConnection(store(request)).device_status(project_id, bearer(request))
+    )
+
+
+@router.post("/api/projects/{project_id}/connection-extension/session")
+async def connection_session(project_id: UUID, request: Request):
+    extension_origin(request)
+    service = CollectionConnection(store(request), request.app.state.runtime.integrations._cipher)
+    return await safe(service.save_session(project_id, bearer(request), await body(request)))
+
+
+@router.put("/api/projects/{project_id}/connection-collection/preferences")
+async def preferences(project_id: UUID, request: Request, user=USER):
+    return await safe(
+        CollectionConnection(store(request)).preferences(
+            project_id, user.clerk_user_id, await body(request)
+        )
+    )
 
 
 @router.post("/api/projects/{project_id}/connection-extension/{run_id}/{operation}")

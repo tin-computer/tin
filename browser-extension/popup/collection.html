@@ -1,6 +1,8 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><title>Tin LinkedIn</title>
 <link rel="stylesheet" href="collection.css"><main><img src="../icons/icon-32.png" alt="Tin"><h1>LinkedIn connections</h1>
-<p id="status">Checking connection…</p><p id="detail"></p>
-<label><input type="checkbox" id="cloud-consent"> For a cloud run, transfer this Chrome profile’s LinkedIn session and request context to Tin for this collection.</label>
-<button id="begin">Continue collection</button><button id="stop">Stop collection</button>
-<p>Connect this extension from your project’s Integrations page. Start a collection in Tin, then continue here. Keep Chrome open while collecting locally.</p></main><script src="collection.js"></script></html>
+<p id="status" role="status">Checking connection…</p><p id="detail"></p>
+<p id="setup">Connect LinkedIn from your project's Integrations page. Then start collections in Tin.</p>
+<label id="legacy-consent" hidden><input type="checkbox" id="cloud-consent"> Use my LinkedIn session for this cloud collection.</label>
+<button id="begin" hidden>Resume</button><button id="stop" hidden>Stop collection</button>
+<a id="integrations" href="https://app.tin.computer/integrations" target="_blank" rel="noopener">Open Tin</a>
+<p id="local-note" hidden>Keep Chrome open and your computer awake while collecting here.</p></main><script src="collection.js"></script></html>

@@ -62,6 +62,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         review_task = asyncio.create_task(
             review_reconciliation_loop(runtime, resolved_settings), name="review-reconciliation"
         )
+        from tin_lite.connection_collection_connection import session_cleanup_loop
+
+        session_task = asyncio.create_task(
+            session_cleanup_loop(runtime.database), name="connection-session-cleanup"
+        )
         billing_task = (
             asyncio.create_task(
                 billing_reconciliation_loop(runtime, resolved_settings),
@@ -78,6 +83,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             ):
                 yield
         finally:
+            session_task.cancel()
+            await asyncio.gather(session_task, return_exceptions=True)
             review_task.cancel()
             await asyncio.gather(review_task, return_exceptions=True)
             if billing_task is not None:

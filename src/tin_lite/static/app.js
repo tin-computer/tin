@@ -1041,12 +1041,14 @@ function bindXWorkflowFields(root) {
 function workflowFieldPresentation(workflow, name, definition) {
   if (workflow.key !== "connections.collect") return definition;
   const current = workflow.definition?.input_schema?.properties?.[name] || {};
+  const mode = state.integrations.find(item => item.key === "network.linkedin")?.configuration?.collection_permission?.mode;
   // Add missing explanations to older saved configurations without changing their
   // defaults, constraints or selected execution policy.
   return {...definition,
+    ...(name === "execution" && mode ? {default:mode} : {}),
     title: definition.title || current.title,
     description: name === "execution" && workflow.collection_availability?.cloud_ready === false
-      ? "Cloud collection is not available on this deployment yet. Cloud preferred and Local only will use your signed-in Chrome browser; keep it open and awake and click Continue collection in the Tin extension. Cloud only cannot start yet."
+      ? "Cloud collection is not available here yet. Browser collection needs Chrome open and awake."
       : definition.description || current.description,
   };
 }
@@ -6454,7 +6456,8 @@ function renderIntegrationCard(integration) {
     : integration.key === "analytics.posthog"
       ? integration.external_account_label || "PostHog"
       : selected || integration.external_account_label || "Choose an account";
-  const health = integration.key.startsWith("custom.api.")
+  const health = integration.key === "network.linkedin" && connected ? linkedInHealth(integration)
+    : integration.key.startsWith("custom.api.")
     ? integration.configuration?.access_verified ? "access verified" : "saved · not verified"
     : integration.key === "social.x" && connected
     ? integration.status === "needs_attention" ? "reconnect required"
@@ -6578,6 +6581,14 @@ function renderXIntegrationExpanded(integration) {
 }
 
 function renderIntegrationExpanded(integration) {
+  if (integration.key === "network.linkedin") {
+    const permission = integration.configuration?.collection_permission;
+    const mode = {cloud_preferred:"Cloud with browser backup",cloud_only:"Cloud only",local_only:"This browser only"}[permission?.mode];
+    return `<div class="integration-expanded"><p>${escapeHtml(mode || "Finish setup to start collections from Tin.")}</p>
+      <p>${escapeHtml(linkedInHealth(integration))}</p><div class="integration-expanded-actions">
+      <button type="button" class="integration-reconnect" data-integration-connect="network.linkedin">${permission ? "Settings" : "Finish setup"}</button>
+      <button type="button" class="integration-disconnect" data-integration-disconnect="network.linkedin">Disconnect</button></div></div>`;
+  }
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
   if (integration.key === "social.x") return renderXIntegrationExpanded(integration);
   const selected = integrationSelection(integration) || "";
@@ -6708,6 +6719,156 @@ async function promptForIntegrationResource(providerKey) {
   await chooseIntegrationResource(providerKey);
 }
 
+function linkedInHealth(integration) {
+  const config = integration.configuration || {}, permission = config.collection_permission;
+  if (!permission) return "finish setup";
+  if (permission.mode === "local_only") return "keep Chrome open while collecting";
+  if (config.session_state === "reconnect") return "reconnect LinkedIn";
+  if (config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now()) return `cloud access enabled${config.session_verified_at ? ` · checked ${timeLabel(config.session_verified_at)}` : ""}`;
+  return "open Chrome to finish cloud setup";
+}
+
+function linkedInMessage(type, payload = {}, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timeout = setTimeout(() => {window.removeEventListener("message", listener);reject(new Error("extension_unavailable"));}, timeoutMs);
+    function listener(event) {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== "tin.linkedin.collection.v3" || event.data.id !== id) return;
+      clearTimeout(timeout);window.removeEventListener("message", listener);
+      if (event.data.ok) resolve(event.data.payload);
+      else reject(new Error(event.data.error || "extension_unavailable"));
+    }
+    window.addEventListener("message", listener);
+    window.postMessage({source:"tin.dashboard.collection.v3",type,id,...payload},location.origin);
+  });
+}
+
+function linkedInSetupError(code) {
+  return {
+    extension_unavailable:"Install or update the Tin extension, then refresh this Tin tab.",
+    open_linkedin_tab:"Open LinkedIn and sign in, then check again.",
+    account_unavailable:"Sign in to LinkedIn in this Chrome profile, then check again.",
+    account_changed:"The LinkedIn account changed. Check again before connecting.",
+    session_expired:"LinkedIn needs you to sign in again. Open LinkedIn, then try connecting again.",
+    challenge:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
+    rate_limited:"LinkedIn asked us to wait. Try connecting again later.",
+    access_denied:"LinkedIn did not allow this connection. Check your account on LinkedIn before trying again.",
+    unsupported_identity:"Tin could not confirm the LinkedIn account. Refresh LinkedIn and try again.",
+    account_owner_required:"Only the person who connected this LinkedIn account can change its settings.",
+    collection_active:"A collection is running. Stop it or let it finish before reconnecting.",
+    pairing_expired:"Setup timed out. Check again to continue.",
+    legacy_retirement_pending:"The earlier Tin connection is still closing. Try connecting again shortly.",
+    update_extension:"Update the Tin extension to version 0.4 or later, then refresh this Tin tab.",
+  }[code] || "LinkedIn could not connect. Check that it is open in this Chrome profile, then try again.";
+}
+
+async function chooseLinkedInConnection(context) {
+  const existing = state.integrations.find(item => item.key === "network.linkedin");
+  const choice = {context,existing,mode:existing?.configuration?.collection_permission?.mode || "cloud_preferred",account:null};
+  state.linkedInChoice = choice;
+  integrationProjectTitle.textContent = "Connect LinkedIn";
+  integrationProjectCopy.textContent = "Use the LinkedIn account signed in to this Chrome profile.";
+  integrationProjectOptions.setAttribute("aria-label", "LinkedIn setup");
+  integrationProjectOptions.removeAttribute("role");
+  integrationProjectOptions.innerHTML = `<div class="linkedin-setup">
+    <ol class="linkedin-install-steps">
+      <li><a href="${escapeHtml(existing?.setup_url || "https://chromewebstore.google.com/detail/tin-computer-for-linkedin/eanmnipacaadfahphbcijncgpfkdcbec")}" target="_blank" rel="noopener noreferrer">Install Tin for Chrome</a>. Choose <strong>Add to Chrome</strong>, then <strong>Add extension</strong>.</li>
+      <li><a href="https://www.linkedin.com/feed/" target="_blank" rel="noopener noreferrer">Open LinkedIn</a> and sign in.</li>
+      <li>Return here. If you just installed Tin, refresh this tab first.</li>
+    </ol>
+    <p data-linkedin-account role="status">Checking the extension…</p>
+    <button type="button" class="button-quiet" data-linkedin-check>Check again</button>
+    <fieldset class="linkedin-modes" hidden><legend>Where should Tin collect?</legend>
+      <label><input type="radio" name="linkedin_mode" value="cloud_preferred"> Cloud with browser backup</label>
+      <label><input type="radio" name="linkedin_mode" value="cloud_only"> Cloud only</label>
+      <label><input type="radio" name="linkedin_mode" value="local_only"> This browser only</label>
+      <p data-linkedin-mode-copy></p>
+    </fieldset></div>`;
+  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
+  confirm.textContent = existing?.connection_id ? "Save connection" : "Connect";
+  confirm.disabled = true;
+  function modeCopy() {
+    const cloud = choice.mode !== "local_only";
+    integrationProjectOptions.querySelector("[data-linkedin-mode-copy]").textContent = cloud
+      ? "Allow Tin to collect for this project while Chrome is closed. Tin securely stores your login for up to 7 days and refreshes it while Chrome is open. Disconnect here anytime." + (choice.mode === "cloud_preferred" ? " Browser backup needs Chrome open and may open a LinkedIn tab." : "")
+      : "Tin collects in Chrome without uploading your login. Keep Chrome open and your computer awake while collecting.";
+  }
+  integrationProjectOptions.querySelectorAll('[name="linkedin_mode"]').forEach(input => {
+    input.checked = input.value === choice.mode;
+    input.addEventListener("change", () => {choice.mode = input.value;modeCopy();});
+  });
+  modeCopy();
+  const check = async () => {
+    confirm.disabled = true; choice.account = null;
+    const account = integrationProjectOptions.querySelector("[data-linkedin-account]");
+    account.textContent = "Checking the extension…";
+    try {
+      const result = await linkedInMessage("DISCOVER");
+      if (state.linkedInChoice !== choice || !isCurrentProjectContext(context)) return;
+      if (result?.protocol !== 4) throw new Error("update_extension");
+      if (!result.account) throw new Error(result.reason || "open_linkedin_tab");
+      choice.account = result.account;choice.deviceProject = result.project_id;
+      account.textContent = `Account: ${result.account.name || result.account.profile_url || "your signed-in LinkedIn account"}`;
+      integrationProjectOptions.querySelector(".linkedin-install-steps").hidden = true;
+      integrationProjectOptions.querySelector(".linkedin-modes").hidden = false;
+      confirm.disabled = false;showIntegrationDialogError(null);
+    } catch (error) {
+      if (state.linkedInChoice !== choice) return;
+      account.textContent = linkedInSetupError(error.message);
+      integrationProjectOptions.querySelector(".linkedin-install-steps").hidden = false;
+    }
+  };
+  integrationProjectOptions.querySelector("[data-linkedin-check]").addEventListener("click", check);
+  showIntegrationDialogError(null);
+  integrationProjectDialog.showModal();
+  await check();
+}
+
+async function confirmLinkedInConnection() {
+  const choice = state.linkedInChoice;
+  if (!choice?.account || !isCurrentProjectContext(choice.context)) return;
+  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
+  confirm.disabled = true;confirm.textContent = "Connecting…";
+  try {
+    const body = JSON.stringify({actor:choice.account,mode:choice.mode,consent_version:1});
+    const prefix = `/api/projects/${choice.context.projectId}/connection-collection`;
+    // Existing pairing can update permission without replacing its device or active account.
+    const sameAccount = choice.deviceProject === choice.context.projectId && choice.existing?.configuration?.actor?.key === choice.account.key;
+    if (sameAccount) {
+      await api(`${prefix}/preferences`, {method:"PUT",body});
+    } else {
+      const grant = await api(`${prefix}/pairing`, {method:"POST",body});
+      const paired = await linkedInMessage("PAIR", {grant:grant.grant}, 30000);
+      if (paired?.project_id !== choice.context.projectId) throw new Error("account_changed");
+    }
+    await linkedInMessage("WAKE");
+    let ready = choice.mode === "local_only", cloudAvailable = true;
+    if (!ready) {
+      confirm.textContent = "Preparing cloud access…";
+      integrationProjectOptions.querySelector("[data-linkedin-account]").textContent = "Keep LinkedIn open for a moment while Tin finishes connecting.";
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline && state.linkedInChoice === choice && isCurrentProjectContext(choice.context)) {
+        let status;
+        try { status = await linkedInMessage("DISCOVER", {}, 35000); } catch { break; }
+        if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity"].includes(status.reason)) throw new Error(status.reason);
+        ready = status.session_available === true;
+        cloudAvailable = status.cloud_available === true;
+        if (ready || !cloudAvailable) break;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
+    integrationProjectDialog.close();
+    showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
+    await bootstrap();
+  } catch (error) {
+    if (state.linkedInChoice !== choice) return;
+    showIntegrationDialogError(linkedInSetupError(error.message));
+    confirm.disabled = false;confirm.textContent = "Try again";
+  }
+}
+
 async function connectIntegration(providerKey, capabilities = null) {
   if (providerKey === CUSTOM_API_TEMPLATE.key) {
     await openCustomApi();
@@ -6720,25 +6881,7 @@ async function connectIntegration(providerKey, capabilities = null) {
   }
   const context = currentProjectContext();
   if (providerKey === "network.linkedin") {
-    const projectId = context.projectId;
-    try {
-      const grant = await api(`/api/projects/${projectId}/connection-collection/pairing`, { method: "POST" });
-      const id = crypto.randomUUID();
-      const paired = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => { window.removeEventListener("message", listener); reject(new Error("Open LinkedIn in this Chrome profile and enable the Tin extension, then try again.")); }, 30000);
-        function listener(event) {
-          if (event.source !== window || event.origin !== location.origin || event.data?.source !== "tin.linkedin.collection.v3" || event.data.id !== id) return;
-          clearTimeout(timeout); window.removeEventListener("message", listener);
-          if (event.data.ok && event.data.payload?.project_id === projectId) resolve(event.data.payload);
-          else reject(new Error((event.data.error || "Could not connect the Tin extension.").replaceAll("_", " ")));
-        }
-        window.addEventListener("message", listener);
-        window.postMessage({ source: "tin.dashboard.collection.v3", type: "PAIR", id, grant: grant.grant }, location.origin);
-      });
-      if (!isCurrentProjectContext(context)) return;
-      showToast(`${paired.actor || "LinkedIn"} connected.`);
-      await bootstrap();
-    } catch (error) { showToast(error.message); }
+    await chooseLinkedInConnection(context);
     return;
   }
   if (providerKey === "ads.google") {
@@ -8000,6 +8143,7 @@ projectInviteDialog.addEventListener("close", () => {
 integrationProjectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   showIntegrationDialogError(null);
+  if (state.linkedInChoice) { await confirmLinkedInConnection(); return; }
   if (state.resourceChoice) {
     await confirmIntegrationResource();
     return;
@@ -8029,6 +8173,8 @@ integrationProjectDialog.addEventListener("close", () => {
   integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Cancel";
   integrationProjectOptions.setAttribute("aria-label", "Tin project");
   state.googleAdsChoice = null;
+  state.linkedInChoice = null;
+  integrationProjectOptions.setAttribute("role", "radiogroup");
   state.stripeKeyChoice = null;
   const stripeKey = integrationProjectOptions.querySelector('input[name="restricted_key"]');
   if (stripeKey) stripeKey.value = "";

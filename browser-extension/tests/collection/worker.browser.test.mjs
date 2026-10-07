@@ -8,7 +8,8 @@ import { chromium } from "playwright";
 import { selection, profileHTML, resultsHTML, person } from "./fixtures.mjs";
 
 const extensionPath = new URL("../..",import.meta.url).pathname;
-for (const handoff of [false, true]) test(handoff ? "cloud cleanup handoff resumes automatically in Chrome without another transfer" : "real MV3 pairing, popup closure, worker restart and lost page acknowledgement", {timeout:90000}, async t => {
+for (const mode of ["legacy", "handoff", "automatic"]) test(mode === "automatic" ? "paired MV3 worker collects a queued run without opening the popup" : mode === "handoff" ? "cloud cleanup handoff resumes automatically in Chrome without another transfer" : "real MV3 pairing, popup closure, worker restart and lost page acknowledgement", {timeout:90000}, async t => {
+  const handoff = mode === "handoff", automatic = mode === "automatic";
   const dir = await mkdtemp(join(tmpdir(),"tin-collection-mv3-"));
   t.after(() => rm(dir,{recursive:true,force:true}));
   let pages=[], accepted=handoff?1:0, failOnce=!handoff, paired=false;
@@ -24,6 +25,7 @@ for (const handoff of [false, true]) test(handoff ? "cloud cleanup handoff resum
       res.end(JSON.stringify({project_id:"00000000-0000-4000-8000-000000000002"}));return;
     }
     assert.equal(req.headers["authorization"]?.startsWith("Bearer "),true);
+    if(req.url.endsWith("/status")){res.end(JSON.stringify({permission:automatic?{version:1,mode:"local_only"}:null,cloud_available:false}));return;}
     if(req.url.endsWith("/pending")){res.end(JSON.stringify(job));return;}
     if(req.url.endsWith("/claim")){job.state="collecting";if(handoff){job.cloud_transport="local_backup";job.execution_mode="local";}res.end(JSON.stringify({...job,lease:"synthetic-collection-lease-1234567890123456789"}));return;}
     if(req.url.endsWith("/heartbeat")){res.end(JSON.stringify(job));return;}
@@ -63,10 +65,12 @@ for (const handoff of [false, true]) test(handoff ? "cloud cleanup handoff resum
       await chrome.alarms.create(key,{when:Date.now()+100});
     },job);
   } else {
+  if (!automatic) {
   const popup=await context.newPage();await popup.goto(`chrome-extension://${id}/popup/collection.html`);
   await popup.locator("#begin:enabled").click();
-  await popup.waitForFunction(()=>document.querySelector("#status").textContent.includes("collecting"));
+  await popup.waitForFunction(()=>document.querySelector("#status").textContent.includes("Collecting"));
   await popup.close();
+  }
   const firstPageDeadline=Date.now()+30000;
   while(Date.now()<firstPageDeadline&&accepted<1&&job.state!=="paused")await new Promise(resolve=>setTimeout(resolve,100));
   assert.equal(accepted,1,"first batch was persisted before restart");
