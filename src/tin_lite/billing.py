@@ -40,10 +40,11 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
-# Workflows with no Tin charge. X API credits are paid by the configured app's operator,
-# separately from Tin's model ledger; included execution does not claim X API calls are free.
-# The other providers below buy no model or provider work.
+# These workflows have no Tin charge. Collection compute is Tin-funded; X API
+# credits are paid by the configured app's operator. Supplier observations remain
+# separate from the customer model ledger. Other entries buy no provider work.
 CONNECTED_ACCOUNT_EXECUTORS = {
+    "connections.collect": "tin-funded-connections-v1",
     "outreach.email_campaign": "tin-connected-email-v1",
     "outreach.awesome_submit": "tin-connected-github-v1",
     "social.x_publish": "tin-x-operator-funded-v1",

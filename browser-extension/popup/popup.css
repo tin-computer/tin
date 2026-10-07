@@ -1,0 +1,150 @@
+:root {
+  color-scheme: light;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #11110f;
+  background: #f4f0e8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 340px;
+  min-height: 250px;
+}
+
+main {
+  padding: 18px;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.mark {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #11110f;
+  border-radius: 50%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
+}
+
+h1,
+header p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 15px;
+  font-weight: 650;
+}
+
+header p,
+.privacy,
+.device-note {
+  color: #5b5a54;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+#status-card {
+  display: flex;
+  gap: 10px;
+  padding: 13px;
+  border: 1px solid #cbc6bc;
+  background: #fffdf7;
+}
+
+.status-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 50%;
+  background: #aaa59a;
+}
+
+.status-dot[data-tone="ready"] {
+  background: #2b7b4b;
+}
+
+.status-dot[data-tone="waiting"] {
+  background: #b87a22;
+}
+
+.status-dot[data-tone="error"] {
+  background: #af3c32;
+}
+
+.status-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.status-copy strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-copy span {
+  color: #5b5a54;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.privacy {
+  margin: 12px 1px;
+}
+
+.device-note {
+  margin: 9px 1px 0;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+}
+
+button {
+  appearance: none;
+  border: 1px solid #11110f;
+  border-radius: 0;
+  padding: 8px 11px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  background: #11110f;
+  color: #fffdf7;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+button:focus-visible {
+  outline: 2px solid #2b7b4b;
+  outline-offset: 2px;
+}
+
+button.danger {
+  background: transparent;
+  color: #8d2d27;
+  border-color: #8d2d27;
+}
+
+#error {
+  margin: 10px 0 0;
+  color: #8d2d27;
+  font-size: 11px;
+  line-height: 1.4;
+}

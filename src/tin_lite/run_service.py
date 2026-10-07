@@ -199,6 +199,13 @@ async def start_workflow_run(
         from tin_lite.private_workflows import require_private_execution
 
         require_private_execution(settings, workflow, project_id)
+    if workflow.executor == "connections.collect":
+        from tin_lite.connection_collection import enabled
+
+        if not enabled(settings, project_id):
+            raise WorkflowExecutorUnavailableError(
+                "Connection collection is unavailable on this project."
+            )
     if workflow.executor == "social.x_revise" and not _x_feedback:
         raise WorkflowInputError("Read the X draft and use request_workflow_changes to revise it.")
     if workflow.executor == "social.x_revise" and not getattr(settings, "luna_api_key", None):
@@ -209,6 +216,19 @@ async def start_workflow_run(
         project_id=project_id,
         inputs=input_payload,
     )
+    if workflow.executor == "connections.collect":
+        from tin_lite.connection_collection import CollectionInputs, cloud_ready
+
+        normalized_inputs = CollectionInputs.model_validate(normalized_inputs).model_dump()
+        # Cloud compute uses a separately qualified, explicitly funded contract.
+        if normalized_inputs["execution"] != "local_only" and not cloud_ready(settings):
+            raise WorkflowExecutorUnavailableError(
+                "Cloud collection has not been qualified on this deployment. Choose local_only."
+            )
+        if not await runtime.database.has_project_access(
+            project_id=project_id, clerk_user_id=started_by_clerk_user_id
+        ):
+            raise LookupError("project not found")
     if workflow.executor == "social.x_publish":
         from tin_lite.x_posts import approved_payload
 

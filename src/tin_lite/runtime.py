@@ -321,6 +321,8 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     awesome_submit_activities = AwesomeSubmitActivities(
         database=database, storage=storage, integrations=integrations
     )
+    from tin_lite.activity_lanes import COLLECTION_ACTIVITIES, collection_task_queue
+
     payment_recovery_activities = PaymentRecoveryActivities(
         database=database,
         storage=storage,
@@ -329,9 +331,22 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
     )
     from tin_lite.code_activities import CodeActivities
+    from tin_lite.connection_collection_activities import CollectionActivities
+    from tin_lite.linkedin_cloud import LinkedInCloud
 
+    collection = CollectionActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        cloud=LinkedInCloud(database, settings),
+        cipher=integrations._cipher,
+    )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
+        collection.prepare,
+        collection.poll,
+        collection.publish,
+        collection.failure,
         code.execute,
         code.publish,
         code.review,
@@ -504,10 +519,17 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         activity_instance.project_task_failure,
     ]
     by_name = {activity._Definition.must_from_callable(fn).name: fn for fn in activities}
-    if set(by_name) != CODEX_ACTIVITIES | TRUSTED_ACTIVITIES:
+    if set(by_name) != CODEX_ACTIVITIES | TRUSTED_ACTIVITIES | COLLECTION_ACTIVITIES:
         raise RuntimeError("Every registered activity needs an explicit worker lane")
     graceful_shutdown = timedelta(seconds=settings.worker_graceful_shutdown_seconds)
     worker = WorkerGroup(
+        Worker(
+            temporal,
+            task_queue=collection_task_queue(settings.task_queue),
+            max_concurrent_activities=2,
+            graceful_shutdown_timeout=graceful_shutdown,
+            activities=[by_name[name] for name in sorted(COLLECTION_ACTIVITIES)],
+        ),
         Worker(
             temporal,
             task_queue=settings.task_queue,
@@ -518,7 +540,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             graceful_shutdown_timeout=graceful_shutdown,
             workflows=registered_workflows(),
             workflow_runner=workflow_runner(),
-            activities=activities,
+            activities=[fn for name, fn in by_name.items() if name not in COLLECTION_ACTIVITIES],
             interceptors=[ActivityLaneInterceptor()],
         ),
         Worker(

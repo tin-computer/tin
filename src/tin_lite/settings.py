@@ -209,6 +209,26 @@ class Settings(BaseSettings):
     e2b_studio_api_template: str = Field(
         default="tin-lite-codex-studio-api", alias="TIN_LITE_E2B_STUDIO_API_TEMPLATE"
     )
+    connection_collection_projects_raw: str = Field(
+        default="", alias="TIN_LITE_CONNECTION_COLLECTION_PROJECTS"
+    )
+    linkedin_extension_ids_raw: str = Field(default="", alias="TIN_LITE_LINKEDIN_EXTENSION_IDS")
+    linkedin_e2b_api_key: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_LINKEDIN_E2B_API_KEY"
+    )
+    linkedin_cloud_template: str | None = Field(default=None, alias="TIN_LITE_LINKEDIN_TEMPLATE")
+    linkedin_cloud_qualified: bool = Field(default=False, alias="TIN_LITE_LINKEDIN_CLOUD_QUALIFIED")
+
+    @property
+    def connection_collection_projects(self) -> tuple[str, ...]:
+        return tuple(
+            v.strip() for v in self.connection_collection_projects_raw.split(",") if v.strip()
+        )
+
+    @property
+    def linkedin_extension_ids(self) -> tuple[str, ...]:
+        return tuple(v.strip() for v in self.linkedin_extension_ids_raw.split(",") if v.strip())
+
     private_workflow_projects_raw: str = Field(
         default="", alias="TIN_LITE_PRIVATE_WORKFLOW_PROJECTS"
     )

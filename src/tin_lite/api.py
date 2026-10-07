@@ -24,6 +24,8 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
+from tin_lite.connection_collection import visible as collection_visible
+from tin_lite.connection_collection_api import router as collection_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
 from tin_lite.content_program_api import router as content_program_router
@@ -150,6 +152,8 @@ router.include_router(content_delivery_router)
 router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
+
+router.include_router(collection_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
 router.include_router(protected_paths_router)
@@ -1719,7 +1723,7 @@ async def list_project_integrations(
             connections.get(definition.key),
             configured=service.is_configured(definition.key),
         )
-        for definition in service.definitions(connections.values())
+        for definition in service.definitions(connections.values(), project_id=project_id)
     ]
 
 
@@ -2261,7 +2265,8 @@ async def list_workflows(
         item
         for item in workflows
         # Agent-only workflows (start here) run through the MCP; the catalog does not list them.
-        if not (item.definition or {}).get("agent_only")
+        if collection_visible(request.app.state.settings, item, project_id)
+        and not (item.definition or {}).get("agent_only")
         and (item.definition or {}).get("public_discovery", True)
         and (
             item.project_id is None

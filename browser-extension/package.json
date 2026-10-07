@@ -1,0 +1,14 @@
+{
+  "name": "@tin/browser-extension",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Tin extension with project-bound connection collection",
+  "scripts": {
+    "test": "node --test tests/*.test.cjs",
+    "package:store": "python3 scripts/package_store.py",
+    "test:collection": "node --test tests/collection/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

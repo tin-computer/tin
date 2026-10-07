@@ -633,6 +633,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "organic.prompt_panel",
     }
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
+        "connections.collect",
         "visibility.audit",
         "content.deliver",
         "website.change",

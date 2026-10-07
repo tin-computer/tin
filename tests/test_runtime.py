@@ -8,7 +8,7 @@ import pytest
 from temporalio import activity
 
 from tin_lite import runtime
-from tin_lite.activity_lanes import CODEX_ACTIVITIES, TRUSTED_ACTIVITIES
+from tin_lite.activity_lanes import CODEX_ACTIVITIES, COLLECTION_ACTIVITIES, TRUSTED_ACTIVITIES
 
 
 @pytest.mark.asyncio
@@ -26,7 +26,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     sandboxes = object()
     temporal = object()
     model_router = object()
-    integrations = SimpleNamespace(x=object())
+    integrations = SimpleNamespace(x=object(), _cipher=object())
     project_files = object()
     worker = object()
 
@@ -78,8 +78,13 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     services = await runtime.build_runtime(settings)
 
     assert services.project_files is project_files
-    assert services.worker.workers == (worker, worker)
-    original, trusted = registrations
+    assert services.worker.workers == (worker, worker, worker)
+    collection, original, trusted = registrations
+    assert collection["task_queue"] == settings.task_queue + "-connections"
+    assert collection["max_concurrent_activities"] == 2
+    assert collection["graceful_shutdown_timeout"] == timedelta(minutes=5)
+    assert not collection.get("workflows")
+    assert all(fn.__self__.cipher is integrations._cipher for fn in collection["activities"])
     assert original["task_queue"] == settings.task_queue
     assert original["max_concurrent_activities"] == 4
     assert original["interceptors"]
@@ -95,6 +100,11 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     trusted_names = {
         activity._Definition.must_from_callable(fn).name for fn in trusted["activities"]
     }
+    collection_names = {
+        activity._Definition.must_from_callable(fn).name for fn in collection["activities"]
+    }
+    assert collection_names == COLLECTION_ACTIVITIES
+    assert not collection_names & (original_names | trusted_names)
     assert original_names == CODEX_ACTIVITIES | TRUSTED_ACTIVITIES
     assert trusted_names == TRUSTED_ACTIVITIES
     assert not trusted_names & CODEX_ACTIVITIES
