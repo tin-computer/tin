@@ -15,9 +15,19 @@
     const notices = [...document.querySelectorAll('[role="alert"], .artdeco-inline-feedback, main h1, main h2')].filter(visible).map(txt).join(" ");
     if (/commercial use limit|search limit|unusual activity|temporarily restricted|security verification|too many requests/i.test(notices)) fail("platform_limit");
   }
-  function profile() {
-    guard();
-    return { actor: E.account(), ...E.selectedProfile() };
+  async function profile(options = {}) {
+    const deadline = Date.now() + (options?.timeout ?? 12_000);
+    let last;
+    do {
+      guard();
+      try { return { actor: E.account(), ...E.selectedProfile() }; }
+      catch (error) {
+        if (!["account_unavailable", "connections_unavailable", "unsupported_profile", "page_loading"].includes(error.message)) throw error;
+        last = error.message;
+      }
+      await sleep(options?.poll ?? 350);
+    } while (Date.now() < deadline);
+    fail(last === "account_unavailable" ? "account_evidence_unavailable" : last);
   }
   function searchContract() {
     guard();
@@ -79,7 +89,8 @@
     while (Date.now() - started < timeout) {
       let page;
       try { page = readPage(run); } catch (error) {
-        if (error.message !== "page_loading") throw error;
+        if (!["page_loading", "account_unavailable"].includes(error.message)) throw error;
+        if (error.message === "account_unavailable") last = {accountMissing:true};
         await sleep(poll); continue;
       }
       if (firstPage !== null && firstPage !== page.page) fail("page_changed_during_read");
@@ -98,7 +109,7 @@
       }
       await sleep(poll);
     }
-    fail(last ? "unstable_results" : "page_loading");
+    fail(last?.accountMissing ? "account_evidence_unavailable" : last ? "unstable_results" : "page_loading");
   }
   async function advance(run) {
     const snapshotNow = await snapshot(run);

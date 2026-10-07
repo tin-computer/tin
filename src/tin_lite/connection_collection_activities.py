@@ -191,7 +191,14 @@ class CollectionActivities:
         reasons = {
             "local_permission_required": "Allow browser backup in LinkedIn settings to continue.",
             "cloud_permission_required": "Allow cloud collection in LinkedIn settings.",
-            "browser_preparation_required": "Open Chrome so Tin can prepare this LinkedIn search.",
+            "browser_preparation_required": (
+                "Preparing the LinkedIn search in Chrome."
+                if job["state"] == "collecting"
+                else "Waiting for Chrome to prepare the LinkedIn search."
+            ),
+            "browser_unavailable": (
+                "Tin could not read the LinkedIn page. Refresh it in Chrome, then retry."
+            ),
             "session_expired": "Reconnect LinkedIn in Integrations to continue.",
             "account_changed": "The LinkedIn account changed. Check the account in Integrations.",
             "challenge": "LinkedIn needs your attention. Open LinkedIn in Chrome.",
@@ -199,6 +206,13 @@ class CollectionActivities:
             "access_denied": "LinkedIn did not allow this collection. Saved pages are kept.",
         }
         summary = reasons.get(job["reason"], summary)
+        # Earlier extensions reported missing page identity as an expired login.
+        # A local page read does not establish that the saved cloud session expired.
+        if job["reason"] == "session_expired" and job["execution_mode"] == "local":
+            summary = (
+                "Tin could not confirm the account on the LinkedIn page. "
+                "Refresh it in Chrome, then retry."
+            )
         await self.db.project_run_progress(
             run_id=run.id, mode="indeterminate", step="collect", summary=summary
         )

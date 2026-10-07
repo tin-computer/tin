@@ -32,7 +32,7 @@ a visible name show a connected-account label, not another account-selection pro
 
 ![Connected account using the shared integration details](images/linkedin-connected.png)
 
-The published extension must be updated to 0.4.1 for this screen. See the extension's
+The published extension must be updated to 0.4.2 for this screen. See the extension's
 [installation guide](../browser-extension/README.md) and [store release](../browser-extension/STORE_RELEASE.md).
 The setup page gives its five-minute, one-use pairing token an expected account and the
 user's selected mode. The extension creates a device bearer locally and sends its hash.

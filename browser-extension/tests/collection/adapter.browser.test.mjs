@@ -198,7 +198,32 @@ test("stable avatar identity ignores expiring image parameters and rejects place
   assert.equal(a.actor.key, b.actor.key);
   assert.equal(a.actor.source, "browser_avatar_marker");
   await page.locator("img").evaluate(el => { el.src = "https://www.linkedin.com/ghost-person.svg"; });
-  await assert.rejects(page.evaluate(() => TinLinkedIn.profile()), /account_unavailable/);
+  await assert.rejects(page.evaluate(() => TinLinkedIn.profile({timeout:150,poll:15})), /account_evidence_unavailable/);
+});
+
+test("profile and results wait for the signed-in header to render", async t => {
+  const page = await pageFor(t, profileHTML(), selection.friend.profile_url);
+  await page.evaluate(() => {
+    const header=document.querySelector('header'), html=header.innerHTML;
+    header.innerHTML='';setTimeout(()=>{header.innerHTML=html;},120);
+  });
+  const profile = await page.evaluate(() => TinLinkedIn.profile({timeout:1000,poll:15}));
+  assert.equal(profile.actor.key,selection.actor.key);
+  await page.evaluate(({html,url})=>{
+    history.replaceState({},'',url);document.body.innerHTML=new DOMParser().parseFromString(html,'text/html').body.innerHTML;
+    const header=document.querySelector('header'), content=header.innerHTML;
+    header.innerHTML='';setTimeout(()=>{header.innerHTML=content;},120);
+  },{html:resultsHTML(),url:searchURL()});
+  const snapshot = await read(page,C.createRun(selection));
+  assert.equal(snapshot.actor.key,selection.actor.key);
+});
+
+test("missing account markup is a page-read failure and challenges still stop immediately", async t => {
+  const page = await pageFor(t, resultsHTML());
+  await page.locator('header').evaluate(node=>node.remove());
+  await assert.rejects(read(page,C.createRun(selection),150),/account_evidence_unavailable/);
+  await page.evaluate(()=>document.body.insertAdjacentHTML('afterbegin','<input name="session_password">'));
+  await assert.rejects(read(page,C.createRun(selection),150),/login_or_checkpoint/);
 });
 
 test("checkpoints, platform limits and unsupported languages stop the read", async t => {

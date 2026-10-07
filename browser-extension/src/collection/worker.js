@@ -51,7 +51,7 @@ importScripts("collection/core.js");
     const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: async (method, input) => {
       try {
         if (method === "account") return { ok: true, value: globalThis.TinPageEvidence.account() };
-        if (!["profile", "snapshot", "searchContract"].includes(method)) throw Error("invalid_operation");
+        if (!["profile", "snapshot", "searchContract", "diagnostics"].includes(method)) throw Error("invalid_operation");
         return { ok: true, value: await globalThis.TinLinkedIn[method](input) };
       } catch (error) { return { ok: false, code: error.message }; }
     }, args: [method, input || null] });
@@ -223,7 +223,8 @@ importScripts("collection/core.js");
   }
   const stopReason = code => ({ login_or_checkpoint: "challenge", platform_limit: "rate_limited",
     page_changed_during_read: "page_changed", missing_friend_filter: "filters_changed",
-    ambiguous_friend_filter: "filters_changed", account_unavailable: "session_expired" })[code]
+    ambiguous_friend_filter: "filters_changed", account_unavailable: "browser_unavailable",
+    account_evidence_unavailable: "browser_unavailable" })[code]
     || (new Set(["account_changed","filters_changed","page_changed","repeated_page","people_limit","friend_time_limit"]).has(code) ? code : "unsupported_layout");
   async function tick() {
     if (running) return;
@@ -252,6 +253,10 @@ importScripts("collection/core.js");
         const pending = await api(state, `${route(state)}/pending`);
         if (pending?.state === "paused") {
           state.job = pending; state.status = "paused"; state.reason = pending.reason;
+          if (state.tab_id && !state.page_diagnostics) {
+            try { state.page_diagnostics = await pageCall(state.tab_id, "diagnostics"); }
+            catch { /* A closed or unavailable tab cannot supply structural evidence. */ }
+          }
           if (state.refresh_requested) {
             delete state.refresh_requested; await save(state);
             await refreshSession(state);
@@ -361,6 +366,10 @@ importScripts("collection/core.js");
       const transient = ["Failed to fetch", "fetch failed", "backend_unavailable", "The operation was aborted due to timeout"].some(c => error.message.includes(c));
       if (transient) { schedule(); return; }
       const reason = stopReason(error.message);
+      if (state.tab_id && !state.page_diagnostics) {
+        try { state.page_diagnostics = await pageCall(state.tab_id, "diagnostics"); }
+        catch { /* Never replace the original failure with a diagnostic failure. */ }
+      }
       try { if (state.lease) await command(state, "pause", { ...fence(state), reason }); } catch { /* Fenced or disconnected: no new browser actions. */ }
       state.status = "paused"; state.reason = error.message;
       await save(state);
