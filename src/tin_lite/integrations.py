@@ -48,6 +48,7 @@ from tin_lite.settings import Settings
 logger = logging.getLogger(__name__)
 
 _SHA = re.compile(r"[0-9a-f]{40}")
+LINKEDIN_PROVIDER = "network.linkedin"
 GSC_PROVIDER = "analytics.gsc"
 GITHUB_PROVIDER = "infra.github"
 GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
@@ -58,6 +59,7 @@ POSTHOG_PROVIDER = "analytics.posthog"
 GITHUB_USER_PROVIDER = "infra.github_user"
 PROVIDER_KEYS = frozenset(
     {
+        LINKEDIN_PROVIDER,
         GSC_PROVIDER,
         GITHUB_PROVIDER,
         GOOGLE_WORKSPACE_PROVIDER,
@@ -327,6 +329,15 @@ class GitHubOpenPullRequestEvidence:
 def registered_integrations() -> tuple[IntegrationDefinition, ...]:
     return (
         IntegrationDefinition(
+            key=LINKEDIN_PROVIDER,
+            name="LinkedIn",
+            badge="in",
+            description="Collect visible connections with the Tin extension.",
+            access_label="Read selected connections",
+            capabilities=("connections.read",),
+            unlocks=("Collect connections",),
+        ),
+        IntegrationDefinition(
             key=GSC_PROVIDER,
             name="Google Search Console",
             badge="SC",
@@ -574,6 +585,8 @@ class IntegrationService:
 
     def is_configured(self, provider_key: str) -> bool:
         self._definition(provider_key)
+        if provider_key == LINKEDIN_PROVIDER:
+            return bool(getattr(self._settings, "linkedin_extension_ids", ()))
         if provider_key.startswith("custom.api.") or provider_key == STRIPE_PROVIDER:
             return self._cipher is not None
         if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
@@ -637,11 +650,16 @@ class IntegrationService:
 
         return GitHubAccounts(self)
 
-    def definitions(self, connections):
+    def definitions(self, connections, *, project_id=None):
+        from tin_lite.connection_collection import enabled
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
 
         return (
-            *registered_integrations(),
+            *(
+                d
+                for d in registered_integrations()
+                if d.key != LINKEDIN_PROVIDER or enabled(self._settings, project_id)
+            ),
             *(
                 custom_definition(c.provider_key)
                 for c in connections
@@ -718,6 +736,12 @@ class IntegrationService:
                         + "; reconnect PostHog and approve the read access"
                     )
                 continue
+            if requirement.provider_key == LINKEDIN_PROVIDER:
+                from tin_lite.connection_collection import enabled
+
+                if not enabled(self._settings, project_id):
+                    raise IntegrationNotConfiguredError("Connection collection is unavailable.")
+                continue
             if requirement.provider_key == GITHUB_USER_PROVIDER:
                 granted = connection.configuration.get("granted_capabilities", [])
                 if connection.credential_ciphertext is None or not set(
@@ -782,6 +806,15 @@ class IntegrationService:
             raise IntegrationError("Use the secure Custom API form in project Integrations.")
         self._require_configured(provider_key)
         definition = self._definition(provider_key)
+        if provider_key == LINKEDIN_PROVIDER:
+            from tin_lite.connection_collection import enabled
+            from tin_lite.product_urls import dashboard_url
+
+            if not enabled(self._settings, project_id):
+                raise IntegrationNotConfiguredError("Connection collection is unavailable.")
+            return ConnectStart(
+                authorization_url=f"{dashboard_url(self._settings)}/connect?project={project_id}&providers={LINKEDIN_PROVIDER}"
+            )
         if provider_key == STRIPE_PROVIDER:
             # A restricted key is pasted only in Tin's own page, never through chat or MCP.
             from tin_lite.product_urls import dashboard_url
@@ -3727,6 +3760,21 @@ class IntegrationService:
         return updated
 
     async def disconnect(self, *, project_id: UUID, provider_key: str) -> bool:
+        if provider_key == LINKEDIN_PROVIDER:
+            async with self._database.pool.acquire() as conn, conn.transaction():
+                await conn.execute(
+                    "UPDATE connection_collection_jobs SET "
+                    "state='partial',reason='disconnected',generation=generation+1,lease_hash=NULL,"
+                    "lease_expires_at=NULL WHERE project_id=$1 "
+                    "AND state NOT IN ('completed','partial','failed','stopped')",
+                    project_id,
+                )
+                result = await conn.execute(
+                    "DELETE FROM integration_connections WHERE project_id=$1 AND provider_key=$2",
+                    project_id,
+                    provider_key,
+                )
+                return result != "DELETE 0"
         definition = self._definition(provider_key)
         if provider_key == ADS_PROVIDER:
             connection = await self._database.get_integration_connection(

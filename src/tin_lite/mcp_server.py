@@ -27,6 +27,7 @@ from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
+from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
@@ -1693,7 +1694,8 @@ def create_mcp_app(
         workflows = [
             workflow
             for workflow in await services.database.list_workflows(project_id=parsed_project_id)
-            if workflow.status.value == "active"
+            if collection_visible(settings, workflow, parsed_project_id)
+            and workflow.status.value == "active"
             and (workflow.definition or {}).get("public_discovery", True)
             and (
                 workflow.project_id is None
@@ -4100,7 +4102,9 @@ def create_mcp_app(
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
             )
-            for definition in service.definitions(connections.values())
+            for definition in service.definitions(
+                connections.values(), project_id=parsed_project_id
+            )
         ]
 
     @server.tool()

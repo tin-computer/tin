@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "Tin LinkedIn",
+  "description": "Connect LinkedIn to Tin and collect visible connections for your selected projects.",
+  "version": "0.3.0",
+  "minimum_chrome_version": "120",
+  "permissions": [
+    "alarms",
+    "cookies",
+    "storage",
+    "webRequest",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://api.tin.computer/*",
+    "https://api.staging.tin.computer/*",
+    "https://tin.computer/*",
+    "https://www.tin.computer/*",
+    "https://staging.tin.computer/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://*.linkedin.com/*",
+    "https://app.tin.computer/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "Tin LinkedIn",
+    "default_popup": "popup/collection.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://tin.computer/*",
+        "https://www.tin.computer/*",
+        "https://staging.tin.computer/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": [
+        "src/protocol.js",
+        "src/tin-bridge.js"
+      ],
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://tin.computer/*",
+        "https://www.tin.computer/*",
+        "https://staging.tin.computer/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://app.tin.computer/*"
+      ],
+      "js": [
+        "src/collection/bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ]
+}

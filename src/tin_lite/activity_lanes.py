@@ -26,6 +26,10 @@ CODEX_ACTIVITIES = frozenset(
         "run_project_task_turn",
     }
 )
+COLLECTION_ACTIVITIES = frozenset(
+    {"collection_prepare", "collection_poll", "collection_publish", "collection_failure"}
+)
+
 TRUSTED_ACTIVITIES = frozenset(
     {
         "apply_project_task_changes",
@@ -172,6 +176,10 @@ def trusted_task_queue(base: str) -> str:
     return f"{base}-trusted"
 
 
+def collection_task_queue(base: str) -> str:
+    return f"{base}-connections"
+
+
 class ActivityLaneInterceptor(Interceptor):
     def workflow_interceptor_class(
         self,
@@ -192,6 +200,9 @@ class _LaneOutbound(WorkflowOutboundInterceptor):
             input.task_queue = trusted_task_queue(base)
             # The workflow worker must not eagerly execute a trusted activity
             # on its legacy/Codex slot.
+            input.disable_eager_execution = True
+        if input.activity in COLLECTION_ACTIVITIES and input.task_queue in (None, base):
+            input.task_queue = collection_task_queue(base)
             input.disable_eager_execution = True
         return super().start_activity(input)
 

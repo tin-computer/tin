@@ -6090,6 +6090,27 @@ async function connectIntegration(providerKey, capabilities = null, targetProjec
     showToast(`${integration?.name || "This integration"} is not configured on this Tin deployment.`);
     return;
   }
+  if (providerKey === "network.linkedin") {
+    const projectId = targetProjectId || currentProjectContext().projectId;
+    try {
+      const grant = await api(`/api/projects/${projectId}/connection-collection/pairing`, { method: "POST" });
+      const id = crypto.randomUUID();
+      const paired = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => { window.removeEventListener("message", listener); reject(new Error("Open LinkedIn in this Chrome profile and enable the Tin extension, then try again.")); }, 30000);
+        function listener(event) {
+          if (event.source !== window || event.origin !== location.origin || event.data?.source !== "tin.linkedin.collection.v3" || event.data.id !== id) return;
+          clearTimeout(timeout); window.removeEventListener("message", listener);
+          if (event.data.ok && event.data.payload?.project_id === projectId) resolve(event.data.payload);
+          else reject(new Error((event.data.error || "Could not connect the Tin extension.").replaceAll("_", " ")));
+        }
+        window.addEventListener("message", listener);
+        window.postMessage({ source: "tin.dashboard.collection.v3", type: "PAIR", id, grant: grant.grant }, location.origin);
+      });
+      showToast(`${paired.actor || "LinkedIn"} connected.`);
+      await bootstrap();
+    } catch (error) { showToast(error.message); }
+    return;
+  }
   if (providerKey === "ads.google") {
     chooseGoogleAdsAccount(targetProjectId || currentProjectContext().projectId);
     return;

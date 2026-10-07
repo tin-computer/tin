@@ -1447,6 +1447,29 @@ class GrowthOnboardingWorkflow:
             raise
 
 
+@workflow.defn(name="connections.collect")
+class ConnectionCollectionWorkflow:
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, seconds=60):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(seconds=seconds),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            await call("collection_prepare")
+            # The activity reads the pinned absolute deadline. Sleep uses no worker slot.
+            while not await call("collection_poll", 150):
+                await workflow.sleep(timedelta(seconds=15))
+            await call("collection_publish", 180)
+        except BaseException:
+            await asyncio.shield(call("collection_failure"))
+            raise
+
+
 def registered_workflows() -> list[type]:
     return [
         CodeWorkflow,
@@ -1458,6 +1481,7 @@ def registered_workflows() -> list[type]:
         GrowthOnboardingPlanWorkflow,
         ScheduledDispatchWorkflow,
         ContentPlanWorkflow,
+        ConnectionCollectionWorkflow,
         DesignMdWorkflow,
         ProjectMemoryWorkflow,
         ScanReportWorkflow,
@@ -1482,6 +1506,7 @@ def registered_workflows() -> list[type]:
 def registered_workflow_implementations() -> dict[str, type]:
     """Explicit executor-to-implementation map used by product catalog dispatch."""
     return {
+        "connections.collect": ConnectionCollectionWorkflow,
         "workflow.code": CodeWorkflow,
         "style.capture": StyleCaptureWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,

@@ -9,6 +9,7 @@ from uuid import UUID
 from tin_lite import (
     article_review,
     awesome_submit,
+    connection_collection,
     content_draft,
     content_plan,
     content_plan_editorial,
@@ -416,6 +417,8 @@ class BuiltinWorkflow:
                 "capabilities": sorted(item.value for item in self.model_route.capabilities),
             }
         resources: dict[str, bytes] = {}
+        if self.key == connection_collection.KEY:
+            definition["collection_policy"] = dict(connection_collection.POLICY)
         if self.key == style_capture.KEY:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
@@ -497,6 +500,22 @@ class BuiltinWorkflow:
 
 
 BUILTIN_WORKFLOWS = (
+    BuiltinWorkflow(
+        id=connection_collection.WORKFLOW_ID,
+        key=connection_collection.KEY,
+        title="Collect connections",
+        description="Collect visible second-degree connections through selected friends.",
+        executor=connection_collection.KEY,
+        version_label="v1",
+        input_schema=connection_collection.INPUT_SCHEMA,
+        schedule_modes=("on_demand",),
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=connection_collection.PROVIDER,
+                capabilities=(connection_collection.CAPABILITY,),
+            ),
+        ),
+    ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000027"),
         key=organic_system.KEY,

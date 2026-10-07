@@ -40,9 +40,11 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
-# Workflows that act only through the founder's own connected account and buy no model or
-# provider work: no quote, no reservation, a $0 Tin charge. The value is the pinned rate card.
+# Workflows acting through the founder's connected account: no customer reservation and
+# a $0 Tin charge. Collection compute is explicitly Tin-funded; its supplier observations
+# remain recorded separately. The value is the pinned rate card.
 CONNECTED_ACCOUNT_EXECUTORS = {
+    "connections.collect": "tin-funded-connections-v1",
     "outreach.email_campaign": "tin-connected-email-v1",
     "outreach.awesome_submit": "tin-connected-github-v1",
 }
