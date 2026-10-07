@@ -544,9 +544,8 @@ class ContentDelivery:
         if settings.mode == "draft_only":
             return None
         kind = item_kind(selected["item"])
-        # A refresh edits the page's own source, and an answer page is adapted to the site at
-        # its route: neither has a Markdown destination path.
-        path = None if kind != content_draft.ARTICLE else destination(settings, selected)[0]
+        # A refresh edits the page's own source; an article or answer page is adapted to the
+        # site through website.change. None of them has a Markdown destination path.
         if self.integrations is None:
             raise ValueError("Connect GitHub before drafting for repository delivery.")
         binding = await self.integrations.github_repository_binding(
@@ -557,12 +556,10 @@ class ContentDelivery:
                 {"kind": REFRESH_KIND}
                 if kind == content_draft.REFRESH
                 else {"adapter": ADAPTER, "via": WEBSITE_CHANGE}
-                if kind == content_draft.ANSWER
-                else {}
             ),
             "settings": settings.model_dump(),
             "settings_revision": configured["revision"],
-            "path": path,
+            "path": None,
             **({"route": selected.get("page_route")} if kind == content_draft.ANSWER else {}),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
@@ -616,8 +613,9 @@ class ContentDelivery:
         """Record the reviewer's delivery pick for one document; optionally keep it.
 
         `adapt` (the caller checked `adaptable`) sends an answer page or public article
-        through website.change instead of the Markdown publisher; `mode` still says
-        whether its pull request stays open or Tin merges it.
+        through website.change instead of the Markdown publisher, as every content.generate
+        article and answer page goes; `mode` still says whether its pull request stays open or
+        Tin merges it.
         """
         if run.workflow_id not in CHOICE_WORKFLOW_IDS:
             raise ValueError("This run does not publish to a repository.")
@@ -668,6 +666,16 @@ class ContentDelivery:
                         "chosen_by": actor,
                     },
                 )
+        if run.workflow_id == DRAFT_WORKFLOW_ID and mode in REPOSITORY_MODES:
+            # A planned article goes to the site through website.change, like an answer page;
+            # `mode` says whether its pull request stays open or Tin merges it.
+            return await self.choose_adaptation(
+                run=run,
+                mode=mode,
+                remember=remember,
+                actor=actor,
+                trigger_source=trigger_source,
+            )
         if mode == "none" and run.workflow_id != DRAFT_WORKFLOW_ID and not run.project_workflow_id:
             # Keeping a one-off page in Tin leaves nothing to configure or remember.
             return await self.record_choice(
@@ -778,7 +786,7 @@ class ContentDelivery:
         answer = await self.plan_kind(run) == content_draft.ANSWER
         record = {
             "adapter": ADAPTER,
-            **({"via": WEBSITE_CHANGE} if answer else {}),
+            "via": WEBSITE_CHANGE,
             "settings": chosen.model_dump(),
             "settings_revision": configured["revision"] if configured else None,
             "path": None,

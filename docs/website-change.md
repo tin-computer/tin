@@ -424,6 +424,12 @@ them, and a test pins the definition's digest.
   starts it once `save_page_route` has saved one.
 - The content program card's **Prepare PR** and **Retry** start website.change, and the card
   shows the latest adaptation by either workflow (`delivery_history`).
+- A content.generate article goes the same way (10/7): a draft selected for a repository
+  program pins website.change (`adapter`, `via: website.change`, no Markdown path), and an
+  approval that picks a pull request or commit to main adapts it, as an answer page's already
+  did. A planned article needs no chosen route; its plan item names its address. Drafts pinned
+  before keep the exact Markdown publisher. A page refresh still changes exactly its approved
+  lines itself (`deliver_refresh`), not through website.change.
 - `get_workflow` no longer prepares content.deliver; website.change's preparation covers
   pages.
 
