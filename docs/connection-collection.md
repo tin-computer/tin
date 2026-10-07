@@ -28,6 +28,10 @@ Click **Continue collection** in the extension. It opens a collection tab, valid
 selected account and friend, applies the second-degree and keyword filters, and collects
 one page at a time. Chrome must remain open and awake. The popup can close.
 
+![Extension collection controls with a synthetic account](images/connection-extension.png)
+
+The preview uses synthetic account and run state.
+
 ## Resume and limits
 
 Each run pins its inputs and policy. Version 1 allows three friends, 20 pages and 200 people
