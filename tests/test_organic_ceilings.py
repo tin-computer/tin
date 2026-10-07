@@ -88,18 +88,18 @@ def test_content_plan_share_covers_its_one_model_call():
     pages = {
         "pages": [
             {"page_id": f"p{index:03d}", "status": "inspected", "source_id": "page:" + "0" * 64}
-            for index in range(1, editorial.POLICY["max_pages"] + 1)
+            for index in range(1, editorial.V8_POLICY["max_pages"] + 1)
         ]
     }
     aliases = {f"s{index}": "keyword:" + "x" * 40 for index in range(400)}
     tokens = (
-        editorial.POLICY["max_input_bytes"]
-        + len(editorial.INSTRUCTIONS.encode())
+        editorial.V8_POLICY["max_input_bytes"]
+        + len(editorial.V8_INSTRUCTIONS.encode())
         + len(json.dumps(editorial.bound_schema(pages, aliases)).encode())
     )
     rate = LUNA["long_context"]
     bound = usd(
-        tokens * rate["cache_write"] + editorial.POLICY["max_output_tokens"] * rate["output"]
+        tokens * rate["cache_write"] + editorial.V8_POLICY["max_output_tokens"] * rate["output"]
     )
     assert bound < Decimal("0.10") < CONTENT_PLAN_SHARE_USD
 
@@ -107,16 +107,17 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 + first
-        # refresh $2.50 + Page decisions $1 = $18.50 ($23.50 with a technical fix); the pool
-        # caps the run at the keyword limit + $10 + the refresh's $2.50 + Page decisions' $1.
-        ({}, 15.5),
-        ({"content_delivery": "draft_only"}, 13.5),  # $13.50 of children, under the pool
+        # Children add up to keyword $2 + audit $2 + plan $6 (its planning agent) + draft $5 +
+        # adaptation $5 + first refresh $2.50 + Page decisions $1 = $23.50 ($28.50 with a
+        # technical fix); the pool caps the run at the keyword limit + $10 + the refresh's
+        # $2.50 + Page decisions' $1 + the planning agent's extra $5.
+        ({}, 20.5),
+        ({"content_delivery": "draft_only"}, 18.5),  # $18.50 of children, under the pool
         (
             {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
-            15.5,
+            20.5,
         ),
-        ({"keyword_max_cost_usd": 9}, 22.5),  # a founder's higher keyword limit raises the pool
+        ({"keyword_max_cost_usd": 9}, 27.5),  # a founder's higher keyword limit raises the pool
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):

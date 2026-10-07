@@ -87,7 +87,12 @@ CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
 # reads the page's current text, a few positioning files and the style guide, then writes one
 # short document: about 150,000 input and 6,000 output tokens at list price, roughly $0.45.
 # Its ceiling is about five times that. No refresh has run yet; recalibrate from measurements.
-PROCEDURE_MAXIMUMS = {"content-refresh.v1": 2_500_000_000}
+PROCEDURE_MAXIMUMS = {
+    "content-refresh.v1": 2_500_000_000,
+    # content.plan_research reads the program's research and the project's files and searches
+    # before it plans up to 81 pages; a runaway guard, not an estimate.
+    "content-plan-portfolio.v1": 6_000_000_000,
+}
 
 
 def default_maximum(room=None):

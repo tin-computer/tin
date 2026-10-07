@@ -187,6 +187,7 @@ def test_concrete_procedure_packages_are_pinned_and_ui_renderable() -> None:
         "website.change",
         "content.generate",
         "content.refresh",
+        "content.plan_research",
         "organic.technical_fix",
         RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
         PUBLIC_ARTICLE_WORKFLOW_NAME,

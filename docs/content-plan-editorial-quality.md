@@ -88,3 +88,43 @@ charges the tokens the call actually used. Instructions, schema, page and input 
 At its bounds the call reads about 254,000 tokens and costs at most $0.088 at long-context
 rates, still under the $0.10 the plan's $1 share in the organic system is sized from. Plans
 pinned to v7 and older keep their caps.
+
+## A planning agent that fills every week (content-editorial-v9)
+
+`content.plan` 1.0.0 pins `content-editorial-v9`. Production plans under v8 held one to seven
+items for 52 slots: one model call read a frozen bundle, was told capacity is not a quota, and
+had no way to research competitors, page families or search results. v9 replaces the call
+with a planning agent and turns the quota rule around: judgment chooses which page comes next,
+never whether a week gets one.
+
+1. **Tin prepares** (`content_plan_research` activity): the v8 context and page inventory, plus
+   one competitor list merged from earlier steps (the audit's buyer panel `competitor_names`,
+   the keyword plan's search competitors with platforms left out, the newest competitor.watch
+   report; a competitor whose site AI answers cite gains that source), the other sites AI
+   answers cite, and the project files worth reading. It publishes this brief to
+   `reports/content-plan/{run}/brief/` (`BRIEF.md`, `context.json`, `research.json`,
+   `pages.json`).
+2. **The agent plans** (`content.plan_research`, a Codex procedure child of the plan, $6
+   ceiling): it reads the brief and the project's files whole (audit and keyword reports, Code
+   map, brand guide, Start here plan, founder notes, Page decisions, traffic snapshot), checks
+   competitors and search results on the web, and writes `PORTFOLIO.md` with a
+   `content-portfolio/1` JSON block: strategy, competitors and their use, page families with
+   their members, and opportunities in priority order. Formats: alternative, comparison,
+   roundup, workaround (the manual way), answer, family hub, family page, use case, guide,
+   refresh, update. Each item names its target search, evidence strength (measured, inferred,
+   bet), why it beat the alternatives, why it can win, the metric it should move and its
+   desk checks. The skill's `check_portfolio.py` runs Tin's checks inside the session so the
+   agent fixes problems before it ends.
+3. **Tin fills** (`content_plan_execute`): `content_plan_agent.normalize` keeps each usable
+   proposal in order and leaves out, with a named reason, a new page the site already has, an
+   item Page decisions rules out, an update of a page Tin does not know, a repeated title or
+   page. Page decisions' refreshes the agent missed go first. `fill` then puts items on the
+   weeks in order, each week up to its capacity; what does not fit is backlog. The plan's
+   strategy names what Tin left out and which weeks stay open. Every item stays
+   `needs_verification`; its format, evidence strength and target search travel with it
+   (hidden plan-item fields, absent on older plans).
+
+Nothing the agent paid for fails the run: an unusable portfolio still publishes a plan whose
+report names every reason. Only an agent run that did not finish fails the plan, with its
+reason. Plans pinned to v8 and older keep their single model call. The organic system's v8
+recipe (`organic-traffic-v8`) sizes the plan's share of its pool for the agent.

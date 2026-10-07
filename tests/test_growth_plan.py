@@ -972,6 +972,8 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     hidden.add("visibility.audit")
     # The project-gated collector is separate from the general starter plan.
     hidden.add("connections.collect")
+    # content.plan's planning agent runs only inside content.plan.
+    hidden.add("content.plan_research")
     assert titles == {
         key: title
         for key, title in (

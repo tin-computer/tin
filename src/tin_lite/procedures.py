@@ -95,8 +95,12 @@ ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
 ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 BLOG_INDEX_PLAN_VALIDATOR = blog_index_plan.VALIDATOR
 CONTENT_REFRESH_VALIDATOR = "content-refresh.v1"
+# content.plan_research's portfolio (content_plan_agent): one validator, one run-owned path.
+CONTENT_PORTFOLIO_VALIDATOR = "content-plan-portfolio.v1"
+CONTENT_PORTFOLIO_PATH_TEMPLATE = "reports/content-plan/{run_id}/PORTFOLIO.md"
 ARTIFACT_VALIDATORS = frozenset(
     {
+        CONTENT_PORTFOLIO_VALIDATOR,
         "brand-design-capture.v1",
         ANALYTICS_BRIEF_VALIDATOR,
         BLOG_INDEX_PLAN_VALIDATOR,
@@ -989,6 +993,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                         PUBLIC_ARTICLE_VALIDATOR,
                         CONTENT_REFRESH_VALIDATOR,
                         BLOG_INDEX_PLAN_VALIDATOR,
+                        CONTENT_PORTFOLIO_VALIDATOR,
                     }
                 ):
                     raise ValueError("run-owned paths require a plain report or draft validation")
@@ -1050,6 +1055,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != GITHUB_REPOSITORY_WORKSPACE
         ):
             raise ValueError("A blog index plan is content.blog_index's run-owned PLAN.md.")
+        if output_validator == CONTENT_PORTFOLIO_VALIDATOR and (
+            definition.get("key") != "content.plan_research"
+            or output_path_template != CONTENT_PORTFOLIO_PATH_TEMPLATE
+            or output_media_type != "text/markdown"
+            or workspace_kind != PROJECT_STATE_WORKSPACE
+        ):
+            raise ValueError("A content portfolio is content.plan_research's PORTFOLIO.md.")
         if output_validator == CONTENT_REFRESH_VALIDATOR and (
             definition.get("key") != "content.refresh"
             or output_path_template != "content/refreshes/{run_folder}.md"
@@ -1539,6 +1551,10 @@ def validate_procedure_artifact(
         analytics_brief.validate(text)
     elif spec.output_validator == BLOG_INDEX_PLAN_VALIDATOR:
         blog_index_plan.validate(text)
+    elif spec.output_validator == CONTENT_PORTFOLIO_VALIDATOR:
+        from tin_lite import content_plan_agent
+
+        content_plan_agent.validate(text)
 
 
 def signup_walkthrough_activation(content: str) -> bool:

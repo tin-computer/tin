@@ -81,6 +81,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "complete_email_campaign",
         "complete_email_campaign_recipient",
         "content_plan_execute",
+        "content_plan_research",
         "content_plan_failure",
         "deliver_content_draft",
         "dispatch_scheduled_workflow",

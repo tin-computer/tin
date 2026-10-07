@@ -70,7 +70,7 @@ def test_clean_draft_notes_and_legacy_delivery_are_distinct():
 def test_planner_keeps_historical_instructions_and_new_scope_is_explicit():
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.plan")
     definition, _ = spec.definition_and_resource_files()
-    assert content_plan_editorial.contract(definition).POLICY["version"] == "content-editorial-v8"
+    assert content_plan_editorial.contract(definition).POLICY["version"] == "content-editorial-v9"
     old = deepcopy(definition)
     old.update(
         content_policy=content_plan_editorial.V3_POLICY,
@@ -81,7 +81,12 @@ def test_planner_keeps_historical_instructions_and_new_scope_is_explicit():
         content_plan_editorial.contract(old).INSTRUCTIONS == content_plan_editorial.V3_INSTRUCTIONS
     )
     assert "live product QA" not in content_plan_editorial.V3_INSTRUCTIONS
-    assert "optional later follow-up" in definition["content_instructions"]
+    assert "optional later follow-up" in content_plan_editorial.V8_INSTRUCTIONS
+    # v9's planning agent keeps the rule: verification is desk checks, never live product QA.
+    research = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.plan_research")
+    _, files = research.definition_and_resource_files()
+    skill = next(raw.decode() for path, raw in files.items() if path.endswith("SKILL.md"))
+    assert "No live product tests, sign-ups or sends." in " ".join(skill.split())
     draft = next(w for w in BUILTIN_WORKFLOWS if w.key == content_draft.KEY)
     _, resources = draft.definition_and_resource_files()
     prompt = next(raw.decode() for path, raw in resources.items() if path.endswith("PROMPT.md"))

@@ -43,10 +43,15 @@ TECHNICAL = {
 
 def test_v6_steps_and_v5_pins_are_unchanged():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
-    # New runs pin v7, which keeps v6's steps and adds the weekly measurement.
-    assert recipe.version_label == "0.7.0"
+    # New runs pin v8: v7's steps and weekly measurement, with the agent-planned content plan.
+    assert recipe.version_label == "0.8.0"
     assert recipe.definition["organic_system_policy"] == organic_system.POLICY
-    assert organic_system.POLICY["version"] == "organic-traffic-v7"
+    assert organic_system.POLICY["version"] == "organic-traffic-v8"
+    assert organic_system.MEASUREMENT_POLICY["version"] == "organic-traffic-v7"
+    assert organic_system.policy_steps(organic_system.POLICY) == organic_system.policy_steps(
+        organic_system.MEASUREMENT_POLICY
+    )
+    assert organic_system.measures_pages(organic_system.MEASUREMENT_POLICY)
     assert digest(organic_system.WEBSITE_POLICY) == V6_DIGEST
     for policy in (organic_system.WEBSITE_POLICY, organic_system.POLICY):
         v6 = organic_system.policy_steps(policy)
@@ -149,8 +154,8 @@ async def test_v6_pins_website_change_for_both_writer_steps(publication_db, monk
     )
     await f.system.organic_system_prepare(str(f.parent.id))
     prepared = (await f.db.get_effect(f"traffic:{f.parent.id}:prepare")).result
-    # New runs pin v7, which keeps v6's writer steps and adds the measurement packages.
-    assert prepared["policy"]["version"] == "organic-traffic-v7"
+    # New runs pin v8, which keeps v6's writer steps and v7's measurement packages.
+    assert prepared["policy"]["version"] == "organic-traffic-v8"
     assert prepared["definitions"]["snapshot"]["key"] == "organic.traffic_snapshot"
     assert prepared["definitions"]["decisions"]["key"] == "organic.content_efficacy"
     website = next(w for w in BUILTIN_WORKFLOWS if w.key == "website.change").definition
@@ -163,14 +168,20 @@ def test_the_v6_ceiling_still_covers_its_children():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY).definition
     website = next(w for w in BUILTIN_WORKFLOWS if w.key == "website.change").definition
     inputs = {"keyword_max_cost_usd": 2, "technical_fix": True, "content_delivery": "auto"}
-    v7 = service_terms(recipe, inputs=inputs)["maximum_nanos"]
-    v6, v5 = (
+    v8 = service_terms(recipe, inputs=inputs)["maximum_nanos"]
+    v7, v6, v5 = (
         service_terms({**recipe, "organic_system_policy": policy}, inputs=inputs)["maximum_nanos"]
-        for policy in (organic_system.WEBSITE_POLICY, organic_system.REFRESH_POLICY)
+        for policy in (
+            organic_system.MEASUREMENT_POLICY,
+            organic_system.WEBSITE_POLICY,
+            organic_system.REFRESH_POLICY,
+        )
     )
     assert v6 == v5
     # v7 adds Page decisions' $1 share; the snapshot makes no model call.
     assert v7 == v6 + 1_000_000_000
+    # v8's content plan runs its planning agent: its share grows from $1 to $6.
+    assert v8 == v7 + 5_000_000_000
     # Two website.change children (the technical step and the delivery) fit inside it.
     assert v6 >= 2 * api_terms(website, child=True)["maximum_nanos"]
 

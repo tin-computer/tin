@@ -647,6 +647,8 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "project.task",
         "growth.onboarding",
         "growth.onboarding_plan",
+        # content.plan's planning agent; only content.plan starts it.
+        "content.plan_research",
     }
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id in entries} | {
         "style.capture",

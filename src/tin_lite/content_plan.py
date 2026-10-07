@@ -65,6 +65,20 @@ def item_kind(item: dict) -> str:
 
 # How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
 KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+# How PLAN.md names a v9 item's format.
+FORMAT_LABELS = {
+    "alternative": "alternatives page",
+    "comparison": "comparison page",
+    "roundup": "best-tools page",
+    "workaround": "comparison with the manual way",
+    "answer": "answer page",
+    "family_hub": "page family hub",
+    "family_page": "page family member",
+    "use_case": "use-case page",
+    "guide": "guide",
+    "refresh": "page refresh",
+    "update": "page update",
+}
 # How PLAN.md names the sources of the site's page list (v7).
 SITE_SOURCE_LABELS = {
     "sitemap": "sitemap",
@@ -76,7 +90,21 @@ SITE_SOURCE_LABELS = {
 # A workflow whose report Tin turned into this item itself, with the page that backs it.
 COMPETITOR_WATCH = "competitor.watch"
 CONTENT_EFFICACY = "organic.content_efficacy"
-OPTIONAL_FIELDS = ("kind", "source", "evidence")
+OPTIONAL_FIELDS = ("kind", "source", "evidence", "format", "evidence_strength", "target_query")
+# What a v9 plan item is (content_plan_agent.FORMATS) and how strong its evidence is.
+Format = Literal[
+    "alternative",
+    "comparison",
+    "roundup",
+    "workaround",
+    "answer",
+    "family_hub",
+    "family_page",
+    "use_case",
+    "guide",
+    "refresh",
+    "update",
+]
 
 
 class ContentItem(Strict):
@@ -97,6 +125,11 @@ class ContentItem(Strict):
     # Hidden and left out when absent, like kind.
     source: SkipJsonSchema[Literal["competitor.watch", "organic.content_efficacy"] | None] = None
     evidence: SkipJsonSchema[str | None] = Field(default=None, max_length=500)
+    # Set by the v9 planner (content-editorial-v9): the page's format, whether its demand is
+    # measured, inferred or a bet, and the search it targets. Hidden and left out when absent.
+    format: SkipJsonSchema[Format | None] = None
+    evidence_strength: SkipJsonSchema[Literal["measured", "inferred", "bet"] | None] = None
+    target_query: SkipJsonSchema[str | None] = Field(default=None, max_length=200)
 
     @model_serializer(mode="wrap")
     def _without_absent_fields(self, handler):
@@ -357,7 +390,12 @@ def render_plan(
         "",
     ]
     decisions = {}
-    if editorial is not None:
+    if editorial is not None and editorial.get("planner"):
+        from tin_lite.content_plan_agent import summary_lines
+
+        lines += summary_lines(editorial, pages)
+        decisions = {d["item_id"]: d for d in editorial["decisions"]}
+    elif editorial is not None:
         inspected = sum(p["status"] == "inspected" for p in pages["pages"])
         lines += [
             "## Coverage and evidence",
@@ -461,6 +499,20 @@ def render_plan(
                     if item.get("source")
                     else []
                 ),
+                *(
+                    [
+                        f"Format: {FORMAT_LABELS.get(item['format'], item['format'])} · "
+                        f"evidence {item.get('evidence_strength', 'inferred')}"
+                        + (
+                            f" · target search: {markdown_text(item['target_query'])}"
+                            if item.get("target_query")
+                            else ""
+                        ),
+                        "",
+                    ]
+                    if item.get("format")
+                    else []
+                ),
                 f"Destination: {markdown_text(item['destination']) or 'To be decided'}",
                 "",
                 "Verify: " + "; ".join(markdown_text(v) for v in item["verification"]),
@@ -470,8 +522,17 @@ def render_plan(
                 f"Item: `{item['id']}`",
                 "",
             ]
-            if item["id"] in decisions:
-                lines += ["Page decision: " + markdown_text(decisions[item["id"]]["rationale"]), ""]
+            decision = decisions.get(item["id"]) or {}
+            if decision.get("rationale"):
+                lines += ["Page decision: " + markdown_text(decision["rationale"]), ""]
+            for name, key in (
+                ("Why this", "why"),
+                ("Why it can win", "win_case"),
+                ("Measure", "metric"),
+                ("Considered instead", "rejected"),
+            ):
+                if decision.get(key):
+                    lines += [f"{name}: {markdown_text(decision[key])}", ""]
     lines += [f"Plan SHA-256: `{digest(plan)}`", ""]
     return "\n".join(lines)
 
