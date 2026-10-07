@@ -14,6 +14,7 @@ from tin_lite.workflows import (
     AnswerPageWorkflow,
     CodeWorkflow,
     CodexProcedureWorkflow,
+    ConnectionCollectionWorkflow,
     DesignMdWorkflow,
     KeywordPlanWorkflow,
     OrganicAuditWorkflow,
@@ -26,6 +27,11 @@ from tin_lite.workflows import (
 
 FIXTURES = Path(__file__).parent / "fixtures"
 ACCEPTED_HISTORIES = (
+    (
+        ConnectionCollectionWorkflow,
+        "connections.collect:00000000-0000-4000-8000-000000000001",
+        FIXTURES / "connection_collection_v1_history.json",
+    ),
     (
         CodeWorkflow,
         "workflow.code:8d24bcc6-9000-4f5d-a31b-f839f133b459",

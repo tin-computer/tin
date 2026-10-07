@@ -66,6 +66,10 @@ resuming does not reset these limits. Earlier version-1 definitions keep their o
 collecting that observed account across projects. This is an observed account binding,
 not proof of ownership of another person's LinkedIn account.
 
+Long waits continue in a fresh Temporal history with the same run identifier. Preparation
+recovers the existing Postgres job; this does not reset deadlines, accepted pages or permission.
+The versioned workflow change replays the earlier collection history.
+
 The worker persists each batch before uploading it. Postgres acknowledges the exact batch
 before navigation. Duplicate acknowledgements, including the final page, are idempotent.
 A new device attempt gets a new generation and lease; stale uploads are rejected. Visible
