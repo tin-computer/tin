@@ -74,6 +74,25 @@ async def test_parent_publication_pins_children_on_first_sync_and_child_only_upg
     assert json.loads(storage.revisions[first][child.definition_path])["title"] == child.title
 
 
+async def test_content_plan_revisions_carry_the_planning_agent():
+    # content.plan 1.0.0 starts content.plan_research at its own pinned revision, and the
+    # organic system starts content.plan at the system's: both revisions carry the agent.
+    from tin_lite import content_plan, content_plan_agent
+
+    db, storage = catalog_database(), RegistrySnapshots()
+    await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
+    agent = next(
+        item for item in catalog.BUILTIN_WORKFLOWS if item.key == content_plan_agent.RESEARCH_KEY
+    )
+    definition, resources = agent.definition_and_files_with_wiki(WIKI)
+    for key in (content_plan.KEY, organic_system.KEY):
+        assert content_plan_agent.RESEARCH_KEY in catalog.pinned_children(key)
+        parent = next(item for item in catalog.BUILTIN_WORKFLOWS if item.key == key)
+        revision = storage.revisions[db.rows[parent.id].current_commit_sha]
+        assert json.loads(revision[agent.definition_path]) == definition
+        assert all(revision[path] == value for path, value in resources.items())
+
+
 async def test_catalog_collision_fails_before_any_registry_or_projection_write():
     db, storage = catalog_database(), RegistrySnapshots()
     builtin = catalog.BUILTIN_WORKFLOWS[-1]
