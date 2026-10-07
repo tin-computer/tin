@@ -598,6 +598,8 @@ class PrivateWorkflows:
 
 
 def workflow_source_view(workflow, settings):
+    from tin_lite.connection_collection import cloud_ready
+
     private = workflow.project_id is not None
     active = workflow.status == WorkflowStatus.ACTIVE
     available = not private or private_execution_ready(settings, workflow.project_id)
@@ -606,6 +608,11 @@ def workflow_source_view(workflow, settings):
         "definition_revision": workflow.current_commit_sha,
         "source": {"path": workflow.definition_path, "revision": workflow.current_commit_sha},
         "runtime_available": available,
+        **(
+            {"collection_availability": {"cloud_ready": cloud_ready(settings)}}
+            if workflow.executor == "connections.collect"
+            else {}
+        ),
         "allowed_actions": (["start", "save"] if active and available else [])
         + (["activate"] if private and available else [])
         + (["archive"] if private and active else []),

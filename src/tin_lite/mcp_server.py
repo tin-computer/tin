@@ -28,6 +28,7 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
+from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
 from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
@@ -2473,6 +2474,8 @@ def create_mcp_app(
                 project_id=parsed_project_id,
                 inputs=inputs,
             )
+            if workflow.executor == "connections.collect":
+                normalized_inputs = validate_collection_inputs(parsed_project_id, normalized_inputs)
             configured = await services.database.create_project_workflow(
                 project_id=parsed_project_id,
                 workflow_id=workflow.id,
@@ -2616,6 +2619,8 @@ def create_mcp_app(
                 project_id=parsed_project_id,
                 inputs=inputs,
             )
+            if getattr(workflow, "executor", None) == "connections.collect":
+                normalized_inputs = validate_collection_inputs(parsed_project_id, normalized_inputs)
             normalized_schedule = (
                 parsed_schedule.model_dump(mode="json") if parsed_schedule is not None else None
             )

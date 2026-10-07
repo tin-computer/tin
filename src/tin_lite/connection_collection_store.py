@@ -181,7 +181,7 @@ class CollectionStore:
         return record(row)
 
     async def prepare(self, run, policy):
-        inputs = CollectionInputs.model_validate(run.input)
+        inputs = CollectionInputs.model_validate({"project_id": str(run.project_id), **run.input})
         if str(run.project_id) != inputs.project_id or policy != POLICY:
             raise CollectionError("unsupported_collection_contract")
         async with self.db.pool.acquire() as conn, conn.transaction():

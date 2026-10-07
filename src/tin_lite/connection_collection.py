@@ -10,7 +10,9 @@ from typing import Literal
 from urllib.parse import parse_qs, quote, unquote, urlsplit, urlunsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+
+from tin_lite.workflow_inputs import WorkflowInputError
 
 KEY = "connections.collect"
 PROVIDER = "network.linkedin"
@@ -112,6 +114,27 @@ class CollectionInputs(ClosedModel):
         return value.strip()
 
 
+def validate_inputs(project_id: UUID, inputs: dict) -> dict:
+    """Validate caller inputs with trusted project context; return caller fields only."""
+    if "project_id" in inputs:
+        raise WorkflowInputError("project_id is bound by Tin and cannot be supplied as input")
+    try:
+        parsed = CollectionInputs.model_validate({**inputs, "project_id": str(project_id)})
+    except ValidationError as exc:
+        fields = {error["loc"][0] for error in exc.errors(include_input=False, include_url=False)}
+        if "friends" in fields:
+            message = (
+                "Enter 1–3 different LinkedIn profile URLs for your first-degree connections, "
+                "separated by commas. Names alone are not supported."
+            )
+        elif "keywords" in fields:
+            message = "Enter a keyword query of up to 300 characters on one line."
+        else:
+            message = "Choose Local only, Cloud preferred or Cloud only for collection."
+        raise WorkflowInputError(message) from None
+    return parsed.model_dump(exclude={"project_id"})
+
+
 INPUT_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -119,6 +142,11 @@ INPUT_SCHEMA = {
         "project_id": {"type": "string", "format": "uuid"},
         "friends": {
             "type": "array",
+            "title": "Friends' LinkedIn profile URLs",
+            "description": (
+                "Paste profile links for 1–3 first-degree connections, separated by commas. "
+                "Open each friend's LinkedIn profile and copy the URL from the address bar."
+            ),
             "minItems": 1,
             "maxItems": 3,
             "uniqueItems": True,
@@ -135,7 +163,17 @@ INPUT_SCHEMA = {
                 "without a keyword filter. Only your second-degree connections are included."
             ),
         },
-        "execution": {"type": "string", "enum": list(MODES), "default": "local_only"},
+        "execution": {
+            "type": "string",
+            "enum": list(MODES),
+            "default": "local_only",
+            "title": "Collection mode",
+            "description": (
+                "Local only uses your Chrome browser. Cloud preferred uses cloud collection "
+                "with a local backup when possible. "
+                "Keep Chrome open and awake for local collection."
+            ),
+        },
     },
     "required": ["project_id", "friends"],
 }
