@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Tin Computer for LinkedIn BETA",
   "description": "THIS EXTENSION IS FOR BETA TESTING. Connect LinkedIn to Tin and collect visible connections.",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "minimum_chrome_version": "120",
   "permissions": [
     "alarms",

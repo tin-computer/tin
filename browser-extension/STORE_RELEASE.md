@@ -2,7 +2,7 @@
 
 Update the [existing Chrome Web Store item](https://chromewebstore.google.com/detail/tin-computer-for-linkedin/eanmnipacaadfahphbcijncgpfkdcbec).
 Do not create a second item or upload an unpacked diagnostic build. The source version is
-0.4.0; the installation screen requires its setup protocol.
+0.4.1; the installation screen requires its setup protocol.
 
 1. Run the extension and collection tests, then `npm run package:store`. The packager emits
    a deterministic archive containing only the allowlisted runtime files and store manifest.

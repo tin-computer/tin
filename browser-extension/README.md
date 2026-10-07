@@ -17,8 +17,8 @@ again, it will say so. Change the choice or disconnect under **Integrations → 
 
 ## Development and release
 
-This is version 0.4.0 of the existing published Tin extension, not a separate store item.
-The store link requires a 0.4.0 release; merging this source does not update installed
+This is version 0.4.1 of the existing published Tin extension, not a separate store item.
+The store link requires a 0.4.1 release; merging this source does not update installed
 extensions. See [store release](STORE_RELEASE.md).
 
 For an operator pilot before the store update, open `chrome://extensions`, enable

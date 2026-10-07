@@ -23,6 +23,31 @@ async function pageFor(t, html, url = searchURL()) {
 }
 const read = (page, run, timeout = 1000) => page.evaluate(({ run, timeout }) => TinLinkedIn.snapshot(run, { poll: 15, timeout }), { run, timeout });
 
+test("reads only the bounded embedded search identifier and rejects ambiguity", async t => {
+  const query = "voyagerSearchDashClusters." + "a".repeat(32);
+  const html = resultsHTML() + `<code hidden id="bpr-guid-fixture" data-request="/voyager/api/graphql?queryId=${query}">{"private":"not returned"}</code><main><p>voyagerSearchDashClusters.${"b".repeat(32)}</p></main>`;
+  const page = await pageFor(t, html);
+  const evidence = await page.evaluate(() => TinLinkedIn.searchContract());
+  assert.deepEqual(evidence.actor,selection.actor);assert.equal(evidence.query_id,query);
+  assert.equal(evidence.diagnostics.query_found,true);
+  assert.equal(JSON.stringify(evidence).includes("not returned"),false);
+  await page.evaluate(() => {
+    const data = document.createElement("script");data.type="application/json";data.textContent=JSON.stringify({queryId:"voyagerSearchDashClusters."+"b".repeat(32)});document.body.append(data);
+  });
+  await assert.rejects(page.evaluate(() => TinLinkedIn.searchContract()), /ambiguous_search_contract/);
+});
+
+test("reads cached search requests from resource timing but ignores other origins", async t => {
+  const page = await pageFor(t, resultsHTML());
+  await page.evaluate(() => {
+    Object.defineProperty(performance,"getEntriesByType",{value:()=>[
+      {name:"https://unrelated.invalid/voyager/api/graphql?queryId=voyagerSearchDashClusters."+"b".repeat(32)},
+      {name:"https://www.linkedin.com/voyager/api/graphql?queryId=voyagerSearchDashClusters."+"a".repeat(32)}
+    ]});
+  });
+  assert.equal((await page.evaluate(() => TinLinkedIn.searchContract())).query_id,"voyagerSearchDashClusters."+"a".repeat(32));
+});
+
 const semanticNavigation = `<div role="banner"><a href="${selection.actor.profile_url}">${selection.actor.name}</a></div>`;
 for (const variant of ["h2", "role-heading", "plain-text", "aria-hidden", "hidden-first-heading", "no-landmark"]) {
   test(`selects the same profile with ${variant} markup and no site-specific classes`, async t => {

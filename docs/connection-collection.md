@@ -22,12 +22,17 @@ three steps: install Tin for Chrome, sign in to LinkedIn in the same Chrome prof
 return to Tin. It detects the extension version and account before enabling confirmation.
 Users choose **Cloud with browser backup**, **Cloud only**, or **This browser only** once.
 New workflow setup uses that choice as its default; existing saved workflows keep their mode.
+Saving the choice does not report cloud setup complete until the session is verified. A
+failed preparation stays in the setup dialog with a retry action. Connected accounts without
+a visible name show a connected-account label, not another account-selection prompt.
 
 ![First-time installation with synthetic content](images/linkedin-install.png)
 
 ![Confirm the account and collection choice](images/linkedin-setup.png)
 
-The published extension must be updated to 0.4.0 for this screen. See the extension's
+![Connected account using the shared integration details](images/linkedin-connected.png)
+
+The published extension must be updated to 0.4.1 for this screen. See the extension's
 [installation guide](../browser-extension/README.md) and [store release](../browser-extension/STORE_RELEASE.md).
 The setup page gives its five-minute, one-use pairing token an expected account and the
 user's selected mode. The extension creates a device bearer locally and sends its hash.
@@ -107,6 +112,12 @@ finalization. An account change or LinkedIn challenge requires attention, not an
 cloud/local retry.
 
 During setup the extension observes a supported search query and matching client context.
+The first search page may provide that identifier in its embedded data or cached resource
+timings without sending a fresh search request. Context stays bound to the tab that supplied
+it; only the validated identifier and structural diagnostics are retained from page data.
+If the initial view supplies no search identifier, setup still verifies and saves the login.
+The run then waits for Chrome to prepare the selected friend's view before dispatching cloud
+collection. An identifier observed later is saved with a session refresh between attempts.
 With a valid session, cloud execution resolves each newly selected friend using a fixed
 read-only request, requiring exact profile identity, linked first-degree evidence and a connections-view link
 inside that profile. A relationship badge alone does not establish list visibility.

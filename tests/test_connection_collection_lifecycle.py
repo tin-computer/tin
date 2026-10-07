@@ -293,17 +293,29 @@ async def test_cloud_prepares_new_friend_and_collects_without_browser(collection
     ]
 
 
+@pytest.mark.parametrize("query_present", [True, False])
 async def test_unsupported_cloud_preparation_waits_for_browser_without_resetting_progress(
     collection_db,
+    query_present,
 ):
     f = await prepared(collection_db)
+    if not query_present:
+        status = await f.connection.save_session(
+            f.project.id,
+            TOKEN,
+            {**f.upload, "query_id": None, "expected_generation": f.status["session_generation"]},
+        )
+        assert status["session_available"]
     job = await new_run(f)
+    calls = []
 
     class Cloud:
         async def page(self, *_):
+            calls.append(True)
             return {"error": "browser_preparation_required"}
 
     await step(f.store, Cloud(), f.cipher, job["run_id"])
+    assert len(calls) == int(query_present)
     pending = await f.store.pending(f.project.id, TOKEN)
     assert (
         pending["state"] == "waiting_browser"

@@ -6438,6 +6438,7 @@ function renderIntegrationCard(integration) {
   const connected = Boolean(integration.connection_id);
   const selected = integrationSelection(integration);
   const needsResource = connected && RESOURCE_SCOPED_INTEGRATIONS.has(integration.key) && !selected;
+  const needsLinkedInSetup = connected && integration.key === "network.linkedin" && !linkedInSetupReady(integration);
   const logoPaths = {
     "analytics.gsc": "/assets/integrations/google-search-console.svg",
     "infra.github": "/assets/integrations/github.svg",
@@ -6455,6 +6456,8 @@ function renderIntegrationCard(integration) {
       : integration.key === "analytics.posthog" ? "Choose a PostHog project" : "Choose a Search property"
     : integration.key === "analytics.posthog"
       ? integration.external_account_label || "PostHog"
+    : integration.key === "network.linkedin" && connected
+      ? linkedInAccountLabel(integration)
       : selected || integration.external_account_label || "Choose an account";
   const health = integration.key === "network.linkedin" && connected ? linkedInHealth(integration)
     : integration.key.startsWith("custom.api.")
@@ -6474,7 +6477,7 @@ function renderIntegrationCard(integration) {
       ? `checked ${timeLabel(integration.last_checked_at)}`
       : "ready for workflows";
   const unlocks = (integration.unlocks || []).join(" · ");
-  return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
+  return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource || needsLinkedInSetup ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
       <span class="integration-badge ${["infra.github", "infra.github_user"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
       <span class="integration-identity">
@@ -6484,7 +6487,9 @@ function renderIntegrationCard(integration) {
       <span class="integration-state-mark is-${escapeHtml(integration.status)}" aria-hidden="true"></span>
       ${connected ? `<span class="integration-primary">${escapeHtml(primary)}</span>
         <span class="integration-health">${escapeHtml(health)}</span>
-        ${RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
+        ${needsLinkedInSetup
+          ? `<button class="integration-row-action" type="button" data-integration-connect="network.linkedin" aria-haspopup="dialog">Finish setup</button>`
+          : RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
           ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Set up" : "Configure"}</button>`
           : `<button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">Configure</button>`}`
         : `<span class="integration-unlocks">would unlock ${escapeHtml(unlocks)}</span>
@@ -6584,10 +6589,16 @@ function renderIntegrationExpanded(integration) {
   if (integration.key === "network.linkedin") {
     const permission = integration.configuration?.collection_permission;
     const mode = {cloud_preferred:"Cloud with browser backup",cloud_only:"Cloud only",local_only:"This browser only"}[permission?.mode];
-    return `<div class="integration-expanded"><p>${escapeHtml(mode || "Finish setup to start collections from Tin.")}</p>
-      <p>${escapeHtml(linkedInHealth(integration))}</p><div class="integration-expanded-actions">
-      <button type="button" class="integration-reconnect" data-integration-connect="network.linkedin">${permission ? "Settings" : "Finish setup"}</button>
-      <button type="button" class="integration-disconnect" data-integration-disconnect="network.linkedin">Disconnect</button></div></div>`;
+    return `<div class="integration-expanded">
+      <div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(linkedInAccountLabel(integration))}</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Collection</span><span class="integration-detail-value">${escapeHtml(mode || "Not set up")}</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Access</span><span class="integration-detail-value">Read selected connections</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Unlocks</span><span class="integration-detail-value is-muted">${escapeHtml((integration.unlocks || []).join(" · "))}</span></div>
+      <div class="integration-control-footer">
+      <span>connected ${escapeHtml(integration.connected_at ? timeLabel(integration.connected_at) : "recently")} · via Tin extension</span>
+      <button type="button" class="integration-reconnect" data-integration-connect="network.linkedin">${linkedInSetupReady(integration) ? "Settings" : "Finish setup"}</button>
+      <button type="button" class="integration-disconnect" data-integration-disconnect="network.linkedin">Disconnect</button>
+      <button type="button" class="integration-done" data-integration-expand="network.linkedin">Done</button></div></div>`;
   }
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
   if (integration.key === "social.x") return renderXIntegrationExpanded(integration);
@@ -6719,13 +6730,23 @@ async function promptForIntegrationResource(providerKey) {
   await chooseIntegrationResource(providerKey);
 }
 
+function linkedInAccountLabel(integration) {
+  return integration.external_account_label || integration.configuration?.actor?.name || integration.configuration?.actor?.profile_url || "LinkedIn account connected";
+}
+
+function linkedInSetupReady(integration) {
+  const config = integration.configuration || {};
+  return config.collection_permission?.mode === "local_only" ||
+    (config.collection_permission && config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now());
+}
+
 function linkedInHealth(integration) {
   const config = integration.configuration || {}, permission = config.collection_permission;
   if (!permission) return "finish setup";
   if (permission.mode === "local_only") return "keep Chrome open while collecting";
   if (config.session_state === "reconnect") return "reconnect LinkedIn";
   if (config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now()) return `cloud access enabled${config.session_verified_at ? ` · checked ${timeLabel(config.session_verified_at)}` : ""}`;
-  return "open Chrome to finish cloud setup";
+  return "cloud setup incomplete";
 }
 
 function linkedInMessage(type, payload = {}, timeoutMs = 5000) {
@@ -6759,6 +6780,12 @@ function linkedInSetupError(code) {
     pairing_expired:"Setup timed out. Check again to continue.",
     legacy_retirement_pending:"The earlier Tin connection is still closing. Try connecting again shortly.",
     update_extension:"Update the Tin extension to version 0.4 or later, then refresh this Tin tab.",
+    refresh_linkedin_context:"Tin could not finish reading LinkedIn. Keep LinkedIn open and try again.",
+    search_setup_unavailable:"Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.",
+    ambiguous_search_contract:"Tin could not confirm LinkedIn search. Refresh LinkedIn and try again.",
+    cloud_setup_pending:"Cloud setup did not finish. Keep LinkedIn open and try again.",
+    login_or_checkpoint:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
+    platform_limit:"LinkedIn asked us to wait. Try connecting again later.",
   }[code] || "LinkedIn could not connect. Check that it is open in this Chrome profile, then try again.";
 }
 
@@ -6840,6 +6867,8 @@ async function confirmLinkedInConnection() {
       const grant = await api(`${prefix}/pairing`, {method:"POST",body});
       const paired = await linkedInMessage("PAIR", {grant:grant.grant}, 30000);
       if (paired?.project_id !== choice.context.projectId) throw new Error("account_changed");
+      choice.deviceProject = paired.project_id;
+      choice.existing = {configuration:{actor:choice.account}};
     }
     await linkedInMessage("WAKE");
     let ready = choice.mode === "local_only", cloudAvailable = true;
@@ -6851,7 +6880,7 @@ async function confirmLinkedInConnection() {
         let status;
         try { status = await linkedInMessage("DISCOVER", {}, 35000); } catch { break; }
         if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
-        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity"].includes(status.reason)) throw new Error(status.reason);
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit"].includes(status.reason)) throw new Error(status.reason);
         ready = status.session_available === true;
         cloudAvailable = status.cloud_available === true;
         if (ready || !cloudAvailable) break;
@@ -6859,6 +6888,7 @@ async function confirmLinkedInConnection() {
       }
     }
     if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
+    if (!ready && cloudAvailable) throw new Error("cloud_setup_pending");
     integrationProjectDialog.close();
     showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
     await bootstrap();

@@ -242,6 +242,7 @@ function createBackgroundHarness(options = {}) {
       },
     },
     tabs: {
+      onRemoved: eventTarget(),
       async query() {
         return cloneInto(context, options.linkedinTabs || []);
       },

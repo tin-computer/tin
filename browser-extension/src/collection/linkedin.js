@@ -19,6 +19,36 @@
     guard();
     return { actor: E.account(), ...E.selectedProfile() };
   }
+  function searchContract() {
+    guard();
+    if (location.pathname !== "/search/results/people/") fail("wrong_page");
+    const ids = new Set();
+    const resources = performance.getEntriesByType("resource").slice(-500);
+    const nodes = [...document.querySelectorAll('code[id^="bpr-guid-"], code[data-request], script[type="application/json"], [data-request-url]')].slice(0, 100);
+    const accept = value => {
+      if (/^voyagerSearchDashClusters\.[a-f0-9]{20,64}$/.test(value || "")) ids.add(value);
+    };
+    const request = value => {
+      try {
+        const url = new URL(value, location.origin);
+        if (url.origin === location.origin && url.pathname === "/voyager/api/graphql") accept(url.searchParams.get("queryId"));
+      } catch { /* Not a request URL. */ }
+    };
+    // Initial results can be embedded in the document or loaded from cache without
+    // a new request-header event. Read the query identifier, never the result data.
+    for (const entry of resources) request(entry.name);
+    let bytes = 0;
+    for (const node of nodes) {
+      request(node.getAttribute("data-request") || node.getAttribute("data-request-url") || "");
+      const content = node.textContent || "";
+      bytes += content.length;
+      if (bytes > 2_000_000) break;
+      for (const match of content.matchAll(/\bvoyagerSearchDashClusters\.[a-f0-9]{20,64}\b/g)) accept(match[0]);
+    }
+    if (ids.size > 1) fail("ambiguous_search_contract");
+    return { actor: E.account(), query_id: [...ids][0] || null,
+      diagnostics: {resource_entries:resources.length,bootstrap_nodes:nodes.length,query_found:ids.size === 1} };
+  }
   function readPage(run) {
     if (root.TinCollectorCancelled?.has(run.generation)) fail("collection_cancelled");
     guard();
@@ -85,5 +115,5 @@
     page.nextButton.click();
     return { clicked: true };
   }
-  root.TinLinkedIn = Object.freeze({ profile, snapshot, advance, diagnostics: E.diagnostics });
+  root.TinLinkedIn = Object.freeze({ profile, snapshot, advance, searchContract, diagnostics: E.diagnostics });
 })(globalThis);
