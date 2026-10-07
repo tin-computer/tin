@@ -219,6 +219,7 @@ class Settings(BaseSettings):
     linkedin_cloud_template: str | None = Field(default=None, alias="TIN_LITE_LINKEDIN_TEMPLATE")
     linkedin_cloud_enabled: bool = Field(
         default=False,
+        alias="TIN_LITE_LINKEDIN_CLOUD_ENABLED",
         validation_alias=AliasChoices(
             "TIN_LITE_LINKEDIN_CLOUD_ENABLED", "TIN_LITE_LINKEDIN_CLOUD_QUALIFIED"
         ),
