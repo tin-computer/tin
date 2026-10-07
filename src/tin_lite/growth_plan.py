@@ -810,6 +810,8 @@ def system_prompt(
         "clause, which code adds. Use only the workflow keys listed for this system, only modes in `schedule_modes` (`once` means "
         "on_demand), and give every name in `required_inputs` a value taken from this business; every value satisfies the workflow's "
         '`input_schema`: an enum input is exactly one of its listed values, and a string stays within its maxLength and under 600 characters. `weekdays` is empty unless mode is weekly; `local_time` is "HH:MM". Code sets visibility.audit\'s target. '
+        "Never restate a setting Tin keeps itself, such as the connected GitHub repository's name, in a free-text input like "
+        "`context`: Tin binds it, and a copy goes stale when the repository is renamed or moved. "
         "A workflow whose `configured_by` names another system is configured there: include it only if your role needs it, and code "
         "then copies that system's cadence, so your role_line names the work without stating a different cadence for it. Your "
         "system must keep at least one workflow if any listed workflow serves it; without a live site, drafts, research and "

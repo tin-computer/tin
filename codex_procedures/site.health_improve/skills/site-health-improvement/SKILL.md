@@ -13,7 +13,10 @@ Use the run inputs, live page, repository, and Tin's mandatory check as one fixe
 3. Select one issue with direct evidence. Prefer missing metadata, inaccessible naming, broken crawl
    primitives, or another mechanical defect that can be fixed without changing the product offer.
 4. Respect `focus`, `context`, and `change_budget`. Make the smallest complete change and preserve
-   unrelated templates, placeholders, layout, and behavior.
+   unrelated templates, placeholders, layout, and behavior. The repository Tin selected is the
+   founder's own choice: a different repository name in `context` or project notes is usually
+   left over from a rename or transfer. When the selected repository serves `site_url`, use it
+   and say in the body that the note is out of date.
 5. Do not add dependencies, trackers, external calls, secrets, generated assets, or broad refactors.
    Do not modify `.github/workflows/` or `.gitmodules`.
 6. After the edit, run the relevant checks this repository defines and this environment can
@@ -24,7 +27,10 @@ Use the run inputs, live page, repository, and Tin's mandatory check as one fixe
 7. If inspection finds no bounded, evidenced improvement, or every suitable one is already covered
    by an open pull request, change no files and return `outcome: "no_change"` with a title
    starting `No change:` and a body explaining what was inspected and why nothing is proposed.
-   Do not invent a change in order to have something to deliver.
+   Do not invent a change in order to have something to deliver. When something only the founder
+   can fix stopped you (the selected repository doesn't serve `site_url`, or a setting or access
+   the run needs is missing), start the title `No change: needs you:` followed by that fix in one
+   sentence, named the way they would find it in Tin. Tin pauses the schedule until it's fixed.
 8. Return a concise PR title and a Markdown PR body that records:
    - the live and repository evidence;
    - the exact change and why it is bounded;
