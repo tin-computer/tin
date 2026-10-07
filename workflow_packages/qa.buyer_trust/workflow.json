@@ -98,6 +98,28 @@
         "media_type": "text/markdown",
         "max_bytes": 32000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Signup report and Feature map", "fact": "from Files, signup is never walked again"},
+          {"id": "site", "kind": "surface", "label": "Your public site", "fact": "GET and HEAD only, never signs in"},
+          {"id": "gate", "kind": "step", "label": "Decide the verdict by rule", "fact": "PASS, FAIL or UNVERIFIED, fixes ranked"},
+          {"id": "claims", "kind": "step", "label": "Check price and refund claims", "fact": "against Feature map, plan, signup report"},
+          {"id": "report", "kind": "store", "label": "Trust report in project Files", "fact": "reports/BUYER_TRUST.md, under 32 KB"},
+          {"id": "review", "kind": "gate", "label": "Review the trust report", "fact": "no deadline, no fix starts on its own"},
+          {"id": "receipt", "kind": "receipt", "label": "Fixes ready to hand off", "fact": "site.health_improve inputs, or yours"}
+        ],
+        "edges": [
+          {"from": "context", "to": "site", "kind": "call"},
+          {"from": "site", "to": "gate", "kind": "call"},
+          {"from": "gate", "to": "claims", "kind": "call"},
+          {"from": "claims", "to": "report", "kind": "call"},
+          {"from": "report", "to": "review", "kind": "call"},
+          {"from": "review", "to": "receipt", "kind": "signal", "label": "approved"}
+        ]
+      }
     }
   }
 }

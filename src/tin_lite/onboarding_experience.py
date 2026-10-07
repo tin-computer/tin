@@ -12,7 +12,7 @@ from uuid import UUID
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import ValidationError
 
-from tin_lite.document_handoff import document_handoff
+from tin_lite.document_handoff import document_handoff, document_url
 from tin_lite.growth_onboarding import (
     CONTENT_DRAFT_KEYS,
     current_plan_text,
@@ -24,9 +24,9 @@ from tin_lite.growth_onboarding import (
     ui_links,
 )
 from tin_lite.growth_onboarding_activities import repaired_action_inputs
-from tin_lite.integrations import registered_integrations
+from tin_lite.integrations import connection_readiness, registered_integrations
 from tin_lite.product_urls import dashboard_url
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
 from tin_lite.workflow_definitions import ensure_schedule_allowed
 from tin_lite.workflow_inputs import WorkflowInputError, normalize_workflow_inputs
 
@@ -85,7 +85,7 @@ def result_links(settings: Any, run: Any) -> list[dict[str, Any]]:
             "run_id": str(run.id),
             "title": getattr(run, "workflow_name", "Result"),
             "kind": "review" if review else "report",
-            "url": f"{dashboard_url(settings)}/document/{run.id}?project={run.project_id}",
+            "url": document_url(settings, run),
             "artifact_path": run.artifact_path,
             "revision": run.canonical_commit_sha,
             **document_handoff(settings, run),
@@ -179,6 +179,7 @@ async def validate_plan(
                         timezone=timezone,
                     )
                     ensure_schedule_allowed(template.definition, schedule)
+                    require_saveable_schedule(schedule)
             except WorkflowInputError as exc:
                 cause = exc.__cause__
                 if isinstance(cause, ValidationError):
@@ -262,17 +263,27 @@ async def access_needs(
     }
     needs = []
     for provider in registered_integrations():
-        if provider.key not in relevant:
+        # Only the providers onboarding describes; others (a personal GitHub account, X)
+        # are set up by the workflows that need them.
+        if provider.key not in relevant or provider.key not in benefits:
             continue
         connection = live.get(provider.key)
-        connected = connection is not None and connection.status == "connected"
+        readiness = connection_readiness(connection, site_url=inputs.get("product_url") or None)
+        if readiness["ready"]:
+            status = "connected"
+        elif readiness["reason"] == "not_connected":
+            status = "not_connected"
+        else:
+            # Signed in, but the site, repository or project is not chosen (or is another one).
+            status = "needs_selection"
         decision = connections.get(provider.key, {})
         benefit, selection = benefits[provider.key]
         needs.append(
             {
                 "provider": provider.key,
                 "name": provider.name,
-                "status": "connected" if connected else "not_connected",
+                "status": status,
+                "next_action": readiness["next_action"],
                 "decision": decision.get("state", "open"),
                 "reason": decision.get("note", ""),
                 "requirement": "required" if provider.key in required else "recommended",
@@ -527,7 +538,8 @@ async def onboarding_experience(
             "providers": [
                 n["provider"]
                 for n in view["access_needs"]
-                if n["status"] != "connected" and n["decision"] != "declined"
+                # A signed-in connection needs its choice on Integrations, not another sign-in.
+                if n["status"] == "not_connected" and n["decision"] != "declined"
             ],
         },
         "requires_founder_choice": True,

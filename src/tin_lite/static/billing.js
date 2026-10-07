@@ -126,7 +126,7 @@ window.TinBilling = (() => {
     function render(data, payments) {
       const invoices = payments.filter((p) => safeLink(p.invoice_url, "invoice.stripe.com"));
       root.innerHTML = `<header class="workspace-header billing-heading"><h1>${data.is_admin ? "Billing" : "Spending"}</h1>
-        <span>${escape(workspaceName)} · Test mode</span></header>
+        <span>${escape(workspaceName)}${data.mode === "test" ? " · Test mode" : ""}</span></header>
         <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${data.is_admin ? "Available" : "Spent this month"}</span>
           <div class="billing-amount">${dollars(data.is_admin ? data.available_usd : data.spent_this_month_usd)}</div>
           ${data.is_admin ? "" : `<p>${escape(projectName)}</p>`}
@@ -136,11 +136,11 @@ window.TinBilling = (() => {
           <div class="billing-presets">${[10,25,100].map((n) => `<button type="button" data-amount="${n}">$${n}</button>`).join("")}</div>
           <input id="billing-amount" name="amount" type="number" min="${data.topup_min_cents / 100}" max="${data.topup_max_cents / 100}" step="0.01" value="10" required aria-describedby="billing-topup-help">
           <button class="billing-primary" type="submit">Add $10.00</button>
-          <small id="billing-topup-help">Checkout with Stripe · Test mode</small><p class="billing-error" role="alert"></p></form>` : ""}</div>
+          <small id="billing-topup-help">Checkout with Stripe${data.mode === "test" ? " · Test mode" : ""}</small><p class="billing-error" role="alert"></p></form>` : ""}</div>
         ${data.is_admin ? `<div class="billing-account"><div class="billing-account-row"><strong>Invoices</strong><span>${invoices.length ? `${invoices.length} available` : "None yet"}</span>
           ${invoices.length ? '<button data-invoices>View invoices →</button>' : ""}</div><div class="billing-account-row"><strong>Billing admin</strong><span>You</span></div></div>` : ""}
-        <section><h2>Project limits</h2><div class="billing-table"><div class="billing-policy-head"><span>Project</span><span>Monthly limit</span><span>Per run</span><span>At once</span><span></span></div>
-          ${data.policies.map((p) => `<div class="billing-policy-row"><strong>${escape(p.name)}</strong><span>${fromNanos(p.monthly_nanos)}</span><span>${fromNanos(p.per_run_nanos)}</span><span>${escape(p.concurrency ?? "—")}</span>
+        <section><h2>Project limits</h2><div class="billing-table"><div class="billing-policy-head"><span>Project</span><span>Monthly limit</span><span>Per run</span><span></span></div>
+          ${data.policies.map((p) => `<div class="billing-policy-row"><strong>${escape(p.name)}</strong><span>${fromNanos(p.monthly_nanos)}</span><span>${fromNanos(p.per_run_nanos)}</span>
             ${data.is_admin ? `<button data-limits="${escape(p.id)}">${p.revision ? "Edit" : "Set limits"} →</button>` : "<span></span>"}</div>`).join("")}</div><div data-policy-editor></div></section>
         <section><div class="billing-section-heading"><h2>Transactions</h2><button data-refresh>Refresh</button></div>
           ${!data.transactions.length ? '<p class="billing-empty">No transactions yet.</p>' : `<div class="billing-transactions">
@@ -182,7 +182,6 @@ window.TinBilling = (() => {
         <label>Per run (USD)<input name="perRun" type="number" min="0.01" step="0.01" value="${policy.per_run_nanos ? policy.per_run_nanos/1e9 : ""}" required></label>
         <label>Per scheduled run (USD)<input name="scheduledRun" type="number" min="0.01" step="0.01" value="${policy.schedule_max_nanos ? policy.schedule_max_nanos/1e9 : ""}" placeholder="Not enabled" aria-describedby="billing-schedule-help"></label>
         <small id="billing-schedule-help">Leave blank to keep paid scheduled runs off. Each run also stays within your other limits.</small>
-        <label>At once<input name="concurrency" type="number" min="1" max="20" step="1" value="${policy.concurrency || 1}" required></label>
         <footer><button type="button" data-cancel>Cancel</button><button type="submit" class="billing-primary">Save limits</button></footer><p role="alert"></p></form>`;
       const form = editor.querySelector("form");
       form.elements.monthly.focus();
@@ -191,7 +190,7 @@ window.TinBilling = (() => {
         event.preventDefault();
         const button = form.querySelector('[type="submit"]'); button.disabled=true;
         try {
-          await api(`/api/projects/${policy.id}/billing/limits`, {method:"PUT",body:JSON.stringify({monthly_nanos:Math.round(Number(form.elements.monthly.value)*1e9),per_run_nanos:Math.round(Number(form.elements.perRun.value)*1e9),concurrency:Number(form.elements.concurrency.value),expected_revision:policy.revision || 0,schedule_max_nanos:form.elements.scheduledRun.value ? Math.round(Number(form.elements.scheduledRun.value)*1e9) : null})});
+          await api(`/api/projects/${policy.id}/billing/limits`, {method:"PUT",body:JSON.stringify({monthly_nanos:Math.round(Number(form.elements.monthly.value)*1e9),per_run_nanos:Math.round(Number(form.elements.perRun.value)*1e9),expected_revision:policy.revision || 0,schedule_max_nanos:form.elements.scheduledRun.value ? Math.round(Number(form.elements.scheduledRun.value)*1e9) : null})});
           if (root.isConnected) await load();
         } catch(error) { form.querySelector('[role="alert"]').textContent=error.message; button.disabled=false; }
       });

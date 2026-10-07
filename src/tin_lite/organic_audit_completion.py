@@ -5,11 +5,13 @@ from copy import deepcopy
 from uuid import UUID
 
 from tin_lite.organic_audit import (
+    AI_ENGINE_POLICY_KEYS,
     AUDIT_POLICY,
     PANEL_PREPARATION_POLICY_KEYS,
     SITE_EVIDENCE_POLICY_KEYS,
     audit_paths,
     audit_policy,
+    bundle_sha256,
     digest,
 )
 
@@ -20,8 +22,11 @@ NEUTRAL_KEYS = {
     "answer_timeout_seconds",
     "check_applicability",
     "respect_sitemap",
+    # The billed ceiling, not how an answer is requested or graded.
+    "billing_maximum_usd",
     *SITE_EVIDENCE_POLICY_KEYS,
     *PANEL_PREPARATION_POLICY_KEYS,
+    *AI_ENGINE_POLICY_KEYS,
 }
 
 
@@ -33,7 +38,7 @@ def completion_seed(
     publication, artifacts = stages["publish"], stages["artifacts"]
     if (
         publication["canonical_commit_sha"] != revision
-        or publication["documents_sha256"] != digest(artifacts)
+        or publication["documents_sha256"] != bundle_sha256(source_id, artifacts)
         or publication["artifact_path"] != audit_paths(source_id)["AUDIT.md"]
     ):
         raise ValueError("Source publication proof does not match the completed audit")

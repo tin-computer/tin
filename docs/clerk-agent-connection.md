@@ -48,9 +48,61 @@ generic `openid` consent and project membership alone do not authorize access to
 In Clerk's OAuth application settings, enable JWT access tokens and resource audiences
 (`oauth_jwt_access_tokens: true`, `aud_claim_enabled: true`). The documented Backend API
 is `PATCH /v1/instance/oauth_application_settings`; change only the necessary fields.
-Keep the issuer, existing sign-in/signup/consent pages, default `openid` scope and
-supported-client registration settings unchanged. These are shared-instance settings:
-check other resource services before changing them.
+Keep the issuer, existing sign-in/signup/consent pages and supported-client registration
+settings unchanged. Configure client scopes as described below. These are shared-instance
+settings: check other resource services before changing them.
+
+### Client scopes and PKCE
+
+Tin requires `openid` for MCP access. This is separate from the identity scopes a host
+requests from Clerk: ChatGPT also requests the advertised OIDC `email` and `profile`
+scopes. Clerk advertises these in discovery even when an individual OAuth application's
+allowed scopes exclude them. Such a client fails with `invalid_scope` before sign-in.
+
+For ChatGPT clients, enable `openid email profile` and preserve Clerk's required
+`offline_access` scope. Do not add `public_metadata` or `private_metadata` for this
+integration. Keep consent enabled and require PKCE with `S256` on the client.
+Tin's resource metadata and per-tool required scope remain `openid`: identity scopes
+do not grant project membership or bypass exact resource binding.
+
+For dynamic clients that omit `scope` during registration, configure Clerk Dashboard →
+OAuth applications → Settings → Client onboarding → Default scopes for dynamic clients
+to `openid`, `email`, `profile`. The documented Backend API operation is:
+
+```http
+PATCH /v1/instance/oauth_application_settings
+Content-Type: application/json
+
+{"default_scopes":["openid","email","profile"]}
+```
+
+This default applies to new DCR registrations and first-contact CIMD clients that omit
+scopes; it does not override an explicit scope request or repair existing registrations.
+Existing ChatGPT applications need their allowed scopes updated separately in the
+Dashboard or with `PATCH /v1/oauth_applications/{oauth_application_id}`. The `scopes`
+field replaces the complete allowed set, so preserve any required existing scopes:
+
+```json
+{"scopes":"openid email profile offline_access","pkce_required":true}
+```
+
+Identify the exact application from the connection's client ID and registered callback;
+a name such as “ChatGPT” is not proof of identity. Preserve its client ID, secret and
+redirect URIs. ChatGPT reuses its registration, so deleting it or rotating its secret
+can break the connection. Copy the exact callback from the connection management page;
+the stable callback requires Clerk to advertise issuer identification and return the
+exact issuer in both successful and error responses.
+
+For shared instances, requiring PKCE on the ChatGPT application avoids changing unrelated
+clients. Before enabling instance-wide `pkce_required`, verify every existing client's
+compatibility. New registrations must also use S256; verify their effective PKCE policy
+as part of connection acceptance.
+
+References: [OpenAI MCP authentication](https://developers.openai.com/plugins/build/auth),
+[Clerk scopes and dynamic registration](https://clerk.com/docs/guides/configure/auth-strategies/oauth/how-clerk-implements-oauth),
+[MCP authorization](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization).
+
+### Resource verification
 
 Session authentication still uses Clerk's signature and origin verification, then requires
 the verified session ID and rejects access-token JWT types. OAuth JWTs cannot acquire
@@ -116,7 +168,7 @@ projects or grants. On September 14, the public environment showed email-code si
 already enabled, **password required at signup**, and no password sign-in factor. This
 explains why the actual signup component still showed a password despite the Paper design.
 
-Keep OAuth consent enabled and the existing `openid` default scope. The path settings
+Keep OAuth consent enabled and configure scopes as described above. The path settings
 and signup requirements are not exposed by Clerk's documented Backend API; use the
 signed-in admin dashboard, not a private dashboard API or exported browser cookies.
 

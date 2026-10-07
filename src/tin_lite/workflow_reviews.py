@@ -3,7 +3,7 @@
 import hashlib
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from tin_lite import content_draft, content_editorial_judgment
+from tin_lite import content_draft, content_editorial_judgment, page_assets
 from tin_lite.domain import RunStatus
 from tin_lite.project_files import safe_project_file_path
 from tin_lite.workflow_review_store import ReviewConflict, accept_approval, digest, unpack
@@ -62,19 +62,32 @@ class WorkflowReviews:
             or receipt.result.get("artifact_path") != artifact_run.artifact_path
         ):
             raise ReviewConflict("The saved copy does not match its publication proof.")
+        assets = page_assets.review_binding(receipt.result.get("checkpoint"))
         return artifact_run, {
             "run_id": str(artifact_run.id),
             "path": artifact_run.artifact_path,
             "revision": artifact_run.canonical_commit_sha,
             "sha256": (receipt.result.get("checkpoint") or {}).get("sha256"),
             "assessment": content_editorial_judgment.no_draft(receipt.result),
+            # Only drafts with figures or embeds carry this, so older tokens stay the same.
+            **({"assets": assets} if assets else {}),
         }
 
-    async def view(self, run_id, actor):
+    async def view(self, run_id, actor, post_id=""):
+        from tin_lite.x_feedback_service import XFeedback, supports
+
+        candidate = await self.db.get_run(run_id)
+        if await supports(self.db, candidate):
+            return await XFeedback(self.runtime, self.settings).view(run_id, actor, post_id)
+        from tin_lite.capture_revisions import STYLE_KEY, StyleProposalReview
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)
         if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if run.executor == STYLE_KEY and run.review_required:
+                return await StyleProposalReview(database=self.db, storage=self.storage).view(
+                    run_id, actor
+                )
             if await document_spec(self.db, self.storage, run):
                 return await ReviewedDocuments(database=self.db, storage=self.storage).view(
                     run_id, actor
@@ -148,7 +161,26 @@ class WorkflowReviews:
         trigger_client=None,
         trigger_source="manual",
         oauth_client_id=None,
+        post_id="",
     ):
+        from tin_lite.x_feedback_service import XFeedback, supports
+
+        candidate = await self.db.get_run(run_id)
+        if await supports(self.db, candidate):
+            # A writing guide may learn from reference files; a post keeps to its own facts.
+            return await XFeedback(self.runtime, self.settings).request_changes(
+                run_id=run_id,
+                actor=actor,
+                feedback=feedback,
+                request_id=request_id,
+                token=token,
+                reference_files=reference_files,
+                post_id=post_id,
+                billing_quote_id=billing_quote_id,
+                trigger_client=trigger_client,
+                trigger_source=trigger_source,
+                oauth_client_id=oauth_client_id,
+            )
         run, definition = await self.source(run_id, actor)
         if not isinstance(feedback, str) or not feedback.strip() or len(feedback) > 8000:
             raise ValueError("Describe the changes in 1–8,000 characters.")
@@ -162,6 +194,10 @@ class WorkflowReviews:
         fingerprint = digest(
             {"run_id": str(run_id), "feedback": feedback, "files": paths, "token": token}
         )
+        # Read the view before the command: a concurrent identical request may
+        # supersede this version while the view is loading. Its committed command
+        # must still replay successfully before we reject the now-stale view.
+        view = await self.view(run_id, actor)
         existing = await self.db.pool.fetchrow(
             "SELECT * FROM workflow_review_commands WHERE project_id=$1 AND request_id=$2",
             run.project_id,
@@ -174,7 +210,6 @@ class WorkflowReviews:
             ):
                 raise ReviewConflict("This request ID already belongs to different feedback.")
             return await self.db.get_run(existing["successor_run_id"])
-        view = await self.view(run_id, actor)
         if token != view["review_token"] or not view["can_request_changes"]:
             raise ReviewConflict("This version cannot be revised. Open the current review first.")
         if (definition.definition.get("human_review") or {}).get("revision_adapter") != CAPABILITY:
@@ -296,11 +331,14 @@ class WorkflowReviews:
                 raise ValueError(
                     "These versions are too large for comparison. Read each full copy."
                 )
+            published = await self.db.get_effect(f"{version.id}:procedure_canonical_commit")
+            checkpoint = (published.result or {}).get("checkpoint") if published else None
             result[name] = {
                 "run_id": str(version.id),
                 "version": version.review_version,
                 "path": version.artifact_path,
                 "content": raw.decode("utf-8"),
+                "assets": page_assets.review_binding(checkpoint),
             }
         return result
 
@@ -333,10 +371,23 @@ class WorkflowReviews:
         return await self.db.get_run(run.id)
 
     async def approve(self, *, run_id, actor, token=None):
+        from tin_lite.x_feedback_service import XFeedback
+
+        candidate = await self.db.get_run(run_id)
+        if candidate and candidate.executor == "social.x_style":
+            return await XFeedback(self.runtime, self.settings).approve(
+                run_id=run_id, actor=actor, token=token
+            )
+
+        from tin_lite.capture_revisions import STYLE_KEY, StyleProposalReview
         from tin_lite.reviewed_documents import ReviewedDocuments, document_spec
 
         run = await self.db.get_run(run_id)
         if run and await self.db.has_project_access(project_id=run.project_id, clerk_user_id=actor):
+            if run.executor == STYLE_KEY:
+                return await StyleProposalReview(database=self.db, storage=self.storage).approve(
+                    run_id=run_id, actor=actor, token=token
+                )
             if await document_spec(self.db, self.storage, run):
                 return await ReviewedDocuments(database=self.db, storage=self.storage).approve(
                     run_id=run_id,

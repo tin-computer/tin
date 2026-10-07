@@ -55,7 +55,7 @@ def tin_state():
         "recent_runs": [],
         "workflows": [
             workflow("visibility.audit", "Audit AI visibility", required=("target",)),
-            workflow("content.answer_page", "Draft answer page"),
+            workflow("competitor.watch", "Watch competitors"),
             workflow(
                 "organic.audit",
                 "Audit organic search",
@@ -122,9 +122,11 @@ class FakeModel:
 
     def __init__(self, *, overrides=None, unusable=()):
         self.calls, self.overrides, self.unusable = [], overrides or {}, list(unusable)
+        self.caps = set()
 
     async def __call__(self, step, system, user, schema, max_out, effort):
         self.calls.append(step)
+        self.caps.add(max_out)
         if step in self.unusable:
             self.unusable.remove(step)
             raise plan.UnusableModelResult("response was truncated")
@@ -263,6 +265,7 @@ class FakeModel:
                     "answer": "Delivered by Organic traffic system: one article each Monday.",
                 }
             ],
+            "channels": [],
         }
 
     def _repair(self, step, user, schema):
@@ -290,6 +293,8 @@ async def test_fixture_run_produces_a_plan_setup_can_read():
     assert plan.route_for("scope") is plan.JUDGMENT_ROUTE
     assert plan.route_for("system:organic-traffic") is plan.DRAFTING_ROUTE
     assert {"facts", "profile", "scope", "table", "view"} <= set(model.calls)
+    # Every step's output cap is the same runaway guard, far below the models' 128,000.
+    assert model.caps == {plan.MAX_OUTPUT_TOKENS} == {32_000}
 
 
 async def test_code_not_the_model_decides_what_reaches_the_block():
@@ -301,10 +306,9 @@ async def test_code_not_the_model_decides_what_reaches_the_block():
     assert not keys & {"project.weekly_brief", "project.task", "content.plan"}
     # The market is an enum the workflow accepts, whatever prose the model offered.
     assert {w["inputs"]["market"] for w in workflows if "market" in w["inputs"]} <= {"US"}
-    # visibility.audit's target is the bare domain, set by code.
-    assert {w["inputs"]["target"] for w in workflows if w["key"] == "visibility.audit"} == {
-        "acmeforms.example"
-    }
+    # The organic traffic system's audit grades AI visibility, so Start here no longer adds
+    # the separate AI visibility audit beside it.
+    assert "visibility.audit" not in keys
     # One configuration per workflow, so setup never doubles a schedule.
     configs = {}
     for w in workflows:
@@ -337,6 +341,38 @@ async def test_plan_says_what_arrives_first_and_never_promises_publication():
     # The mailbox is requested only when the selected work needs it.
     needed = {i for item in block_of(text) for i in item["integrations"]}
     assert ("workspace.google" in connections) == ("workspace.google" in needed)
+
+
+class ChannelModel(FakeModel):
+    def _view(self, step, user, schema):
+        return {
+            **super()._view(step, user, schema),
+            "channels": [
+                {"platform": "linkedin", "why": "clinic managers read it at work."},
+                {"platform": "x", "why": "health-tech founders trade notes there"},
+                {"platform": "linkedin", "why": "named twice"},
+                {"platform": "reddit", "why": "practice owners ask for software there"},
+                {"platform": "instagram", "why": "a fourth is never shown"},
+            ],
+        }
+
+
+async def test_plan_suggests_social_channels_and_says_what_tin_does_on_each_today():
+    quiet = (await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, FakeModel()))["plan"]
+    assert "Social channels" not in quiet
+    text = (await plan.build_plan(inputs(), SITE, SITE_TEXT, TODAY, ChannelModel()))["plan"]
+    line = next(x for x in text.splitlines() if x.startswith("Social channels"))
+    assert line == (
+        "Social channels that likely fit your buyers: LinkedIn (clinic managers read it at work); "
+        "X (health-tech founders trade notes there); Reddit (practice owners ask for software "
+        "there)."
+    )
+    # Code, not the model, says what Tin does on each: X today, LinkedIn drafts, the rest not yet.
+    assert "ask your agent to run Draft for X when you're ready" in text
+    assert "Tin can draft LinkedIn posts from an article or a weekly social plan" in text
+    pieces = text.split("## Missing pieces\n", 1)[1].split("\n\n", 1)[0]
+    assert "- Tin doesn't prepare Reddit posts yet." in pieces
+    assert not re.search(r"(?i)coming soon", text)
 
 
 def test_workflow_inputs_are_held_to_the_input_schema():
@@ -614,12 +650,12 @@ async def test_the_organic_traffic_system_leads_and_starts_its_research_once():
 
 
 async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
-    def answer_pages_only(value, user):
+    def competitor_watch_only(value, user):
         return {
             **value,
             "workflows": [
                 {
-                    "key": "content.answer_page",
+                    "key": "competitor.watch",
                     "mode": "weekly",
                     "weekdays": ["tuesday"],
                     "local_time": "10:00",
@@ -629,12 +665,12 @@ async def test_code_adds_the_research_run_when_the_model_leaves_it_out():
         }
 
     state = with_research_run(tin_state())
-    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": answer_pages_only})
+    model = FakeModel(overrides={f"system:{plan.DEFAULT_SYSTEM}": competitor_watch_only})
     result = await plan.build_plan(inputs(tin_state=state), SITE, SITE_TEXT, TODAY, model)
     plan.validate_plan(result["plan"], state)
 
     lead = block_of(result["plan"])[0]
-    assert [w["key"] for w in lead["workflows"]] == [plan.DEFAULT_RUN, "content.answer_page"]
+    assert [w["key"] for w in lead["workflows"]] == [plan.DEFAULT_RUN, "competitor.watch"]
     # Without a model-written buyer context, code takes it from the facts it can cite.
     assert lead["workflows"][0]["inputs"]["buyer_context"] == (
         "Acme Forms sells a form builder for clinics."
@@ -930,11 +966,18 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
         ]["title"]
         for item in PUBLIC_WORKFLOWS
     }
-    assert (
-        titles
-        == {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
-        | public
-    )
+    # Workflows hidden from the organic system and discovery stay registered for saved
+    # configurations, but the plan never names them.
+    hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
+    hidden.add("visibility.audit")
+    assert titles == {
+        key: title
+        for key, title in (
+            {item.key: item.title for item in BUILTIN_WORKFLOWS if item.key not in onboarding_keys}
+            | public
+        ).items()
+        if key not in hidden
+    }
     assert set(plan.PROGRAMS["workflow_scope"]) == set(titles)
     assert {system["id"] for system in plan.RUBRIC["systems"]} == {row["id"] for row in programs}
     known = {param["id"] for param in plan.RUBRIC["params"]}
@@ -1464,7 +1507,7 @@ async def test_a_refused_plan_says_why_and_never_points_to_files(monkeypatch):
     # Nothing in this project is configurable without the model, so even the fallback is empty.
     db, activities, run = receipts_fixture(monkeypatch, declines_everything())
     for w in db.receipts[f"{run.id}:plan_context"].result["tin_state"]["workflows"]:
-        if w["key"] == "content.answer_page":
+        if w["key"] == "competitor.watch":
             w["required_inputs"] = ["question"]
     with pytest.raises(ApplicationError, match="final check: the plan offers no system") as exc:
         await activities.write(str(run.id))
@@ -1500,3 +1543,10 @@ async def test_failure_before_anything_was_written_does_not_send_the_founder_to_
     db.receipts[key] = EffectReceipt(key, plan.KEY, "started", None)
     await activities.failure(str(run.id))
     assert "Check Files for a saved result" in db.failures[-1]
+
+
+def test_onboarding_offers_no_social_channel():
+    # Which social channel a founder uses is decided after onboarding, by the founder, not
+    # chosen as a setup first run for them.
+    offered = {key for row in plan.PROGRAMS["programs"] for key in row["tin"]["workflows"]}
+    assert not {key for key in offered if key.startswith("social.")}

@@ -48,7 +48,7 @@ async def system_fixture(
     definitions = {w.key: w.definition for w in BUILTIN_WORKFLOWS}
     definitions["content.generate"] = f.workflow.definition
     resources = {}
-    for key in (organic_system.KEY, "content.deliver"):
+    for key in (organic_system.KEY, "content.deliver", "website.change"):
         spec = next(w for w in BUILTIN_WORKFLOWS if w.key == key)
         definition, files = spec.definition_and_resource_files()
         definitions[key] = definition
@@ -64,6 +64,26 @@ async def system_fixture(
             current_commit_sha="e" * 40,
             version_label=spec.version_label,
             definition=definition,
+        )
+    # v7's weekly measurement packages, published in the same registry revision.
+    from tin_lite.public_workflows import load_public_workflows
+
+    for package in await load_public_workflows():
+        if package.key not in organic_system.MEASURE_STEPS.values():
+            continue
+        definitions[package.key] = package.definition
+        resources.update(package.files)
+        await db.upsert_registry_workflow(
+            workflow_id=package.id,
+            key=package.key,
+            title=package.definition["title"],
+            description=package.definition["description"],
+            executor=package.executor,
+            definition_repo_id="registry/workflows",
+            definition_path=package.definition_path,
+            current_commit_sha="e" * 40,
+            version_label=package.definition["version"],
+            definition=package.definition,
         )
     read = f.storage.read_canonical_artifact
 
@@ -105,8 +125,19 @@ async def system_fixture(
         f"traffic:{f.parent.id}:prepare",
         {
             "definition_revision": "e" * 40,
-            "policy": policy or organic_system.POLICY,
-            "definitions": {step: definitions[key] for step, key in organic_system.STEPS.items()},
+            # These cases pin v5, whose delivery step is content.deliver.
+            "policy": policy or organic_system.REFRESH_POLICY,
+            "definitions": {
+                step: definitions[key]
+                for step, key in {
+                    **organic_system.policy_steps(policy or organic_system.REFRESH_POLICY),
+                    **(
+                        organic_system.MEASURE_STEPS
+                        if organic_system.measures_pages(policy)
+                        else {}
+                    ),
+                }.items()
+            },
             "input_sha256": digest(inputs),
             "content_delivery": intent,
         },
@@ -223,13 +254,27 @@ async def test_repository_switch_cannot_redirect_approved_system_article(
     f.runtime.integrations.github_create_pull_request.assert_not_awaited()
 
 
-async def test_no_copy_assessment_never_creates_delivery(publication_db, monkeypatch):
+@pytest.mark.parametrize(
+    ("outcome", "reason"),
+    [
+        ("already_covered", "already_covered"),
+        # A judgment that the evidence is too thin, or the brief needs revision, is also a
+        # result: the system run doesn't fail because the draft step chose no article.
+        ("insufficient_evidence", "editorial_attention_required"),
+        ("needs_replanning", "editorial_attention_required"),
+    ],
+)
+async def test_no_copy_assessment_never_creates_delivery(
+    publication_db, monkeypatch, outcome, reason
+):
     f = await system_fixture(publication_db, monkeypatch)
     result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "draft"})
-    run = await save(f, await f.db.get_run(UUID(result["run_id"])), assessment=True)
+    run = await save(
+        f, await f.db.get_run(UUID(result["run_id"])), assessment=True, outcome=outcome
+    )
     assert await f.delivery.status(run) is None
     result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "delivery"})
-    assert result == {"status": "skipped", "reason": "already_covered"}
+    assert result == {"status": "skipped", "reason": reason}
 
 
 async def test_stop_fences_delivery_and_preserves_waiting_draft(publication_db, monkeypatch):
@@ -271,10 +316,12 @@ async def test_explicit_draft_only_does_not_touch_github():
 def test_new_parent_cost_bounds_leave_historical_definition_unchanged():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     historical = {**definition, "organic_system_policy": organic_system.LEGACY_POLICY}
-    # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each.
+    # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each and the
+    # first page refresh $2.50 and v7's Page decisions $1 ($25.50 of children); the pool caps
+    # the drafting recipe at the keyword limit plus $10, the refresh's $2.50 and $1 ($22.50).
     assert service_terms(historical)["maximum_nanos"] == 12_000_000_000
-    assert service_terms(definition)["maximum_nanos"] == 22_000_000_000
+    assert service_terms(definition)["maximum_nanos"] == 22_500_000_000
     assert (
         service_terms(definition, inputs={"content_delivery": "draft_only"})["maximum_nanos"]
-        == 17_000_000_000
+        == 20_500_000_000
     )

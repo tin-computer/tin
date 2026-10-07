@@ -53,8 +53,8 @@ class ContentProgramNotSavedError(WorkflowInputError):
     def __init__(self, inputs: dict[str, Any]) -> None:
         super().__init__(
             "Save the content program to My system before starting it: call "
-            "create_project_workflow with workflow_id 'content.plan' and these inputs, then "
-            "start_project_workflow with the project_workflow_id it returns."
+            "create_project_workflow with workflow_id 'content.plan', these inputs and a weekly "
+            "schedule. Saving the schedule starts its first run."
         )
         self.inputs = inputs
 
@@ -67,6 +67,42 @@ class TemporalStartError(RuntimeError):
             else "Temporal workflow did not start"
         )
         self.run_id = run_id
+
+
+# Workflows retired for new work, with where the work goes instead.
+RETIRED = {
+    # website.change (source audit) runs the same repair with a founder decision per fix.
+    technical_fix.KEY: (
+        "organic.technical_fix is retired. Fix an audit's findings with website.change: "
+        "call preflight_website_change (source audit), let the founder approve the changes, "
+        "then start website.change with source audit."
+    ),
+    # Its triggers repeated the audit's orphan and competing-page checks, and nothing read
+    # its page tree, URL rules or navigation; page decisions plan redirects and noindex.
+    "organic.site_architecture": (
+        "organic.site_architecture is retired. The organic audit reports orphaned, deep and "
+        "competing pages, and page decisions (organic.content_efficacy) plan the redirects "
+        "and noindex changes website.change makes with source planned."
+    ),
+    # website.change adds each new article to the site's own index.
+    "content.blog_index": (
+        "content.blog_index is retired. website.change adds each published article to the "
+        "site's own index, and the organic audit reports posts nothing links to."
+    ),
+}
+RETIRED_WEBSITE_SOURCES = {
+    "blog_index": (
+        "website.change no longer builds blog index plans: content.blog_index is retired. "
+        "Use source audit or planned."
+    ),
+}
+
+
+def retired_for_new_work(key: str, inputs: dict[str, Any] | None) -> str | None:
+    """Why a new run of this workflow (or website.change source) is refused, if it is."""
+    if key == organic_system.WEBSITE_KEY:
+        return RETIRED_WEBSITE_SOURCES.get(str((inputs or {}).get("source") or ""))
+    return RETIRED.get(key)
 
 
 async def start_workflow_run(
@@ -92,6 +128,8 @@ async def start_workflow_run(
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
     _approval_delivery: bool = False,
+    _x_publication: bool = False,
+    _x_feedback: bool = False,
 ) -> WorkflowRun:
     implementation = registered_workflow_implementations().get(workflow.executor)
     if implementation is None:
@@ -119,6 +157,16 @@ async def start_workflow_run(
             # already-selected revision. create_run still checks actor, inputs and lineage.
             if definition_commit_sha is None:
                 definition_commit_sha = existing.definition_commit_sha
+    retired = retired_for_new_work(workflow.key, input_payload)
+    if (
+        retired
+        and existing is None
+        and retry_of_run_id is None
+        and project_workflow_id is None
+        and _organic_parent_run_id is None
+    ):
+        # Retries, saved schedules and older organic system runs keep what they pinned.
+        raise WorkflowInputError(retired)
     workflow = await resolve_execution_contract(
         storage=getattr(runtime, "storage", None),
         workflow=workflow,
@@ -158,6 +206,10 @@ async def start_workflow_run(
             raise WorkflowExecutorUnavailableError(
                 "Connection collection is unavailable on this project."
             )
+    if workflow.executor == "social.x_revise" and not _x_feedback:
+        raise WorkflowInputError("Read the X draft and use request_workflow_changes to revise it.")
+    if workflow.executor == "social.x_revise" and not getattr(settings, "luna_api_key", None):
+        raise WorkflowExecutorUnavailableError("X feedback requires the native model service.")
     schema = workflow.definition["input_schema"]
     normalized_inputs = normalize_workflow_inputs(
         schema=schema,
@@ -177,6 +229,64 @@ async def start_workflow_run(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
             raise LookupError("project not found")
+    if workflow.executor == "social.x_publish":
+        from tin_lite.x_posts import approved_payload
+
+        approval_id = normalized_inputs["approval_id"]
+        if (
+            not _x_publication
+            or start_idempotency_key != f"x-publish:{approval_id}"
+            or project_workflow_id
+        ):
+            raise WorkflowInputError("Preview the X post and explicitly confirm publication first.")
+        try:
+            await approved_payload(
+                runtime.database, approval_id, project_id, started_by_clerk_user_id
+            )
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not await runtime.database.has_project_access(
+            project_id=project_id, clerk_user_id=started_by_clerk_user_id
+        ):
+            raise LookupError("project not found")
+    if workflow.executor == "social.x_draft" and existing is None:
+        from tin_lite import x_draft
+
+        try:
+            x_draft.check_inputs(normalized_inputs)
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not getattr(settings, "luna_api_key", None):
+            raise WorkflowExecutorUnavailableError("X drafting requires the native model service.")
+    if workflow.executor == "social.x_style" and existing is None:
+        from tin_lite import x_style
+
+        try:
+            x_style.validate_inputs(normalized_inputs)
+        except ValueError as exc:
+            raise WorkflowInputError(str(exc)) from None
+        if not getattr(settings, "luna_api_key", None):
+            raise WorkflowExecutorUnavailableError(
+                "X style capture requires the native model service."
+            )
+        if normalized_inputs.get("sample_source") == "connected" or not any(
+            normalized_inputs.get(k) for k in ("supplied_samples", "source_path", "preferences")
+        ):
+            connection = await runtime.integrations.x.connection(
+                project_id, capability="x.posts.read"
+            )
+            if connection.configuration.get("protected") is not False:
+                raise WorkflowInputError(
+                    "Connect a public X account or supply your own writing samples."
+                )
+            if normalized_inputs.get("account_id") not in {
+                None,
+                "",
+                connection.external_account_id,
+            }:
+                raise WorkflowInputError(
+                    "The selected X account differs from the connected account."
+                )
     if existing is None and workflow.executor == "workflow.code":
         from tin_lite.workflow_code import validate_code_definition
 
@@ -245,7 +355,41 @@ async def start_workflow_run(
             )
         except ValueError as exc:
             raise WorkflowInputError(str(exc)) from exc
-    if workflow.key == technical_fix.KEY:
+    if workflow.key == technical_fix.KEY and technical_fix.batches(
+        technical_fix.definition_policy(workflow.definition)
+    ):
+        from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
+
+        try:
+            preview = await TechnicalFixSources(
+                database=runtime.database,
+                storage=runtime.storage,
+                integrations=runtime.integrations,
+                supported_checks=technical_fix.supported_checks(technical_fix.BATCH_POLICY),
+                batch=True,
+            ).batch(
+                project_id=project_id,
+                audit_run_id=UUID(normalized_inputs["audit_run_id"]),
+                audit_revision=normalized_inputs["audit_revision"],
+                expected_repository=normalized_inputs["expected_repository"],
+                repository_serves_site=normalized_inputs["repository_serves_site"],
+                finding_ids=normalized_inputs.get("finding_ids") or [],
+                decisions=normalized_inputs.get("decisions") or [],
+            )
+        except TechnicalFixError as exc:
+            raise WorkflowInputError(str(exc)) from exc
+        if not preview["plan"]["repairs"]:
+            waiting = len(preview["decisions_needed"])
+            raise WorkflowInputError(
+                "Nothing in this audit is ready to fix"
+                + (
+                    f": {waiting} finding{'s' if waiting != 1 else ''} wait for a decision. "
+                    "Answer preflight_technical_fix's decisions_needed and pass them as decisions."
+                    if waiting
+                    else "; its findings are copy, manual steps or need no change."
+                )
+            )
+    elif workflow.key == technical_fix.KEY:
         from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 
         try:
@@ -407,6 +551,19 @@ async def start_workflow_run(
             )
         except (ValueError, LookupError, IntegrationError) as exc:
             raise WorkflowInputError(str(exc)) from exc
+    if workflow.id == content_repository_delivery.WEBSITE_CHANGE_ID and existing is None:
+        from tin_lite import website_change
+
+        try:
+            create_arguments["content_delivery_source"] = await website_change.select_source(
+                database=runtime.database,
+                storage=runtime.storage,
+                integrations=runtime.integrations,
+                project_id=project_id,
+                inputs=normalized_inputs,
+            )
+        except (ValueError, LookupError, IntegrationError) as exc:
+            raise WorkflowInputError(str(exc)) from exc
     if project_workflow_id is not None:
         create_arguments["project_workflow_id"] = project_workflow_id
     if trigger_source != "manual":
@@ -438,7 +595,14 @@ async def start_workflow_run(
             create_arguments["draft_selection"] = await ContentDraftSources(
                 database=runtime.database, storage=runtime.storage
             ).choose(
-                project_id=project_id, inputs=normalized_inputs, retry_of_run_id=retry_of_run_id
+                project_id=project_id,
+                inputs=normalized_inputs,
+                retry_of_run_id=retry_of_run_id,
+                # The organic traffic system's own draft is its next article; its delivery
+                # step adapts articles only. Saved schedules draft every kind they pin.
+                kinds=(content_plan.ARTICLE,)
+                if _organic_parent_run_id is not None
+                else content_draft.supported_kinds(workflow.definition),
             )
             if _organic_parent_run_id is not None:
                 from tin_lite.organic_content import draft_intent
@@ -470,7 +634,11 @@ async def start_workflow_run(
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
-        if workflow.key in {content_draft.KEY, content_repository_delivery.KEY} or (
+        if workflow.key in {
+            content_draft.KEY,
+            content_repository_delivery.KEY,
+            "website.change",
+        } or (
             workflow.executor == "workflow.code"
             and (
                 workflow.definition.get("code", {}).get("approved_article") is not None
@@ -524,7 +692,8 @@ async def start_workflow_run(
         )
     )
     temporal_options = {}
-    if paid:
+    durable_dispatch = paid or workflow.executor in {"social.x_publish", "social.x_revise"}
+    if durable_dispatch:
         from temporalio.common import WorkflowIDReusePolicy
 
         temporal_options["id_reuse_policy"] = WorkflowIDReusePolicy.REJECT_DUPLICATE
@@ -543,9 +712,9 @@ async def start_workflow_run(
     except WorkflowAlreadyStartedError:
         return run
     except Exception as exc:
-        if paid:
+        if durable_dispatch:
             # The committed run/budget is the dispatch intent. A lost acknowledgment
-            # cannot release funds or mark a possibly running execution failed.
+            # cannot release funds or mark a possibly running external delivery failed.
             raise TemporalStartError(run.id, uncertain=True) from exc
         await runtime.database.project_failure(
             run_id=run.id,

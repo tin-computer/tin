@@ -117,6 +117,28 @@
         "media_type": "text/markdown",
         "max_bytes": 32000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "extract", "kind": "step", "label": "Sort the changelog lines", "fact": "one model call, code drops internal ones"},
+          {"id": "nothing", "kind": "ghost", "label": "No user-facing change", "fact": "the run stops, nothing is drafted"},
+          {"id": "newsletter", "kind": "step", "label": "Write the newsletter email", "fact": "one model call, no invented numbers"},
+          {"id": "social", "kind": "step", "label": "Write one post per channel", "fact": "X, LinkedIn, Reddit, HN, lengths checked"},
+          {"id": "drafts", "kind": "store", "label": "Drafts in project Files", "fact": "content/releases, only your release link"},
+          {"id": "review", "kind": "gate", "label": "Check what really shipped", "fact": "no deadline, Tin posts nothing"},
+          {"id": "receipt", "kind": "receipt", "label": "Drafts ready to post", "fact": "you post and send them, Tin never does"}
+        ],
+        "edges": [
+          {"from": "extract", "to": "newsletter", "kind": "call"},
+          {"from": "extract", "to": "nothing", "kind": "call", "label": "internal only"},
+          {"from": "newsletter", "to": "social", "kind": "call"},
+          {"from": "social", "to": "drafts", "kind": "call"},
+          {"from": "drafts", "to": "review", "kind": "call"},
+          {"from": "review", "to": "receipt", "kind": "signal", "label": "approved"}
+        ]
+      }
     }
   }
 }

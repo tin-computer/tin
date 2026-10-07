@@ -52,152 +52,19 @@ async def surface_fixture(monkeypatch, request):
         yield f
 
 
-def arguments(f):
-    return {
-        key: str(value) if key in {"project_id", "audit_run_id"} else value
-        for key, value in f.selection.items()
+async def test_retired_preview_routes_and_tools_are_gone(surface_fixture):
+    # organic.technical_fix is retired for new work; preflight_website_change previews repairs.
+    f = surface_fixture
+    f.token.subject = "member"
+    assert (await f.client.get(f"{f.root}/sources")).status_code in {404, 405}
+    assert (await f.client.post(f"{f.root}/preflight", json={})).status_code in {404, 405}
+    names = {tool.name for tool in await f.server.list_tools()}
+    assert not names & {
+        "list_technical_fix_sources",
+        "get_technical_fix_source",
+        "preflight_technical_fix",
     }
-
-
-async def test_all_http_and_mcp_surfaces_deny_before_source_or_provider_reads(surface_fixture):
-    f = surface_fixture
-    args = arguments(f)
-    body = {k: v for k, v in args.items() if k != "project_id"}
-    for suffix in ("/sources", f"/sources/{f.run.id}"):
-        assert (await f.client.get(f.root + suffix)).status_code == 404
-    assert (await f.client.post(f.root + "/preflight", json=body)).status_code == 404
-    for name, fields in (
-        ("list_technical_fix_sources", ["project_id"]),
-        ("get_technical_fix_source", ["project_id", "audit_run_id"]),
-        ("preflight_technical_fix", args),
-    ):
-        with pytest.raises(ToolError, match="project not found"):
-            await f.server.call_tool(name, {key: args[key] for key in fields})
-    f.db.get_run.assert_not_awaited()
-    f.db.pool.fetch.assert_not_awaited()
-    f.storage.read_canonical_artifact.assert_not_awaited()
-    f.integrations.github_repository_binding.assert_not_awaited()
-
-
-async def test_members_read_the_same_verified_source_and_preview_over_http_and_mcp(surface_fixture):
-    f = surface_fixture
-    f.token.subject = "member"
-    args = arguments(f)
-    body = {k: v for k, v in args.items() if k != "project_id"}
-    assert (await f.client.get(f.root + "/sources")).json()["sources"] == []
-    await f.server.call_tool("list_technical_fix_sources", {"project_id": args["project_id"]})
-    response = await f.client.get(f.root + f"/sources/{f.run.id}")
-    assert response.status_code == 200
-    assert response.json()["findings"][0]["source_eligible"] is True
-    await f.server.call_tool(
-        "get_technical_fix_source",
-        {
-            "project_id": args["project_id"],
-            "audit_run_id": args["audit_run_id"],
-        },
-    )
-    response = await f.client.post(f.root + "/preflight", json=body)
-    assert response.status_code == 200
-    assert response.json()["repository_mapping"] == "member_asserted_not_verified"
-    assert response.json()["execution_available"] is True
-    result = await f.server.call_tool("preflight_technical_fix", args)
-    assert result.structured_content == response.json()
-    assert f.integrations.github_repository_binding.await_count == 2
-    first, second = f.integrations.github_repository_binding.await_args_list
-    assert first == second
-    assert first.kwargs == {"project_id": f.project.id, "expected_repository": "owner/site"}
-
-
-@pytest.mark.parametrize("surface_fixture", ["content"], indirect=True)
-async def test_content_only_audit_is_visible_and_rejected_consistently(surface_fixture):
-    f = surface_fixture
-    f.token.subject = "member"
-    response = await f.client.get(f.root + f"/sources/{f.run.id}")
-    assert response.status_code == 200
-    result = await f.server.call_tool(
-        "get_technical_fix_source",
-        {"project_id": str(f.project.id), "audit_run_id": str(f.run.id)},
-    )
-    assert result.structured_content == response.json()
-    assert response.json()["repair_availability"]["reason"] == "no_technical_findings"
-    for row in response.json()["excluded_findings"]:
-        f.selection["finding_id"] = row["finding"]["id"]
-        args = arguments(f)
-        rejected = await f.client.post(
-            f.root + "/preflight", json={k: v for k, v in args.items() if k != "project_id"}
-        )
-        assert rejected.status_code == 409
-        assert rejected.json()["detail"] == {"code": "content_finding", "message": row["message"]}
-        with pytest.raises(ToolError, match="content_finding") as error:
-            await f.server.call_tool("preflight_technical_fix", args)
-        assert row["message"] in str(error.value)
-    f.integrations.github_repository_binding.assert_not_awaited()
-
-
-@pytest.mark.parametrize(
-    "change,code,status",
-    [
-        ("project", "source_not_found", 404),
-        ("revision", "source_changed", 409),
-        ("finding", "finding_not_found", 404),
-        ("receipt", "invalid_source", 409),
-        ("confirmation", "repository_confirmation_required", 409),
-        ("storage", "source_unavailable", 503),
-    ],
-)
-async def test_http_and_mcp_rejections_match_and_never_reach_github(
-    surface_fixture, change, code, status
-):
-    f = surface_fixture
-    f.token.subject = "member"
-    if change == "project":
-        f.run.project_id = uuid4()
-    elif change == "revision":
-        f.selection["audit_revision"] = "b" * 40
-    elif change == "finding":
-        f.selection["finding_id"] = "oa_" + "0" * 20
-    elif change == "receipt":
-        f.receipt.status = "started"
-    elif change == "confirmation":
-        f.selection["repository_serves_site"] = False
-    else:
-        f.storage.read_canonical_artifact.side_effect = RuntimeError("secret-provider-detail")
-    args = arguments(f)
-    response = await f.client.post(
-        f.root + "/preflight",
-        json={k: v for k, v in args.items() if k != "project_id"},
-    )
-    assert response.status_code == status
-    assert response.json()["detail"]["code"] == code
-    assert "secret-provider-detail" not in response.text
-    with pytest.raises(ToolError, match=code) as failure:
-        await f.server.call_tool("preflight_technical_fix", args)
-    assert "secret-provider-detail" not in str(failure.value)
-    f.integrations.github_repository_binding.assert_not_awaited()
-
-
-async def test_bad_selection_and_pagination_rejected_without_reads(surface_fixture):
-    f = surface_fixture
-    f.token.subject = "member"
-    body = {k: v for k, v in arguments(f).items() if k != "project_id"}
-    assert (
-        await f.client.post(f.root + "/preflight", json={**body, "repository_serves_site": "true"})
-    ).status_code == 422
-    assert (
-        await f.client.post(f.root + "/preflight", json={**body, "extra": "ignored?"})
-    ).status_code == 422
-    assert (await f.client.get(f.root + "/sources?offset=-1")).status_code == 422
-    with pytest.raises(ToolError, match="invalid_offset"):
-        await f.server.call_tool(
-            "list_technical_fix_sources", {"project_id": str(f.project.id), "offset": -1}
-        )
-    with pytest.raises(ToolError, match="repository_serves_site"):
-        await f.server.call_tool(
-            "preflight_technical_fix", {**arguments(f), "repository_serves_site": "true"}
-        )
-    f.db.get_run.assert_not_awaited()
-    f.db.pool.fetch.assert_not_awaited()
-    f.storage.read_canonical_artifact.assert_not_awaited()
+    assert {"stop_technical_fix", "preflight_website_change"} <= names
 
 
 def test_technical_fix_is_an_explicit_codex_catalog_template():
@@ -205,7 +72,9 @@ def test_technical_fix_is_an_explicit_codex_catalog_template():
 
     template = next(row for row in BUILTIN_WORKFLOWS if row.key == "organic.technical_fix")
     assert template.executor == "codex.procedure"
-    assert template.definition["procedure"]["output"]["repair_policy"] == "html-metadata-v3"
+    assert template.definition["procedure"]["output"]["repair_policy"] == "site-fix-v5"
+    assert template.definition["procedure"]["output"]["max_files"] == 20
+    assert template.definition["procedure"]["entry_skill"] == "audit-batch-repair"
 
 
 async def test_new_controls_enforce_membership_before_any_stop(surface_fixture):
@@ -216,7 +85,7 @@ async def test_new_controls_enforce_membership_before_any_stop(surface_fixture):
     for root in roots:
         assert (await f.client.post(f"{root}/runs/{f.run.id}/stop")).status_code == 404
     for name in ("stop_organic_system", "stop_technical_fix"):
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await f.server.call_tool(name, {"run_id": str(f.run.id)})
     f.db.stop_technical_fix.assert_not_awaited()
     f.runtime.temporal.get_workflow_handle.assert_not_called()

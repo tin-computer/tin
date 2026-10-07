@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, time, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from weakref import WeakValueDictionary
 from zoneinfo import ZoneInfo
 
@@ -37,6 +37,7 @@ from tin_lite.domain import (
     RunStatus,
     RunToolGrant,
     SideEffectConflictError,
+    StaleGenerationError,
     StaleSettingsRevisionError,
     StoppedRunHandle,
     StudioUsage,
@@ -45,16 +46,49 @@ from tin_lite.domain import (
     WorkflowRun,
     WorkflowStatus,
     Workspace,
+    result_line,
 )
 from tin_lite.projects import ProjectCreationConflictError
 from tin_lite.rollouts import RolloutFile
 from tin_lite.usage_capture import borrowed_connection, effect_connection
+from tin_lite.workflow_order import WORKFLOW_DISPLAY_ORDER
 
 logger = logging.getLogger(__name__)
 _warned_unknown_workflow_system_ids: set[str] = set()
 
-# One cheap, Postgres-only eligibility predicate for Decisions and its count.
-# Applying decisions stay visible until their uncertain outcome is settled.
+# One cheap, Postgres-only eligibility predicate for Decisions and its count: a run with
+# something to approve. A task asking a question waits on an answer, not a decision, and a
+# reviewed task that changed nothing has nothing to approve. While a task revising a run's
+# saved output waits or applies, only the newer version shows: the older one stays out of
+# Decisions and every count until that task is resolved.
+_DECISION_RUN_SQL = """
+    run.status = 'needs_input'
+    AND (run.review_required OR (
+        run.executor = 'project.task' AND run.task_phase = 'review'
+        AND run.task_has_changes IS NOT FALSE
+    ))
+    AND NOT EXISTS (
+        SELECT 1 FROM workflow_runs AS newer
+        WHERE newer.project_id = run.project_id
+          AND newer.executor = 'project.task'
+          AND newer.id <> run.id
+          AND run.artifact_path IS NOT NULL
+          AND newer.task_diff->'files'
+              @> jsonb_build_array(jsonb_build_object('path', run.artifact_path))
+          AND (
+              (newer.status = 'needs_input' AND newer.task_phase = 'review')
+              OR (newer.status = 'running' AND newer.task_phase = 'applying')
+          )
+    )
+"""
+
+# Decisions saved before outputs carried their heading and first sentence: the review line
+# only restated the workflow ("X is ready for your review."), or the title was generic.
+_GENERIC_REVIEW_TEXT_SQL = """
+    (decision.title = 'Review workflow output'
+     OR decision.explanation ~ '^[^.]*\\mis ready for your review\\.')
+"""
+
 # A one-off task that revises a run's saved output file: still waiting for approval, or
 # applied after that output was saved. Approving the run would otherwise use the older copy.
 _OUTPUT_REVISION_SQL = """
@@ -82,8 +116,9 @@ _OUTPUT_REVISION_SQL = """
     LIMIT 1
 """
 
+# Applying decisions stay visible until their uncertain outcome is settled.
 _PENDING_OUTPUT_CONFLICT_SQL = """
-    run.executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+    run.executor IN ('codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
     AND run.status IN ('failed', 'stopped') AND NOT run.lease_active
     AND run.canonical_commit_sha IS NULL
     AND run.retained_output->>'reason' = 'output_conflict'
@@ -91,7 +126,8 @@ _PENDING_OUTPUT_CONFLICT_SQL = """
     AND EXISTS (
         SELECT 1 FROM effect_receipts AS receipt
         WHERE receipt.execution_key = run.id::text || CASE WHEN run.executor='style.capture'
-            THEN ':style_artifact_persist' ELSE ':procedure_artifact_persist' END
+            THEN ':style_artifact_persist' WHEN run.executor='social.x_style'
+            THEN ':x_style_artifact_persist' ELSE ':procedure_artifact_persist' END
           AND receipt.status = 'completed'
           AND receipt.result->'checkpoint' = run.retained_output - 'reason'
           AND receipt.result->'checkpoint'->>'run_id' = run.id::text
@@ -127,6 +163,30 @@ def _email_campaign_progress_text(
             f"Waiting until {local_next.strftime('%a %H:%M').lower()} for the next approved email"
         )
     return "waiting", "Waiting for the next approved email"
+
+
+# A copy revision waiting for review holds every recipient's next send. Checking every minute
+# for as long as it waits grew each recipient's history without bound, so the wait lengthens.
+REVISION_WAITS = ((timedelta(minutes=10), 60), (timedelta(days=1), 15 * 60))
+REVISION_LONG_WAIT_SECONDS = 60 * 60
+
+
+def revision_wait_seconds(pending_for: timedelta) -> int:
+    for limit, seconds in REVISION_WAITS:
+        if pending_for < limit:
+            return seconds
+    return REVISION_LONG_WAIT_SECONDS
+
+
+# Run admission locks the project row FOR NO KEY UPDATE, not FOR UPDATE. It still serializes
+# admissions with each other and with deletion, but no longer blocks foreign-key checks
+# (FOR KEY SHARE). Settlement holds the workspace's billing account and then inserts ledger
+# rows that reference the project; admission holds the project and then locks that account.
+# With FOR UPDATE here the two waited on each other and Postgres aborted one, usually the
+# founder's run start.
+PROJECT_ADMISSION_LOCK = (
+    "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"
+)
 
 
 class Database:
@@ -1589,8 +1649,10 @@ class Database:
                 LEFT JOIN workflow_systems AS system
                   ON system.id = workflow.definition ->> 'system'
                 WHERE workflow.project_id IS NULL AND workflow.status <> 'archived'
-                ORDER BY (system.id IS NULL), system.display_order, system.name, workflow.key
-                """
+                ORDER BY (system.id IS NULL), system.display_order, system.name,
+                         array_position($1::text[], workflow.key) NULLS LAST, workflow.key
+                """,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         else:
             rows = await self.pool.fetch(
@@ -1605,9 +1667,11 @@ class Database:
                 WHERE (workflow.project_id IS NULL OR workflow.project_id = $1)
                   AND workflow.status <> 'archived'
                 ORDER BY workflow.project_id NULLS FIRST,
-                         (system.id IS NULL), system.display_order, system.name, workflow.key
+                         (system.id IS NULL), system.display_order, system.name,
+                         array_position($2::text[], workflow.key) NULLS LAST, workflow.key
                 """,
                 project_id,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         workflows = [_workflow(row) for row in rows]
         for workflow in workflows:
@@ -1633,15 +1697,25 @@ class Database:
                    (saved.workflow_id IS NOT NULL) AS saved,
                    count(configured.id) FILTER (
                        WHERE configured.status <> 'archived'
-                   )::integer AS project_workflow_count
+                   )::integer AS project_workflow_count,
+                   latest.id AS last_run_id,
+                   latest.finished_at AS last_run_at
             FROM workflows AS workflow
             LEFT JOIN saved_workflow_templates AS saved
               ON saved.workflow_id = workflow.id AND saved.clerk_user_id = $2
             LEFT JOIN project_workflows AS configured
               ON configured.workflow_id = workflow.id AND configured.project_id = $1
+            LEFT JOIN LATERAL (
+                SELECT id, finished_at
+                FROM workflow_runs
+                WHERE project_id = $1 AND workflow_id = workflow.id
+                  AND finished_at IS NOT NULL
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) AS latest ON true
             WHERE workflow.status <> 'archived'
               AND (workflow.project_id IS NULL OR workflow.project_id = $1)
-            GROUP BY workflow.id, saved.workflow_id
+            GROUP BY workflow.id, saved.workflow_id, latest.id, latest.finished_at
             """,
             project_id,
             clerk_user_id,
@@ -1650,6 +1724,8 @@ class Database:
             row["id"]: {
                 "saved": bool(row["saved"]),
                 "project_workflow_count": int(row["project_workflow_count"] or 0),
+                "last_run_id": row["last_run_id"],
+                "last_run_at": row["last_run_at"],
             }
             for row in rows
         }
@@ -1683,6 +1759,7 @@ class Database:
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
+                   (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1737,6 +1814,7 @@ class Database:
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
+                   (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1800,11 +1878,10 @@ class Database:
                       AND created_at >= date_trunc('month', now() AT TIME ZONE projects.timezone)
                           AT TIME ZONE projects.timezone)::integer
                        AS runs_this_month,
+                   -- The same items Decisions lists, so every count agrees.
                    (SELECT count(*) FROM workflow_runs AS run
                     WHERE run.project_id = projects.id AND (
-                        (run.status = 'needs_input'
-                         AND (run.review_required OR run.executor = 'project.task'))
-                        OR ({_PENDING_OUTPUT_CONFLICT_SQL})
+                        ({_DECISION_RUN_SQL}) OR ({_PENDING_OUTPUT_CONFLICT_SQL})
                     ))::integer
                        AS waiting_count,
                    (SELECT count(*) FROM activity_events
@@ -1928,6 +2005,7 @@ class Database:
                 SELECT configured.*, workflows.key AS workflow_key,
                        workflows.title AS workflow_title,
                        workflows.description AS workflow_description,
+                       (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                        workflows.version_label,
                        NULL::uuid AS last_run_id,
                        NULL::text AS last_run_status,
@@ -1940,6 +2018,14 @@ class Database:
                 request_id,
             )
             assert row is not None
+            # A retried request finds the row an earlier attempt saved; only a new row counts.
+            created = row["id"] == project_workflow_id
+            first_for_project = created and (
+                await conn.fetchval(
+                    "SELECT count(*) FROM project_workflows WHERE project_id = $1", project_id
+                )
+                == 1
+            )
             if (
                 row["workflow_id"] != workflow_id
                 or row["definition_commit_sha"] != definition_commit_sha
@@ -1977,6 +2063,21 @@ class Database:
                 ),
                 f"{name} saved to Your workflows.",
                 f"project-workflow:{row['id']}:settings:{row['settings_revision']}",
+            )
+        if created:
+            # Activation: a project saving its first workflow. Sent after the commit, from the
+            # one place every save goes through (dashboard, MCP, Start here, the systems).
+            analytics.capture(
+                "project_workflow_created",
+                distinct_id=created_by_clerk_user_id,
+                project_id=project_id,
+                properties={
+                    "project_workflow_id": str(row["id"]),
+                    "workflow": row["workflow_key"],
+                    "scheduled": schedule is not None,
+                    "cadence": (schedule or {}).get("cadence"),
+                    "first_for_project": first_for_project,
+                },
             )
         return _project_workflow(row)
 
@@ -2030,7 +2131,10 @@ class Database:
                     -- A skip names one occurrence of the old calendar; a new one disarms it.
                     skip_scheduled_for = CASE WHEN schedule IS DISTINCT FROM $5::jsonb
                         THEN NULL ELSE skip_scheduled_for END,
-                    status = 'provisioning', last_error = NULL,
+                    -- A pause stands through a settings save, including one that landed
+                    -- after the editor read the row; the sync reads it from this row.
+                    status = CASE WHEN status = 'paused' THEN 'paused' ELSE 'provisioning' END,
+                    last_error = NULL,
                     settings_revision = settings_revision + 1, updated_at = now()
                 WHERE id = $1 AND project_id = $2 AND status <> 'archived'
                   AND settings_revision = $6
@@ -2119,7 +2223,7 @@ class Database:
         await self.pool.execute(
             """
             UPDATE project_workflows
-            SET status = 'failed', last_error = $2, updated_at = now()
+            SET status = 'failed', last_error = $2, next_run_at = NULL, updated_at = now()
             WHERE id = $1 AND status <> 'archived'
             """,
             project_workflow_id,
@@ -2135,7 +2239,7 @@ class Database:
             SET status = $3, next_run_at = CASE WHEN $3 = 'paused' THEN NULL ELSE next_run_at END,
                 last_error = NULL, updated_at = now()
             WHERE id = $1 AND project_id = $2 AND schedule IS NOT NULL
-              AND status IN ('active', 'paused')
+              AND (status IN ('active', 'paused') OR ($3 = 'paused' AND status = 'failed'))
             RETURNING id
             """,
             project_workflow_id,
@@ -2337,10 +2441,7 @@ class Database:
                     f"content-program:{UUID(input_payload['program_id'])}",
                 )
             # Deletion tombstones under the same row lock, so admission never outlives it.
-            exists = await conn.fetchval(
-                "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR UPDATE",
-                project_id,
-            )
+            exists = await conn.fetchval(PROJECT_ADMISSION_LOCK, project_id)
             if not exists:
                 raise LookupError(f"project {project_id} does not exist")
             if review_transition is not None:
@@ -2422,6 +2523,15 @@ class Database:
                 raise RuntimeError(
                     "The pinned child definition does not match its registry identity"
                 )
+            if workflow["executor"] == "social.x_revise":
+                from tin_lite.x_feedback_service import guard_admission
+
+                await guard_admission(
+                    conn,
+                    project_id=project_id,
+                    inputs=input_payload,
+                    actor=started_by_clerk_user_id,
+                )
             if review_transition is not None:
                 origin = await conn.fetchrow(
                     "SELECT project_workflow_id, input FROM workflow_runs "
@@ -2453,11 +2563,16 @@ class Database:
                 if trigger_source == "schedule" and workflow["executor"] == "workflow.code":
                     from tin_lite.schedules import ScheduledWorkflowSkip
 
+                    # An automatic retry of a failed scheduled run is not an occurrence: it
+                    # needs the schedule still active, not the dispatcher's revision fence.
                     if (
                         configured is None
                         or configured["status"] != "active"
                         or configured["schedule"] is None
-                        or configured["settings_revision"] != schedule_settings_revision
+                        or (
+                            retry_of_run_id is None
+                            and configured["settings_revision"] != schedule_settings_revision
+                        )
                     ):
                         raise ScheduledWorkflowSkip("The saved schedule changed before dispatch.")
                     if started_by_clerk_user_id != configured[
@@ -2527,6 +2642,13 @@ class Database:
                     raise RuntimeError(
                         "Open the failed revision and use Retry revision to preserve its feedback."
                     )
+                # The project row lock above serializes admission, so concurrent retries
+                # with different request keys see each other: one retry per failed run.
+                if await conn.fetchval(
+                    "SELECT true FROM workflow_runs WHERE retry_of_run_id = $1 LIMIT 1",
+                    retry_of_run_id,
+                ):
+                    raise RuntimeError("this failed run has already been retried")
             executor = workflow["executor"]
             task_title: str | None = None
             if executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -2592,12 +2714,16 @@ class Database:
             elif code_project_files_source is not None:
                 raise ValueError("Project file revisions belong only to code workflows.")
 
-            if workflow_id == content_repository_delivery.WORKFLOW_ID:
+            if workflow_id in content_repository_delivery.ADAPTER_WORKFLOW_IDS:
                 if content_delivery_source is None:
                     raise ValueError(
                         "Select the approved article before creating its delivery run."
                     )
-                await content_repository_delivery.guard_source(
+                if workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    guard = content_repository_delivery.guard_source
+                else:
+                    from tin_lite.website_change import guard_source as guard
+                await guard(
                     conn,
                     project_id=project_id,
                     inputs=input_payload,
@@ -2633,7 +2759,10 @@ class Database:
                 # autonomy setting will resolve this boolean here, once, when the run starts.
                 review_required = True
             temporal_workflow_id = f"{executor}:{run_id}"
-            thread_id = str(project_workflow_id or workflow_id)
+            # A saved configuration is one lease lineage: a newer generation fences the older.
+            # Ad-hoc runs are independent jobs, so each gets its own lineage; sharing the
+            # workflow id let one run's sandbox attach revoke another run's lease.
+            thread_id = str(project_workflow_id) if project_workflow_id else f"run:{run_id}"
             generation = await conn.fetchval(
                 """
                 SELECT COALESCE(MAX(generation), 0) + 1
@@ -2684,7 +2813,11 @@ class Database:
             )
             assert row is not None
             await self._track_run(run_id, "run_created", conn=conn)
-            if trigger_source == "schedule" and executor == "workflow.code":
+            if (
+                trigger_source == "schedule"
+                and executor == "workflow.code"
+                and retry_of_run_id is None
+            ):
                 from tin_lite.schedules import WorkflowSchedule, next_run_after
 
                 await conn.execute(
@@ -2702,7 +2835,9 @@ class Database:
             if content_delivery_source is not None:
                 key = content_repository_delivery.source_key(run_id)
                 await self.start_effect(
-                    conn, execution_key=key, operation=content_repository_delivery.OPERATION
+                    conn,
+                    execution_key=key,
+                    operation=content_repository_delivery.SOURCE_OPERATIONS[workflow_id],
                 )
                 await self.complete_effect(conn, execution_key=key, result=content_delivery_source)
             if approved_article_source is not None:
@@ -3323,11 +3458,13 @@ class Database:
                    workflow.key AS workflow_key,
                    workflow.title AS workflow_title,
                    COALESCE(decision.kind, 'review') AS kind,
-                   -- Older reviews saved one generic title; name what they produced instead.
-                   CASE WHEN COALESCE(decision.title, 'Review workflow output')
-                           <>'Review workflow output'
+                   -- A review saved with a generic title, or one naming only the workflow, is
+                   -- named by what it produced, so repeat runs don't share a title.
+                   CASE WHEN decision.title IS NOT NULL
+                           AND decision.title NOT IN (
+                               'Review workflow output', 'Review: ' || workflow.title)
                        THEN decision.title
-                       ELSE 'Review: ' || COALESCE(output.title, workflow.title) END AS title,
+                       ELSE 'Review: ' || output.named END AS title,
                    COALESCE(
                        NULLIF(decision.explanation, ''),
                        CASE
@@ -3366,11 +3503,13 @@ class Database:
                    NULL::jsonb AS output_resolution,
                    COALESCE(run.review_requested_at, run.created_at) AS version_saved_at,
                    ({_OUTPUT_REVISION_SQL}) AS revision,
-                   output.title AS output_title
+                   output.named AS output_title
             FROM workflow_runs AS run
             JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            JOIN projects AS project ON project.id = run.project_id
             -- What the run produced, in its own words: the document's heading, the planned
-            -- article's brief, or the task's title.
+            -- article's brief, or the task's title. Without one, the workflow and the day it
+            -- was saved ("Social post batch · Sep 29").
             LEFT JOIN LATERAL (
                 SELECT COALESCE(
                     NULLIF(run.artifact_title, ''),
@@ -3383,8 +3522,12 @@ class Database:
                           AND receipt.status='completed'
                     ) END,
                     CASE WHEN run.executor = 'project.task'
-                        THEN NULLIF(run.task_title, '') END
-                ) AS title
+                        THEN NULLIF(run.task_title, '') END,
+                    workflow.title || ' · ' || to_char(
+                        COALESCE(run.review_requested_at, run.created_at)
+                            AT TIME ZONE project.timezone,
+                        'Mon FMDD')
+                ) AS named
             ) AS output ON true
             LEFT JOIN LATERAL (
                 SELECT pending.*
@@ -3393,13 +3536,7 @@ class Database:
                 ORDER BY pending.created_at DESC, pending.id DESC
                 LIMIT 1
             ) AS decision ON true
-            WHERE run.project_id = $1
-              AND run.status = 'needs_input'
-              -- A task asking a question waits on an answer, not a decision.
-              AND (run.review_required OR (
-                  run.executor = 'project.task' AND run.task_phase = 'review'
-                  AND run.task_has_changes IS NOT FALSE
-              ))
+            WHERE run.project_id = $1 AND ({_DECISION_RUN_SQL})
             UNION ALL
             SELECT run.id, run.id, run.project_id, workflow.key, workflow.title,
                    'output_conflict',
@@ -3451,9 +3588,172 @@ class Database:
         )
         return _json_object(value, field="output revision") if value is not None else None
 
-    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
-        row = await self.pool.fetchrow(
-            """
+    async def decisions_without_output_text(
+        self, *, project_id: UUID, limit: int
+    ) -> list[dict[str, Any]]:
+        """Pending reviews saved before outputs carried their heading and first sentence.
+
+        Only Markdown outputs at the revision the decision pins; the oldest first.
+        """
+        rows = await self.pool.fetch(
+            f"""
+            SELECT decision.id AS decision_id, run.id AS run_id,
+                   run.artifact_path AS path, run.canonical_commit_sha AS revision,
+                   decision.explanation, workflow.title AS workflow_title
+            FROM run_decisions AS decision
+            JOIN workflow_runs AS run ON run.id = decision.run_id
+            JOIN workflows AS workflow ON workflow.id = run.workflow_id
+            WHERE decision.project_id = $1 AND decision.status = 'pending'
+              AND decision.kind = 'review'
+              AND run.status = 'needs_input' AND run.review_required
+              AND run.review_decision IS NULL
+              AND lower(run.artifact_path) ~ '\\.(md|markdown)$'
+              AND decision.items->0->>'file' = run.artifact_path
+              AND decision.items->0->>'revision' = run.canonical_commit_sha
+              AND {_GENERIC_REVIEW_TEXT_SQL}
+            ORDER BY decision.created_at, decision.id
+            LIMIT $2
+            """,  # noqa: S608 — static SQL predicate, no caller text
+            project_id,
+            limit,
+        )
+        return [dict(row) for row in rows]
+
+    async def store_decision_output_text(
+        self,
+        *,
+        decision_id: UUID,
+        run_id: UUID,
+        revision: str,
+        previous_explanation: str,
+        workflow_title: str,
+        title: str | None,
+        explanation: str,
+    ) -> bool:
+        """Store an older review's heading and card line, once, if nothing changed meanwhile."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            stored = await conn.fetchval(
+                """
+                UPDATE run_decisions
+                SET explanation = $3,
+                    title = CASE WHEN title IN ('Review workflow output', 'Review: ' || $4)
+                        THEN left('Review: ' || COALESCE($5::text, $4), 160) ELSE title END
+                WHERE id = $1 AND run_id = $2 AND status = 'pending' AND explanation = $6
+                RETURNING true
+                """,
+                decision_id,
+                run_id,
+                explanation[:2000],
+                workflow_title,
+                title,
+                previous_explanation,
+            )
+            if stored and title:
+                await conn.execute(
+                    """
+                    UPDATE workflow_runs SET artifact_title = $2
+                    WHERE id = $1 AND artifact_title IS NULL AND canonical_commit_sha = $3
+                    """,
+                    run_id,
+                    title[:160],
+                    revision,
+                )
+        return bool(stored)
+
+    async def decline_review(
+        self, *, run_id: UUID, clerk_user_id: str, summary: str
+    ) -> WorkflowRun:
+        """Turn down a waiting proposal: the run ends as declined and nothing it proposed is used.
+
+        One decision per run, like an approval. The accepted command ends the waiting durable
+        run through the review dispatcher, which retries until Temporal accepts it.
+        """
+        async with self.pool.acquire() as conn, conn.transaction():
+            row = await conn.fetchrow(
+                "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if row is None:
+                raise LookupError(f"run {run_id} does not exist")
+            if row["review_decision"] == "declined":
+                return _run(row)
+            if (
+                not row["review_required"]
+                or row["review_decision"] is not None
+                or row["status"] != RunStatus.NEEDS_INPUT.value
+            ):
+                raise RuntimeError("This proposal is no longer waiting for a decision.")
+            if await conn.fetchval(
+                "SELECT true FROM workflow_review_commands WHERE source_run_id = $1", run_id
+            ):
+                raise RuntimeError("This proposal already has a review decision.")
+            artifact = {
+                "run_id": str(run_id),
+                "path": row["artifact_path"],
+                "revision": row["canonical_commit_sha"],
+            }
+            token = hashlib.sha256(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            await conn.execute(
+                """
+                INSERT INTO workflow_review_commands (
+                    id, project_id, request_id, actor_clerk_user_id, source_run_id, root_run_id,
+                    artifact_run_id, coordinator_run_id, action, request_digest, review_token,
+                    artifact
+                )
+                VALUES ($1, $2, $3, $4, $5, $5, $5, $5, 'decline', $6, $6, $7::jsonb)
+                """,
+                uuid4(),
+                row["project_id"],
+                uuid5(NAMESPACE_URL, f"tin:decline:{run_id}"),
+                clerk_user_id,
+                run_id,
+                token,
+                json.dumps(artifact),
+            )
+            row = await conn.fetchrow(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', review_decision = 'declined', reviewed_at = now(),
+                    reviewed_by_clerk_user_id = $2, finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    progress_summary = 'Discarded. The current guide is unchanged.',
+                    progress_updated_at = now()
+                WHERE id = $1
+                RETURNING *
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"declined"}'::jsonb,
+                    applied_at = now(), applied_by_clerk_user_id = $2
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+                clerk_user_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="human_review_declined",
+                details={
+                    "kind": "your_edits",
+                    "decision": "declined",
+                    "actor_clerk_user_id": clerk_user_id,
+                },
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{run_id}:human_review_declined",
+            )
+            await self._track_run(run_id, "run_review_recorded", conn=conn, decision="declined")
+        assert row is not None
+        return _run(row)
+
+    _PENDING_DECISION = """
             SELECT COALESCE(decision.id, run.id) AS id,
                    run.id AS run_id,
                    run.project_id,
@@ -3463,13 +3763,23 @@ class Database:
             FROM workflow_runs AS run
             LEFT JOIN run_decisions AS decision
               ON decision.run_id = run.id AND decision.status = 'pending'
-            WHERE run.status = 'needs_input'
-              AND (decision.id = $1 OR (decision.id IS NULL AND run.id = $1))
+            WHERE run.status = 'needs_input' AND {match}
             ORDER BY decision.created_at DESC NULLS LAST
             LIMIT 1
-            """,
+            """
+
+    async def get_pending_decision(self, *, decision_id: UUID) -> dict[str, Any] | None:
+        row = await self.pool.fetchrow(
+            self._PENDING_DECISION.format(
+                match="(decision.id = $1 OR (decision.id IS NULL AND run.id = $1))"
+            ),
             decision_id,
         )
+        return dict(row) if row is not None else None
+
+    async def get_pending_decision_for_run(self, *, run_id: UUID) -> dict[str, Any] | None:
+        """The run's decision waiting in Decisions, the way get_pending_decision reads it."""
+        row = await self.pool.fetchrow(self._PENDING_DECISION.format(match="run.id = $1"), run_id)
         return dict(row) if row is not None else None
 
     async def apply_run_decision(
@@ -4395,15 +4705,16 @@ class Database:
             row = await conn.fetchrow(
                 """
                 SELECT delivery.execution_key, delivery.status,
-                       delivery.campaign_run_id,
+                       delivery.campaign_run_id, campaign.status AS campaign_status,
                        campaign.external_account_id, campaign.daily_send_cap,
                        campaign.send_interval_seconds, campaign.send_window_start,
                        campaign.send_window_end, campaign.send_timezone,
-                       EXISTS (
-                           SELECT 1 FROM outreach_campaign_revisions AS revision
+                       (
+                           SELECT min(revision.requested_at)
+                           FROM outreach_campaign_revisions AS revision
                            WHERE revision.campaign_run_id = campaign.run_id
                              AND revision.status = 'pending'
-                       ) AS revision_pending
+                       ) AS revision_pending_since
                 FROM outreach_deliveries AS delivery
                 JOIN outreach_campaigns AS campaign
                   ON campaign.run_id = delivery.campaign_run_id
@@ -4420,6 +4731,9 @@ class Database:
                 return 0
             if row["status"] != "pending":
                 raise RuntimeError("outreach delivery cannot be reserved")
+            if row["campaign_status"] == "stopped":
+                # No slot is taken; the send step records the delivery as skipped.
+                return 0
 
             async def defer(seconds: int) -> int:
                 await conn.execute(
@@ -4434,8 +4748,8 @@ class Database:
                 await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
                 return seconds
 
-            if row["revision_pending"]:
-                return await defer(60)
+            if row["revision_pending_since"] is not None:
+                return await defer(revision_wait_seconds(current - row["revision_pending_since"]))
 
             await conn.execute(
                 "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
@@ -4516,6 +4830,18 @@ class Database:
             await self._refresh_email_campaign_progress(conn, run_id=row["campaign_run_id"])
         return 0
 
+    async def skip_outreach_delivery(self, *, execution_key: str, reason: str) -> None:
+        """Record that a reserved or pending delivery was never handed to the provider."""
+        await self.pool.execute(
+            """
+            UPDATE outreach_deliveries
+            SET status = 'skipped', error_code = $2, updated_at = now()
+            WHERE execution_key = $1 AND status IN ('pending', 'started')
+            """,
+            execution_key,
+            reason[:200],
+        )
+
     async def fail_outreach_delivery(
         self, *, execution_key: str, error_code: str, unknown: bool
     ) -> None:
@@ -4583,7 +4909,7 @@ class Database:
             error_code[:200],
         )
 
-    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any]:
+    async def complete_email_campaign(self, *, run_id: UUID) -> dict[str, Any] | None:
         async with self.pool.acquire() as conn, conn.transaction():
             counts = await conn.fetchrow(
                 """
@@ -4604,8 +4930,11 @@ class Database:
                 run_id,
             )
             assert counts is not None
-            if counts["failed_count"]:
-                raise RuntimeError("one or more email recipients failed")
+            status = await conn.fetchval(
+                "SELECT status FROM outreach_campaigns WHERE run_id = $1", run_id
+            )
+            if status == "stopped":
+                return None
             campaign = await conn.fetchrow(
                 """
                 UPDATE outreach_campaigns
@@ -4643,6 +4972,11 @@ class Database:
                 (
                     f"Email campaign delivered {counts['sent_count']} message(s) "
                     f"to {campaign['recipient_count']} recipient(s)."
+                    + (
+                        f" {counts['failed_count']} recipient(s) could not be sent."
+                        if counts["failed_count"]
+                        else ""
+                    )
                 ),
                 f"{run_id}:email_campaign_completed",
             )
@@ -4831,7 +5165,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("launch cannot complete in its current state")
@@ -5312,6 +5646,7 @@ class Database:
                 "paid_ads_monitor_stopped",
                 "Google Ads check",
             ),
+            "social.x_draft": ("x-draft", "x_draft_stopped", "X draft"),
         }[workflow_key]
         async with self.pool.acquire() as conn, self.project_state_lock(conn, project_id):
             async with conn.transaction():
@@ -5631,6 +5966,21 @@ class Database:
                 "SELECT * FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
             )
             assert run is not None
+            # A newer generation fences an older one, never the reverse: an older run that
+            # attaches late must not revoke the lease of the run that superseded it.
+            if await conn.fetchval(
+                """
+                SELECT true FROM workflow_runs
+                WHERE project_id = $1 AND thread_id = $2 AND lease_active = true
+                  AND id <> $3 AND generation > $4
+                LIMIT 1
+                """,
+                run["project_id"],
+                run["thread_id"],
+                run_id,
+                run["generation"],
+            ):
+                raise StaleGenerationError("a newer run of this configuration holds the lease")
             await conn.execute(
                 """
                 UPDATE workflow_runs
@@ -6330,15 +6680,37 @@ class Database:
         Every statement is a no-op on replay. Activity goes last so the events written by
         integration disconnects during the same deletion are swept too.
         """
+        # X approval keys outlive an individual run so retries cannot duplicate a post.
+        # Purge the owning project's frozen drafts and delivery metadata with its files.
+        await conn.execute(
+            """WITH approvals AS (
+                SELECT split_part(execution_key, ':', 3) AS id FROM effect_receipts
+                WHERE operation='social.x_publish' AND execution_key LIKE 'x:approved:%'
+                  AND result->>'project_id'=$1::text
+            )
+            DELETE FROM effect_receipts
+            WHERE operation IN ('social.x_publish', 'social.x_style', 'social.x_revise') AND (
+                (execution_key LIKE 'x:preview:%' AND result->>'project_id'=$1::text)
+                OR execution_key LIKE 'x:confirm:' || $1::text || ':%'
+                OR (split_part(execution_key, ':', 2) IN ('approved', 'media', 'post')
+                    AND split_part(execution_key, ':', 3) IN (SELECT id FROM approvals))
+                OR split_part(execution_key, ':', 1) IN (
+                    SELECT id::text FROM workflow_runs WHERE project_id=$1::uuid)
+            )""",
+            str(project_id),
+        )
         statements = (
             "DELETE FROM content_plan_revisions WHERE project_id = $1",
             "DELETE FROM content_plan_batches WHERE project_workflow_id IN "
             "(SELECT project_workflow_id FROM content_programs WHERE project_id = $1)",
             "DELETE FROM content_programs WHERE project_id = $1",
             "DELETE FROM workflow_review_commands WHERE project_id = $1",
+            "DELETE FROM capture_proposal_revisions WHERE project_id = $1",
             "DELETE FROM outreach_campaigns WHERE project_id = $1",
             "DELETE FROM run_tool_grants WHERE project_id = $1",
             "DELETE FROM run_decisions WHERE project_id = $1",
+            "DELETE FROM website_changes WHERE project_id = $1",
+            "DELETE FROM project_protected_paths WHERE project_id = $1",
             "DELETE FROM broker_grants WHERE run_id IN "
             "(SELECT id FROM workflow_runs WHERE project_id = $1)",
             "DELETE FROM run_rollouts WHERE run_id IN "
@@ -6346,6 +6718,11 @@ class Database:
             "DELETE FROM project_test_identities WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
+            # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
+            # one send receipt per invoice, keyed payment_recovery:<run or project>:...
+            "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "
+            "split_part(execution_key, ':', 2) IN (SELECT id::text FROM workflow_runs "
+            "WHERE project_id = $1 UNION SELECT $1::text)",
             "UPDATE integration_webhook_deliveries SET project_id = NULL WHERE project_id = $1",
             "DELETE FROM integration_connections WHERE project_id = $1",
             "DELETE FROM project_secrets WHERE project_id = $1",
@@ -6419,6 +6796,14 @@ class Database:
             error_message[:2000],
         )
 
+    async def discard_started_effect(self, conn: asyncpg.Connection, *, execution_key: str) -> None:
+        """Forget an effect the provider refused outright, so nothing happened and a later run
+        may try again. Completed effects are never discarded."""
+        await conn.execute(
+            "DELETE FROM effect_receipts WHERE execution_key = $1 AND status = 'started'",
+            execution_key,
+        )
+
     async def save_publication_intent(
         self, conn: asyncpg.Connection, *, execution_key: str, intent: dict[str, Any]
     ) -> None:
@@ -6452,6 +6837,113 @@ class Database:
             raise SideEffectConflictError(
                 "effect progress cannot replace a completed or failed effect"
             )
+
+    async def payment_recovery_sends(self, project_id: UUID) -> list[EffectReceipt]:
+        """Every recovery send attempt in a project: one receipt per emailed invoice."""
+        rows = await self.pool.fetch(
+            """
+            SELECT * FROM effect_receipts
+            WHERE operation = 'revenue.payment_recovery' AND execution_key LIKE $1
+            """,
+            f"payment_recovery:{project_id}:invoice:%",
+        )
+        return [_effect_receipt(row) for row in rows]
+
+    async def expire_payment_recovery_review(
+        self, *, run_id: UUID, summary: str, execution_key: str
+    ) -> bool:
+        """Close a recovery Decision nobody answered in time: the run stops unsent and the
+        next scheduled run may start. Returns False when someone decided first, including an
+        approval whose reviewer is recorded but whose signal has not landed yet."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            closed = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    result_summary = $2, progress_summary = $2, progress_updated_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND status = 'needs_input' AND review_decision IS NULL
+                  AND reviewed_by_clerk_user_id IS NULL
+                RETURNING id
+                """,
+                run_id,
+                result_line(summary),
+            )
+            if closed is None:
+                return False
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"expired"}'::jsonb,
+                    applied_at = now()
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_expired",
+                details={"kind": "runs", "status": "stopped"},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_expired",
+            )
+        await self._track_run(run_id, "run_review_recorded", decision="expired")
+        return True
+
+    async def complete_payment_recovery_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+        approved: bool,
+    ) -> None:
+        """A recovery run finishes with its result: after approval when it drafted emails, or
+        without a decision when Stripe had no failed payment to recover."""
+        async with conn.transaction():
+            projected = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'succeeded', canonical_commit_sha = $2, artifact_ref = $3,
+                    artifact_path = $4, result_summary = $5, error_message = NULL,
+                    finished_at = COALESCE(finished_at, now()), progress_percent = 100,
+                    progress_updated_at = now(), heartbeat_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND (NOT $6 OR (review_required AND review_decision = 'approved'))
+                  AND ($6 OR review_decision IS NULL)
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                RETURNING id
+                """,
+                run_id,
+                canonical_commit_sha,
+                artifact_ref,
+                artifact_path,
+                result_line(summary),
+                approved,
+            )
+            if projected is None:
+                raise SideEffectConflictError("recovery run cannot complete in its current state")
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_ready",
+                details={"kind": "runs", "status": "succeeded", "artifact_ref": artifact_ref},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_ready",
+            )
+            await self.complete_effect(
+                conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
+            )
+        await self._track_run(run_id, "run_succeeded", artifact_path=artifact_path)
 
     async def complete_organic_audit_projection(
         self,
@@ -6529,7 +7021,7 @@ class Database:
                 canonical_commit_sha,
                 artifact_ref,
                 artifact_path,
-                summary[:1000],
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("submission run cannot complete in its current state")
@@ -6564,6 +7056,10 @@ class Database:
             raise ValueError("Unsupported report result status")
         event, default_summary = {
             "style.capture": ("style_capture_ready", "Writing style is ready."),
+            "social.x_style": ("x_style_ready", "Your X writing guide is ready."),
+            "social.x_revise": ("x_revision_ready", "Your X revision is ready."),
+            "social.x_draft": ("x_draft_ready", "Your X draft is ready."),
+            "social.x_publish": ("x_post_published", "Your X post is published."),
             "growth.onboarding_plan": ("onboarding_plan_ready", "The growth plan is ready."),
             "content.plan": ("content_plan_ready", "Content plan is ready."),
             "organic.audit": ("organic_audit_ready", "Organic visibility audit is ready."),
@@ -6578,9 +7074,17 @@ class Database:
             ),
             "organic.traffic_system": ("organic_system_ready", "Organic traffic system finished."),
             "organic.technical_fix": ("technical_fix_ready", "Technical fix inspection finished."),
+            "content.refresh": ("content_refresh_ready", "No page is due for a refresh."),
+            # A website.change run with the audit's changes when the live site needs none.
+            "website.change": ("website_change_ready", "Website changes checked."),
         }[workflow_key]
         if final_status == "failed":
-            event = "organic_system_incomplete"
+            # technical_fix_ready becomes technical_fix_failed; the traffic system keeps its own.
+            event = (
+                "organic_system_incomplete"
+                if workflow_key == "organic.traffic_system"
+                else event.removesuffix("_ready") + "_failed"
+            )
         async with conn.transaction():
             projected = await conn.fetchval(
                 """
@@ -6588,14 +7092,27 @@ class Database:
                 SET status = $7, canonical_commit_sha = $2, artifact_path = $3,
                     artifact_ref = $4,
                     error_message = CASE WHEN $7 = 'failed' THEN $5::text ELSE NULL END,
-                    result_summary = COALESCE($5::text, result_summary),
+                    result_summary = COALESCE($8::text, result_summary),
                     progress_summary = CASE WHEN $6 = 'organic.audit'
-                        THEN COALESCE($5::text, progress_summary) ELSE progress_summary END,
+                        THEN COALESCE($8::text, progress_summary) ELSE progress_summary END,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_updated_at = now(), heartbeat_at = now()
                 WHERE id = $1 AND executor = $6
                   AND status NOT IN ('failed', 'stopped', 'superseded')
-                  AND (NOT review_required OR review_decision = 'approved')
+                  AND (NOT review_required OR review_decision = 'approved' OR (
+                    -- A page refresh with no page due ends before compute: nothing exists
+                    -- to review, and its saved preparation says so.
+                    workflow_id = '00000000-0000-4000-8000-000000000044'
+                    AND review_requested_at IS NULL AND review_decision IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM effect_receipts preparation
+                      WHERE preparation.execution_key = workflow_runs.id::text
+                        || ':content_refresh_prepare'
+                        AND preparation.operation = 'content_refresh_prepare'
+                        AND preparation.status = 'completed'
+                        AND preparation.result->'page' = 'null'::jsonb
+                    )
+                  ))
                   AND (canonical_commit_sha IS NULL OR canonical_commit_sha = $2)
                 RETURNING id
                 """,
@@ -6604,8 +7121,11 @@ class Database:
                 artifact_path,
                 artifact_ref,
                 summary,
-                "codex.procedure" if workflow_key == "organic.technical_fix" else workflow_key,
+                "codex.procedure"
+                if workflow_key in {"organic.technical_fix", "content.refresh", "website.change"}
+                else workflow_key,
                 final_status,
+                result_line(summary),
             )
             if projected is None:
                 raise SideEffectConflictError("report cannot complete in its current state")
@@ -6636,6 +7156,39 @@ class Database:
             run_id,
         )
 
+    async def clear_x_style_review_projection(self, run_id: UUID) -> None:
+        await self.pool.execute(
+            """UPDATE workflow_runs
+               SET canonical_commit_sha=NULL, artifact_ref=NULL, artifact_path=NULL,
+                   artifact_title=NULL
+               WHERE id=$1 AND executor='social.x_style' AND review_decision='approved'
+                 AND status='running'
+                 AND artifact_path LIKE 'style/proposals/%-x-writing-style-%'""",
+            run_id,
+        )
+
+    async def complete_x_publish_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+    ) -> None:
+        await self._complete_readonly_report_projection(
+            conn,
+            execution_key=execution_key,
+            run_id=run_id,
+            canonical_commit_sha=canonical_commit_sha,
+            artifact_path=artifact_path,
+            artifact_ref=artifact_ref,
+            summary=summary,
+            workflow_key="social.x_publish",
+        )
+
     async def retain_procedure_output(
         self,
         conn: asyncpg.Connection,
@@ -6652,7 +7205,9 @@ class Database:
         await conn.execute(
             """
             UPDATE workflow_runs SET retained_output = $2::jsonb
-            WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+            WHERE id = $1
+              AND executor IN (
+                  'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
               AND canonical_commit_sha IS NULL
               AND (NOT $3 OR retained_output IS NULL)
             """,
@@ -6671,7 +7226,9 @@ class Database:
     ) -> None:
         updated = await conn.fetchval(
             """UPDATE workflow_runs SET output_resolution = $2::jsonb
-               WHERE id = $1 AND executor IN ('codex.procedure', 'style.capture', 'workflow.code')
+               WHERE id = $1
+                 AND executor IN (
+                     'codex.procedure', 'style.capture', 'social.x_style', 'workflow.code')
                  AND status IN ('failed', 'stopped') AND NOT lease_active
                  AND canonical_commit_sha IS NULL
                  AND retained_output->>'reason' = 'output_conflict'
@@ -6868,33 +7425,44 @@ class Database:
         summary: str,
     ) -> None:
         async with conn.transaction():
+            # A content.generate run whose validated result drafts nothing (already covered,
+            # brief needs revision, coverage unknown) has nothing to review: it closes without
+            # one, and its row says so, so no reader takes it for a draft waiting in Decisions.
             projected = await conn.fetchval(
                 """
+                WITH no_draft AS (
+                  SELECT EXISTS (
+                    SELECT 1 FROM effect_receipts publication
+                    WHERE publication.execution_key
+                        = $1::uuid::text || ':procedure_canonical_commit'
+                      AND publication.operation = 'procedure_canonical_commit'
+                      AND publication.status = 'completed'
+                      AND publication.result->>'canonical_commit_sha' = $2
+                      AND publication.result->>'artifact_path' = $3
+                      AND publication.result->'content_editorial'->>'schema'
+                        = 'content-editorial-check.v1'
+                      AND publication.result->'content_editorial'->>'outcome'
+                        IN ('already_covered','needs_replanning','insufficient_evidence')
+                  ) AS found
+                )
                 UPDATE workflow_runs
                 SET status = 'succeeded', canonical_commit_sha = $2, artifact_path = $3,
                     artifact_ref = $4, retained_output = NULL, error_message = NULL,
                     finished_at = COALESCE(finished_at, now()), progress_percent = 100,
                     progress_mode = 'steps', progress_step = 'complete',
                     progress_current = 3, progress_total = 3, progress_summary = $5,
-                    progress_updated_at = now(), heartbeat_at = now()
+                    progress_updated_at = now(), heartbeat_at = now(),
+                    review_required = review_required AND NOT (
+                      workflow_id = '00000000-0000-4000-8000-000000000031'
+                      AND review_requested_at IS NULL AND review_decision IS NULL
+                      AND (SELECT found FROM no_draft)
+                    )
                 WHERE id = $1 AND executor IN ('codex.procedure', 'workflow.code')
                   AND status NOT IN ('failed', 'stopped', 'superseded')
                   AND (NOT review_required OR review_decision = 'approved' OR (
                     workflow_id = '00000000-0000-4000-8000-000000000031'
                     AND review_requested_at IS NULL AND review_decision IS NULL
-                    AND EXISTS (
-                      SELECT 1 FROM effect_receipts publication
-                      WHERE publication.execution_key = workflow_runs.id::text
-                        || ':procedure_canonical_commit'
-                        AND publication.operation = 'procedure_canonical_commit'
-                        AND publication.status = 'completed'
-                        AND publication.result->>'canonical_commit_sha' = $2
-                        AND publication.result->>'artifact_path' = $3
-                        AND publication.result->'content_editorial'->>'schema'
-                          = 'content-editorial-check.v1'
-                        AND publication.result->'content_editorial'->>'outcome'
-                          IN ('already_covered','needs_replanning','insufficient_evidence')
-                    )
+                    AND (SELECT found FROM no_draft)
                   ))
                 RETURNING id
                 """,
@@ -7271,6 +7839,13 @@ class Database:
         memory_index: str,
     ) -> None:
         async with self.pool.acquire() as conn, conn.transaction():
+            # Same guard as project_success: a stopped, failed or superseded run keeps its
+            # outcome, and its late result does not replace the project's memory pointer.
+            status = await conn.fetchval(
+                "SELECT status FROM workflow_runs WHERE id = $1 FOR UPDATE", run_id
+            )
+            if status in {"failed", "stopped", "superseded"}:
+                raise SideEffectConflictError("run cannot complete in its current state")
             updated = await conn.fetchval(
                 """
                 UPDATE projects
@@ -7686,6 +8261,7 @@ def _project_workflow(row: asyncpg.Record) -> ProjectWorkflow:
         workflow_key=row["workflow_key"],
         workflow_title=row["workflow_title"],
         workflow_description=row["workflow_description"],
+        workflow_drawn=bool(row.get("workflow_drawn")),
         version_label=row["version_label"],
         definition_commit_sha=row["definition_commit_sha"],
         name=row["name"],
@@ -7994,4 +8570,4 @@ def _failure_summary(executor: str) -> str:
     }.get(executor, "Workflow run")
     if executor == PROJECT_TASK_WORKFLOW_NAME:
         return f"{subject} could not finish."
-    return f"{subject} stopped before it finished."
+    return f"{subject} failed before it finished."

@@ -26,13 +26,26 @@ from tin_lite.workflow_code import example_files
 SCHEDULE = {"cadence": "daily", "local_time": "09:00", "timezone": "America/Los_Angeles"}
 
 
+# Saving a schedule over MCP also starts one run right away; these tests count only the runs
+# that scheduled occurrences start.
+SCHEDULED_RUNS = "SELECT count(*) FROM workflow_runs WHERE trigger_source='schedule'"
+SCHEDULED_BUDGETS = (
+    "SELECT count(*) FROM billing_run_budgets b JOIN workflow_runs r ON r.id=b.run_id "
+    "WHERE r.trigger_source='schedule'"
+)
+SCHEDULED_BUDGET_RUN = (
+    "SELECT b.run_id FROM billing_run_budgets b JOIN workflow_runs r ON r.id=b.run_id "
+    "WHERE r.trigger_source='schedule'"
+)
+
+
 async def prepared(f, monkeypatch, *, model=False, connected=False):
     server, common, code = await setup(f, monkeypatch)
     if model:
         common._settings.luna_api_key = SecretStr("fixture-managed-model")
     files = example_files(KEY, model_steps=model)
     body = json.loads(files[PATH])
-    body["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly"]
+    body["definition"]["schedule_modes"] = ["on_demand", "daily", "weekly", "monthly"]
     if connected:
         from test_project_connections import definition, integrations
 
@@ -76,6 +89,15 @@ async def prepared(f, monkeypatch, *, model=False, connected=False):
             },
         )
     )
+    # Saving a schedule over MCP runs it once right away. These tests are about scheduled
+    # occurrences, so that first run is settled before any occurrence arrives.
+    # Counts below are of scheduled runs only.
+    if configured["first_run"].get("id"):
+        await f.db.pool.execute(
+            "UPDATE workflow_runs SET status='succeeded', finished_at=now(), lease_active=false "
+            "WHERE id=$1",
+            UUID(configured["first_run"]["id"]),
+        )
     return server, common, code, configured, handle
 
 
@@ -165,7 +187,7 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
     row = await f.db.get_project_workflow(UUID(configured["id"]))
     assert row.status == "paused" and row.next_run_at is None
     assert "author" in row.last_error
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 0
     assert (
         await f.db.pool.fetchval(
             "SELECT count(*) FROM activity_events "
@@ -175,6 +197,7 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
     )
     assert handle.pause.await_count == 2
     await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id=ACTOR)
+    sent = handle.update.await_count
     resumed = structured(
         await server.call_tool(
             "set_project_workflow_paused",
@@ -185,7 +208,8 @@ async def test_schedule_revocation_pauses_once_and_rechecks_on_resume(billed, mo
             },
         )
     )
-    assert resumed["status"] == "active" and handle.unpause.await_count == 1
+    assert resumed["status"] == "active" and handle.update.await_count == sent + 1
+    assert resent_unpaused(handle)
     assert (await common.dispatch_scheduled_workflow(occurrence(configured)))["run_id"]
 
 
@@ -198,8 +222,10 @@ async def test_schedule_without_project_revision_does_not_admit_a_run(billed, mo
 
     monkeypatch.setattr(f.storage, "head_sha", unavailable)
     assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
-    assert not await f.db.pool.fetchval("SELECT id FROM workflow_runs")
-    assert not await f.db.pool.fetchval("SELECT run_id FROM billing_run_budgets")
+    assert not await f.db.pool.fetchval(
+        "SELECT id FROM workflow_runs WHERE trigger_source='schedule'"
+    )
+    assert not await f.db.pool.fetchval(SCHEDULED_BUDGET_RUN)
     saved = await f.db.get_project_workflow(UUID(configured["id"]))
     assert saved.status == "paused" and "canonical revision" in saved.last_error
 
@@ -259,15 +285,14 @@ async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritati
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=500 * NANOS_PER_DOLLAR,
-            concurrency=5,
             schedule_max_nanos=NANOS_PER_DOLLAR,
             expected_revision=1,
         ),
     )
     await server.call_tool("set_project_workflow_paused", {**selected, "paused": False})
     run = await common.dispatch_scheduled_workflow(occurrence(configured))
-    assert run["run_id"] and handle.unpause.await_count == 1
-    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 1
+    assert run["run_id"] and resent_unpaused(handle)
+    assert await f.db.pool.fetchval(SCHEDULED_BUDGETS) == 1
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
     # Fresh admission catches insufficient available funds even when a positive balance
     # passed the advisory readout. No failed run/budget is inserted for this occurrence.
@@ -279,8 +304,8 @@ async def test_schedule_model_funding_is_fresh_and_admission_remains_authoritati
     assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
     row = await f.db.get_project_workflow(UUID(configured["id"]))
     assert row.status == "paused" and "credits" in row.last_error.lower()
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 1
-    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 1
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 1
+    assert await f.db.pool.fetchval(SCHEDULED_BUDGETS) == 1
 
 
 async def test_dispatch_response_loss_recovers_one_run_and_next_projection(billed, monkeypatch):
@@ -298,7 +323,7 @@ async def test_dispatch_response_loss_recovers_one_run_and_next_projection(bille
         await common.dispatch_scheduled_workflow(payload)
     recovered = await common.dispatch_scheduled_workflow(payload)
     assert recovered["run_id"]
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 1
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 1
     assert (await f.db.get_project_workflow(UUID(configured["id"]))).next_run_at > datetime.now(UTC)
 
 
@@ -320,7 +345,13 @@ async def test_ended_and_old_occurrences_do_not_create_backlog(billed, monkeypat
         json.dumps(schedule),
     )
     assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 0
+
+
+def resent_unpaused(handle):
+    """Resume sends the saved calendar unpaused, not a bare unpause of Temporal's copy."""
+    update = handle.update.await_args
+    return update is not None and update.args[0](None).schedule.state.paused is False
 
 
 def test_next_projection_matches_temporal_for_missing_and_repeated_local_times():
@@ -367,7 +398,7 @@ async def test_connection_rotation_then_removal_pauses_without_a_backlog(billed,
         assert await common.dispatch_scheduled_workflow(occurrence(configured)) == {}
         row = await f.db.get_project_workflow(UUID(configured["id"]))
         assert row.status == "paused" and PROVIDER in row.last_error
-        assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 1
+        assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 1
         await custom.save_secrets(
             f.project.id,
             ACTOR,
@@ -440,7 +471,7 @@ async def test_setup_rejects_invalid_inputs_and_cross_project_access(billed, mon
         )
     with pytest.raises(ToolError, match="not found"):
         await server.call_tool("get_code_workflow_setup", {**selected, "project_id": str(uuid4())})
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 0
 
 
 async def test_archive_retry_repairs_temporal_failure_without_future_dispatch(billed, monkeypatch):
@@ -458,4 +489,69 @@ async def test_archive_retry_repairs_temporal_failure_without_future_dispatch(bi
     handle.delete.side_effect = None
     result = structured(await server.call_tool("archive_project_workflow", selected))
     assert result["status"] == "archived" and handle.delete.await_count == 2
-    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+    assert await f.db.pool.fetchval(SCHEDULED_RUNS) == 0
+
+
+async def test_saving_a_schedule_over_mcp_runs_it_once_now(billed, monkeypatch):
+    f = billed
+    server, common, code, configured, handle = await prepared(f, monkeypatch)
+    first = configured["first_run"]
+    run = await f.db.get_run(UUID(first["id"]))
+    # One run now, billed like any run and tied to the saved configuration.
+    assert run.project_workflow_id == UUID(configured["id"])
+    assert run.trigger_source == "mcp"
+    assert (
+        await f.db.get_run_by_start_key(
+            project_id=f.project.id, start_idempotency_key=f"first-run:{configured['id']}"
+        )
+    ).id == run.id
+    assert "running once now" in " ".join(configured["relay"])
+    request = str(uuid4())
+    arguments = {
+        "project_id": str(f.project.id),
+        "workflow_id": str(run.workflow_id),
+        "name": "Weekly fixture report",
+        "inputs": {"minimum_cents": 1000},
+        "request_id": request,
+        "schedule": SCHEDULE,
+    }
+    again = [
+        structured(await server.call_tool("create_project_workflow", arguments)) for _ in range(2)
+    ]
+    # A retried save is the same configuration and the same first run.
+    assert again[0]["id"] == again[1]["id"]
+    assert again[0]["first_run"]["id"] == again[1]["first_run"]["id"]
+    # Without a schedule nothing runs until someone starts it.
+    unscheduled = structured(
+        await server.call_tool(
+            "create_project_workflow",
+            {
+                **arguments,
+                "name": "Manual fixture report",
+                "request_id": str(uuid4()),
+                "schedule": None,
+            },
+        )
+    )
+    assert "first_run" not in unscheduled
+    # A schedule the founder starts later waits for that date; nothing runs or bills now.
+    starts_at = (datetime.now(UTC) + timedelta(days=30)).replace(microsecond=0)
+    later = structured(
+        await server.call_tool(
+            "create_project_workflow",
+            {
+                **arguments,
+                "name": "Later fixture report",
+                "request_id": str(uuid4()),
+                "schedule": {**SCHEDULE, "start_at": starts_at.isoformat()},
+            },
+        )
+    )
+    assert later["first_run"] == {"status": "waits_for_start", "starts_at": starts_at.isoformat()}
+    assert "waits for the start date" in " ".join(later["relay"])
+    assert (
+        await f.db.get_run_by_start_key(
+            project_id=f.project.id, start_idempotency_key=f"first-run:{later['id']}"
+        )
+        is None
+    )

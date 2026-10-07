@@ -14,6 +14,9 @@ articles. Show the number of supported briefs, unused capacity, and evidence gap
 2. Inspect at most 60 same-host public HTML pages from the frozen audit/keyword candidates.
    Reuse the IP-pinned, redirect-bounded fetcher. Save bounded extracted text, timestamps and
    hashes as run evidence; failures are unavailable evidence, not proof a page does not exist.
+   From `content-editorial-v7`, the model also reads the whole site's page list (sitemap,
+   Search Console, crawl, pages Tin published, keyword ranking pages), saved as `pages.json`;
+   see [one content.generate](one-content-generate.md).
 3. One receipted model call develops a prioritized portfolio of distinct briefs. Supply all
    retained keywords, including fallible exclusions, selected files and page excerpts. Compact
    source aliases are resolved deterministically into original source IDs. An update must
@@ -57,3 +60,31 @@ semantic relevance. Paid acceptance must inspect the actual mapped queries.
 
 See [writing style capture](writing-style-capture.md) and
 [content generation](content-generation-implementation.md) for the subsequent authoring steps.
+
+## Positioning comes from the project (content-editorial-v6)
+
+`content.plan` 0.7.0 pins `content-editorial-v6`. v5 told the planner that "strategy owns
+product positioning", and one plan answered by telling writers to position the product narrowly.
+v6 replaces that paragraph: the plan reads the project's positioning files (`brand/BRAND.md`,
+up to five `context/*.md` notes, `wiki/INDEX.md` and the Start here plan, bounded to 8 KB each
+and 30 KB together, pinned with their digests) and follows them. A brief chooses the reader
+question, searches, evidence and sections, and never says how to position the product. As a
+check, Tin removes any brief sentence that sets positioning ("Position the product as ...",
+"frame it as ...", "Positioning: ...") and counts the removals in the plan's evidence; search
+positions such as "average position 8" are left alone. Plans pinned to v5 and older keep their
+instructions and their briefs as written.
+
+The drafts read the same files: `content.generate` 1.8.0 lists them in its pinned
+`content_draft.positioning` context, `content.public_article` 1.6.0 reads them from the
+checkout, `content.answer_page` 1.6.0 receives them as sources (`ANSWER_POSITIONING_V1`) and
+`content.refresh` pins them before compute. Each presents the product the way those files do.
+
+
+## A larger output cap (content-editorial-v8)
+
+`content.plan` 0.9.0 pins `content-editorial-v8`: v7 with a 32,000-token output cap instead of
+16,000. GPT-6 Luna counts reasoning against the cap, and a cap only stops a plan; billing
+charges the tokens the call actually used. Instructions, schema, page and input bounds are v7's.
+At its bounds the call reads about 254,000 tokens and costs at most $0.088 at long-context
+rates, still under the $0.10 the plan's $1 share in the organic system is sized from. Plans
+pinned to v7 and older keep their caps.

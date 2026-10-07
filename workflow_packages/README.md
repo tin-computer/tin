@@ -20,7 +20,9 @@ founder again. Before adding inputs, read these:
 - `reports/GROWTH_ONBOARDING_PLAN.md` from Start here: the business, its buyers, budget and
   hard no's. Respect the hard no's.
 - `wiki/INDEX.md`: its `### Code map` (`product.code_map`) and `### Feature map`
-  (`product.deep_dive`) sections.
+  (`product.deep_dive`) sections, under `## Product`. There is no separate file for either.
+  Code reads one with `ctx.files.read_section("### Code map")`; a procedure reads
+  `/home/user/state/wiki/INDEX.md`.
 - `.agents/skills/writing-style/SKILL.md` from `style.capture`, for any copy drafted in the
   founder's voice.
 - Outputs of earlier runs, such as the keyword plan, the organic audit and the signup walkthrough.
@@ -37,9 +39,10 @@ A procedure writes only its declared output. A weekly package keeps its history 
 
 | Package | Builds on | Hands off to | Onboarding program |
 |---|---|---|---|
-| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Organic search content |
-| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | AI visibility |
+| `organic.error_surface` | Code map, keyword plan, audit | `content.plan` (`context_files`), `content.generate` | Hidden from discovery; saved configurations keep running |
+| `organic.mention_backlinks` | onboarding plan, organic and visibility audits, style guide | founder sends the asks | Hidden from discovery; saved configurations keep running |
 | `competitor.watch` | its last report, keyword plan and ads competitors, Feature map | `content.public_article`, `content.plan`, `research.deep_dive` | Pricing and packaging |
+| `competitor.sunset_rescue` | its earlier reports, competitor-watch reports, onboarding plan, Feature map, Code map, keyword plan | `content.public_article`, `project.task`, `outreach.community_threads` | Pricing and packaging |
 | `qa.buyer_trust` | signup walkthrough, Feature map, onboarding plan | `site.health_improve` (code), founder (policy, host) | Conversion and trust |
 | `growth.score_quiz` | Feature map, style guide (filled in by the agent) | founder embeds the widget | Conversion and trust |
 | `product.analytics_brief` | PostHog connection (`analytics.posthog`) | its next scheduled brief | Product-led growth |
@@ -51,13 +54,19 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `outreach.newsletter_placements` | onboarding plan, Feature map, style guide, its earlier reports | founder submits or books the placement | Earned media and launches |
 | `outreach.marketplace_listings` | Code map (required), Feature map, style guide | founder submits the listing | Platform and marketplaces |
 | `outreach.awesome_lists` | onboarding plan, Code map, its earlier reports | `outreach.awesome_submit` sends the approved entries from the founder's GitHub account | Platform and marketplaces |
+| `growth.framework_starter` | connected repository, Code map, Feature map, onboarding plan, style guide, its earlier receipts | founder merges the PR; `content.plan` (`context_files`) for a tutorial; `outreach.awesome_lists` once the starter has its own repository | Platform and marketplaces |
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
+| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy` reads its data file; its weekly readout routes decisions to `growth.signup_source`, `content.refresh` and `organic.audit` | Organic traffic |
+| `organic.content_efficacy` | traffic snapshot, organic audit, onboarding plan, brand guide, earlier `content.refresh` drafts | `website.change` (source `planned`, PR #266) reads its URL changes; refresh rows wait for the content workflow | Organic traffic, technical SEO |
+| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` runs pinned to v13 or v14 ask the newest panel for its site; hidden from new setups since v15 drafts its own questions | Organic traffic |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`
-line each. A new Registry package needs the same.
+line each. A new Registry package needs the same. A package registered with
+`public_discovery=False` in `public_workflows.py` keeps running for saved configurations but
+leaves programs.json and discovery.
 
 ## Code examples
 
@@ -157,12 +166,30 @@ This one validates. Copy it and change the parts that describe your workflow.
         "media_type": "text/markdown",
         "max_bytes": 250000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          { "id": "context", "kind": "store", "label": "Project evidence", "fact": "context files and the optional focus" },
+          { "id": "recommend", "kind": "step", "label": "Recommend one next action", "fact": "cites the project paths behind it" },
+          { "id": "report", "kind": "receipt", "label": "Report in Files", "fact": "reports/EXAMPLE_PLAY.md" }
+        ],
+        "edges": [
+          { "from": "context", "to": "recommend", "kind": "call" },
+          { "from": "recommend", "to": "report", "kind": "call" }
+        ]
+      }
     }
   }
 }
 ```
 
+`presentation` draws how the run goes for the workflow's diagram panel; see
+[Draw how it runs](../docs/adding-a-workflow.md#draw-how-it-runs).
+
 Every text input needs a `maxLength`, every array a `maxItems`, and `project_id` stays as it is.
+A `"format": "uri"` input accepts only an http(s) URL with a host, and no input may contain NUL.
 A package declares one output: either a file in the project, as above, or a GitHub pull request.
 
 For a complete minimal example, save this as `PROMPT.md`:

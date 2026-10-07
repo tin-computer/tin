@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use synthetic Search Console and PostHog responses for northpine.example, served by step ID; tests/test_traffic_snapshot.py supplies them offline. They are not live evidence.",
+    "The ordinary case has a full year of daily Search Console rows, complete page and query reads, and complete PostHog landing, referrer, signup and reading reads.",
+    "The readout sits in the same file as the data, under readout.markdown, because a code workflow writes one artifact.",
+    "PostHog is optional. Every case here runs with it connected; the search-only run without it is covered offline in tests/test_traffic_snapshot.py, since a case cannot set a connection's state."
+  ],
+  "cost_drivers": [
+    "No model calls and no Tin credits. At most four Search Console reads, each capped at 256000 bytes, and four PostHog reads capped at 64000 bytes; provider quotas and latency are unmeasured."
+  ],
+  "effects": [
+    "Replaces analytics/traffic-snapshot.json in the project when at least one provider read returned data. No send, post, spend, edit or provider change."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "Pages, named and hidden clicks, sessions by channel, first-touch signups, team exclusions and a readout with a ChatGPT row.",
+      "inputs": {
+        "website_hosts": ["northpine.example"],
+        "exclude_email_domains": ["northpine.example"],
+        "signup_event": "signed_up",
+        "activation_event": "first_invoice_sent"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "\"schema\":\"tin.traffic_snapshot/1\"",
+          "\"hidden_clicks\":20",
+          "\"search_sessions_per_click\":0.75",
+          "\"sessions\":291",
+          "\"new_in_search\"",
+          "\"schema\":\"tin.growth_readout/1\"",
+          "Direct is a measurement gap, not a channel",
+          "- ChatGPT: 6 sessions vs 3",
+          "Holm correction"
+        ],
+        "excludes": ["team visits are counted"]
+      }
+    },
+    {
+      "id": "truncated_prior",
+      "description": "A capped prior page read must not turn an unobserved prior page into zero or a new page.",
+      "inputs": {"website_hosts": ["northpine.example"], "signup_event": "signed_up"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "\"status\":\"partial\"",
+          "\"prior_note\":\"The prior read ended at 140 clicks",
+          "team visits are counted"
+        ],
+        "excludes": ["\"new_in_search\""]
+      }
+    },
+    {
+      "id": "unseen_signup",
+      "description": "A signup event PostHog never saw stays null and names the instrumentation gap.",
+      "inputs": {
+        "website_hosts": ["northpine.example"],
+        "exclude_email_domains": ["northpine.example"],
+        "signup_event": "signed_up",
+        "activation_event": "first_invoice_sent"
+      },
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["check the name", "\"signups\":{\"current\":null", "Signups are unknown this week."],
+        "excludes": ["\"signups\":{\"current\":0"]
+      }
+    },
+    {
+      "id": "thin",
+      "description": "Few sessions, no signup event and no project files; min_count 100, so nothing is called a change.",
+      "inputs": {"website_hosts": ["northpine.example"], "min_count": 100},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["too little data", "Organic audit: no audit found", "no signup event is set"],
+        "excludes": ["change (up)", "change (down)", "more than normal weekly variation"]
+      }
+    },
+    {
+      "id": "no_cross_source_sums",
+      "description": "118 PostHog signups this week, 9 of them from paid sessions. The wrong result adds ad-platform conversions to site signups.",
+      "inputs": {"website_hosts": ["northpine.example"], "signup_event": "signed_up", "paid_event": "subscribed"},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["118 people signed up this week", "never added to site-side counts"],
+        "excludes": ["127 people"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "accuracy",
+      "question": "Do windows, channel counts, hidden clicks, nulls and prior values match the provider rows without filling in missing numbers?"
+    },
+    {
+      "id": "sessions",
+      "question": "Do session counts match PostHog's own session count for the same hosts, window and exclusions within one percent?"
+    },
+    {
+      "id": "scope",
+      "question": "Does every PostHog read carry the host scope and the team exclusions, and does a failed read leave its fields unmeasured?"
+    },
+    {
+      "id": "tests",
+      "question": "Are readout changes called only above min_count with the exact binomial test and Holm correction, and is Direct reported as a measurement gap?"
+    },
+    {
+      "id": "decisions",
+      "question": "Does each readout decision rest on a rule that fired, with its evidence and the workflow that acts on it?"
+    }
+  ]
+}

@@ -65,20 +65,34 @@ def safe_path(name):
     return not path.is_absolute() and all(p not in {"", ".", ".."} for p in name.split("/"))
 
 
-def archive_files(archive):
-    files, total = {}, 0
-    with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as source:
+# The most a caller reads out of one snapshot into memory.
+ARCHIVE_MAX_BYTES = 100_000_000
+ARCHIVE_MAX_FILES = 20_000
+
+
+def _snapshot_reader(archive):
+    # repository_limits.snapshot_reader; this module also runs alone in the sandbox image.
+    if isinstance(archive, (bytes, bytearray, memoryview)):
+        return io.BytesIO(archive)
+    archive.seek(0)
+    return archive
+
+
+def archive_files(archive, *, select=None):
+    """The snapshot's files by path. `select(path, size)` keeps only the files a caller reads,
+    and the read bounds apply to those; every member is still checked."""
+    files, total, seen = {}, 0, set()
+    with tarfile.open(fileobj=_snapshot_reader(archive), mode="r:gz") as source:
         for member in source:
             if member.isdir():
                 continue
+            if not member.isfile() or not safe_path(member.name) or member.name in seen:
+                raise ValueError("Unsupported repository snapshot.")
+            seen.add(member.name)
+            if select is not None and not select(member.name, member.size):
+                continue
             total += member.size
-            if (
-                not member.isfile()
-                or not safe_path(member.name)
-                or member.name in files
-                or total > 30_000_000
-                or len(files) >= 5000
-            ):
+            if total > ARCHIVE_MAX_BYTES or len(files) >= ARCHIVE_MAX_FILES:
                 raise ValueError("Unsupported repository snapshot.")
             files[member.name] = source.extractfile(member).read()
     return files

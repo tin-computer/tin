@@ -1,5 +1,6 @@
 """HTTP and MCP share these delivery settings and durable retry operations."""
 
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -50,19 +51,23 @@ def adapt_on_approval(settings, run):
     return adaptable(settings, run)
 
 
-async def delivery_cost(*, runtime, settings, run, actor, repository):
-    """The configured cost preview of adapting this page, or None where billing is off."""
+async def delivery_cost(*, runtime, settings, run, actor, repository, website_change=False):
+    """The configured cost preview of adapting this page, or None where billing is off.
+
+    `website_change` prices website.change, which adapts a content.generate answer page.
+    """
     from tin_lite.billing import BillingService
     from tin_lite.billing_contracts import BillingError
-    from tin_lite.content_repository_delivery import WORKFLOW_ID
+    from tin_lite.content_repository_delivery import WEBSITE_CHANGE_ID, WORKFLOW_ID
 
+    inputs = {"source_run_id": str(run.id), "expected_repository": repository}
     try:
         preview = await BillingService(database=runtime.database, settings=settings).quote(
             runtime=runtime,
             project_id=run.project_id,
             actor=actor,
-            workflow_id=WORKFLOW_ID,
-            inputs={"source_run_id": str(run.id), "expected_repository": repository},
+            workflow_id=WEBSITE_CHANGE_ID if website_change else WORKFLOW_ID,
+            inputs={"source": "content_draft", **inputs} if website_change else inputs,
             preview_only=True,
         )
     except (BillingError, LookupError, ValueError):
@@ -94,25 +99,44 @@ async def publish_preview(*, runtime, settings, run, actor):
         if connection and connection.status == "connected"
         else None
     )
-    if not repository or not adapt_on_approval(settings, run):
+    # A content.generate answer page always goes to the site through website.change.
+    answer = await delivery_service(runtime).plan_kind(run) == "answer"
+    if not repository or not (answer or adapt_on_approval(settings, run)):
         return {"adapt": False}
+    from tin_lite.page_routes import PageRouteService, ask_the_founder, page_type
+
+    kind = "answer_page" if answer else page_type(run)
     mode = await delivery_service(runtime).saved_mode(run)
     cost = await delivery_cost(
-        runtime=runtime, settings=settings, run=run, actor=actor, repository=repository
+        runtime=runtime,
+        settings=settings,
+        run=run,
+        actor=actor,
+        repository=repository,
+        website_change=answer,
     )
-    page = await page_url_service(runtime, settings).view(run, None)
-    sentence = publish_sentence(mode, route_missing=bool(page and page.get("route_missing")))
+    route = await PageRouteService(database=runtime.database, storage=runtime.storage).route_for(
+        run, page_type=kind
+    )
+    sentence = publish_sentence(mode, route_missing=route is None)
     # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
     about = about_usd(cost["estimated_usd"]) if cost else None
-    return {
+    preview = {
         "adapt": True,
         "label": "Publish",
         "mode": mode,
         "repository": repository,
+        "route": route,
         "sentence": sentence,
         "cost": cost,
         "footer": f"{sentence} · up to {about}" if about else sentence,
     }
+    if route is None:
+        # Before the first page of this type publishes, the coding agent asks the founder.
+        page = await page_url_service(runtime, settings).view(run, None)
+        host = urlsplit(page["url"]).hostname if page and page.get("url") else None
+        preview["ask_the_founder"] = ask_the_founder(kind, host)
+    return preview
 
 
 async def retry_delivery(*, runtime, settings, project_id, run_id):
@@ -122,7 +146,7 @@ async def retry_delivery(*, runtime, settings, project_id, run_id):
         raise LookupError("Draft not found.")
     from tin_lite import content_repository_delivery
 
-    if run.workflow_id != content_repository_delivery.WORKFLOW_ID:
+    if not content_repository_delivery.adapts(run):
         status = await service.status(run)
         if not status or run.status != RunStatus.SUCCEEDED or run.review_decision != "approved":
             raise ValueError("This run has no approved GitHub delivery to retry.")
@@ -130,7 +154,7 @@ async def retry_delivery(*, runtime, settings, project_id, run_id):
             # The approval's adaptation exists: retrying means delivering its saved patch.
             # With no adaptation yet (a refused start), the page's own delivery retries it.
             run = await runtime.database.get_run(UUID(status["run_id"]))
-    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+    if content_repository_delivery.adapts(run):
         status = await content_repository_delivery.retry_status(runtime.database, run)
     if status["status"] == "completed":
         return status

@@ -111,7 +111,8 @@ optional `system` slug pinned in each definition; the global `workflow_systems` 
 only the display name and order. Unknown and absent slugs remain callable and appear last as
 unassigned. This taxonomy applies only to Registry discovery. “Your workflows” contains
 project-owned configurations that pin one Registry revision, store schema-validated inputs, and
-optionally own a daily or weekly Temporal Schedule in an IANA timezone. Product reads remain
+optionally own a daily, weekly or monthly Temporal Schedule in an IANA timezone. A workflow
+allows a cadence only by naming it in `schedule_modes`; the default leaves monthly out. Product reads remain
 Postgres-only. A scheduled occurrence creates an ordinary pinned workflow run through one explicit
 dispatcher; overlap is skipped and at most 24 hours of missed work is caught up.
 The dispatcher remains alive while its child awaits human review; the catch-up window
@@ -125,6 +126,17 @@ schedule are editable inline. Opening an active run expands the same card with i
 facts; there is no separate run-inspector page. Email campaign runs additionally read a bounded
 delivery projection for recipient, touch, schedule, send, reply, and failure state. Provider message
 and request identifiers are not returned to the browser.
+
+Files requests `GET /api/projects/{project_id}/files?include_modified=true` to show each
+file's last saved change. Dates come from code.storage's per-file commit metadata at the
+same revision as the listing; bulk pages reuse the immutable revision cache. An unrelated
+project commit does not change a file's date. Missing timestamps remain unknown. Dates use
+the browser's local timezone, with an exact timestamp on hover; narrow and search views
+show the same metadata. The default API listing remains path-only for existing clients.
+
+Background workflow polling updates run facts while preserving an open configuration form,
+its unsaved inputs, focus and setup result. Code setup is checked on opening and when workflow
+inputs change; changing the name or schedule alone does not repeat the server check.
 
 All product API routes require a Clerk session token and enforce the requested project's local
 membership. Project membership has one access level: any current member can use the project and
@@ -204,9 +216,12 @@ names keep `reports/ANSWER_PAGE.md`. A later page with the same date and title g
 eight characters of its run ID after the slug, so it never replaces the earlier file; a retry
 reuses the path its own evidence names. Because this is
 customer-facing content, the artifact becomes readable while the run waits in `needs_input`; an
-approval from the draft reader resumes and completes it. Workflows presents every live gate through
-one needs-you queue banner and one matching filter count; completed reviews remain historical
-Activity events rather than permanent stages on finished rows. Report and memory workflows do not
+approval from the draft reader resumes and completes it. The menu's Decisions badge, the Decisions
+list and the project line's "need you" count the same items: runs with something to approve, not a
+task asking a question or a reviewed task that changed nothing. A decision saved before outputs
+carried their heading is named once from its pinned file when Decisions is listed, a few per
+request; an output with no heading is titled by its workflow and day. Completed reviews remain
+historical Activity events rather than permanent stages on finished rows. Report and memory workflows do not
 pause for review. The workflow does not edit or publish the customer's website, create an E2B
 sandbox, or add a provider credential path.
 
@@ -273,7 +288,8 @@ phase, the question a task is waiting on, and (for `get_run`) proposed file path
 transcript; `send_project_task_message` answers a waiting question, resumes a paused or reviewing
 task with direction, or steers a running one; `approve_workflow_run` applies reviewed task changes.
 Both surfaces go through `project_task_control`, so answering in either one continues the run.
-Pause and stop remain web-only for now.
+Stop is shared there too: MCP `discard_workflow_review` stops a task waiting for approval, as the
+dashboard's Discard does. Pause remains web-only for now.
 
 `codex.procedure` is the separate reusable executor for registry workflows whose implementation is
 a pinned Codex procedure rather than a bespoke trusted activity. A Tin-owned source package under
@@ -296,11 +312,14 @@ into `content/articles/<date>-<id>.md` (for example `2026-09-29-1a2b3c4d.md`), a
 normal human-review queue because it is public-facing content. Neither procedure publishes,
 contacts anyone, or acquires the steering and arbitrary-diff semantics of `project.task`.
 
-Workflow definitions may also contain one small `presentation.flow`. It is immutable presentation
-metadata, not an executable graph: the Registry renders it only inside a template's setup panel.
-The first diagrams describe `site.health_improve`, `project.weekly_brief`, and
-`outreach.email_campaign`. They share seven node meanings and two edge meanings so the visual
-language stays recognizable as the catalog grows.
+Workflow definitions contain one small `presentation.flow`. It is immutable presentation metadata,
+not an executable graph: the System page draws it top to bottom in the workflow diagram panel
+(`static/workflow-spine.js`), opened from a workflow's row or template card. A saved workflow is
+drawn from its pinned revision, or from today's definition when the pin predates its drawing
+(`GET /api/projects/{id}/workflows/{project_workflow_id}/diagram` says which). Every built-in a
+person can save, every public package and every creator candidate carries one. They share seven
+node meanings and two edge meanings so the visual language stays recognizable as the catalog
+grows. See [Draw how it runs](adding-a-workflow.md#draw-how-it-runs).
 
 `content.diagram` uses the same vocabulary to create a reviewed, editable Mermaid source artifact
 at `diagrams/{slug}.mmd`. Tin validates a deliberately small Mermaid dialect before publication;
@@ -420,7 +439,7 @@ are disabled so workflow-level receipts and Temporal retries remain the only amb
 `TIN_LITE_LUNA_API_KEY` remains the switchboard-only OpenAI credential and continues to serve Luna;
 `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and `OPENROUTER_API_KEY` configure the other adapters. Identity-linked Anthropic
 keys also require `ANTHROPIC_WORKSPACE_ID`; workspace-scoped keys may omit it. None of these
-credentials is sent to Temporal, code.storage, the broker, or E2B. No model routes are silently created merely
+credentials is sent to Temporal, code.storage, or E2B. No model routes are silently created merely
 because a key exists; each workflow definition must deliberately select a registered route.
 
 Shared-service calls now retain trusted per-run usage receipts, including rejected output and
@@ -512,10 +531,12 @@ Codex runs receive only short-lived run-scoped access in the protected controlle
 reusable provider key. Tin no longer requires a pooled login or `auth.json`. Product Clerk
 login and model-provider authentication are separate systems.
 
-MCP and OAuth-based connection setup also require `TIN_LITE_MCP_OAUTH_CLIENT_IDS`, an explicit
-comma-separated list of approved Clerk OAuth client IDs or exact CIMD URLs. Empty disables
-OAuth access. Configure approved IDs before deployment; browser sessions do not require this
-setting. See [client admission](clerk-agent-connection.md#oauth-client-admission).
+MCP and OAuth-based connection setup accept Clerk access tokens bound to Tin's resource
+(`TIN_LITE_PUBLIC_URL` plus `/mcp`); new clients need no per-client setting.
+`TIN_LITE_MCP_OAUTH_CLIENT_IDS` is optional: a comma-separated list of exact Clerk OAuth client
+IDs or CIMD URLs whose tokens may lack that resource binding (legacy clients). Empty, the
+default, refuses only those unbound tokens; it does not disable MCP OAuth. Browser sessions do
+not use this setting. See [OAuth resource binding](clerk-agent-connection.md#oauth-resource-binding).
 
 The trusted switchboard may also read `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and
 `OPENROUTER_API_KEY` for native workflow
@@ -551,7 +572,8 @@ configured with `TIN_LITE_GITHUB_OAUTH_CLIENT_ID` and `TIN_LITE_GITHUB_OAUTH_CLI
 narrowest classic scope that can open a pull request on someone else's public repository, and
 stores that user token encrypted. Only `outreach.awesome_submit` uses it, after the founder
 approves the exact changes: fork the list, commit one file change to a branch in the fork, open
-one pull request, or open one issue. Disconnecting revokes the grant in GitHub. All provider
+one pull request, or open one issue. Disconnecting revokes that project's token in GitHub, not
+the founder's whole grant, which their other projects share. All provider
 credentials remain on the trusted switchboard and are explicitly rejected from E2B sandbox
 environments.
 
@@ -627,9 +649,11 @@ pause for review.
 `qa.signup_walkthrough`. The first two write product understanding into project memory rather
 than into new files: each owns one subsection of `wiki/INDEX.md` → `## Product` (`### Code map`
 from the connected GitHub repository, `### Feature map` from the docs, the live signed-in product,
-and the code map), declared through `output.section` and checked by the `memory-section.v1`
-validator, which rejects any change outside the owned section and any feature line outside the
-closed status and claim vocabulary. `project.memory` keeps that block verbatim, and a procedure
+and the code map), declared through `output.section`. Tin keeps only that section from the
+procedure's output and writes it into the index as the run's base had it, so everything outside
+the section comes from the base byte for byte. The `memory-section.v1` validator then rejects a
+missing or oversized section and any feature line outside the closed status and claim
+vocabulary. `project.memory` keeps that block verbatim, and a procedure
 commit to the index refreshes the memory projection immediately. `product.code_map` reads a
 read-only repository snapshot while writing into the project-state checkout at `/home/user/state`.
 The two browser procedures reuse the walkthrough's active test identity (`identity.reuse: active`)
@@ -670,6 +694,10 @@ Markdown receipt is also committed to project state; Activity links directly to 
 human review. Repository content and live-page evidence remain untrusted inputs, while installation
 credentials remain entirely on the switchboard. The older native site-health executor stays
 registered only for already-recorded Temporal history compatibility.
+
+Site health is now folded into `organic.technical_fix` (policy `site-fix-v5`), which fixes
+every fixable finding of an organic audit in one pull request under the same delivery path; its
+checks run in the audit. Site health leaves discovery but saved configurations keep running.
 
 Sandbox profiles are built by `sandbox/template.py`. API execution uses the isolated,
 browser API or Studio API templates. Historical OAuth compute is refused. Select only the template required for a reviewed change with

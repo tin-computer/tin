@@ -52,8 +52,8 @@ def test_listing_does_not_excuse_a_missing_title():
 @pytest.mark.parametrize(
     ("key", "version", "skill"),
     [
-        ("content.public_article", "1.5.0", "search-and-answer-engines"),
-        ("content.generate", "1.7.0", "search-and-answer-engines"),
+        ("content.public_article", "1.15.0", "search-and-answer-engines"),
+        ("content.generate", "1.16.0", "search-and-answer-engines"),
     ],
 )
 def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
@@ -73,6 +73,16 @@ def test_blog_workflows_pin_the_search_structure_guidance(key, version, skill):
     assert "search-and-answer-engines" in prompt
 
 
+def test_a_public_article_cites_only_pages_a_reader_can_open():
+    # Sheepdogs, content.public_article 760bbad2: Sources linked ../../reports/
+    # GROWTH_ONBOARDING_PLAN.md, because the skill said to list project documents.
+    _, files = workflow("content.public_article").definition_and_resource_files()
+    skills = {path.rsplit("/", 2)[-2]: content.decode() for path, content in files.items()}
+    assert "list the project documents" not in skills["search-and-answer-engines"]
+    assert "Only public pages a reader can open" in skills["search-and-answer-engines"]
+    assert "never link to them or list them as sources" in skills["public-article"]
+
+
 def test_public_articles_carry_the_listing_and_planned_drafts_do_not():
     article = (
         workflow("content.public_article").procedure.root
@@ -85,3 +95,20 @@ def test_public_articles_carry_the_listing_and_planned_drafts_do_not():
     # Planned drafts keep a title-first file: their delivery writes the site header.
     assert "meta_title" not in planned and "no frontmatter" in planned.replace("\n   ", " ")
     assert "keep the destination's structure" in planned
+
+
+def test_the_listing_carries_the_slug_the_founder_approves():
+    from tin_lite.approved_document import _metadata
+    from tin_lite.article_review import search_listing
+
+    page = (
+        '---\nmeta_title: "Filming the trailers"\nslug: "filming-sheepdogs-trailers"\n---\n\n# T\n'
+    )
+    listing, _ = search_listing(page)
+    assert listing["slug"] == "filming-sheepdogs-trailers"
+    assert _metadata(listing)["slug"] == "filming-sheepdogs-trailers"
+    # An odd slug is left to delivery rather than failing the draft.
+    odd, _ = search_listing('---\nmeta_title: "T"\nslug: "How I Filmed It"\n---\n\n# T\n')
+    assert "slug" not in odd and "slug" not in _metadata({"slug": "How I Filmed It"})
+    with pytest.raises(ValueError, match="search listing"):
+        search_listing('---\nmeta_title: "T"\nauthor: "x"\n---\n\n# T\n')

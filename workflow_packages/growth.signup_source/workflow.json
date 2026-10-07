@@ -72,6 +72,28 @@
       "verification": {
         "commands": ["git diff --check", "git status --short"]
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "signup code, account storage, channels"},
+          {"id": "place", "kind": "step", "label": "Choose where to ask", "fact": "fixed code, signup form or first screen"},
+          {"id": "none", "kind": "ghost", "label": "No question added", "fact": "signup elsewhere, already asked, no sink"},
+          {"id": "answers", "kind": "step", "label": "Build the answer list", "fact": "at most 8, extra channels need evidence"},
+          {"id": "write", "kind": "step", "label": "Add the optional question", "fact": "Codex, at most 3 files, submit unchanged"},
+          {"id": "pr", "kind": "surface", "label": "Pull request", "fact": "left unmerged, never deployed"},
+          {"id": "receipt", "kind": "receipt", "label": "Signup source receipt", "fact": "RESULT.md with the query to read answers"}
+        ],
+        "edges": [
+          {"from": "repo", "to": "place", "kind": "call"},
+          {"from": "place", "to": "answers", "kind": "call"},
+          {"from": "place", "to": "none", "kind": "call", "label": "no change"},
+          {"from": "answers", "to": "write", "kind": "call"},
+          {"from": "write", "to": "pr", "kind": "call"},
+          {"from": "pr", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }

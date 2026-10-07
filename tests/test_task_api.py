@@ -17,6 +17,7 @@ from tin_lite.activities import TinActivities
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.codex_api import (
     PROCEDURE_CONTRACT,
+    PROCEDURE_CONTRACT_V5,
     attempt_key,
     execution_profile,
     is_api_contract,
@@ -109,7 +110,7 @@ async def test_task_questions_retries_and_next_turn_charge_once(billed, monkeypa
 
         async def execute(*, sandbox_id, run_input, on_event):
             assert run_input.isolated
-            assert run_input.api_contract == PROCEDURE_CONTRACT
+            assert run_input.api_contract == PROCEDURE_CONTRACT_V5
             assert run_input.proxy_url == "http://proxy.test:8888"
             grants.append(run_input.api_grant)
             if len(grants) > 1:

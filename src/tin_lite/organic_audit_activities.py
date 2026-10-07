@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from urllib.parse import urlsplit
@@ -25,25 +27,36 @@ from tin_lite.organic_audit import (
     V7_AUDIT_POLICY,
     V8_AUDIT_POLICY,
     V9_AUDIT_POLICY,
+    V10_AUDIT_POLICY,
+    V11_AUDIT_POLICY,
+    V12_AUDIT_POLICY,
+    V13_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     build_documents,
+    bundle_sha256,
+    crawl_respects_sitemap,
     digest,
     grounded_preparation,
     in_scope_url,
     normalize_pages,
     panel_repetitions,
     question_results,
+    sitemap_page_urls,
+    summary_paths,
 )
 from tin_lite.organic_audit_ai import (
-    AI_SCHEMAS,
+    AnswerGrade,
     AnswerJudgment,
     AuditValidationError,
     BuyerPanel,
     PanelValidation,
     ai_contract,
+    ai_schemas,
     classify,
     classify_absent_target,
+    graded_panel,
     payload,
     read_response,
     response_diagnostics,
@@ -52,6 +65,7 @@ from tin_lite.organic_audit_ai import (
 )
 from tin_lite.organic_audit_fetch import (
     SiteReader,
+    read_crawler_access,
     read_pages,
     read_pagespeed,
     read_site_files,
@@ -123,6 +137,18 @@ class OrganicAuditActivities:
             await self.db.complete_effect(conn, execution_key=key, result=result)
         return result
 
+    async def _exposure(self, conn, run_id: str, scope: dict, ledger: dict) -> Decimal:
+        """What the run has spent or reserved: billing's observation when the policy says so."""
+        exposure = sum((Decimal(value) for value in ledger.values()), Decimal(0))
+        billing = getattr(self.db, "billing", None)
+        if billing is not None and audit_policy(
+            scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])
+        ).get("runtime_budget"):
+            observed = await billing.run_operation_exposure(conn, UUID(run_id))
+            if observed is not None:
+                exposure = Decimal(observed) / 1_000_000_000
+        return exposure
+
     async def _reserve(self, run_id: str, stage: str, amount: str) -> bool:
         scope = await self._result(run_id, "scope")
         key = self.key(run_id, "budget")
@@ -130,20 +156,31 @@ class OrganicAuditActivities:
             ledger = dict(existing.result or {}) if existing else {}
             if stage in ledger:
                 return True
-            exposure = sum((Decimal(value) for value in ledger.values()), Decimal(0))
-            billing = getattr(self.db, "billing", None)
-            if billing is not None and audit_policy(
-                scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])
-            ).get("runtime_budget"):
-                observed = await billing.run_operation_exposure(conn, UUID(run_id))
-                if observed is not None:
-                    exposure = Decimal(observed) / 1_000_000_000
+            exposure = await self._exposure(conn, run_id, scope, ledger)
             if exposure + Decimal(amount) > Decimal(scope["max_cost_usd"]):
                 return False
             ledger[stage] = amount
             await self.db.start_effect(conn, execution_key=key, operation="organic.audit")
             await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
         return True
+
+    async def _reserve_fitting(self, run_id: str, stage: str, choose) -> Decimal | None:
+        """Reserve `choose(left)` for one stage, where `left` is what the audit's limit has
+        left; None reserves nothing. A stage reserves once, and a retry gets that amount."""
+        scope = await self._result(run_id, "scope")
+        key = self.key(run_id, "budget")
+        async with self.db.effect_lock(key, "organic.audit") as (conn, existing):
+            ledger = dict(existing.result or {}) if existing else {}
+            if stage in ledger:
+                return Decimal(ledger[stage])
+            exposure = await self._exposure(conn, run_id, scope, ledger)
+            amount = choose(Decimal(scope["max_cost_usd"]) - exposure)
+            if amount is None:
+                return None
+            ledger[stage] = str(amount)
+            await self.db.start_effect(conn, execution_key=key, operation="organic.audit")
+            await self.db.save_effect_progress(conn, execution_key=key, result=ledger)
+        return amount
 
     async def _paid(
         self, run_id: str, stage: str, request: dict, amount: str, call, *, recover=None
@@ -289,10 +326,15 @@ class OrganicAuditActivities:
                 V7_AUDIT_POLICY,
                 V8_AUDIT_POLICY,
                 V9_AUDIT_POLICY,
+                V10_AUDIT_POLICY,
+                V11_AUDIT_POLICY,
+                V12_AUDIT_POLICY,
+                V13_AUDIT_POLICY,
+                V14_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             or definition.get("audit_instructions") != ai_contract(pinned_policy["version"])
-            or definition.get("audit_schemas") != AI_SCHEMAS
+            or definition.get("audit_schemas") != ai_schemas(pinned_policy["version"])
             or definition.get("model_route")
             != {
                 "key": "organic.audit.visibility.v1",
@@ -308,7 +350,16 @@ class OrganicAuditActivities:
         from tin_lite.organic_audit_completion import KIND, prepare_completion
 
         if (getattr(run, "prerequisite_evidence", None) or {}).get("kind") == KIND:
-            if pinned_policy not in (V8_AUDIT_POLICY, V9_AUDIT_POLICY, AUDIT_POLICY):
+            if pinned_policy not in (
+                V8_AUDIT_POLICY,
+                V9_AUDIT_POLICY,
+                V10_AUDIT_POLICY,
+                V11_AUDIT_POLICY,
+                V12_AUDIT_POLICY,
+                V13_AUDIT_POLICY,
+                V14_AUDIT_POLICY,
+                AUDIT_POLICY,
+            ):
                 raise ValueError("Audit completion requires the current compatible policy")
             await prepare_completion(self, run, target_policy=pinned_policy)
             return
@@ -365,7 +416,13 @@ class OrganicAuditActivities:
         if existing and (
             not audit_policy(scope["policy_version"]).get("site_checks")
             or "request_sha256" not in existing  # No matching property: nothing was read.
-            or await self._result(run_id, "search_console_queries")
+            or (
+                await self._result(run_id, "search_console_queries")
+                and (
+                    not audit_policy(scope["policy_version"]).get("decay_min_previous_clicks")
+                    or await self._result(run_id, "search_console_previous")
+                )
+            )
         ):
             return
         if self.integrations is None:
@@ -497,6 +554,65 @@ class OrganicAuditActivities:
             "0",
             queries,
         )
+        if not policy.get("decay_min_previous_clicks"):
+            return
+        days = policy.get("search_console_days", 28)
+        start = datetime.fromisoformat(request["start_date"]).date()
+        previous = {
+            "property": request["property"],
+            "start_date": (start - timedelta(days=days)).isoformat(),
+            "end_date": (start - timedelta(days=1)).isoformat(),
+        }
+
+        async def previous_pages():
+            raw = await self.integrations.search_console_analytics(
+                project_id=run.project_id,
+                start_date=previous["start_date"],
+                end_date=previous["end_date"],
+                dimensions=("page",),
+                row_limit=policy["search_console_page_rows"],
+                expected_site_url=request["property"],
+                execution_key=self.key(run_id, "search_console_previous:read"),
+                run_id=run.id,
+            )
+            rows, returned = search_console_rows(
+                raw,
+                ("page",),
+                in_scope=in_scope,
+                max_rows=policy["search_console_page_rows"],
+            )
+            return {
+                **previous,
+                "pages": sorted(rows, key=lambda r: (-r["impressions"], r["url"])),
+                "returned_rows": returned,
+                "note": "Page rows for the 28 days before the audit window, to find pages "
+                "losing clicks.",
+            }
+
+        await self._paid(run_id, "search_console_previous", previous, "0", previous_pages)
+
+    async def _respects_sitemap(self, run_id: str, scope: dict) -> bool:
+        """What the crawl request sends as respect_sitemap, from saved receipts only."""
+        files = None
+        if audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
+            "follow_links_without_sitemap"
+        ):
+            files = await self._result(run_id, "site_files")
+        return crawl_respects_sitemap(scope, files)
+
+    async def _crawl_mode(self, run_id: str, scope: dict) -> dict:
+        """From v14 the crawl says whether the provider followed the sitemap or links, and why."""
+        if not audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
+            "follow_links_without_sitemap"
+        ):
+            return {}
+        if await self._respects_sitemap(run_id, scope):
+            return {"mode": "sitemap", "note": "The provider followed the site's sitemap."}
+        return {
+            "mode": "links",
+            "note": "No sitemap URL on this site was found, so the provider followed links "
+            "from the homepage up to the page cap.",
+        }
 
     async def _site_evidence(self, run_id: str, scope: dict) -> dict:
         """robots.txt, sitemaps and the page selection, each saved once before the crawl."""
@@ -522,12 +638,7 @@ class OrganicAuditActivities:
                 if search.get("status") == "completed"
                 else []
             )
-            sitemap = [
-                row["loc"]
-                for row in (files.get("sitemaps") or {}).get("urls", [])
-                if urlsplit(row["loc"]).scheme == "https"
-                and in_scope_url(row["loc"], scope["host"], aliases=hosts)
-            ]
+            sitemap = sitemap_page_urls(files, scope)
             plan = select_pages(
                 home=scope["url"],
                 sitemap_urls=sitemap,
@@ -540,6 +651,7 @@ class OrganicAuditActivities:
                 if row["reason"] != "homepage" and urlsplit(row["url"]).hostname == scope["host"]
             ][: policy["max_priority_urls"]]
             plan = await self._save(run_id, "crawl_plan", plan)
+        await self._access_step(run_id, scope)
         return plan
 
     async def _collect_page_facts(self, run_id: str, scope: dict, *, seconds: float) -> bool:
@@ -618,7 +730,11 @@ class OrganicAuditActivities:
         for index, url in enumerate(urls):
             saved = await self._result(run_id, f"pagespeed:{index}")
             if saved is None:
-                result = await self.pagespeed_reader(url, secret.get_secret_value())
+                result = await self.pagespeed_reader(
+                    url,
+                    secret.get_secret_value(),
+                    **({} if policy.get("site_angles") else {"lighthouse": False}),
+                )
                 await self._save(run_id, f"pagespeed:{index}", {"url": url, "result": result})
                 return False
             results.append(saved)
@@ -639,11 +755,14 @@ class OrganicAuditActivities:
         policy = audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]))
         if policy.get("check_applicability"):
             await self._search_console_evidence(run_id, scope)
-        options = {"respect_sitemap": True} if policy.get("respect_sitemap") else {}
+        options = {}
         site_checks = policy.get("site_checks") and not scope.get("completion")
         if site_checks:
             plan = await self._site_evidence(run_id, scope)
             options.update(max_pages=scope["page_cap"], priority_urls=plan["priority_urls"])
+        if policy.get("respect_sitemap"):
+            # From saved site files only, so recover() rebuilds the request it submitted.
+            options["respect_sitemap"] = await self._respects_sitemap(run_id, scope)
         request = self.provider.crawl_request(
             host=scope["host"], tag=f"tin-organic-{run_id}", **options
         )
@@ -682,7 +801,88 @@ class OrganicAuditActivities:
             return False
         if not crawl_was_final and scope.get("pagespeed") == "configured":
             return False  # Keep this attempt short; speed is read on the next poll.
-        return crawl_final and await self._pagespeed_step(run_id, scope)
+        if not crawl_final or not await self._pagespeed_step(run_id, scope):
+            return False
+        return await self._inspection_step(run_id, scope, seconds=20)
+
+    async def _access_step(self, run_id: str, scope: dict) -> None:
+        """The homepage and one selected page read as a browser and as AI crawlers, once."""
+        policy = audit_policy(scope["policy_version"])
+        if not policy.get("access_check_pages") or await self._result(run_id, "access"):
+            return
+        plan = await self._result(run_id, "crawl_plan") or {"selected": []}
+        urls = [scope["url"]] + [
+            row["url"]
+            for row in plan["selected"]
+            if row["reason"] != "homepage" and urlsplit(row["url"]).hostname == scope["host"]
+        ]
+        urls = list(dict.fromkeys(urls))[: policy["access_check_pages"]]
+        try:
+            async with self.site_reader(audit_hosts(scope)) as reader:
+                result = await read_crawler_access(reader, urls, seconds=30)
+        except Exception:  # noqa: BLE001 - an unread comparison stays unknown.
+            activity.logger.warning("Organic audit crawler access was not read.", exc_info=True)
+            result = {"status": "unavailable", "reason": "site_read_failed", "rows": []}
+        await self._save(run_id, "access", result)
+
+    async def _inspection_step(self, run_id: str, scope: dict, *, seconds: float) -> bool:
+        """Google's URL Inspection for the key pages, each its own receipt, within `seconds`."""
+        policy = audit_policy(scope["policy_version"])
+        if not policy.get("url_inspection_max_urls") or await self._result(
+            run_id, "url_inspection"
+        ):
+            return True
+        search = await self._result(run_id, "search_console") or {}
+        if search.get("status") != "completed" or self.integrations is None:
+            await self._save(
+                run_id,
+                "url_inspection",
+                {"status": "not_available", "reason": "matching_property_not_connected"},
+            )
+            return True
+        from tin_lite.organic_audit_search import inspection_row, inspection_urls
+
+        run = await self._active(run_id)
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        urls = inspection_urls(
+            home=scope["url"],
+            host=scope["host"],
+            search_pages=search["value"].get("pages", []),
+            facts=((facts.result or {}) if facts else {}).get("pages", {}),
+            cap=policy["url_inspection_max_urls"],
+        )
+        results = []
+        deadline = time.monotonic() + seconds
+        for index, url in enumerate(urls):
+            saved = await self._result(run_id, f"url_inspection:{index}")
+            if saved is None:
+                if time.monotonic() > deadline:
+                    return False  # The rest are read on the next poll.
+
+                async def inspect(url=url, index=index):
+                    raw = await self.integrations.search_console_url_inspection(
+                        project_id=run.project_id,
+                        url=url,
+                        expected_site_url=search["value"]["property"],
+                        execution_key=self.key(run_id, f"url_inspection:{index}:read"),
+                        run_id=run.id,
+                    )
+                    return inspection_row(url, raw)
+
+                saved = await self._paid(
+                    run_id, f"url_inspection:{index}", {"url": url}, "0", inspect
+                )
+            results.append(
+                saved["value"]
+                if saved.get("status") == "completed"
+                else {"url": url, "status": "unknown", "reason": saved.get("reason")}
+            )
+        await self._save(
+            run_id,
+            "url_inspection",
+            {"status": "observed" if results else "unavailable", "results": results},
+        )
+        return True
 
     async def _poll_provider(self, run_id: str) -> bool:
         if await self._result(run_id, "crawl"):
@@ -733,11 +933,13 @@ class OrganicAuditActivities:
         if scope.get("page_cap"):
             options["limit"] = scope["page_cap"]
         raw_pages = await self.provider.pages(task_id, **options)
+        mode = await self._crawl_mode(run_id, scope)
         pages = normalize_pages(
             raw_pages,
             scope["host"],
             aliases=hosts,
             policy_version=scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]),
+            respect_sitemap=await self._respects_sitemap(run_id, scope),
         )
         status = (
             "completed"
@@ -752,7 +954,11 @@ class OrganicAuditActivities:
                 "pages": pages,
                 "summary": summary,
                 "task_id": task_id,
-                "note": "Static HTML only; no JavaScript or resource rendering.",
+                "note": " ".join(
+                    ["Static HTML only; no JavaScript or resource rendering."]
+                    + ([mode["note"]] if mode else [])
+                ),
+                **({"crawl_mode": mode["mode"]} if mode else {}),
                 **(
                     {
                         "collection": {
@@ -795,7 +1001,7 @@ class OrganicAuditActivities:
             return
         submission = await self._result(run_id, "crawl_submit")
         stopped = False
-        pages = []
+        pages, mode = [], {}
         if self.provider and submission and submission["status"] == "completed":
             try:
                 await self.provider.stop(submission["value"]["task_id"])
@@ -803,6 +1009,7 @@ class OrganicAuditActivities:
             except DataForSEOError:
                 pass
             scope = await self._result(run_id, "scope")
+            mode = await self._crawl_mode(run_id, scope)
             try:
                 pages = normalize_pages(
                     await self.provider.pages(
@@ -819,6 +1026,7 @@ class OrganicAuditActivities:
                     scope["host"],
                     aliases=audit_hosts(scope),
                     policy_version=scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]),
+                    respect_sitemap=await self._respects_sitemap(run_id, scope),
                 )
             except (DataForSEOError, ValueError):
                 pass
@@ -828,7 +1036,11 @@ class OrganicAuditActivities:
             {
                 "status": "partial",
                 "pages": pages,
-                "note": "Crawl collection reached its time or retry limit.",
+                "note": " ".join(
+                    ["Crawl collection reached its time or retry limit."]
+                    + ([mode["note"]] if mode else [])
+                ),
+                **({"crawl_mode": mode["mode"]} if mode else {}),
                 "provider_stop_confirmed": stopped,
             },
         )
@@ -896,28 +1108,34 @@ class OrganicAuditActivities:
                 "Observation index is outside its frozen panel.", non_retryable=True
             )
         repetitions = panel_repetitions(panel)
-        question = panel["questions"][index // repetitions]["question"]
+        searched = len(panel["questions"]) * repetitions
+        # Answers without web search follow every searched answer, one per question.
+        memory = bool(panel.get("unsearched")) and index >= searched
+        question_index = index - searched if memory else index // repetitions
+        ladder = graded_panel(panel)
+        question = panel["questions"][question_index]["question"]
         answer = await self._model(
             run_id,
             f"answer:{index}",
             payload(
-                stage="answer",
+                stage="answer_memory" if memory else "answer",
                 data=question,
                 market=scope["market"],
-                search=True,
+                search=not memory,
                 policy_version=policy_version,
             ),
-            search=True,
+            search=not memory,
         )
         result = {
             "status": "unavailable",
             "index": index,
-            "question_index": index // repetitions,
-            "repetition": index % repetitions + 1,
+            "question_index": question_index,
+            "repetition": 1 if memory else index % repetitions + 1,
             "answer": answer,
+            **({"mode": "memory"} if memory else {}),
         }
         absent = (
-            classify_absent_target(answer["value"], panel)
+            classify_absent_target(answer["value"], panel, ladder=ladder)
             if modern and answer["status"] == "completed"
             else None
         )
@@ -930,13 +1148,13 @@ class OrganicAuditActivities:
                 run_id,
                 f"judge:{index}",
                 payload(
-                    stage="judge",
+                    stage="judge_graded" if ladder else "judge",
                     data={
                         "answer": answer["value"]["text"],
                         "name": panel["name"],
                         "aliases": panel["aliases"],
                     },
-                    schema=AnswerJudgment,
+                    schema=AnswerGrade if ladder else AnswerJudgment,
                     market=scope["market"],
                     search=False,
                     policy_version=policy_version,
@@ -948,7 +1166,9 @@ class OrganicAuditActivities:
                     result.update(
                         {
                             "status": "completed",
-                            "classification": classify(answer["value"], judgment["value"], panel),
+                            "classification": classify(
+                                answer["value"], judgment["value"], panel, ladder=ladder
+                            ),
                             "judgment_receipt": {
                                 "response_id": judgment["value"]["response_id"],
                                 "usage": judgment["value"]["usage"],
@@ -977,10 +1197,11 @@ class OrganicAuditActivities:
             result = {
                 "status": "unavailable",
                 "index": index,
-                "question_index": index // repetitions,
-                "repetition": index % repetitions + 1,
+                "question_index": question_index,
+                "repetition": 1 if memory else index % repetitions + 1,
                 "answer": answer,
                 "reason": "classification_exceeded_evidence_budget",
+                **({"mode": "memory"} if memory else {}),
             }
             if modern:
                 result["failure_stage"] = "grading"
@@ -994,8 +1215,65 @@ class OrganicAuditActivities:
             summary="Observing the frozen buyer-question panel.",
         )
 
+    async def _content_review(self, run_id: str) -> None:
+        """One text-model review of the top content pages' answer structure, saved once."""
+        from tin_lite.organic_audit_ai import ContentReview
+        from tin_lite.organic_audit_content import model_input, review_pages, validate_review
+        from tin_lite.organic_audit_report import query_rows
+
+        scope = await self._result(run_id, "scope")
+        policy_version = await self._policy_version(run_id)
+        policy = audit_policy(policy_version)
+        if (
+            not policy.get("content_review_pages")
+            or scope.get("completion")
+            or await self._result(run_id, "content_review")
+        ):
+            return
+        facts = await self.db.get_effect(self.key(run_id, "page_facts"))
+        search = await self._result(run_id, "search_console") or {}
+        pages = review_pages(
+            facts=((facts.result or {}) if facts else {}).get("pages", {}),
+            search_pages=search.get("value", {}).get("pages", [])
+            if search.get("status") == "completed"
+            else [],
+            queries=query_rows(await self._result(run_id, "search_console_queries")),
+            host=scope["host"],
+            cap=policy["content_review_pages"],
+        )
+        if not pages:
+            await self._save(
+                run_id, "content_review", {"status": "not_available", "reason": "no_content_pages"}
+            )
+            return
+        response = await self._model(
+            run_id,
+            "content_review:model",
+            payload(
+                stage="content_review",
+                data=model_input(scope["url"], pages),
+                schema=ContentReview,
+                market=scope["market"],
+                search=False,
+                policy_version=policy_version,
+            ),
+            search=False,
+        )
+        result = {"status": "unavailable", "reason": response.get("reason", "not_recorded")}
+        if response["status"] == "completed":
+            try:
+                result = {
+                    "status": "completed",
+                    "pages": validate_review(response["value"]["text"], pages),
+                    "response_id": response["value"]["response_id"],
+                }
+            except ValueError:
+                result = {"status": "unavailable", "reason": "content_review_invalid"}
+        await self._save(run_id, "content_review", result)
+
     @activity.defn
     async def organic_brand_checks(self, run_id: str) -> None:
+        await self._content_review(run_id)
         if await self._result(run_id, "brand_checks"):
             return
         panel = await self._result(run_id, "panel")
@@ -1037,6 +1315,77 @@ class OrganicAuditActivities:
         )
 
     @activity.defn
+    async def organic_prepare_ai_engines(self, run_id: str) -> str | None:
+        """organic-audit-v13: save this run's questions for ai_answers_measure.
+
+        Returns the measurement's stage, or None when the pinned policy measures no engines
+        or there is nothing to ask within the ceiling; the plan saved here says why. The
+        prompts and brand stay in receipts, so Temporal carries only the stage name.
+        """
+        policy = audit_policy(await self._policy_version(run_id))
+        if not policy.get("ai_engines"):
+            return None
+        saved = await self._result(run_id, "ai_engines")
+        if saved is None:
+            await self._active(run_id)
+            plan, request = await self._engine_plan(run_id, policy)
+            if request is not None:
+                from tin_lite.ai_answers_activities import save_request
+
+                await save_request(self.db, run_id=run_id, stage=plan["stage"], inputs=request)
+            saved = await self._save(run_id, "ai_engines", plan)
+        return saved.get("stage")
+
+    async def _engine_plan(self, run_id: str, policy: dict) -> tuple[dict, dict | None]:
+        from tin_lite import organic_audit_engines as engines
+        from tin_lite.ai_answers import AIAnswersRequest
+
+        scope = await self._result(run_id, "scope")
+        panel = await self._result(run_id, "panel")
+        plan = {
+            "status": "not_measured",
+            "stage": None,
+            "engines": list(policy["ai_engines"]),
+            "questions": len((panel or {}).get("questions") or []),
+            "asked": 0,
+        }
+        if scope.get("completion"):
+            return {**plan, "reason": "answer_completion"}, None
+        ordered = engines.question_order(panel) if panel else []
+        if not panel or panel.get("status") != "completed" or not ordered:
+            return {**plan, "reason": "no_question_panel"}, None
+        cap = Decimal(policy["ai_engines_max_cost_usd"])
+        try:
+            AIAnswersRequest.from_inputs(
+                engines.request_inputs(panel, scope, policy, [t for _, t in ordered], cap)
+            )
+        except ValueError:
+            return {**plan, "reason": "panel_not_measurable"}, None
+        each = engines.per_question_usd(policy)
+
+        def fit(left: Decimal) -> Decimal | None:
+            fitting = min(len(ordered), int(min(cap, left) // each)) if left > 0 else 0
+            return each * fitting if fitting else None
+
+        reserved = await self._reserve_fitting(run_id, "ai_engines", fit)
+        if reserved is None:
+            return {**plan, "reason": "cost_ceiling"}, None
+        asked = ordered[: int(reserved / each)]
+        plan = {
+            **plan,
+            "status": "planned",
+            "reason": None,
+            "stage": engines.STAGE,
+            "asked": len(asked),
+            "question_indexes": [index for index, _ in asked],
+            "not_asked": sorted(index for index, _ in ordered[len(asked) :]),
+            "max_cost_usd": str(reserved),
+            "priority": policy["ai_engines_priority"],
+        }
+        request = engines.request_inputs(panel, scope, policy, [t for _, t in asked], reserved)
+        return plan, request
+
+    @activity.defn
     async def organic_publish(self, run_id: str) -> None:
         key = self.key(run_id, "publish")
         async with self.db.effect_lock(key, "organic.audit") as (conn, existing):
@@ -1074,6 +1423,14 @@ class OrganicAuditActivities:
                         )
                     }
                 ai["brand_checks"] = await self._result(run_id, "brand_checks")
+                if audit_policy(policy_version).get("ai_engines"):
+                    from tin_lite.ai_answers_activities import read_result
+                    from tin_lite.organic_audit_engines import STAGE, results
+
+                    ai["engines"] = results(
+                        await self._result(run_id, "ai_engines"),
+                        await read_result(self.db, run_id=run_id, stage=STAGE),
+                    )
                 # Only v10 question sets carry an answer count and can be reused or compared.
                 if (
                     panel
@@ -1162,6 +1519,7 @@ class OrganicAuditActivities:
             async def validate_active():
                 await self._active(run_id, conn=conn)
 
+            completion = bool((await self._result(run_id, "scope") or {}).get("completion"))
             async with self.db.project_state_lock(conn, project.id):
                 revision = await publish_audit(
                     storage=self.storage,
@@ -1172,15 +1530,29 @@ class OrganicAuditActivities:
                     intent=(existing.result or {}).get("publication") if existing else None,
                     save_intent=save_intent,
                     validate_active=validate_active,
+                    policy_version=await self._policy_version(run_id),
+                    completion=completion,
                 )
+            summary_file = summary_paths(run_id)["SUMMARY.json"]
             await self.db.complete_effect(
                 conn,
                 execution_key=key,
                 result={
                     "canonical_commit_sha": revision,
                     "artifact_path": audit_paths(run_id)["AUDIT.md"],
-                    "documents_sha256": digest(artifacts),
+                    "documents_sha256": bundle_sha256(run_id, artifacts),
                     **({"summary": summary} if summary is not None else {}),
+                    # v12: the summary for code workflows, outside the verified bundle.
+                    **(
+                        {
+                            "summary_path": summary_file,
+                            "summary_sha256": hashlib.sha256(
+                                artifacts[summary_file].encode()
+                            ).hexdigest(),
+                        }
+                        if summary_file in artifacts
+                        else {}
+                    ),
                 },
             )
 
@@ -1202,14 +1574,29 @@ class OrganicAuditActivities:
                 if saved:
                     pagespeed["results"].append(saved)
                     pagespeed["status"] = "partial"
+        inspection = await self._result(run_id, "url_inspection")
+        if inspection is None:
+            inspection = {"status": "not_collected", "results": []}
+            for index in range(
+                audit_policy(scope["policy_version"]).get("url_inspection_max_urls", 0)
+            ):
+                saved = await self._result(run_id, f"url_inspection:{index}")
+                if saved and saved.get("status") == "completed":
+                    inspection["results"].append(saved["value"])
+                    inspection["status"] = "partial"
         return {
             "search_queries": await self._result(run_id, "search_console_queries"),
+            "search_previous": await self._result(run_id, "search_console_previous"),
             "site": {
                 "files": files,
                 "plan": await self._result(run_id, "crawl_plan"),
                 "pages": list(progress.get("pages", {}).values()),
                 "pages_status": "complete" if facts and facts.status == "completed" else "partial",
                 "pagespeed": pagespeed,
+                "access": await self._result(run_id, "access") or {"status": "not_collected"},
+                "url_inspection": inspection,
+                "content_review": await self._result(run_id, "content_review")
+                or {"status": "not_collected"},
             },
         }
 

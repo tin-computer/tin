@@ -397,7 +397,7 @@ async def test_child_identity_and_step_ceiling_are_enforced(billed):
     async with f.db.pool.acquire() as conn:
         with pytest.raises(BillingError, match="step"):
             await f.billing.begin_operation(
-                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_000
+                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_001
             )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
 
@@ -408,7 +408,8 @@ def test_new_organic_parent_requires_priced_execution_before_research(billed):
 
 
 async def test_content_children_share_parent_budget_only_for_pinned_recipe(billed):
-    from tin_lite.organic_system import POLICY
+    # A recipe pinned to v5 delivers with content.deliver.
+    from tin_lite.organic_system import REFRESH_POLICY as POLICY
 
     f = billed
     await fund(f)
@@ -460,6 +461,66 @@ async def test_content_children_share_parent_budget_only_for_pinned_recipe(bille
     await finish(f, parent)
     assert await f.billing.settle(parent.id) == 100_000_000
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
+
+
+async def test_the_systems_page_refresh_shares_its_budget_and_holds_settlement(billed):
+    from tin_lite.organic_system import FALLBACK_POLICY, POLICY
+
+    f = billed
+    await fund(f)
+    parent = await admit(f, "organic.traffic_system", PARENT)
+    refresh = SPECS["content.refresh"].definition
+    step = f"system:{parent.id}:refresh"
+    # Before the recipe is pinned, the refresh has no allocation to draw on.
+    with pytest.raises(BillingError, match="allocation"):
+        await admit(f, "content.refresh", parent=parent, step=step)
+    key = f"traffic:{parent.id}:prepare"
+    async with f.db.pool.acquire() as conn:
+        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
+        await f.db.complete_effect(
+            conn,
+            execution_key=key,
+            result={"policy": POLICY, "definitions": {"refresh": refresh}},
+        )
+        system = {"run_id": parent.id, "executor": "organic.traffic_system"}
+        # Only the pinned definition, under the refresh's own start key.
+        assert not await f.billing.valid_child(
+            conn, system, {"start_idempotency_key": f"system:{parent.id}:draft"}, refresh
+        )
+        assert not await f.billing.valid_child(
+            conn, system, {"start_idempotency_key": step}, {**refresh, "title": "Changed"}
+        )
+    child = await admit(f, "content.refresh", parent=parent, step=step)
+    async with f.db.pool.acquire() as conn:
+        await f.billing.begin_operation(
+            conn, run_id=child.id, operation_id=str(child.id), kind="codex_api", maximum=200_000_000
+        )
+        await f.billing.observe_operation(
+            conn, operation_id=str(child.id), nanos=80_000_000, observation={"basis": "fixture"}
+        )
+    # The system's budget stays open while its refresh is still running.
+    await finish(f, parent)
+    assert await f.billing.settle(parent.id) is None
+    await finish(f, child)
+    assert await f.billing.settle(parent.id) == 80_000_000
+    assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
+    assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
+    # A recipe pinned before v5 refreshes nothing, so it funds no refresh.
+    older = await admit(f, "organic.traffic_system", PARENT)
+    async with f.db.pool.acquire() as conn:
+        key = f"traffic:{older.id}:prepare"
+        await f.db.start_effect(conn, execution_key=key, operation="organic.traffic_system")
+        await f.db.complete_effect(
+            conn,
+            execution_key=key,
+            result={"policy": FALLBACK_POLICY, "definitions": {"refresh": refresh}},
+        )
+        assert not await f.billing.valid_child(
+            conn,
+            {"run_id": older.id, "executor": "organic.traffic_system"},
+            {"start_idempotency_key": f"system:{older.id}:refresh"},
+            refresh,
+        )
 
 
 async def test_free_onboarding_review_holds_no_credit_reservation(billed):
@@ -587,7 +648,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
 
     from tin_lite.codex_api import (
         ATTEMPT,
-        PROCEDURE_CONTRACT,
+        PROCEDURE_CONTRACT_V5,
         attempt_key,
         select_contract,
         token_hash,
@@ -612,10 +673,14 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
     run = await admit(f, "research.deep_dive", {"question": "Which clinics buy form builders?"})
     async with f.db.pool.acquire() as conn:
         included = await api_terms_for_included(f.db, run.id, conn=conn)
-    # Included work gets the v3 procedure contract and its 1 MiB request bound, not the
+    # Included work gets the v5 procedure contract and its 8 MiB request bound, not the
     # eight-request pilot contract whose 100,000-token envelope was enforced as bytes.
-    assert included["codex_contract"] == PROCEDURE_CONTRACT
-    assert included["request_maximum_input_bytes"] == 1_048_576
+    assert included["codex_contract"] == PROCEDURE_CONTRACT_V5
+    # Tin funds it with no customer session, so its request/token runaway stops remain.
+    assert "funding" not in included
+    assert included["codex_contract"]["max_requests"] == 256
+    assert included["codex_contract"]["max_observed_tokens"] == 8_000_000
+    assert included["request_maximum_input_bytes"] == 8 * 1024 * 1024
     await f.db.pool.execute(
         """UPDATE workflow_runs SET status='running', lease_active=true,
            sandbox_id='free-test', lease_owner='test' WHERE id=$1""",
@@ -633,7 +698,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
                 ),
                 settings=SimpleNamespace(codex_api_projects=set(), luna_api_key="synthetic"),
             )
-            == PROCEDURE_CONTRACT
+            == PROCEDURE_CONTRACT_V5
         )
         await f.db.start_effect(conn, execution_key=attempt_key(run.id), operation=ATTEMPT)
         await f.db.save_effect_progress(
@@ -641,7 +706,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
             execution_key=attempt_key(run.id),
             result={
                 "outcome": "running",
-                "contract": PROCEDURE_CONTRACT,
+                "contract": PROCEDURE_CONTRACT_V5,
                 "pricing": RATE_CARD,
                 "grant_sha256": token_hash(GRANT),
                 "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
@@ -686,7 +751,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api), base_url="https://tin.test"
         ) as client:
-            # A 150 KB request: above the old 100,000-byte envelope, within v3.
+            # A 150 KB request: above the old 100,000-byte envelope, within v5.
             large = {**BODY, "input": "x" * 150_000}
             assert (await post(client, run, large)).status_code == 200
             assert (await post(client, run, large)).status_code == 409
@@ -778,9 +843,15 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
 
     f = billed
     parent = await admit(f, "growth.onboarding")
-    step = f"onboarding:{parent.id}:setup:0:visibility.audit:first"
+    step = f"onboarding:{parent.id}:setup:0:project.weekly_brief:first"
     with pytest.raises(BillingError, match="free setup"):
-        await admit(f, "visibility.audit", {"target": "this project"}, parent=parent, step=step)
+        await admit(
+            f,
+            "project.weekly_brief",
+            {"focus": "Which buyers ask assistants about us?"},
+            parent=parent,
+            step=step,
+        )
     async with f.db.pool.acquire() as conn:
         key = f"onboarding:{parent.id}:approved_plan"
         await f.db.start_effect(conn, execution_key=key, operation="growth.onboarding")
@@ -789,16 +860,22 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
         )
     with pytest.raises(BillingError, match="free setup"):
         await admit(
-            f, "visibility.audit", {"target": "not the approved target"}, parent=parent, step=step
+            f, "project.weekly_brief", {"focus": "not the approved focus"}, parent=parent, step=step
         )
-    child = await admit(f, "visibility.audit", {"target": "this project"}, parent=parent, step=step)
+    child = await admit(
+        f,
+        "project.weekly_brief",
+        {"focus": "Which buyers ask assistants about us?"},
+        parent=parent,
+        step=step,
+    )
     assert (await f.billing.run_charge(child.id, ACTOR))["root_run_id"] == str(parent.id)
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 0
-    workflow = await install(f, "visibility.audit")
+    workflow = await install(f, "project.weekly_brief")
     inputs = normalize_workflow_inputs(
         schema=workflow.definition["input_schema"],
         project_id=f.project.id,
-        inputs={"target": "this project"},
+        inputs={"focus": "Which buyers ask assistants about us?"},
     )
     with pytest.raises(BillingError, match="standing spending"):
         await f.db.create_run(
@@ -811,7 +888,7 @@ async def test_only_approved_initial_setup_inherits_free_onboarding(billed):
             definition_commit_sha=workflow.current_commit_sha,
         )
     with pytest.raises(BillingError, match="Add credits"):
-        await admit(f, "visibility.audit", {"target": "this project"})
+        await admit(f, "project.weekly_brief", {"focus": "Which buyers ask assistants about us?"})
 
 
 async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
@@ -819,7 +896,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
     await fund(f)
     original = f.billing.terms
 
-    def small_parent(definition, project_id, inputs=None):
+    def small_parent(definition, project_id, inputs=None, **_):
         terms = original(definition, project_id, inputs)
         return {**terms, "maximum_nanos": 2_000_000_000} if terms["kind"] == "parent" else terms
 
@@ -866,4 +943,63 @@ async def test_unknown_supplier_cost_stays_pending_until_reconciliation_deadline
     assert (
         await f.db.pool.fetchval("SELECT status FROM billing_operations WHERE run_id=$1", run.id)
         == "absorbed"
+    )
+
+
+async def test_x_parent_and_both_children_share_one_budget(billed):
+    from tin_lite.public_workflows import load_public_workflows
+
+    f = billed
+    package = next(w for w in await load_public_workflows() if w.key == "social.x_compose")
+    await fund(f)
+    parent = await admit(f, "social.x_draft", {"direction": "Describe our new product update."})
+    prepared = {
+        "definition_revision": parent.definition_commit_sha,
+        "definitions": {"style": SPECS["social.x_style"].definition, "compose": package.definition},
+    }
+    key = f"x-draft:{parent.id}:prepare"
+    async with f.db.effect_lock(key, "social.x_draft") as (conn, _):
+        await f.db.start_effect(conn, execution_key=key, operation="social.x_draft")
+        await f.db.complete_effect(conn, execution_key=key, result=prepared)
+    child = await admit(
+        f,
+        "social.x_style",
+        {"supplied_samples": "A concrete post about a feature I built."},
+        parent=parent,
+        step=f"x-draft:{parent.id}:style",
+    )
+    await f.db.upsert_registry_workflow(
+        workflow_id=package.id,
+        key=package.key,
+        title=package.title,
+        description=package.description,
+        executor=package.executor,
+        definition_repo_id="registry/workflows",
+        definition_path=package.definition_path,
+        current_commit_sha=parent.definition_commit_sha,
+        version_label=package.version_label,
+        definition=package.definition,
+    )
+    compose, _ = await f.db.create_run(
+        project_id=f.project.id,
+        workflow_id=package.id,
+        started_by_clerk_user_id=ACTOR,
+        input_payload={
+            "project_id": str(f.project.id),
+            "direction": "Describe our new product update.",
+        },
+        pinned_definition=package.definition,
+        definition_commit_sha=parent.definition_commit_sha,
+        start_idempotency_key=f"x-draft:{parent.id}:compose",
+        billing_parent_run_id=parent.id,
+    )
+    rows = await f.db.pool.fetch(
+        "SELECT run_id, root_run_id FROM billing_run_budgets WHERE run_id=ANY($1::uuid[])",
+        [parent.id, child.id, compose.id],
+    )
+    assert len(rows) == 3 and all(row["root_run_id"] == parent.id for row in rows)
+    assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
+    assert (
+        f.billing.terms(SPECS["social.x_draft"].definition, f.project.id)["maximum_nanos"]
+        == 4_000_000_000
     )

@@ -88,6 +88,7 @@
   --hot-hover: #d94100;
   --hot-pressed: #bd3900;
   --bermellon-text: #be3a00;
+  --ember-text: #ec4b1a;
   --setup-text: #b73500;
   --danger: #be2132;
   --on-accent: #fffdf6;
@@ -125,6 +126,19 @@
   --diagram-mono: "Tin Diagram Mono", "Geist Mono", "SFMono-Regular", Consolas, monospace;
   --diagram-store-top: #f5f2ea;
   --diagram-ghost-border: rgb(var(--ink-rgb) / 25%);
+  /* The workflow diagram panel (workflow-spine.js): a canvas a step below the page,
+     opaque nodes on it, and one stroke for lines and chevrons. */
+  --spine-panel-width: 420px;
+  --spine-canvas: #ece9e2;
+  --spine-canvas-dot: rgb(var(--ink-rgb) / 16%);
+  --spine-line: rgb(var(--ink-rgb) / 32%);
+  --spine-page-shadow: rgb(var(--ink-rgb) / 10%);
+  --spine-surface-fill: #f3f1ea;
+  --spine-gate-fill: #fceee4;
+  --spine-gate-border: rgb(var(--hot-rgb) / 16%);
+  --spine-receipt-fill: #eaecdf;
+  --spine-receipt-border: rgb(var(--accent-deep-rgb) / 24%);
+  --spine-ghost-border: rgb(var(--ink-rgb) / 25%);
   --file-icon-surface: var(--paper-card);
   --file-icon-folder: var(--paper-deep);
   --file-icon-stroke: var(--ink-secondary);
@@ -187,6 +201,7 @@ html[data-theme="dark"] {
   --hot-hover: #e8552a;
   --hot-pressed: #c53a10;
   --bermellon-text: #ec4b1a;
+  --ember-text: #ec4b1a;
   --setup-text: #ec4b1a;
   --danger: #d9515e;
   --on-accent: #14170a;
@@ -211,6 +226,15 @@ html[data-theme="dark"] {
   --diagram-receipt-wash: rgb(var(--accent-deep-rgb) / 10%);
   --diagram-store-top: #23201d;
   --diagram-edge: #7d786f;
+  --spine-canvas: #0d0c0a;
+  --spine-canvas-dot: rgb(var(--ink-rgb) / 12%);
+  --spine-line: rgb(var(--ink-rgb) / 34%);
+  --spine-page-shadow: rgb(0 0 0 / 65%);
+  --spine-surface-fill: #2a2620;
+  --spine-gate-fill: #2e1a12;
+  --spine-gate-border: transparent;
+  --spine-receipt-fill: #23241a;
+  --spine-receipt-border: transparent;
   --file-icon-surface: var(--paper-card);
   --file-icon-folder: var(--paper-deep);
   --file-icon-stroke: var(--ink-secondary);
@@ -820,6 +844,36 @@ body {
 
 html {
   scrollbar-gutter: stable;
+}
+
+/* Every scroll area: a slim rounded thumb in the theme's ink on a transparent track. Chrome and
+   Safari draw these parts unless an element sets its own scrollbar-color; Firefox uses the
+   fallback below. */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+  background: transparent;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--ink-rgb) / 34%);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-color: var(--scrollbar-thumb) transparent;
+    scrollbar-width: thin;
+  }
 }
 
 body {
@@ -2263,6 +2317,39 @@ html[data-theme="dark"] .markdown-logo::before {
   border-color: rgb(var(--ink-rgb) / 35%);
 }
 
+/* One "Open" everywhere a row opens what it describes: a small bordered button, not a text link
+   with an arrow. The container selectors outrank the plain-text button resets of each row. */
+.open-button,
+:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  align-self: center;
+  min-height: 26px;
+  padding: 4px 11px;
+  background: var(--paper-card);
+  border: 1px solid rgb(var(--ink-rgb) / 25%);
+  border-radius: 4px;
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 16px;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease;
+}
+
+.open-button:hover,
+:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
+  background: var(--paper-well);
+  border-color: rgb(var(--ink-rgb) / 35%);
+  text-decoration: none;
+}
+
 .button-quiet {
   background: transparent;
   color: var(--ink-secondary);
@@ -2914,33 +3001,8 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 16px;
 }
 
-.workflow-how-it-runs {
-  padding: 8px 10px 10px;
-  border-top: 1px solid rgb(var(--ink-rgb) / 9%);
-}
 
-.workflow-how-it-runs > header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  padding-bottom: 6px;
-}
 
-.workflow-how-it-runs > header strong {
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 16px;
-}
-
-.workflow-how-it-runs > header code {
-  overflow: hidden;
-  color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  line-height: 14px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 .tin-diagram {
   min-width: 0;
@@ -2965,15 +3027,455 @@ html[data-theme="dark"] .markdown-logo::before {
   text-rendering: geometricPrecision;
 }
 
-.workflow-diagram {
-  min-height: 116px;
-  padding: 4px 0;
+/* The workflow diagram panel: one workflow's flow, read top to bottom along a single
+   spine (workflow-spine.js), on a dot-grid canvas that sits a step below the page. While
+   it is open the page narrows beside it instead of running underneath. Paper:
+   thinklikeanagent, "System · workflow diagram panel", PANEL-3B and ANATOMY. */
+.system-card-diagram {
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
 }
 
-.workflow-diagram > span {
-  display: block;
-  padding: 44px 0;
-  text-align: center;
+.system-card-diagram svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.2px;
+}
+
+.system-card-diagram:hover {
+  background: var(--paper-well);
+  color: var(--ink);
+}
+
+.system-card-diagram[aria-pressed="true"] {
+  background: var(--paper-well);
+  box-shadow: inset 0 0 0 1px var(--paper-border-strong);
+  color: var(--ink);
+}
+
+.system-workflow-card.is-diagram-open {
+  border-color: rgb(var(--ink-rgb) / 26%);
+}
+
+.workflow-diagram-panel {
+  position: fixed;
+  z-index: 60;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  width: var(--spine-panel-width);
+  flex-direction: column;
+  background: var(--spine-canvas);
+  border-left: 1px solid var(--paper-border-strong);
+}
+
+/* The page's short shadow falls onto the panel's left edge: the diagram sits behind it. */
+.workflow-diagram-panel::after {
+  position: absolute;
+  z-index: 3;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 16px;
+  background: linear-gradient(90deg, var(--spine-page-shadow), transparent);
+  content: "";
+  pointer-events: none;
+}
+
+body.has-diagram-panel .main {
+  margin-right: var(--spine-panel-width);
+}
+
+/* Beside the panel, a row keeps its name, key, schedule and actions. */
+@container view (max-width: 860px) {
+  .has-diagram-panel .system-card-identity {
+    width: auto;
+    flex: 1 1 0;
+  }
+
+  .has-diagram-panel .system-card-state,
+  .has-diagram-panel .system-card-last,
+  .has-diagram-panel .system-pace-long {
+    display: none;
+  }
+
+  .has-diagram-panel .system-pace-short {
+    display: inline;
+  }
+}
+
+.system-pace-short {
+  display: none;
+}
+
+.workflow-diagram-panel > header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  padding: 20px 16px 16px 20px;
+  border-bottom: 1px solid var(--paper-border);
+}
+
+.diagram-panel-close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  margin: -3px -4px 0 0;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+}
+
+.diagram-panel-close:hover {
+  background: var(--paper-well);
+  color: var(--ink);
+}
+
+.diagram-panel-close svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.4px;
+}
+
+.workflow-diagram-panel h2 {
+  margin: 0;
+  color: var(--ink);
+  font: 400 18px/23px var(--sans);
+  letter-spacing: -0.01em;
+  overflow-wrap: anywhere;
+}
+
+.workflow-diagram-panel > header code {
+  grid-column: 1 / -1;
+  color: var(--ink-muted);
+  font: 11px/14px var(--mono);
+  overflow-wrap: anywhere;
+}
+
+.diagram-panel-canvas {
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 28px 18px 36px;
+  background-color: var(--spine-canvas);
+  background-image: radial-gradient(circle, var(--spine-canvas-dot) 1px, transparent 1.4px);
+  background-attachment: local;
+  background-position: 8px 8px;
+  background-size: 16px 16px;
+}
+
+.diagram-panel-canvas:focus-visible {
+  outline: 2px solid var(--accent-deep);
+  outline-offset: -2px;
+}
+
+.diagram-panel-canvas.is-loading .spine-diagram {
+  visibility: hidden;
+}
+
+.workflow-diagram-panel > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 16px 11px 20px;
+  border-top: 1px solid var(--paper-border);
+}
+
+.workflow-diagram-panel > footer code {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-muted);
+  font: 11px/14px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-diagram-panel > footer button {
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  margin: -4px -6px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--ink-secondary);
+  cursor: pointer;
+  font: 13px/16px var(--sans);
+}
+
+.workflow-diagram-panel > footer button:hover {
+  color: var(--ink);
+}
+
+.spine-diagram {
+  position: relative;
+  max-width: 384px;
+  margin: 0 auto;
+  font-synthesis: none;
+}
+
+.spine-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 34px;
+  margin: 0;
+  padding: 0 24px;
+  list-style: none;
+}
+
+.spine-row {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+}
+
+.spine-row.has-edge-label {
+  margin-top: calc(14px + var(--spine-label-room, 0px));
+}
+
+.spine-row.is-single > .spine-node {
+  width: min(248px, 100%);
+}
+
+.spine-row.is-pair > .spine-node {
+  min-width: 0;
+  flex: 1 1 50%;
+  max-width: 176px;
+}
+
+.spine-node {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  box-sizing: border-box;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 14px 11px;
+  background: var(--paper-card);
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+}
+
+.spine-node strong {
+  color: var(--ink);
+  font: 700 13px/17px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+/* A node's description: one plain line in the sans, never the mono. */
+.spine-node code {
+  color: var(--ink-secondary);
+  font: 12px/16px var(--sans);
+  overflow-wrap: anywhere;
+}
+
+.spine-node.is-surface {
+  background: var(--spine-surface-fill);
+  border-color: transparent;
+}
+
+.spine-node.is-store:has(.spine-node-icon) {
+  padding-right: 32px;
+}
+
+.spine-node-icon {
+  position: absolute;
+  top: 11px;
+  right: 12px;
+  width: 12px;
+  height: 14px;
+  fill: none;
+  stroke: var(--ink-muted);
+  stroke-linejoin: round;
+  stroke-width: 1.1px;
+}
+
+.spine-node.is-gate {
+  background: var(--spine-gate-fill);
+  border-color: var(--spine-gate-border);
+}
+
+.spine-node.is-receipt {
+  background: var(--spine-receipt-fill);
+  border-color: var(--spine-receipt-border);
+}
+
+.spine-node.is-gate strong,
+.spine-node.is-receipt strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.spine-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: var(--hot);
+}
+
+.spine-node.is-receipt .spine-dot {
+  background: var(--accent-deep);
+}
+
+.spine-node.is-ghost {
+  background: var(--spine-canvas);
+  border: 1px dashed var(--spine-ghost-border);
+}
+
+.spine-node.is-ghost strong {
+  color: var(--ink-muted);
+  font-weight: 400;
+}
+
+.spine-node.is-wait {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) 12px minmax(0, 1fr);
+  gap: 0 10px;
+  padding: 2px 0;
+  background: transparent;
+  border: 0;
+}
+
+.spine-wait-mark {
+  grid-column: 2;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--ink-muted);
+  border-radius: 50%;
+  background: var(--spine-canvas);
+}
+
+.spine-wait-text {
+  display: flex;
+  min-width: 0;
+  grid-column: 3;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.spine-node.is-wait strong {
+  color: var(--ink-secondary);
+  font: 12px/16px var(--sans);
+}
+
+.spine-row.is-trigger {
+  margin-bottom: -6px;
+}
+
+.spine-trigger {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 12px 0 10px;
+  border: 1px solid var(--paper-border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--spine-canvas);
+  color: var(--ink-secondary);
+  font: 11px/14px var(--mono);
+  white-space: nowrap;
+}
+
+.spine-trigger-mark {
+  width: 7px;
+  height: 7px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent-deep);
+  border-radius: 50%;
+}
+
+.spine-edges {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* Lines and their chevrons share one stroke. */
+.spine-lines path,
+.spine-heads path {
+  fill: none;
+  stroke: var(--spine-line);
+  stroke-width: 1.2px;
+}
+
+.spine-heads path {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.spine-labels {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+}
+
+.spine-edge-label {
+  position: absolute;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--spine-canvas);
+  color: var(--ink-muted);
+  font: 10.5px/13px var(--mono);
+  transform: translateY(-50%);
+  white-space: nowrap;
+}
+
+/* Beside a line a label wraps inside its lane; the renderer sets how wide that is. */
+.spine-edge-label.is-right {
+  width: max-content;
+  white-space: normal;
+}
+
+.spine-edge-label.is-rail,
+.spine-edge-label.is-skip {
+  transform: translate(-50%, -50%) rotate(-90deg);
+}
+
+@media (max-width: 640px) {
+  .workflow-diagram-panel {
+    width: 100vw;
+    border-left: 0;
+  }
+
+  .workflow-diagram-panel::after {
+    display: none;
+  }
+
+  body.has-diagram-panel .main {
+    margin-right: 0;
+  }
 }
 
 .tin-segmented {
@@ -3135,7 +3637,10 @@ html[data-theme="dark"] .markdown-logo::before {
 .system-config-form.is-manual .schedule-timed,
 .system-config-form:not(.is-weekly) .schedule-weekday,
 .workflow-ledger-schedule-form.is-manual .schedule-timed,
-.workflow-ledger-schedule-form:not(.is-weekly) .schedule-weekday {
+.workflow-ledger-schedule-form:not(.is-weekly) .schedule-weekday,
+.workflow-config-form:not(.is-monthly) .schedule-monthly,
+.system-config-form:not(.is-monthly) .schedule-monthly,
+.workflow-ledger-schedule-form:not(.is-monthly) .schedule-monthly {
   display: none;
 }
 
@@ -4073,6 +4578,17 @@ html[data-theme="dark"] .markdown-logo::before {
   overflow-y: auto;
 }
 
+/* Room for a quarter's four month names on one line. */
+.schedule-monthly .tin-select {
+  width: min(220px, 100%);
+}
+
+/* 28 days of the month: scroll inside the menu rather than past the card. */
+.schedule-monthly .tin-select-menu {
+  max-height: min(280px, 50vh);
+  overflow-y: auto;
+}
+
 .content-disclosure {
   min-width: 0;
   color: var(--ink);
@@ -4293,6 +4809,29 @@ html[data-theme="dark"] .markdown-logo::before {
 .system-saved-mark {
   display: flex;
   align-items: center;
+}
+
+.system-template-side {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.system-last-run {
+  padding: 0;
+  background: transparent;
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.system-last-run:hover {
+  color: var(--ink);
+  text-decoration: underline;
 }
 
 .system-template-actions {
@@ -4556,15 +5095,6 @@ html[data-theme="dark"] .markdown-logo::before {
   line-height: 14px;
 }
 
-.decision-detail-card > header button {
-  padding: 0;
-  background: transparent;
-  color: var(--accent-text);
-  font-size: 12.5px;
-  font-weight: 700;
-  cursor: pointer;
-}
-
 .decision-workflow-mark {
   display: grid;
   width: 30px;
@@ -4681,10 +5211,6 @@ p.page-url-line[hidden],
   border-top: 1px solid var(--card-hairline);
 }
 
-.decision-detail-card > footer.is-actions-only {
-  justify-content: flex-end;
-}
-
 .decision-detail-card > footer .decision-remember {
   display: inline-flex;
   align-items: center;
@@ -4732,6 +5258,120 @@ p.page-url-line[hidden],
   border-radius: 4px;
   font-size: 12.5px;
   line-height: 16px;
+}
+
+/* The footer holds controls only: the "future drafts" box on the left, the buttons on the right.
+   When the card is too narrow, the buttons wrap to a second row on the right. */
+.decision-detail-card > footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 10px;
+}
+
+.decision-detail-card > footer .button-quiet {
+  padding-inline: 2px;
+}
+
+/* A quiet way to turn down what is waiting, just before the approval. */
+.decision-detail-card > footer .decision-discard {
+  align-self: center;
+  padding: 7px 0;
+  background: transparent;
+  color: var(--bermellon-text);
+  font-size: 12.5px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.decision-detail-card > footer .decision-discard:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+/* While a newer revision waits, every approval looks blocked, not only the primary one. */
+.decision-detail-card > footer .button-secondary[data-blocked],
+.decision-detail-card > footer .button-secondary[data-blocked]:hover {
+  background: transparent;
+  border-color: rgb(var(--ink-rgb) / 12%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+}
+
+.decision-detail-card > footer .decision-approval[data-blocked] {
+  background: rgb(var(--ink-rgb) / 8%);
+  color: rgb(var(--ink-rgb) / 35%);
+  cursor: not-allowed;
+  opacity: 1;
+}
+
+.decision-detail-body p.decision-note {
+  color: var(--ink-secondary);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.decision-detail-body p.decision-note a {
+  color: var(--accent-deep);
+}
+
+/* A proposed website change: the pages and files it touches, as quiet code chips. */
+.website-change-paths,
+.website-change-files,
+.judgment-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.website-change-paths code,
+.website-change-files code {
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.website-change-files li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.website-change-files li span {
+  flex: none;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.decision-detail-body p.website-change-protected {
+  color: var(--bermellon-text);
+}
+
+/* A judgment call: its options, with Tin's suggestion marked. */
+.judgment-options li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--card-hairline);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.judgment-options li.is-suggested {
+  border-color: var(--accent-deep);
+}
+
+.judgment-suggested {
+  margin-left: auto;
+  color: var(--accent-deep);
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 .side-stack {
@@ -5254,6 +5894,9 @@ button.activity-ref {
   font-family: var(--mono);
   font-size: 11px;
 }
+
+.file-metadata { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.file-metadata .file-modified, .file-metadata .file-type { font: inherit; white-space: nowrap; }
 
 .project-file-icon {
   display: block;
@@ -6450,6 +7093,12 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   box-shadow: 0 0 0 1px var(--accent-deep);
 }
 
+.integration-project-error {
+  margin: 14px 0 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
 .integration-project-dialog footer {
   display: flex;
   justify-content: flex-end;
@@ -7252,6 +7901,13 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     flex: 1;
   }
 
+  /* Four cadences: each label keeps one line, sized to its text. */
+  .schedule-mode .tin-segment {
+    flex: 1 1 auto;
+    padding: 0 8px;
+    white-space: nowrap;
+  }
+
   .workflow-config-actions {
     flex-wrap: wrap;
     padding-right: 7px;
@@ -7531,7 +8187,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
     padding: 13px 14px;
   }
 
-  .system-template-card:not(.is-open) > .system-template-actions {
+  .system-template-card:not(.is-open) > .system-template-side {
     align-self: flex-end;
   }
 
@@ -8167,7 +8823,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   display: block;
   padding: 8px 0 0;
   color: var(--on-dark-code);
-  content: "Tin could not render this diagram; the source remains available.";
+  content: "Shown as source: Tin previews only its own diagram format.";
   font-family: var(--sans);
   font-size: 11px;
   line-height: 16px;
@@ -8186,6 +8842,106 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   height: auto;
   margin: 0 auto 30px;
   border-radius: 4px;
+}
+
+/* Page bundles: a draft's figures, embeds, videos and callouts. */
+.md-figure,
+.md-embed,
+.md-video {
+  margin: 4px 0 34px;
+}
+
+.md-figure img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+  /* A figure's own prefers-color-scheme rules follow the reader's theme. */
+  color-scheme: light;
+}
+
+.md-figure figcaption,
+.md-embed figcaption,
+.md-video figcaption {
+  margin-top: 10px;
+  color: var(--ink-muted);
+  font-size: 13px;
+  line-height: 18px;
+  text-align: center;
+}
+
+/* No card around a piece: the page is its background, and it frames its own surface. A
+   matching color-scheme keeps the frame transparent. */
+.md-embed-frame {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] .md-figure img,
+html[data-theme="dark"] .md-embed-frame {
+  color-scheme: dark;
+}
+
+.md-video-frame,
+.md-video-file {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border: 0;
+  border-radius: var(--radius-card);
+}
+
+.md-embed-missing,
+.md-asset-notes {
+  color: var(--ink-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.md-embed-missing {
+  padding: 24px;
+  background: var(--paper-deep);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.md-asset-notes {
+  margin: 0 0 24px;
+}
+
+.md-callout {
+  margin: 0 0 30px;
+  padding: 16px 20px;
+  background: var(--paper-well);
+  border-radius: var(--radius-card);
+}
+
+.md-callout p {
+  margin: 0 0 8px;
+}
+
+.md-callout p:last-child {
+  margin-bottom: 0;
+}
+
+.md-callout .md-callout-label {
+  margin-bottom: 6px;
+  color: var(--ink-secondary);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 14px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.md-callout[data-kind="warning"] .md-callout-label,
+.md-callout[data-kind="caution"] .md-callout-label {
+  color: var(--danger);
 }
 
 .md-image-fallback {
@@ -8371,20 +9127,9 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
   scrollbar-gutter: stable;
 }
 
-/* Slim rounded thumb on a transparent track; the track keeps clear of the dialog corners. */
-.custom-api-dialog form::-webkit-scrollbar {
-  width: 6px;
-  background: transparent;
-}
-
+/* The track keeps clear of the dialog corners; the thumb darkens while the form is in use. */
 .custom-api-dialog form::-webkit-scrollbar-track {
   margin: 10px 0;
-  background: transparent;
-}
-
-.custom-api-dialog form::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 3px;
 }
 
 .custom-api-dialog form:hover::-webkit-scrollbar-thumb,
@@ -8393,11 +9138,6 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 }
 
 @supports not selector(::-webkit-scrollbar) {
-  .custom-api-dialog form {
-    scrollbar-color: var(--scrollbar-thumb) transparent;
-    scrollbar-width: thin;
-  }
-
   .custom-api-dialog form:hover,
   .custom-api-dialog form:focus-within {
     scrollbar-color: rgb(var(--ink-rgb) / 34%) transparent;

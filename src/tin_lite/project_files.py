@@ -5,12 +5,12 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, Literal
+from typing import Any, Literal, NoReturn
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from tin_lite.code_storage import CodeStorage
+from tin_lite.code_storage import CodeStorage, ProjectStateChangedError
 from tin_lite.db import Database
 from tin_lite.domain import Project, SideEffectConflictError
 
@@ -70,7 +70,7 @@ class StaleProjectRevisionError(ProjectFileError):
 class ProjectFileMutation:
     operation: str
     path: str
-    content: str | None = None
+    content: str | bytes | None = None
     new_path: str | None = None
 
 
@@ -108,8 +108,10 @@ def safe_project_file_path(path: str) -> bool:
         or "\x00" in path
     ):
         return False
-    parts = PurePosixPath(path).parts
-    if not parts or any(part in {"", ".", ".."} for part in parts):
+    # Split the raw string: PurePosixPath collapses "a//b", "./a", "a/./b" and "a/", which
+    # code.storage does not, so a path that only looks safe after normalizing is refused.
+    parts = path.split("/")
+    if any(part in {"", ".", ".."} for part in parts):
         return False
     for part in parts:
         lowered = part.casefold()
@@ -121,6 +123,15 @@ def safe_project_file_path(path: str) -> bool:
         ):
             return False
     return True
+
+
+def safe_project_search_path(path: str) -> bool:
+    """A search scope: a project file or directory, never git pathspec magic like :(icase)."""
+    return (
+        isinstance(path, str)
+        and not path.startswith(":")
+        and safe_project_file_path(path.removesuffix("/"))
+    )
 
 
 def normalize_project_file_mutations(
@@ -187,6 +198,73 @@ class ProjectFileService:
         self._database = database
         self._storage = storage
 
+    async def upload(
+        self,
+        *,
+        project: Project,
+        actor_clerk_user_id: str,
+        client_id: str | None,
+        request_id: UUID,
+        expected_revision: str,
+        path: str,
+        content: bytes,
+        media_type: str,
+    ) -> dict:
+        from tin_lite.project_media import validate_media
+
+        metadata = validate_media(path, content, media_type)
+        if not re.fullmatch(r"[0-9a-f]{40}", expected_revision):
+            raise ValueError("expected_revision must be a commit SHA")
+        fingerprint = project_file_request_fingerprint(
+            operation="commit",
+            expected_revision=expected_revision,
+            payload={"path": path, "sha256": hashlib.sha256(content).hexdigest(), **metadata},
+        )
+        async with self._database.project_file_change_lock(
+            project_id=project.id, request_id=request_id
+        ):
+            existing = await self._database.get_project_file_change(
+                project_id=project.id, request_id=request_id
+            )
+            replay = self._replay(existing, fingerprint=fingerprint)
+            if replay is not None:
+                return {"path": path, "revision": replay.revision, **metadata}
+            await self._database.start_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                operation="commit",
+                request_fingerprint=fingerprint,
+                expected_head_sha=expected_revision,
+            )
+            try:
+                revision, changed = await self._storage.commit_project_changes(
+                    repo_id=project.state_repo_id,
+                    branch=project.canonical_branch,
+                    expected_head_sha=expected_revision,
+                    request_id=str(request_id),
+                    message=f"Upload {path}",
+                    changes=(ProjectFileMutation("upsert", path, content),),
+                )
+            except RuntimeError as exc:
+                if "changed" in str(exc):
+                    raise StaleProjectRevisionError(
+                        "Files changed; refresh and try again."
+                    ) from exc
+                raise
+            await self._database.complete_project_file_change(
+                project_id=project.id,
+                request_id=request_id,
+                commit_sha=revision,
+                changed_paths=list(changed),
+                actor_clerk_user_id=actor_clerk_user_id,
+                client_id=client_id,
+                message=f"Uploaded {path}",
+                operation="commit",
+            )
+            return {"path": path, "revision": revision, **metadata}
+
     async def commit(
         self,
         *,
@@ -207,6 +285,7 @@ class ProjectFileService:
         ):
             raise ValueError(f"message must contain 1-{MAX_PROJECT_FILE_MESSAGE_BYTES} UTF-8 bytes")
         normalized = normalize_project_file_mutations(changes)
+        await self._refuse_pending_proposal_edits(project, normalized)
         payload = [item.__dict__ for item in normalized]
         fingerprint = project_file_request_fingerprint(
             operation="commit", expected_revision=expected_revision, payload=payload
@@ -238,21 +317,8 @@ class ProjectFileService:
                     message=normalized_message,
                     changes=normalized,
                 )
-            except ValueError:
-                # Nothing was committed; do not leave the request looking in flight.
-                await self._database.fail_project_file_change(
-                    project_id=project.id, request_id=request_id, error_code="invalid"
-                )
-                raise
-            except RuntimeError as exc:
-                await self._database.fail_project_file_change(
-                    project_id=project.id,
-                    request_id=request_id,
-                    error_code="stale_revision" if "changed" in str(exc) else "storage_failed",
-                )
-                if "changed" in str(exc):
-                    raise StaleProjectRevisionError(str(exc)) from exc
-                raise
+            except Exception as exc:
+                await self._fail(project_id=project.id, request_id=request_id, exc=exc)
             await self._database.complete_project_file_change(
                 project_id=project.id,
                 request_id=request_id,
@@ -269,6 +335,18 @@ class ProjectFileService:
                 revision=revision,
                 changed_paths=changed_paths,
                 operation="commit",
+            )
+
+    async def _refuse_pending_proposal_edits(self, project: Project, changes) -> None:
+        """A brand or style proposal waiting in Decisions changes only through its revision
+        route, which validates it and records who revised it (capture_revisions.py)."""
+        from tin_lite.capture_revisions import TOOL, pending_owner
+
+        paths = {path for item in changes for path in (item.path, item.new_path) if path}
+        if owner := await pending_owner(self._database, self._storage, project.id, paths):
+            raise ValueError(
+                "This file is a proposal waiting in Decisions. Revise it with "
+                f"{TOOL} (run_id {owner}) so Tin checks it, or approve or discard it there."
             )
 
     async def revert_latest(
@@ -314,15 +392,8 @@ class ProjectFileService:
                     expected_head_sha=expected_revision,
                     request_id=str(request_id),
                 )
-            except RuntimeError as exc:
-                await self._database.fail_project_file_change(
-                    project_id=project.id,
-                    request_id=request_id,
-                    error_code="stale_revision" if "current" in str(exc) else "storage_failed",
-                )
-                if "current" in str(exc):
-                    raise StaleProjectRevisionError(str(exc)) from exc
-                raise
+            except Exception as exc:
+                await self._fail(project_id=project.id, request_id=request_id, exc=exc)
             await self._database.complete_project_file_change(
                 project_id=project.id,
                 request_id=request_id,
@@ -340,6 +411,25 @@ class ProjectFileService:
                 changed_paths=changed_paths,
                 operation="revert",
             )
+
+    async def _fail(self, *, project_id: UUID, request_id: UUID, exc: Exception) -> NoReturn:
+        """Record why a change did not land, by exception type, and raise it for the caller.
+
+        Every failure is recorded, so no request is left looking in flight; a retry with the
+        same request ID starts again, and storage reconciles a commit that did land.
+        """
+        if isinstance(exc, ValueError):
+            error_code = "invalid"
+        elif isinstance(exc, ProjectStateChangedError):
+            error_code = "stale_revision"
+        else:
+            error_code = "storage_failed"
+        await self._database.fail_project_file_change(
+            project_id=project_id, request_id=request_id, error_code=error_code
+        )
+        if error_code == "stale_revision":
+            raise StaleProjectRevisionError(str(exc)) from exc
+        raise exc
 
     @staticmethod
     def _replay(

@@ -19,9 +19,9 @@ from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import (
     ANSWER_PAGE_WORKFLOW_ID,
     BUILTIN_WORKFLOWS,
-    COLD_OUTREACH_SYSTEM,
     DESIGN_MD_WORKFLOW_ID,
     ORGANIC_TRAFFIC_SYSTEM,
+    OUTREACH_SYSTEM,
     SCAN_REPORT_WORKFLOW_ID,
     START_HERE_SYSTEM,
     VISIBILITY_AUDIT_WORKFLOW_ID,
@@ -64,6 +64,7 @@ from tin_lite.workflows import (
     PaidAdsAssessmentWorkflow,
     PaidAdsLaunchWorkflow,
     PaidAdsMonitorWorkflow,
+    PaymentRecoveryWorkflow,
     ProjectMemoryWorkflow,
     ProjectTaskWorkflow,
     ScanReportWorkflow,
@@ -72,6 +73,10 @@ from tin_lite.workflows import (
     StyleCaptureWorkflow,
     VisibilityAuditWorkflow,
     WeeklyBriefWorkflow,
+    XDraftWorkflow,
+    XFeedbackWorkflow,
+    XPublishWorkflow,
+    XStyleWorkflow,
     registered_workflow_implementations,
     registered_workflows,
 )
@@ -502,6 +507,10 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         ContentDraftDeliveryWorkflow,
         ProjectCodexExecution,
         StyleCaptureWorkflow,
+        XDraftWorkflow,
+        XStyleWorkflow,
+        XFeedbackWorkflow,
+        XPublishWorkflow,
         OrganicTrafficSystemWorkflow,
         GrowthOnboardingWorkflow,
         GrowthOnboardingPlanWorkflow,
@@ -518,6 +527,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
+        PaymentRecoveryWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -528,6 +538,10 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
     ]
     assert registered_workflow_implementations() == {
         "style.capture": StyleCaptureWorkflow,
+        "social.x_draft": XDraftWorkflow,
+        "social.x_revise": XFeedbackWorkflow,
+        "social.x_style": XStyleWorkflow,
+        "social.x_publish": XPublishWorkflow,
         "organic.traffic_system": OrganicTrafficSystemWorkflow,
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
@@ -543,6 +557,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         "ads.launch": PaidAdsLaunchWorkflow,
         "ads.monitor": PaidAdsMonitorWorkflow,
         "outreach.awesome_submit": AwesomeSubmitWorkflow,
+        "revenue.payment_recovery": PaymentRecoveryWorkflow,
         "content.answer_page": AnswerPageWorkflow,
         "creative.character": CharacterDesignWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
@@ -559,8 +574,20 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
 
 @pytest.mark.asyncio
 async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -> None:
-    # This fixture models the native catalog, not a deployment's selected public packages.
-    monkeypatch.setattr("tin_lite.public_workflows.PUBLIC_WORKFLOWS", ())
+    # Include the package children published atomically with the X parent and the organic
+    # system.
+    from tin_lite.organic_system import MEASURE_STEPS
+    from tin_lite.public_workflows import PUBLIC_WORKFLOWS, load_public_workflows
+
+    monkeypatch.setattr(
+        "tin_lite.public_workflows.PUBLIC_WORKFLOWS",
+        tuple(
+            item
+            for item in PUBLIC_WORKFLOWS
+            if item.key in {"social.x_compose", *MEASURE_STEPS.values()}
+        ),
+    )
+    packages = await load_public_workflows()
     _, workflow, _ = fixture_state()
 
     class FakeCatalogDatabase:
@@ -572,12 +599,14 @@ async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -
             self.synced_systems.append(values)
 
         async def get_workflow(self, workflow_id):
-            builtin = next(item for item in BUILTIN_WORKFLOWS if item.id == workflow_id)
+            builtin = next(
+                item for item in (*BUILTIN_WORKFLOWS, *packages) if item.id == workflow_id
+            )
             return replace(
                 workflow,
                 id=workflow_id,
                 key=builtin.key,
-                executor=builtin.executor,
+                executor=builtin.definition["executor"],
                 definition_path=builtin.definition_path,
             )
 
@@ -657,11 +686,11 @@ def test_registry_system_assignments_are_manifest_metadata_only() -> None:
     assert definitions["site.health_improve"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["visibility.audit"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["content.answer_page"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["outreach.email_shortlist"]["system"] == COLD_OUTREACH_SYSTEM
-    assert definitions["outreach.email_campaign"]["system"] == COLD_OUTREACH_SYSTEM
+    assert definitions["outreach.email_shortlist"]["system"] == OUTREACH_SYSTEM
+    assert definitions["outreach.email_campaign"]["system"] == OUTREACH_SYSTEM
     assert "system" not in definitions["research.deep_dive"]
     assert definitions["content.public_article"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["style.capture"]["system"] == ORGANIC_TRAFFIC_SYSTEM
+    assert "system" not in definitions["style.capture"]
     assert definitions["ads.assessment"]["system"] == "paid-ads"
     assert "agent_only" not in definitions["ads.assessment"]
 

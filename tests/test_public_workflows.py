@@ -42,6 +42,17 @@ class PublishedSnapshots(RegistrySnapshots):
 def select(monkeypatch, *keys):
     entries = tuple(PublicWorkflow(uuid4(), key) for key in keys)
     monkeypatch.setattr(public_workflows, "PUBLIC_WORKFLOWS", entries)
+    # These intentionally partial catalogs do not include the X parent or the organic system,
+    # nor the package children each publishes with it.
+    monkeypatch.setattr(
+        catalog,
+        "BUILTIN_WORKFLOWS",
+        tuple(
+            item
+            for item in catalog.BUILTIN_WORKFLOWS
+            if item.key not in {"social.x_draft", "organic.traffic_system"}
+        ),
+    )
     return entries
 
 
@@ -343,3 +354,14 @@ async def test_public_multistep_model_recovery_reuses_paid_results(billed, monke
         )
     finally:
         await second_router.close()
+
+
+async def test_parent_cannot_publish_without_its_selected_package_child(monkeypatch):
+    parent = next(w for w in catalog.BUILTIN_WORKFLOWS if w.key == "social.x_draft")
+    select(monkeypatch)
+    monkeypatch.setattr(catalog, "BUILTIN_WORKFLOWS", (*catalog.BUILTIN_WORKFLOWS, parent))
+    db, storage = catalog_database(), PublishedSnapshots()
+    with pytest.raises(RuntimeError, match="needs selected children.*social.x_compose"):
+        await catalog.sync_builtin_workflows(database=db, storage=storage, system_wiki=WIKI)
+    assert not storage.revisions and not db.rows
+    db.upsert_workflow_system.assert_not_awaited()

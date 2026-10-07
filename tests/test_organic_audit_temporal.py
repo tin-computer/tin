@@ -17,8 +17,10 @@ from tin_lite.workflows import OrganicAuditWorkflow
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("stop_during_crawl", [False, True])
-async def test_native_workflow_retry_stop_and_identifier_only_history(stop_during_crawl):
+@pytest.mark.parametrize(
+    ("stop_during_crawl", "engines"), [(False, False), (True, False), (False, True)]
+)
+async def test_native_workflow_retry_stop_and_identifier_only_history(stop_during_crawl, engines):
     binary = shutil.which("temporal")
     if binary is None:
         pytest.skip("local Temporal CLI is needed for the orchestration integration test")
@@ -37,6 +39,11 @@ async def test_native_workflow_retry_stop_and_identifier_only_history(stop_durin
                 return not stop_during_crawl
             if name == "organic_prepare_panel":
                 return 2
+            if name == "organic_prepare_ai_engines":
+                # A v13 run measures the engines; earlier policies return no stage.
+                return "engines" if engines else None
+            if name == "ai_answers_measure":
+                raise ApplicationError("Injected measurement failure", non_retryable=True)
             if name == "organic_publish":
                 publish_attempts += 1
                 if publish_attempts == 1:
@@ -55,6 +62,8 @@ async def test_native_workflow_retry_stop_and_identifier_only_history(stop_durin
         "organic_prepare_panel",
         "organic_observe",
         "organic_brand_checks",
+        "organic_prepare_ai_engines",
+        "ai_answers_measure",
         "organic_publish",
         "organic_project",
         "organic_failure",
@@ -87,6 +96,7 @@ async def test_native_workflow_retry_stop_and_identifier_only_history(stop_durin
                 assert value == run_id or value in [
                     {"run_id": run_id, "index": 0},
                     {"run_id": run_id, "index": 1},
+                    {"run_id": run_id, "stage": "engines"},
                 ]
     if stop_during_crawl:
         assert not any(
@@ -95,3 +105,7 @@ async def test_native_workflow_retry_stop_and_identifier_only_history(stop_durin
     else:
         assert publish_attempts == 2
         assert calls[-1] == ("organic_project", run_id)
+        # A failed engine measurement is reported, not fatal; it runs before publication.
+        names = [name for name, _ in calls]
+        assert ("ai_answers_measure" in names) == engines
+        assert names.index("organic_prepare_ai_engines") < names.index("organic_publish")

@@ -1,9 +1,6 @@
 from __future__ import annotations
 
-import asyncio
-import ipaddress
 import json
-import socket
 from dataclasses import asdict, dataclass
 from html.parser import HTMLParser
 from typing import Any
@@ -22,6 +19,7 @@ from tin_lite.model_providers import (
     ProviderName,
     ReasoningEffort,
 )
+from tin_lite.organic_audit_fetch import SiteReader, body_text
 
 SITE_HEALTH_MODEL_ROUTE = ModelRoute(
     key="site-health-fix-v1",
@@ -39,6 +37,9 @@ MAX_SITE_RESPONSE_BYTES = 500_000
 # The provider's wait for the proposal: 16,000 output tokens at high effort take minutes, not
 # the client's 90-second default. The drafting activity heartbeats and allows 15 minutes.
 MODEL_TIMEOUT_SECONDS = 300
+# A runaway guard, not an expected length: reasoning counts against the cap, and billing
+# charges the tokens a call actually used. It was 16,000; GPT-6 Luna allows 128,000.
+MAX_OUTPUT_TOKENS = 32_000
 MAX_SITE_CHANGE_BYTES = 512_000
 
 _PROPOSAL_SCHEMA: dict[str, Any] = {
@@ -229,7 +230,7 @@ class SiteHealthImprover:
                         content=json.dumps(reference, ensure_ascii=False, separators=(",", ":")),
                     ),
                 ),
-                max_output_tokens=16_000,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
                 reasoning_effort=ReasoningEffort.HIGH,
                 output_schema=_PROPOSAL_SCHEMA,
                 output_schema_name="site_health_fix",
@@ -250,54 +251,54 @@ class SiteHealthImprover:
         return proposal
 
 
-async def fetch_live_page_evidence(site_url: str) -> LivePageEvidence:
+async def fetch_live_page_evidence(
+    site_url: str, *, client: httpx.AsyncClient | None = None, resolver: Any = None
+) -> LivePageEvidence:
     current = _validated_public_url(site_url)
     requested = current
-    async with httpx.AsyncClient(timeout=30, follow_redirects=False) as client:
+    own_client = client is None
+    client = client or httpx.AsyncClient(
+        trust_env=False,
+        timeout=30,
+        follow_redirects=False,
+        headers={
+            "Accept": "text/html,application/xhtml+xml",
+            "User-Agent": "Tin-Lite-Site-Health/1.0",
+        },
+    )
+    try:
         for _hop in range(4):
-            await _require_public_hostname(current)
-            async with client.stream(
-                "GET",
-                current,
-                headers={
-                    "Accept": "text/html,application/xhtml+xml",
-                    "User-Agent": "Tin-Lite-Site-Health/1.0",
-                },
-            ) as response:
-                if response.status_code in {301, 302, 303, 307, 308}:
-                    location = response.headers.get("location")
-                    if not location:
-                        raise SiteHealthProtocolError("site redirect has no destination")
-                    current = _validated_public_url(urljoin(current, location))
-                    continue
-                if response.status_code >= 400:
-                    raise SiteHealthProtocolError(f"site returned HTTP {response.status_code}")
-                content_type = response.headers.get("content-type", "")
-                if "html" not in content_type.casefold():
-                    raise SiteHealthProtocolError("site URL did not return HTML")
-                chunks: list[bytes] = []
-                size = 0
-                async for chunk in response.aiter_bytes():
-                    size += len(chunk)
-                    if size > MAX_SITE_RESPONSE_BYTES:
-                        raise SiteHealthProtocolError("site HTML exceeds the audit limit")
-                    chunks.append(chunk)
-                body = b"".join(chunks).decode(response.encoding or "utf-8", errors="replace")
-                parser = _SitePageParser()
-                parser.feed(body)
-                return LivePageEvidence(
-                    requested_url=requested,
-                    final_url=current,
-                    status_code=response.status_code,
-                    title=parser.title.strip()[:500],
-                    description=parser.description.strip()[:1000],
-                    canonical=parser.canonical.strip()[:1000],
-                    html_language=parser.html_language.strip()[:100],
-                    viewport=parser.viewport.strip()[:500],
-                    h1s=tuple(value.strip()[:500] for value in parser.h1s if value.strip())[:10],
-                    image_count=parser.image_count,
-                    images_missing_alt=parser.images_missing_alt,
-                )
+            response = await _read(client, resolver, current)
+            if response["status_code"] in {301, 302, 303, 307, 308}:
+                location = response.get("location")
+                if not location:
+                    raise SiteHealthProtocolError("site redirect has no destination")
+                current = _validated_public_url(urljoin(current, location))
+                continue
+            if response["status_code"] >= 400:
+                raise SiteHealthProtocolError(f"site returned HTTP {response['status_code']}")
+            if "html" not in response["content_type"].casefold():
+                raise SiteHealthProtocolError("site URL did not return HTML")
+            if response["truncated"]:
+                raise SiteHealthProtocolError("site HTML exceeds the audit limit")
+            parser = _SitePageParser()
+            parser.feed(body_text(response))
+            return LivePageEvidence(
+                requested_url=requested,
+                final_url=current,
+                status_code=response["status_code"],
+                title=parser.title.strip()[:500],
+                description=parser.description.strip()[:1000],
+                canonical=parser.canonical.strip()[:1000],
+                html_language=parser.html_language.strip()[:100],
+                viewport=parser.viewport.strip()[:500],
+                h1s=tuple(value.strip()[:500] for value in parser.h1s if value.strip())[:10],
+                image_count=parser.image_count,
+                images_missing_alt=parser.images_missing_alt,
+            )
+    finally:
+        if own_client:
+            await client.aclose()
     raise SiteHealthProtocolError("site redirected too many times")
 
 
@@ -432,26 +433,16 @@ def _validated_public_url(value: str) -> str:
     return parsed.geturl()
 
 
-async def _require_public_hostname(url: str) -> None:
-    hostname = urlsplit(url).hostname
-    if hostname is None:
-        raise SiteHealthProtocolError("site URL has no hostname")
-    try:
-        addresses = await asyncio.get_running_loop().getaddrinfo(
-            hostname,
-            443,
-            family=socket.AF_UNSPEC,
-            type=socket.SOCK_STREAM,
-        )
-    except OSError as exc:
-        raise SiteHealthProtocolError("site hostname could not be resolved") from exc
-    resolved = {item[4][0] for item in addresses}
-    if not resolved:
-        raise SiteHealthProtocolError("site hostname could not be resolved")
-    for address in resolved:
-        parsed = ipaddress.ip_address(address)
-        if not parsed.is_global:
-            raise SiteHealthProtocolError("site URL resolved to a non-public address")
+async def _read(client: httpx.AsyncClient, resolver: Any, url: str) -> dict:
+    """One GET pinned to the public address it was vetted at (the organic audit's reader)."""
+    host = urlsplit(url).hostname or ""
+    async with SiteReader((host,), client=client, resolver=resolver) as reader:
+        response = await reader.get(url, max_bytes=MAX_SITE_RESPONSE_BYTES)
+    if response["status"] == "non_public_address":
+        raise SiteHealthProtocolError("site URL resolved to a non-public address")
+    if response["status"] != "observed":
+        raise SiteHealthProtocolError(f"site could not be read ({response['status']})")
+    return response
 
 
 def _required_string(value: dict[str, Any], key: str) -> str:

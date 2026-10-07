@@ -32,10 +32,6 @@
           "style.capture",
           "content.generate",
           "content.public_article",
-          "content.answer_page",
-          "visibility.audit",
-          "organic.mention_backlinks",
-          "organic.error_surface",
           "competitor.watch"
         ],
         "integrations": [
@@ -43,7 +39,7 @@
         ],
         "founder_keeps": "publishing to the site and the final voice",
         "impact": 0.7,
-        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants name the product; the founder publishes and keeps the voice."
+        "impact_note": "Tin audits the site, researches buyer searches, keeps the content plan, drafts every article and answer page, and checks whether AI assistants find, name and recommend the product in its audit; the founder publishes and keeps the voice."
       }
     },
     {
@@ -69,16 +65,15 @@
         "coverage": "full",
         "workflows": [
           "organic.audit",
-          "organic.technical_fix",
-          "site.health_improve"
+          "website.change"
         ],
         "integrations": [
           "infra.github",
           "analytics.gsc"
         ],
-        "founder_keeps": "merging and deploying the pull requests",
+        "founder_keeps": "approving each fix, and merging the ones left as pull requests",
         "impact": 0.8,
-        "impact_note": "Tin audits and opens the fix as a pull request; the founder merges."
+        "impact_note": "Tin audits and fixes; fixes the founder approved publish, the rest wait as a pull request."
       }
     },
     {
@@ -276,7 +271,7 @@
         "coverage": "partial",
         "workflows": [
           "qa.signup_walkthrough",
-          "site.health_improve",
+          "website.change",
           "content.diagram",
           "organic.audit",
           "qa.buyer_trust",
@@ -351,8 +346,6 @@
           "content.diagram",
           "content.release_announce",
           "outreach.speaking_shortlist",
-          "social.content_plan",
-          "social.post_batch",
           "outreach.newsletter_placements"
         ],
         "integrations": [],
@@ -385,12 +378,15 @@
           "project.task",
           "outreach.marketplace_listings",
           "outreach.awesome_lists",
-          "outreach.awesome_submit"
+          "outreach.awesome_submit",
+          "growth.framework_starter"
         ],
-        "integrations": [],
-        "founder_keeps": "marketplace accounts and submissions, and approval of each awesome-list submission; Tin finds the directories and lists and prepares listing copy",
+        "integrations": [
+          "infra.github"
+        ],
+        "founder_keeps": "marketplace accounts and submissions, approval of each awesome-list submission, and merging each starter PR; Tin finds the directories and lists, prepares listing copy and writes framework starters",
         "impact": 0.4,
-        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms, and finds the awesome lists that accept the product and sends the entries the founder approves from their GitHub account; marketplace accounts and submissions are the founder's."
+        "impact_note": "Tin maps the integrations to partner marketplaces and fills in the listing forms, and finds the awesome lists that accept the product and sends the entries the founder approves from their GitHub account, and opens a PR with a runnable framework starter developers can clone; marketplace accounts and submissions are the founder's."
       }
     },
     {
@@ -481,6 +477,7 @@
         "workflows": [
           "research.deep_dive",
           "competitor.watch",
+          "competitor.sunset_rescue",
           "outreach.paying_segment"
         ],
         "integrations": [],
@@ -566,18 +563,19 @@
   "workflow_titles": {
     "brand.capture": "Capture brand and design",
     "content.deliver": "Prepare article PR",
+    "website.change": "Change the website",
     "organic.traffic_system": "Run the organic traffic system",
     "style.capture": "Capture writing style",
-    "organic.technical_fix": "Fix an audited technical issue",
+    "organic.technical_fix": "Fix what the audit found",
     "content.plan": "Plan upcoming content",
     "content.generate": "Draft planned content",
+    "content.refresh": "Refresh an existing page",
     "organic.keyword_plan": "Plan keyword opportunities",
     "organic.audit": "Audit organic visibility",
     "content.design_md": "Generate project design",
     "project.memory": "Garden project memory",
     "scan.report": "Scan project",
     "site.health_improve": "Improve site health",
-    "visibility.audit": "Audit AI visibility",
     "content.answer_page": "Draft an answer page",
     "project.weekly_brief": "Create a weekly project brief",
     "project.task": "One-off project task",
@@ -596,9 +594,8 @@
     "ads.launch": "Launch a Google Ads campaign",
     "ads.monitor": "Check the Google Ads campaign",
     "competitor.watch": "Watch competitors for pricing and product changes",
+    "competitor.sunset_rescue": "Catch the users of a tool that is shutting down",
     "qa.buyer_trust": "Check if a buyer would trust your checkout",
-    "organic.mention_backlinks": "Turn unlinked mentions into backlink asks",
-    "organic.error_surface": "Find the errors your users search for",
     "outreach.paying_segment": "Find who pays and stays",
     "outreach.campus_events": "Find campus events to reach student buyers",
     "outreach.speaking_shortlist": "Find the talks and podcasts worth pitching",
@@ -610,25 +607,36 @@
     "social.post_batch": "Draft social posts from a weekly plan or article",
     "social.content_plan": "Plan a sustainable social week",
     "outreach.awesome_submit": "Submit to awesome lists",
+    "revenue.payment_recovery": "Recover failed payments",
     "outreach.awesome_lists": "Get your product into the awesome lists that will actually accept it",
+    "growth.framework_starter": "Add a starter developers can clone",
     "outreach.community_threads": "Find threads where people ask for what you make",
-    "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read"
+    "outreach.newsletter_placements": "Get featured in the newsletters and communities your buyers read",
+    "social.x_style": "Learn my X writing style",
+    "social.x_publish": "Publish an approved X post",
+    "social.x_compose": "Compose X posts directly",
+    "social.x_draft": "Draft for X",
+    "social.x_revise": "Revise X writing",
+    "organic.traffic_snapshot": "Take a weekly traffic snapshot and growth readout",
+    "organic.content_efficacy": "Decide what each page needs"
   },
   "workflow_scope": {
+    "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
-    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
+    "website.change": "Put approved changes on the connected website repository: an approved article, answer page or public article at the route the founder chose with its copy unchanged, or the technical fixes the latest audit found (indexing, sitemap, robots.txt, redirects, page structure, accessibility, structured data, internal links), each a change the founder approves or declines once. Approved changes publish (Tin merges the PR once the required checks pass, then checks the live site); anything else, and any change to a protected page such as /sign-in, opens a PR for the founder to merge. The coding agent answers judgment calls first; copy goes to the content workflows. Never touches dependencies or lockfiles.",
+    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Also runs and saves the weekly traffic snapshot and page decisions, ahead of a weekly page refresh. Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
-    "organic.technical_fix": "Recheck one missing-title or missing-description finding and propose a verified PR. Supports exact static HTML and bounded Python-wheel HTML templates. Lists unsupported pages separately. If no safe repair is available, explain why without a PR. Never merges or deploys; GitHub may run its configured PR checks.",
-    "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap. Save to My system to prepare weekly batches. Does not write articles or publish.",
-    "content.generate": "Draft one selected brief from an initialized content program, using the project writing guide when available. Saves a separate reviewable Markdown draft with factual checks. Requires program_id; omit item_id to select the next eligible article, or select an explicit item through get_content_draft_sources. On demand, or weekly against one program: each weekly run drafts the next planned article and waits while an earlier draft of that program awaits review. Optional pinned repository delivery opens an unmerged PR only after article approval; otherwise use content.deliver for an approved source. Does not merge, publish, or change the roadmap.",
+    "organic.technical_fix": "Older runs and schedules only: recheck an audit's findings and fix them in one unmerged pull request. New technical fixes go through website.change (source audit).",
+    "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap with one list to write from: new articles, answer pages for buyer questions where AI answers missed the product (from the audit's AI-visibility findings), and refreshes of existing pages the audit or Page decisions marked. The newest competitor.watch report's material changes add up to three comparison or refresh items, each citing the competitor's page. Save to My system to prepare weekly batches. Does not write or publish anything.",
+    "content.refresh": "Retired: content.generate refreshes the pages the content plan schedules. Saved schedules keep running: refresh one existing page each week, chosen from the latest organic audit, proposing exact replacements for its title, meta description, H1 and opening answer for review; never add it to a new setup.",
+    "content.generate": "Draft the next item of an initialized content program, using the project writing guide when available: a new article; an answer page for a buyer question AI answers missed the product on (a direct 40 to 60 word answer, cited sources and a search listing, published by website.change at the route the founder chose); or a refresh of an existing page (exact replacements for its title, meta description, H1 and opening answer, which Tin applies in the site's source after approval). Saves a separate reviewable draft with factual checks, or explains why no draft is needed. Requires program_id; omit item_id to take the next eligible item, or select an explicit item through get_content_draft_sources. On demand, or weekly against one program: each weekly run drafts the next item and waits while an earlier draft of that program awaits review. Delivery follows approval and the delivery setting. Does not change the roadmap.",
     "organic.keyword_plan": "Research buyer searches, competitor keywords, and a bounded sample of Google results. Get an evidence-backed keyword inventory for content planning. No audit or GitHub required; does not create a calendar, write articles, or publish.",
     "organic.audit": "Audit technical SEO and AI visibility (GEO). Check up to 100 public pages and see whether AI answers mention, cite, or recommend your business. Get a report, actionable findings, and supporting evidence. No GitHub required.",
     "content.design_md": "Analyze a project repository and publish its DESIGN.md.",
     "project.memory": "Consolidate durable project outputs into the project wiki.",
     "scan.report": "Review durable project knowledge against the system scanning guide and publish SCAN.md.",
     "site.health_improve": "Inspect one public site against its selected GitHub repository, make one bounded mechanical improvement, and open a pull request for review. When no safe change is justified, save a no-change report without opening a PR.",
-    "visibility.audit": "Measure whether Luna finds and recommends a chosen target across five target-blind buyer questions, then publish AI_VISIBILITY.md.",
     "content.answer_page": "Create a public-facing Markdown content draft from the latest AI visibility findings; not for general advice or internal business questions.",
     "project.weekly_brief": "Summarize what moved, what needs attention, and the smallest useful next steps from this project's durable week of activity.",
     "project.task": "Use an isolated Codex task when the founder asks Tin to inspect, research, or change project files and no narrower registered workflow fits.",
@@ -647,9 +655,8 @@
     "ads.launch": "From a successful assessment, draft one Google Search campaign (keywords, ads, negatives, budget, click ceiling) for the founder's approval, then create it in their linked Google Ads account. Blocks until a conversion is measured; on demand only.",
     "ads.monitor": "Read a launched campaign, add negatives from wasted search terms, pause disapproved ads and wasteful keywords, and propose budget or bidding changes for approval. Daily or weekly once a campaign is live.",
     "competitor.watch": "Reread known competitors' public pricing and changelog pages weekly and report only material changes against the last watch, with at most three suggested Tin follow-ups. Never signs in, contacts competitors, publishes, or changes your pricing.",
+    "competitor.sunset_rescue": "Weekly, checks the watch list, competitor-watch changes and a small web sweep for a neighboring tool that is shutting down, dropping a free plan, repricing or relicensing; verifies it from the vendor's own pages, vetoes events the product cannot honestly serve, and for at most one builds a dated migration kit (export mapped to the product, import gap, ready inputs for a migration article, importer task and thread search). Never posts, contacts anyone or lists another tool's users.",
     "qa.buyer_trust": "Check the public site and checkout a buyer sees against fixed trust rules (HTTPS, security headers, exposed files, privacy, contact, refund and total-before-pay) and hand each code fix to Improve site health and each policy or host fix to the founder; public GET requests only, never signs in, submits forms, changes the site or claims CVE coverage.",
-    "organic.mention_backlinks": "Finds pages and AI-cited sources that name the product without linking to its site and drafts one ask per page for the founder to send; it never sends, contacts anyone or re-asks a page asked before.",
-    "organic.error_surface": "Reads the connected repository for user-visible error messages and ranks the undocumented ones as pages to add to content.plan as a context file, with cause and fix cited to code; it never writes pages, opens PRs or estimates demand.",
     "outreach.paying_segment": "Reads Stripe subscriptions (the Stripe connection, a read-only restricted key) and names the customer segment that keeps paying, with exact inputs for the outreach shortlist, keyword plan and ads assessment; read-only, no model calls, never starts workflows or writes to Stripe.",
     "outreach.campus_events": "For businesses whose buyers are students, finds or compares upcoming campus events, ranks them on cited evidence and drafts one permission-dependent activation; never contacts organizers or students, registers, pays or collects student data.",
     "outreach.speaking_shortlist": "Find conferences, meetups and podcasts with an open call that fit the business, verify deadlines and requirements, and draft one pitch per venue; skips venues pitched before; never submits, applies or emails.",
@@ -661,8 +668,16 @@
     "social.post_batch": "Draft X and LinkedIn posts in two manual modes. Weekly mode reads social/PLAN.md and current source notes, checks earlier batch files to avoid reusing material, and keeps earlier files unchanged. Repurpose mode reads one article file or article_text fallback. Both read current writing guidance and save a dated reviewable batch. No automatic posting, recurring schedule, rendered carousel or producer/version picker.",
     "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule.",
     "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",
+    "revenue.payment_recovery": "Reads the founder's Stripe for open invoices whose automatic payment failed, with each customer's plan, decline reason, payment history and latest mail, and drafts one short email per customer with Stripe's payment link; after the founder approves, re-checks each invoice and sends only the unpaid ones from the founder's Gmail; never emails twice about the same invoice; needs Stripe and Google Workspace connected.",
     "outreach.awesome_lists": "For a public product or repository, reads the growth plan and Code map, finds curated GitHub awesome lists that are alive and whose written rules the product meets, ranks them and prepares one exact entry and pull request text per list; keeps history and never re-recommends a list; never submits (Submit to awesome lists sends what the founder approves).",
+    "growth.framework_starter": "For a product developers integrate (a published SDK, public API, webhooks or embed in the connected repository): opens one unmerged PR adding a small runnable starter for one framework (Next.js, FastAPI, Vite React or Express) under the repository's examples directory, calling only what the repository defines and keeping secrets server-side; says no for products with nothing to integrate and never repeats a framework; never merges, deploys, publishes a package or creates a repository.",
     "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
-    "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone."
+    "outreach.newsletter_placements": "Finds newsletters and communities the buyers read that have a written way in (featured-tool slot, reader submissions, showcase thread, sponsorship within the founder's budget), verifies the rules and drafts one submission per placement in the founder's voice; not conferences, podcasts or campus events; skips earlier placements; never submits, pays or contacts anyone.",
+    "social.x_draft": "Draft one X post or a small set from current project files and direction. Reuse a matching X guide; otherwise capture from supplied samples or a connected public account and continue after guide approval. With no voice source, draft from project context and state the limitation. No automatic posting, schedules or generated media.",
+    "social.x_style": "Sample up to 50 of the connected account’s own public X posts, favoring recent writing, or read supplied samples. Propose an X writing guide for review before adopting it in project Files. Does not draft or publish posts.",
+    "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
+    "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation.",
+    "organic.traffic_snapshot": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly data file per landing page from Search Console, and PostHog when it is connected (read-only): clicks, impressions and top searches, the audit's findings and, with PostHog, sessions by channel, first-touch signups and activation and reading depth, read by page decisions, the page tree and the blog index; the same file carries the weekly growth readout (channels and named AI assistants, search with a brand split, content, landing pages and first-touch activation, changes called only by an exact test with Holm's correction, each decision routed to the workflow that acts on it; search only without PostHog); no model calls.",
+    "organic.content_efficacy": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; website.change reads its URL changes and asks before it changes the site, and pages to refresh are listed; edits nothing itself."
   }
 }

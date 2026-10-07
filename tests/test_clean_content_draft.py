@@ -70,11 +70,12 @@ def test_clean_draft_notes_and_legacy_delivery_are_distinct():
 def test_planner_keeps_historical_instructions_and_new_scope_is_explicit():
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == "content.plan")
     definition, _ = spec.definition_and_resource_files()
-    assert content_plan_editorial.contract(definition).POLICY["version"] == "content-editorial-v5"
+    assert content_plan_editorial.contract(definition).POLICY["version"] == "content-editorial-v8"
     old = deepcopy(definition)
     old.update(
         content_policy=content_plan_editorial.V3_POLICY,
         content_instructions=content_plan_editorial.V3_INSTRUCTIONS,
+        content_schema=content_plan_editorial.PORTFOLIO_SCHEMA,
     )
     assert (
         content_plan_editorial.contract(old).INSTRUCTIONS == content_plan_editorial.V3_INSTRUCTIONS

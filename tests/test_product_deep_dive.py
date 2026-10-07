@@ -5,6 +5,7 @@ import asyncio
 import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import UUID, uuid4
@@ -29,7 +30,9 @@ from tin_lite.procedures import (
     PinnedCodexProcedure,
     SandboxProfile,
     TestIdentityPolicy,
+    memory_section_text,
     product_audit_summary,
+    settle_procedure_artifact,
     validate_codex_procedure_definition,
     validate_memory_section,
     validate_procedure_artifact,
@@ -214,6 +217,47 @@ def test_memory_section_validator_accepts_only_a_section_replacement() -> None:
             _index(CODE_MAP, FEATURE_MAP.replace("- none\n", "- " + "x" * 30_000 + "\n", 1)),
             section=FEATURE_SECTION,
             base=base,
+        )
+
+
+def test_a_section_owning_output_keeps_only_its_own_section() -> None:
+    # Codex added the feature map but also rewrote the introduction and the code map. The
+    # run owns only its section: the rest comes from the base, so the run publishes.
+    base = BASE_INDEX.encode()
+    spec = _spec(FEATURE_SECTION)
+    output = _index(
+        CODE_MAP.replace("Files opened: 40", "Files opened: 99"),
+        FEATURE_MAP,
+        intro="# Test memory\n\nA rewritten introduction.\n\n## Architecture\n\n- Edited.\n\n",
+    )
+    with pytest.raises(ValueError, match="changed outside"):
+        validate_procedure_artifact(output, spec=spec, base=base)
+    settled = settle_procedure_artifact(output, spec=spec, base=base)
+    validate_procedure_artifact(settled, spec=spec, base=base)
+    text = settled.decode()
+    assert memory_section_text(text, FEATURE_MAP_SECTION) == memory_section_text(
+        output.decode(), FEATURE_MAP_SECTION
+    )
+    assert memory_section_text(text, CODE_MAP_SECTION) == memory_section_text(
+        BASE_INDEX, CODE_MAP_SECTION
+    )
+    assert "Intro line." in text and "rewritten" not in text and "- Edited." not in text
+    # Replacing a section the base already has keeps everything around it byte for byte.
+    rewritten = CODE_MAP.replace("Files opened: 40", "Files opened: 41")
+    replaced = settle_procedure_artifact(
+        _index(rewritten, intro="# Changed\n\n"), spec=_spec(CODE_SECTION), base=base
+    )
+    assert replaced.decode() == BASE_INDEX.replace("Files opened: 40", "Files opened: 41")
+    # Nothing to splice: no base, no section, or a section over its limit are judged as before.
+    assert settle_procedure_artifact(output, spec=spec, base=None) == output
+    missing = _index(CODE_MAP)
+    assert settle_procedure_artifact(missing, spec=spec, base=base) == missing
+    with pytest.raises(ValueError, match="no ### Feature map section"):
+        validate_procedure_artifact(missing, spec=spec, base=base)
+    huge = _spec(replace(FEATURE_SECTION, max_bytes=200))
+    with pytest.raises(ValueError, match="exceeds 200 bytes"):
+        validate_procedure_artifact(
+            settle_procedure_artifact(output, spec=huge, base=base), spec=huge, base=base
         )
 
 

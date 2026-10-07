@@ -100,14 +100,24 @@ class VerifiedOAuthTokenCache:
 class ClerkAuth:
     """One verifier for browser sessions and Clerk-issued MCP OAuth tokens."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        oauth_resource_path: str = "/mcp",
+        allow_legacy_clients: bool = True,
+    ) -> None:
         self._secret_key = settings.clerk_secret_key.get_secret_value()
         self._jwt_key = (
             settings.clerk_jwt_key.get_secret_value() if settings.clerk_jwt_key else None
         )
         self._authorized_parties = list(settings.clerk_authorized_parties)
-        self._oauth_client_ids = settings.mcp_oauth_client_ids
-        self._oauth_resource = f"{settings.switchboard_public_url.rstrip('/')}/mcp"
+        if oauth_resource_path not in {"/mcp", "/mcp/plugins"}:
+            raise ValueError("unknown MCP resource")
+        self._oauth_client_ids = (
+            settings.mcp_oauth_client_ids if allow_legacy_clients else frozenset()
+        )
+        self._oauth_resource = f"{settings.switchboard_public_url.rstrip('/')}{oauth_resource_path}"
         self._oauth_issuer = settings.clerk_frontend_api_url
         # Fixed, operator-configured issuer only; never follow a token's jku/x5u.
         self._oauth_jwks = jwt.PyJWKClient(

@@ -13,7 +13,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft
 from tin_lite.activities import TinActivities
-from tin_lite.article_review import validate_article, validate_changes
+from tin_lite.article_review import change_summary, validate_article, validate_notes
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_draft_sources import ContentDraftSources
 from tin_lite.mcp_server import _review_summary
@@ -65,7 +65,7 @@ async def setup(db, monkeypatch, *, planned=False):
     return f
 
 
-async def save(f, run, *, assessment=False):
+async def save(f, run, *, assessment=False, outcome="already_covered"):
     if f.workflow.key == content_draft.KEY:
         await ContentDraftSources(database=f.db, storage=f.storage).prepare(
             run, output_validator=content_draft.CLEAN_VALIDATOR
@@ -81,7 +81,7 @@ async def save(f, run, *, assessment=False):
     if assessment:
         result["content_editorial"] = {
             "schema": "content-editorial-check.v1",
-            "outcome": "already_covered",
+            "outcome": outcome,
         }
     key = f"{run.id}:procedure_canonical_commit"
     async with f.db.effect_lock(key, "procedure_canonical_commit") as (conn, _):
@@ -191,6 +191,42 @@ async def test_duplicate_and_approval_race_is_one_transaction(publication_db, mo
         )
         == 1
     )
+
+
+async def test_duplicate_committed_during_view_replays_before_stale_rejection(
+    publication_db, monkeypatch
+):
+    f = await setup(publication_db, monkeypatch)
+    source = await save(f, await start(f))
+    token = (await f.reviews.view(source.id, ACTOR))["review_token"]
+    request_id = uuid4()
+    original_view = f.reviews.view
+    competing = False
+    accepted = None
+
+    async def submit(feedback="Keep the opening."):
+        return await f.reviews.request_changes(
+            run_id=source.id,
+            actor=ACTOR,
+            feedback=feedback,
+            request_id=request_id,
+            token=token,
+        )
+
+    async def view_after_competing_commit(*args, **kwargs):
+        nonlocal competing, accepted
+        if not competing:
+            competing = True
+            accepted = await submit()
+        return await original_view(*args, **kwargs)
+
+    monkeypatch.setattr(f.reviews, "view", view_after_competing_commit)
+    replayed = await submit()
+    assert replayed.id == accepted.id
+    assert not (await original_view(source.id, ACTOR))["can_request_changes"]
+    assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_review_commands") == 1
+    with pytest.raises(ReviewConflict, match="different feedback"):
+        await submit("Different feedback must not replay.")
 
 
 async def test_admission_failure_keeps_review_and_reference_pin(publication_db, monkeypatch):
@@ -334,12 +370,17 @@ def test_copy_and_notes_are_different_contracts():
     validate_article(article)
     with pytest.raises(ValueError, match="process notes"):
         validate_article(article + b"\n## What changed\nWe revised this.\n")
-    validate_changes(
-        b"# Generation notes\n\n## What changed\nShorter opening.\n"
-        b"\n## Feedback not followed\nNone.\n"
-    )
-    with pytest.raises(ValueError, match="Feedback not followed"):
-        validate_changes(b"# Generation notes\n\n## What changed\nShorter opening.\n")
+    # Revision notes are for the founder: a missing, repeated or long section never fails the
+    # paid revision; the review shows what it can.
+    for notes in (
+        b"# Generation notes\n\n## What changed\nShorter opening.\n",
+        b"# Generation notes\n\nRevised as asked.\n",
+        b"# Generation notes\n\n## Feedback not followed\n" + b"x" * 3000 + b"\n",
+    ):
+        validate_notes(notes, revision=True)
+    assert change_summary(b"# Generation notes\n\nRevised as asked.\n") is None
+    with pytest.raises(ValueError, match="bounded Generation notes"):
+        validate_notes(b"Not notes at all", revision=True)
 
 
 async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication_db, monkeypatch):

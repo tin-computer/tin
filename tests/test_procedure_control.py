@@ -243,7 +243,8 @@ async def test_generation_and_executor_cannot_be_substituted(publication_db, mon
         "UPDATE workflow_runs SET executor='project.task' WHERE id=$1",
         f.run.id,
     )
-    with pytest.raises(LookupError):
+    # A run of another kind is named, not reported missing.
+    with pytest.raises(SideEffectConflictError, match="not project.task runs"):
         await stop(f)
     f.runtime.sandboxes.kill.assert_not_awaited()
 
@@ -275,7 +276,7 @@ async def test_http_and_mcp_authorize_and_use_the_same_control(publication_db, m
     ) as client:
         path = f"/api/workflows/runs/{f.run.id}/stop-procedure"
         assert (await client.post(path)).status_code == 404
-        with pytest.raises(ToolError, match="project not found"):
+        with pytest.raises(ToolError, match="not_found: run not found"):
             await server.call_tool("stop_procedure", {"run_id": str(f.run.id)})
         f.handle.cancel.assert_not_awaited()
         token.subject = f.member

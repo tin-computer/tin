@@ -273,6 +273,12 @@ async def test_page_reads_refuse_other_hosts_private_addresses_and_robots_blocks
         "x_robots_tag": [],
         "fetch": "redirect",
         "location": "https://example.com/a",
+        # Tin follows the redirect within the site to find loops and where it ends.
+        "redirect": {
+            "chain": ["https://example.com/old", "https://example.com/a"],
+            "loop": False,
+            "final_status": 200,
+        },
     }
     assert result["https://example.com/away"]["location"] == "(outside the audited site)"
     assert result["https://example.com/secret/x"]["fetch"] == "blocked_by_robots"

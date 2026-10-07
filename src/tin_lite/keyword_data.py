@@ -20,6 +20,8 @@ ENDPOINTS = {
     "ranked": "dataforseo_labs/google/ranked_keywords/live",
     "ranked_relevant": "dataforseo_labs/google/ranked_keywords/live",
     "competitors": "dataforseo_labs/google/competitors_domain/live",
+    # v9 asks for more domains so filtering out platforms and namesakes still leaves three.
+    "competitors_wide": "dataforseo_labs/google/competitors_domain/live",
     "ideas": "dataforseo_labs/google/keyword_ideas/live",
     "suggestions": "dataforseo_labs/google/keyword_suggestions/live",
     "related": "dataforseo_labs/google/related_keywords/live",
@@ -34,6 +36,9 @@ ENDPOINTS = {
     "ranked_paid": "dataforseo_labs/google/ranked_keywords/live",
 }
 PAID_BOUNDS = {"batch": 40, "ads_depth": 20, "ranked_paid_rows": 50}
+# HTTP refusals as the DataForSEO status codes they stand for (unauthorized, payment required,
+# access denied, rate limit), for callers that settle a refusal as a known outcome.
+HTTP_REFUSALS = {401: 40100, 402: 40200, 403: 40300, 429: 40202}
 # The traffic forecast answers with one aggregate row per request rather than an items list.
 ROW_RESULT_KINDS = frozenset({"ad_traffic"})
 # The client a batch of lookups shares, with the adapter that opened it.
@@ -62,6 +67,8 @@ def request_for(kind: str, *, market: str, value, tag: str) -> dict:
         )
     elif kind == "competitors":
         request.update(target=host(value).removeprefix("www."), limit=5)
+    elif kind == "competitors_wide":
+        request.update(target=host(value).removeprefix("www."), limit=20)
     elif kind == "ideas":
         request.update(keywords=[phrase(value)], limit=POLICY["idea_rows"])
     elif kind == "related":
@@ -107,6 +114,17 @@ def request_for(kind: str, *, market: str, value, tag: str) -> dict:
     return request
 
 
+class DataForSEOTaskError(DataForSEOError):
+    """DataForSEO answered and refused the request or its task: a known outcome."""
+
+    def __init__(self, status_code: int, status_message: str | None = None) -> None:
+        super().__init__(f"DataForSEO returned status {status_code}.")
+        self.status_code = status_code
+        # DataForSEO's own explanation ("Invalid Field: 'location_code'."); the service
+        # gateway redacts and shows it to the run, never to logs or founders.
+        self.status_message = status_message if isinstance(status_message, str) else None
+
+
 class KeywordData:
     validate_target = staticmethod(DataForSEO.validate_target)
 
@@ -141,9 +159,23 @@ class KeywordData:
             finally:
                 _SESSION.reset(token)
 
-    async def query(self, kind: str, *, market: str, value, tag: str) -> dict:
-        request = request_for(kind, market=market, value=value, tag=tag)
-        observation = await begin_observation("dataforseo", "tool", ENDPOINTS[kind])
+    async def task(
+        self,
+        endpoint: str,
+        request: dict,
+        *,
+        scope_keys: tuple[str, ...] | None = None,
+        settle_errors: bool = False,
+    ) -> dict:
+        """POST one live request and return its checked task, with cost read back.
+
+        The observation reserves and settles the supplier cost inside the caller's usage
+        scope. `scope_keys` names the request fields the provider must echo back (all of them
+        by default). With `settle_errors`, a refused request or task is recorded with its
+        reported cost and raised as `DataForSEOTaskError`, a known outcome, instead of
+        leaving the observation unconfirmed.
+        """
+        observation = await begin_observation("dataforseo", "tool", endpoint)
         shared = _SESSION.get()
         try:
             async with AsyncExitStack() as stack:
@@ -155,9 +187,13 @@ class KeywordData:
                 )
                 response = await stack.enter_async_context(
                     client.stream(
-                        "POST", f"https://api.dataforseo.com/v3/{ENDPOINTS[kind]}", json=[request]
+                        "POST", f"https://api.dataforseo.com/v3/{endpoint}", json=[request]
                     )
                 )
+                if settle_errors and response.status_code in HTTP_REFUSALS:
+                    # Refused at the door (credentials, balance, rate): nothing was bought.
+                    await observe_tool(observation, {"cost": 0})
+                    raise DataForSEOTaskError(HTTP_REFUSALS[response.status_code])
                 response.raise_for_status()
                 body = bytearray()
                 async for chunk in response.aiter_bytes():
@@ -165,7 +201,12 @@ class KeywordData:
                     if len(body) > 4_000_000:
                         raise DataForSEOError("Keyword response exceeded the transport bound.")
                 payload = json.loads(body)
-            if not isinstance(payload, dict) or payload.get("status_code") != 20000:
+            if not isinstance(payload, dict):
+                raise DataForSEOError("Keyword provider response was not successful.")
+            if payload.get("status_code") != 20000:
+                if settle_errors and type(payload.get("status_code")) is int:
+                    await observe_tool(observation, {"cost": payload.get("cost", 0)})
+                    raise DataForSEOTaskError(payload["status_code"], payload.get("status_message"))
                 raise DataForSEOError("Keyword provider response was not successful.")
             tasks = payload.get("tasks")
             if not isinstance(tasks, list) or len(tasks) != 1 or not isinstance(tasks[0], dict):
@@ -174,15 +215,29 @@ class KeywordData:
             await observe_tool(observation, task)
             # 20100 is DataForSEO's "No Search Results": a completed, charged, empty lookup.
             if task.get("status_code") not in {20000, 20100}:
+                if settle_errors and type(task.get("status_code")) is int:
+                    raise DataForSEOTaskError(task["status_code"], task.get("status_message"))
                 raise DataForSEOError("Keyword task did not return a completed result.")
             data = task.get("data")
             if not isinstance(data, dict) or any(
-                data.get(key) != value for key, value in request.items()
+                data.get(key) != request[key]
+                for key in (request if scope_keys is None else scope_keys)
             ):
                 raise DataForSEOError("Keyword response belongs to a different request scope.")
             cost = Decimal(str(task.get("cost")))
             if not cost.is_finite() or cost < 0:
                 raise DataForSEOError("Keyword response has invalid cost metadata.")
+            return task
+        except DataForSEOError:
+            raise
+        except (httpx.HTTPError, ValueError, TypeError, KeyError, ArithmeticError, TimeoutError):
+            raise DataForSEOError("Keyword provider outcome could not be confirmed.") from None
+
+    async def query(self, kind: str, *, market: str, value, tag: str) -> dict:
+        request = request_for(kind, market=market, value=value, tag=tag)
+        try:
+            task = await self.task(ENDPOINTS[kind], request)
+            cost = Decimal(str(task.get("cost")))
             results = task.get("result")
             if results is None and (
                 task.get("result_count") == 0 or task.get("status_code") == 20100

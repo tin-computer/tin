@@ -1,6 +1,9 @@
 .code-workflow-setup { padding: 16px 24px; border-top: 1px solid var(--paper-border); font-size: 13px; line-height: 1.55; }
 .code-workflow-setup p { margin: 4px 0; }
 .code-workflow-setup a { color: inherit; text-underline-offset: 3px; }
+.code-workflow-setup details { margin: 4px 0; }
+.code-workflow-setup summary { cursor: pointer; }
+.code-setup-provider { color: var(--ink-secondary); }
 .code-setup-issue { color: var(--bermellon-text); }
 [data-code-weekdays] { display: flex; flex-wrap: wrap; gap: 8px 14px; }
 [data-code-weekdays] label { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; }

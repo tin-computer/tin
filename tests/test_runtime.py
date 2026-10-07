@@ -26,7 +26,7 @@ async def test_build_runtime_wires_services_without_unknown_activity_arguments(
     sandboxes = object()
     temporal = object()
     model_router = object()
-    integrations = object()
+    integrations = SimpleNamespace(x=object())
     project_files = object()
     worker = object()
 

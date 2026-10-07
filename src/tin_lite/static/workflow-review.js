@@ -14,6 +14,7 @@
     const {api, projectId, runId, reader, openRun, onRevised, toast} = context;
     let disposed = false, comparisonCleanup = null;
     const key = keyFor(projectId, runId);
+    reviews.delete(key);
     const draft = drafts.get(key) || {feedback: "", open: false, request: null};
     drafts.set(key, draft);
     const approval = [...host.querySelectorAll(reader ? ".markdown-context-action:not(.is-secondary)" : "[data-apply-decision]")];
@@ -39,7 +40,10 @@
     requestButton.type = "button";
     requestButton.className = reader ? "markdown-context-action is-secondary is-review-request" : "button-secondary";
     requestButton.hidden = true;
-    if (approval[0]) approval[0].before(requestButton); else actions?.append(requestButton);
+    // A Decisions card holds Discard and the approval only; feedback lives on the draft page.
+    if (reader) {
+      if (approval[0]) approval[0].before(requestButton); else actions?.append(requestButton);
+    }
     // Reader bar order for a draft with GitHub connected: Request changes, Open a pull
     // request, Publish now. The extra choice follows the approval's visibility rules.
     for (const option of reader ? context.deliveryOptions || [] : []) {
@@ -54,8 +58,9 @@
     let review;
     const redraw = () => {
       if (disposed || !host.isConnected) return;
-      requestButton.hidden = !review.can_request_changes;
-      requestButton.textContent = draft.open ? "Close feedback" : review.status === "failed" ? "Retry revision" : review.artifact?.assessment ? "Give feedback" : "Request changes";
+      // Feedback is given on the draft page; a Decisions card only approves or discards.
+      requestButton.hidden = !reader || !review.can_request_changes;
+      requestButton.textContent = draft.open ? "Close feedback" : review.status === "failed" ? "Retry" : review.artifact?.assessment ? "Give feedback" : "Request changes";
       requestButton.setAttribute("aria-expanded", String(draft.open));
       approval.forEach((button, i) => {button.hidden = draft.open || !review.can_approve; button.disabled = originalDisabled[i];});
       region.innerHTML = "";
@@ -64,6 +69,19 @@
         summary.className = "review-change-summary";
         summary.textContent = review.documents.map(item => `${item.destination}: ${item.change === "unchanged" ? "carried forward unchanged" : item.change}`).join(" · ");
         region.append(summary);
+      }
+      // The founder's coding agent may revise a waiting brand or style proposal; say so.
+      const revised = review.proposal_revisions;
+      if (revised?.count) {
+        const line = document.createElement("p");
+        line.className = "review-change-summary review-proposal-revisions";
+        const times = revised.count === 1 ? "once" : revised.count === 2 ? "twice" : `${revised.count} times`;
+        let when = "";
+        try {
+          when = new Date(revised.latest_at).toLocaleString([], {month: "short", day: "numeric", hour: "2-digit", minute: "2-digit"});
+        } catch {when = "";}
+        line.textContent = `Revised ${times} by ${revised.latest_by}.${when ? ` Latest ${when}.` : ""}`;
+        region.append(line);
       }
       if (review.conflict) {
         const conflict = document.createElement("p");
@@ -89,6 +107,18 @@
         region.innerHTML = `<p class="review-version-notice">A newer version is available. <button type="button" class="system-action" data-current-review>Read current version →</button></p>`;
         region.querySelector("[data-current-review]").onclick = () => openRun(review.current_run_id);
         return;
+      }
+      if (review.x_feedback && review.change_summary) {
+        const summary = document.createElement("p");
+        summary.className = "review-change-summary";
+        summary.textContent = review.change_summary;
+        region.append(summary);
+      }
+      if (review.pending_run_id) {
+        const pending = document.createElement("p");
+        pending.className = "review-change-summary";
+        pending.textContent = "Revising from your feedback. This copy stays readable while Tin works.";
+        region.append(pending);
       }
       if (review.version > 1) {
         const versions = document.createElement("div");
@@ -118,7 +148,7 @@
       form.className = "review-composer";
       const id = `review-feedback-${runId}`;
       form.innerHTML = `<label for="${esc(id)}">What should change?</label>
-        <p>For this draft only. Your feedback won’t change your saved writing style.</p>
+        <p>${esc(review.feedback_hint || "For this draft only. Your feedback won’t change your saved writing style.")}</p>
         <textarea id="${esc(id)}" name="feedback" maxlength="8000" required placeholder="What should we change, keep, or explain better? Mention any project files to use.">${esc(draft.feedback)}</textarea>
         <p class="review-error" role="alert" hidden></p>
         <footer><button type="submit" class="review-submit">${review.artifact?.assessment ? "Recheck with feedback" : "Revise draft"}</button></footer>`;
@@ -171,6 +201,15 @@
     }
     api(`/api/workflows/runs/${runId}/review`).then(value => {
       if (disposed || !host.isConnected) return;
+      // X guide revisions keep their original approval gate. Never pair a cached
+      // document with a token for newer text, including edits made through Files.
+      // A brand or style proposal the agent revised after this page loaded reloads too.
+      const revisedSince = value.proposal_revisions?.count && context.documentSha && value.artifact?.sha256 && context.documentSha !== value.artifact.sha256;
+      if (reader && ((value.x_feedback && context.documentSha !== value.artifact?.sha256) || revisedSince)) {
+        region.textContent = "Loading the updated guide…";
+        context.reloadDocument?.();
+        return;
+      }
       review = value; reviews.set(key, review);
       if (review.status === "failed" && !draft.feedback) draft.feedback = review.feedback || "";
       redraw();

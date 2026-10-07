@@ -18,13 +18,20 @@ from test_service_billing import install
 from tin_lite import growth_onboarding
 from tin_lite.api import router
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.growth_onboarding import PLAN_PATH, plan_readiness
 from tin_lite.mcp_server import _run_allowed_actions, create_mcp_app
 from tin_lite.project_files import ProjectFileService
 
 MEMBER = "user_member"
 OUTSIDER = "user_outsider"
-CONNECTED = [SimpleNamespace(provider_key="infra.github", status="connected")]
+CONNECTED = [
+    SimpleNamespace(
+        provider_key="infra.github",
+        status="connected",
+        configuration={"selected_repository": "acme/site"},
+    )
+]
 PICKS = [
     {"provider": "infra.github", "decision": "connected"},
     {
@@ -38,7 +45,6 @@ PICKS = [
 async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.KEY, hold=True):
     _, storage, run, _ = await activity_fixture(db, review=True)
     for key in (
-        "visibility.audit",
         "organic.audit",
         "outreach.email_shortlist",
         "site.health_improve",
@@ -53,7 +59,7 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
 
     async def commit(*, repo_id, branch, expected_head_sha, request_id, message, changes):
         if storage.repo.head != expected_head_sha:
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         sha = storage.repo.edit({c.path: c.content.encode() for c in changes}, message)
         return sha, tuple(c.path for c in changes)
 
@@ -74,11 +80,12 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
     monkeypatch.setattr(db, "record_mcp_usage", AsyncMock())
     monkeypatch.setattr(db, "record_tin_user", AsyncMock())
     handle = SimpleNamespace(signal=AsyncMock())
+    list_connections = AsyncMock(return_value=list(CONNECTED))
     runtime = SimpleNamespace(
         database=db,
         storage=storage,
         project_files=ProjectFileService(database=db, storage=storage),
-        integrations=SimpleNamespace(list_connections=AsyncMock(return_value=list(CONNECTED))),
+        integrations=SimpleNamespace(list_connections=list_connections),
         temporal=SimpleNamespace(get_workflow_handle=Mock(return_value=handle)),
     )
     token = SimpleNamespace(subject=MEMBER, scopes=["openid"], client_id="client_test")
@@ -105,6 +112,7 @@ async def harness(db, monkeypatch, *, plan=UNTICKED, executor=growth_onboarding.
         app=app,
         handle=handle,
         token=token,
+        list_connections=list_connections,
     )
 
 
@@ -177,6 +185,43 @@ async def test_connected_is_verified_against_the_project(publication_db, monkeyp
     assert h.storage.repo.head == head
 
 
+@pytest.mark.parametrize(
+    ("provider", "configuration", "expected"),
+    [
+        # Signed in, but no repository or property chosen: setup would start work that fails.
+        ("infra.github", {}, "Choose the repository"),
+        ("analytics.gsc", {"selected_site_url": None}, "Choose the Search Console property"),
+        # A property for another domain reads nothing for the product's site.
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:other.example"},
+            "is not",
+        ),
+    ],
+)
+async def test_connected_needs_the_chosen_resource(
+    publication_db, monkeypatch, provider, configuration, expected
+):
+    h = await harness(publication_db, monkeypatch)
+    await h.db.pool.execute(
+        "UPDATE workflow_runs SET input = input || $2::jsonb WHERE id=$1",
+        h.run.id,
+        '{"product_url": "https://acme.example"}',
+    )
+    h.list_connections.return_value = [
+        SimpleNamespace(provider_key=provider, status="connected", configuration=configuration)
+    ]
+    head = h.storage.repo.head
+    text = await refused(
+        h,
+        "record_onboarding_picks",
+        **picks_args(h, connections=[{"provider": provider, "decision": "connected"}]),
+    )
+    assert f"not_ready: {provider} is signed in but not ready" in text
+    assert expected in text
+    assert h.storage.repo.head == head
+
+
 async def test_unknown_picks_are_named(publication_db, monkeypatch):
     h = await harness(publication_db, monkeypatch)
     text = await refused(h, "record_onboarding_picks", **picks_args(h, systems=["paid-ads"]))
@@ -208,7 +253,9 @@ async def test_picks_need_a_run_that_is_waiting(publication_db, monkeypatch):
 async def test_picks_need_project_access(publication_db, monkeypatch):
     h = await harness(publication_db, monkeypatch)
     h.token.subject = OUTSIDER
-    assert "project not found" in await refused(h, "record_onboarding_picks", **picks_args(h))
+    assert "not_found: run not found" in await refused(
+        h, "record_onboarding_picks", **picks_args(h)
+    )
 
 
 async def test_approval_waits_for_the_picks_on_both_surfaces(publication_db, monkeypatch):

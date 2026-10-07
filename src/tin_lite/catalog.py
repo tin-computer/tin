@@ -13,6 +13,7 @@ from tin_lite import (
     content_draft,
     content_plan,
     content_plan_editorial,
+    content_refresh,
     content_repository_delivery,
     growth_onboarding,
     growth_plan,
@@ -20,8 +21,14 @@ from tin_lite import (
     paid_ads,
     paid_ads_launch,
     paid_ads_monitor,
+    payment_recovery,
     style_capture,
     technical_fix,
+    website_change,
+    x_draft,
+    x_feedback,
+    x_posts,
+    x_style,
 )
 from tin_lite.character_design import MODEL_ROUTE as CHARACTER_MODEL_ROUTE
 from tin_lite.code_storage import CodeStorage
@@ -61,6 +68,7 @@ from tin_lite.integrations import (
     GITHUB_USER_PROVIDER,
     GOOGLE_WORKSPACE_PROVIDER,
     GSC_PROVIDER,
+    STRIPE_PROVIDER,
     IntegrationRequirement,
     parse_integration_requirements,
 )
@@ -70,18 +78,20 @@ from tin_lite.keyword_plan import (
 from tin_lite.keyword_plan import (
     ROUTE_KEY as KEYWORD_ROUTE_KEY,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v9 import (
     INSTRUCTIONS as KEYWORD_INSTRUCTIONS,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v9 import (
     POLICY as KEYWORD_POLICY,
 )
-from tin_lite.keyword_plan_v6 import (
+from tin_lite.keyword_plan_v9 import (
     SCHEMAS as KEYWORD_SCHEMAS,
 )
 from tin_lite.model_providers import ModelCapability, ModelRoute, ProviderName
 from tin_lite.organic_audit import AUDIT_KEY, AUDIT_POLICY, MARKETS
-from tin_lite.organic_audit_ai import AI_CONTRACT, AI_SCHEMAS
+from tin_lite.organic_audit_ai import ai_contract, ai_schemas
+from tin_lite.page_assets import AssetPolicy
+from tin_lite.procedure_documents import AGENT_REVISION
 from tin_lite.procedures import (
     BROWSER_SANDBOX_PROFILE,
     CODE_MAP_SECTION,
@@ -103,7 +113,7 @@ from tin_lite.procedures import (
     SandboxProfile,
     TestIdentityPolicy,
 )
-from tin_lite.public_workflows import load_public_workflows
+from tin_lite.public_workflows import PublicMCPExposure, load_public_workflows
 from tin_lite.studio import STUDIO_VOICES
 from tin_lite.studio_contracts import (
     DEMO_VIDEO_MEDIA_TYPE,
@@ -111,7 +121,12 @@ from tin_lite.studio_contracts import (
     MAX_DEMO_VIDEO_BYTES,
 )
 from tin_lite.system_wiki import SystemWikiRef
-from tin_lite.workflow_diagrams import DiagramEdge, DiagramNode, WorkflowDiagram
+from tin_lite.workflow_diagrams import (
+    DiagramEdge,
+    DiagramNode,
+    WorkflowDiagram,
+    validate_presentation,
+)
 from tin_lite.workflow_inputs import validate_input_schema
 from tin_lite.workflow_prerequisites import (
     WorkflowPrerequisite,
@@ -123,10 +138,15 @@ from tin_lite.writing_style import STYLE_PATH
 REGISTRY_REPO_ID = "registry/workflows"
 START_HERE_SYSTEM = "start-here"
 ORGANIC_TRAFFIC_SYSTEM = "organic-traffic"
-COLD_OUTREACH_SYSTEM = "cold-outreach"
+# The stored system ID stays "cold-outreach"; only its name changed.
+OUTREACH_SYSTEM = "cold-outreach"
 PRODUCT_QA_SYSTEM = "product-qa"
 CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
+# The stored system ID stays "x"; only its name changed.
+SOCIAL_SYSTEM = "x"
+COMPETITORS_SYSTEM = "competitors"
+REVENUE_SYSTEM = "revenue"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
 PROJECT_MEMORY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000002")
 SCAN_REPORT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000003")
@@ -153,6 +173,7 @@ PAID_ADS_ASSESSMENT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000040")
 PAID_ADS_LAUNCH_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000041")
 PAID_ADS_MONITOR_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000042")
 AWESOME_SUBMIT_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000043")
+PAYMENT_RECOVERY_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000046")
 # Numbers below were used by built-ins that later left the catalog. Their rows still exist in
 # deployed databases, and the boot-time sync refuses to bind a number to a different key, so a
 # new built-in must take a fresh number above the highest ever used, never fill a gap.
@@ -188,8 +209,8 @@ WORKFLOW_SYSTEMS = (
         display_order=1,
     ),
     WorkflowSystem(
-        id=COLD_OUTREACH_SYSTEM,
-        name="Cold outreach system",
+        id=OUTREACH_SYSTEM,
+        name="Outreach",
         display_order=2,
     ),
     WorkflowSystem(
@@ -207,6 +228,9 @@ WORKFLOW_SYSTEMS = (
         name="Paid ads system",
         display_order=5,
     ),
+    WorkflowSystem(id=SOCIAL_SYSTEM, name="Social", display_order=6),
+    WorkflowSystem(id=COMPETITORS_SYSTEM, name="Competitors", display_order=7),
+    WorkflowSystem(id=REVENUE_SYSTEM, name="Revenue system", display_order=8),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -266,6 +290,43 @@ PUBLIC_ARTICLE_REVIEW_POLICY = HumanReviewPolicy(
     revision_adapter="content-revision.v1",
 )
 
+CONTENT_REFRESH_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Changes the title, snippet or opening copy of a live page.",
+    review_label="Review refresh",
+    defer_label="Not now",
+    summary=(
+        "A refresh of one of your pages is ready. Compare each current line with the proposed "
+        "one; after you approve, Tin changes exactly those lines in your site's source."
+    ),
+    queue_clause="Page refresh ready to review",
+)
+
+# Emre's v2 organic map: content.generate is the one workflow that writes copy, so these two
+# stay registered for pinned runs and saved schedules but leave discovery.
+RETIRED_CONTENT_KEYS = frozenset({ANSWER_PAGE_WORKFLOW_NAME, content_refresh.KEY})
+
+# content.generate 1.9.0 drafts three kinds of plan item. The article keeps the planned-content
+# policy above; an answer page and a page refresh each get their own review wording, and all
+# three take feedback as a revision of the same document.
+CONTENT_KIND_REVIEW_POLICIES = {
+    content_plan.ANSWER: HumanReviewPolicy(
+        reason="Produces a public page that answers one buyer question.",
+        review_label="Review answer page",
+        defer_label="Not now",
+        summary=content_draft.KIND_REVIEW[content_plan.ANSWER],
+        queue_clause="Answer page ready to review",
+        revision_adapter="content-revision.v1",
+    ),
+    content_plan.REFRESH: HumanReviewPolicy(
+        reason="Changes the title, snippet or opening copy of a live page.",
+        review_label="Review refresh",
+        defer_label="Not now",
+        summary=content_draft.KIND_REVIEW[content_plan.REFRESH],
+        queue_clause="Page refresh ready to review",
+        revision_adapter="content-revision.v1",
+    ),
+}
+
 GROWTH_ONBOARDING_REVIEW_POLICY = HumanReviewPolicy(
     reason="Tin sets up only the systems the founder picked, with the tools they connected.",
     review_label="Set it up",
@@ -294,6 +355,16 @@ AWESOME_SUBMIT_REVIEW_POLICY = HumanReviewPolicy(
         "request text. Nothing is sent from your GitHub account until you approve."
     ),
     queue_clause="Awesome list submissions ready to send",
+)
+PAYMENT_RECOVERY_REVIEW_POLICY = HumanReviewPolicy(
+    reason="Sends email to your customers from your mailbox.",
+    review_label="Approve & send",
+    defer_label="Not now",
+    summary=(
+        "The exact failed-payment emails are ready, one per customer, with why each was "
+        "written that way. Nothing is sent until you approve."
+    ),
+    queue_clause="Failed-payment emails ready to send",
 )
 EMAIL_CAMPAIGN_REVIEW_POLICY = HumanReviewPolicy(
     reason="Sends email to external recipients.",
@@ -355,11 +426,14 @@ class BuiltinWorkflow:
     integration_requirements: tuple[IntegrationRequirement, ...] = ()
     model_route: ModelRoute | None = None
     schedule_modes: tuple[str, ...] = ("on_demand", "daily", "weekly")
+    # The cadence a new setup starts with; the founder can still choose another or none.
+    default_schedule: dict[str, Any] | None = None
     system: str | None = None
     presentation: WorkflowDiagram | None = None
     prerequisites: tuple[WorkflowPrerequisite, ...] = ()
     # Agents run it through the MCP; the product UI does not list it in the catalog.
     agent_only: bool = False
+    public_mcp: PublicMCPExposure | None = None
 
     @property
     def definition_path(self) -> str:
@@ -395,6 +469,10 @@ class BuiltinWorkflow:
         }
         if self.review_policy is not None:
             definition["human_review"] = self.review_policy.definition()
+        if self.default_schedule is not None:
+            if self.default_schedule.get("cadence") not in self.schedule_modes:
+                raise ValueError(f"workflow {self.key} defaults to a cadence it does not allow")
+            definition["default_schedule"] = dict(self.default_schedule)
         if self.system is not None:
             if self.system not in WORKFLOW_SYSTEM_IDS:
                 raise ValueError(f"workflow {self.key} references unknown system {self.system}")
@@ -423,6 +501,22 @@ class BuiltinWorkflow:
             definition["style_policy"] = dict(style_capture.POLICY)
             definition["style_instructions"] = style_capture.INSTRUCTIONS
             definition["style_schema"] = style_capture.MODEL_SCHEMA
+            # 1.2.0: the founder's coding agent can revise the waiting proposal, and approval
+            # binds its exact content. Runs pinned to 1.1.0 lack this and keep their rules.
+            definition["proposal_revision"] = AGENT_REVISION
+        if self.key == x_draft.KEY:
+            definition["x_draft_policy"] = dict(x_draft.POLICY)
+        if self.key == x_feedback.KEY:
+            definition["public_discovery"] = False
+            definition["x_feedback_contract"] = {
+                "policy": x_feedback.POLICY,
+                "instructions": x_feedback.INSTRUCTIONS,
+                "schema": x_feedback.SCHEMA,
+            }
+        if self.key == x_style.KEY:
+            definition["x_style_policy"] = dict(x_style.POLICY)
+            definition["x_style_instructions"] = x_style.INSTRUCTIONS
+            definition["x_style_schema"] = x_style.MODEL_SCHEMA
         if self.key == organic_system.KEY:
             definition["organic_system_policy"] = dict(organic_system.POLICY)
         if self.key == growth_onboarding.KEY:
@@ -444,14 +538,24 @@ class BuiltinWorkflow:
             definition["paid_ads_monitor_policy"] = dict(paid_ads_monitor.POLICY)
             definition["paid_ads_monitor_routes"] = paid_ads_monitor.route_definitions()
             definition["paid_ads_monitor_contract_sha256"] = paid_ads_monitor.contract_digest()
+        if self.key in RETIRED_CONTENT_KEYS:
+            # content.generate drafts answer pages and page refreshes from the content plan.
+            # Pinned runs and saved schedules keep running these at their revisions; new setups,
+            # the organic system and discovery no longer offer them.
+            definition["public_discovery"] = False
+        if self.key == content_draft.KEY:
+            definition[content_draft.KINDS_FIELD] = list(content_plan.KINDS)
+            definition["human_review_kinds"] = {
+                kind: policy.definition() for kind, policy in CONTENT_KIND_REVIEW_POLICIES.items()
+            }
         if self.key == content_plan.KEY:
             definition["content_policy"] = dict(content_plan_editorial.POLICY)
             definition["content_instructions"] = content_plan_editorial.INSTRUCTIONS
             definition["content_schema"] = content_plan_editorial.MODEL_SCHEMA
         if self.key == AUDIT_KEY:
             definition["audit_policy"] = dict(AUDIT_POLICY)
-            definition["audit_instructions"] = dict(AI_CONTRACT)
-            definition["audit_schemas"] = dict(AI_SCHEMAS)
+            definition["audit_instructions"] = dict(ai_contract(AUDIT_POLICY["version"]))
+            definition["audit_schemas"] = dict(ai_schemas(AUDIT_POLICY["version"]))
         if self.key == KEYWORD_KEY:
             definition["keyword_policy"] = dict(KEYWORD_POLICY)
             definition["keyword_instructions"] = dict(KEYWORD_INSTRUCTIONS)
@@ -467,7 +571,16 @@ class BuiltinWorkflow:
                 raise ValueError(
                     "procedures that use a test identity require the Google Workspace mailbox"
                 )
-        if self.key == "content.public_article":
+        if self.key in {
+            "content.public_article",
+            SITE_HEALTH_WORKFLOW_NAME,
+            VISIBILITY_AUDIT_WORKFLOW_NAME,
+            technical_fix.KEY,
+        }:
+            # Site health is folded into the technical fix, and the technical fix into
+            # website.change (its audit source): saved configurations and schedules keep
+            # running at their pinned revision, but new setups use the newer workflow.
+            # The AI visibility audit is folded into the organic audit's buyer questions.
             definition["public_discovery"] = False
         from tin_lite.native_skill_pins import suite_for_workflow
 
@@ -504,6 +617,58 @@ BUILTIN_WORKFLOWS = (
         id=connection_collection.WORKFLOW_ID,
         key=connection_collection.KEY,
         title="Collect connections",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "scope",
+                    "step",
+                    "Pin friends and filters",
+                    "Up to 3 friends, second-degree only",
+                ),
+                DiagramNode(
+                    "ready", "wait", "Wait for Chrome", "Pairing and cloud consent, when selected"
+                ),
+                DiagramNode(
+                    "read",
+                    "surface",
+                    "Read a result page",
+                    "Local Chrome or qualified cloud adapter",
+                ),
+                DiagramNode(
+                    "save",
+                    "store",
+                    "Save the accepted page",
+                    "Check account, scope, order and limits",
+                ),
+                DiagramNode(
+                    "backup", "step", "Recover in Chrome", "Cloud-preferred, confirmed cleanup only"
+                ),
+                DiagramNode(
+                    "pause",
+                    "wait",
+                    "Pause for the account owner",
+                    "Challenge, account change or rate limit",
+                ),
+                DiagramNode(
+                    "files",
+                    "receipt",
+                    "Save collection files",
+                    "JSON, CSV and visible-results coverage",
+                ),
+            ),
+            edges=(
+                DiagramEdge("scope", "ready"),
+                DiagramEdge("ready", "read", "signal", "Continue collection"),
+                DiagramEdge("read", "save"),
+                DiagramEdge("save", "read", label="Next page"),
+                DiagramEdge("read", "backup", label="Recoverable cloud failure"),
+                DiagramEdge("backup", "read"),
+                DiagramEdge("read", "pause", label="Account needs attention"),
+                DiagramEdge("pause", "read", "signal", "Resume if permitted"),
+                DiagramEdge("save", "files", label="View exhausted or limit reached"),
+            ),
+        ),
         description="Collect visible second-degree connections through selected friends.",
         executor=connection_collection.KEY,
         version_label="v1",
@@ -519,16 +684,73 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000027"),
         key=organic_system.KEY,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "audit", "step", "Audit the site", "up to 100 pages, Search Console, AI answers"
+                ),
+                DiagramNode(
+                    "keywords",
+                    "step",
+                    "Research buyer searches",
+                    "DataForSEO and up to 40 Google results",
+                ),
+                DiagramNode(
+                    "technical",
+                    "step",
+                    "Fix what the audit found",
+                    "website.change, up to 30, each waits for you",
+                ),
+                DiagramNode(
+                    "content", "step", "Plan the content", "roadmap saved, weekly drafts scheduled"
+                ),
+                DiagramNode(
+                    "draft", "step", "Draft the next article", "a page refresh runs beside it"
+                ),
+                DiagramNode(
+                    "review", "gate", "Approve the article", "the run waits for you, no timer"
+                ),
+                DiagramNode(
+                    "delivery",
+                    "surface",
+                    "Pull request on your site",
+                    "website.change, merged on commit to main",
+                ),
+                DiagramNode(
+                    "report", "receipt", "System result", "RESULT.md in reports/organic-system"
+                ),
+            ),
+            edges=(
+                DiagramEdge("audit", "technical", "call", "if fixes are on"),
+                DiagramEdge("audit", "content"),
+                DiagramEdge("keywords", "content"),
+                DiagramEdge("technical", "draft"),
+                DiagramEdge("content", "draft"),
+                DiagramEdge("draft", "review"),
+                DiagramEdge("review", "draft", "signal", "request changes"),
+                DiagramEdge("review", "delivery", "signal", "if GitHub is connected"),
+                DiagramEdge("delivery", "report"),
+            ),
+        ),
+        public_mcp=PublicMCPExposure(
+            "start_organic_traffic_system", destructive=True, open_world=True
+        ),
         title="Run the organic traffic system",
         description=(
             "Audit your website and research buyer searches, then save an editable content "
-            "plan and draft its next article for review. With GitHub connected, adapt the "
-            "approved article into an unmerged PR; otherwise keep its Markdown in Tin. "
-            "Then draft the next planned article each week, one review at a time. "
-            "Optionally propose one technical fix. Never merges, publishes or sends outreach."
+            "plan and draft its next article for review. With GitHub connected, website.change "
+            "puts the approved article on the site: Tin merges its PR once your required checks "
+            "pass when you approved it with commit to main, and otherwise leaves the PR for "
+            "you; without GitHub its Markdown stays in Tin. Then draft the next planned "
+            "article each week, one review at a time. Before new articles, refresh one "
+            "existing page now and again each week. Each week, take a traffic snapshot and "
+            "decide what every page needs before the refresh picks one. Optionally fix what "
+            "the audit found through website.change; each fix waits for your approval. "
+            "Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.4.0",
+        version_label="0.7.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,
@@ -537,13 +759,61 @@ BUILTIN_WORKFLOWS = (
         id=content_repository_delivery.WORKFLOW_ID,
         key=content_repository_delivery.KEY,
         title="Prepare article PR",
-        description="Adapt an approved article, answer page or public article to the "
-        "connected website repository's own format, adding a Markdown route once when the "
-        "site has none. Preserve its copy, open a reviewable GitHub PR, and keep the "
-        "Markdown original in Tin. Tin merges the PR only when your delivery setting commits "
-        "to main and the PR adds nothing but the page.",
+        description="Put an approved article, answer page or public article on the connected "
+        "website repository in the site's own format (Markdown, a component, plain HTML or "
+        "whatever it uses), adding its route when the site has none. Keep its wording, open "
+        "a reviewable GitHub PR, and keep the Markdown original in Tin. Tin merges the PR "
+        "only when your delivery setting commits to main, the page keeps the approved "
+        "wording, and the PR adds nothing but the page, or the page at the route you chose "
+        "for such pages.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.2.0",
+        version_label="1.9.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "pin",
+                    "step",
+                    "Pin the approved page",
+                    "approved article, answer or public article",
+                ),
+                DiagramNode(
+                    "adapt",
+                    "step",
+                    "Adapt it to the site",
+                    "Codex keeps the wording, at most 30 files",
+                ),
+                DiagramNode(
+                    "pull_request",
+                    "surface",
+                    "Pull request",
+                    "Tin opens it after checking the wording",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Receipt in project Files",
+                    "in content/deliveries, with the PR body",
+                ),
+                DiagramNode("poll", "wait", "Wait for GitHub", "checks every 15 s, up to 3.5 min"),
+                DiagramNode(
+                    "merged",
+                    "surface",
+                    "Merged into main",
+                    "only the page, or the page at your route",
+                ),
+                DiagramNode("open", "ghost", "Left open for you", "yours to review and merge"),
+            ),
+            edges=(
+                DiagramEdge("pin", "adapt"),
+                DiagramEdge("adapt", "pull_request"),
+                DiagramEdge("pull_request", "files"),
+                DiagramEdge("files", "poll", "call", "if commit to main and rules pass"),
+                DiagramEdge("files", "open", "call", "otherwise"),
+                DiagramEdge("poll", "merged", "signal", "clean"),
+                DiagramEdge("poll", "open", "signal", "not clean in time"),
+            ),
+        ),
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -604,23 +874,221 @@ BUILTIN_WORKFLOWS = (
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="content/deliveries/{run_id}.md",
                 verification_commands=(content_repository_delivery.CHECK_COMMAND,),
-                max_files=5,
-                # A 300 KB public article, its frontmatter and a small route still fit.
-                max_bytes=400_000,
+                # Runaway guards: a page in any format with its figures and embeds, its route,
+                # index and sitemap.
+                max_files=30,
+                max_bytes=2_000_000,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=content_repository_delivery.WEBSITE_CHANGE_ID,
+        key=website_change.KEY,
+        title="Change the website",
+        description="Put approved changes on your website repository: an approved article, "
+        "answer page or public article, adapted to the site's own format at the route you "
+        "chose with its wording kept; the technical fixes the latest audit found; the "
+        "redirects and noindex changes your page decisions and site plan made; or the blog "
+        "index plan. Each fix, planned change or plan is a change you approve or decline once "
+        "in Tin. What you approved publishes: Tin merges the pull request once your "
+        "repository's required checks pass, then checks the live site. Anything else, a page "
+        "whose wording Tin can't confirm, and any "
+        "change to a protected page such as /sign-in or one you added to the project's "
+        "protected pages, opens a pull request for you to merge. Deleting a page stays with "
+        "you.",
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.8.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand",),
+        # Agents start it for an approved change; the catalog has no picker for change rows.
+        agent_only=True,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "source": {
+                    "type": "string",
+                    "enum": list(website_change.IMPLEMENTED_SOURCES),
+                    "default": "content_draft",
+                    "title": "Change source",
+                    "description": "content_draft: one approved page (source_run_id). audit: "
+                    "the technical fixes the latest organic audit found. planned: the "
+                    "redirects and noindex changes page decisions made. blog_index: retired; "
+                    "kept for runs that pinned it. Preview audit and planned with "
+                    "preflight_website_change.",
+                },
+                "source_run_id": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
+                    "title": "Approved page run",
+                    "description": "For content_draft: an approved planned article, answer "
+                    "page or public article.",
+                },
+                "expected_repository": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 140,
+                    "pattern": r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9_.-]{1,100}$",
+                    "title": "Website repository",
+                },
+                "repository_serves_site": {
+                    "type": "boolean",
+                    "default": False,
+                    "title": "This repository serves the audited website",
+                    "description": "For audit and planned: the member confirms the repository "
+                    "builds the audited site.",
+                },
+                "finding_ids": {
+                    "type": "array",
+                    "title": "Only these findings",
+                    "description": "For audit or planned: leave empty for every change.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["finding_ids"][
+                        "maxItems"
+                    ],
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "decisions": {
+                    "type": "array",
+                    "title": "Decisions",
+                    "description": "For audit: answers to preflight_website_change's "
+                    "decisions_needed, each written finding_id=choice.",
+                    "items": {"type": "string", "pattern": "^oa_[0-9a-f]{20}=.{1,500}$"},
+                    "maxItems": technical_fix.BATCH_INPUT_SCHEMA["properties"]["decisions"][
+                        "maxItems"
+                    ],
+                    "default": [],
+                },
+                "protected_paths": {
+                    "type": "array",
+                    "title": "Protected paths",
+                    "description": "More site paths whose changes always wait for the "
+                    "founder's merge, for this run only, on top of /sign-in, /sign-up, "
+                    "/auth-complete and the project's protected pages (set_protected_paths).",
+                    "items": {"type": "string", "pattern": website_change.PROTECTED_PATH_PATTERN},
+                    "maxItems": website_change.MAX_PROTECTED_PATHS,
+                    "uniqueItems": True,
+                    "default": [],
+                },
+                "retry_run_id": {
+                    "type": "string",
+                    "default": "",
+                    "pattern": r"^(|[0-9a-f-]{36})$",
+                    "title": "Failed change to retry",
+                    "description": "Internal retry context. A fresh attempt is a new "
+                    "metered run; retrying a saved PR delivery does not use this input.",
+                },
+                "direction": {
+                    "type": "string",
+                    "default": "",
+                    "maxLength": 2000,
+                    "title": "Site instructions",
+                    "description": "Optional site root or conventions. Does not authorize "
+                    "changing the approved copy, the route or a protected path.",
+                },
+            },
+            "required": ["project_id", "expected_repository"],
+        },
+        integration_requirements=(
+            IntegrationRequirement(
+                provider_key=GITHUB_PROVIDER,
+                capabilities=(
+                    "contents.read",
+                    "contents.write",
+                    "pull_requests.read",
+                    "pull_requests.write",
+                ),
+                required=True,
+            ),
+        ),
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / website_change.KEY,
+            entry_skill="site-change",
+            github_pull_request=GitHubPullRequestProcedure(
+                receipt_path_template="website/changes/{run_id}.md",
+                verification_commands=(content_repository_delivery.CHECK_COMMAND,),
+                # site-fix-v5's file cap, for an audit run and a page alike; a page with its
+                # figures and embeds needs more bytes than a technical batch.
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
+                max_bytes=2_000_000,
+                site_repair_policy=technical_fix.BATCH_POLICY,
+                allow_no_change=True,
             ),
         ),
     ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000031"),
         key=content_draft.KEY,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "select",
+                    "step",
+                    "Pick the next plan item",
+                    "next in plan order: article, answer or refresh",
+                ),
+                DiagramNode(
+                    "write",
+                    "step",
+                    "Check coverage, then draft",
+                    "Codex reads up to 12 current pages first",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Draft in project Files",
+                    "copy and generation notes, or an assessment",
+                ),
+                DiagramNode("review", "gate", "Approve the draft", "or keep it in Files, no timer"),
+                DiagramNode(
+                    "no_draft",
+                    "ghost",
+                    "No draft needed",
+                    "assessment saved, closes without review",
+                ),
+                DiagramNode(
+                    "pull_request", "surface", "Pull request", "left unmerged for you on GitHub"
+                ),
+                DiagramNode(
+                    "commit",
+                    "surface",
+                    "Commit to main",
+                    "a commit, or a PR Tin merges once checks pass",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Delivery receipt",
+                    "PR number or commit, linked on the run",
+                ),
+            ),
+            edges=(
+                DiagramEdge("select", "write"),
+                DiagramEdge("write", "files"),
+                DiagramEdge("files", "review"),
+                DiagramEdge("files", "no_draft"),
+                DiagramEdge("review", "write", "signal", "request changes"),
+                DiagramEdge("review", "pull_request", "signal", "approve and open PR"),
+                DiagramEdge("review", "commit", "signal", "approve and publish"),
+                DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("commit", "receipt"),
+            ),
+        ),
+        public_mcp=PublicMCPExposure("start_content_draft", destructive=True, open_world=True),
         title="Draft planned content",
-        description="Check current coverage before drafting the next planned article "
-        "in your style. "
-        "Save useful copy for review, or explain why no draft is needed. "
-        "Optional GitHub PR delivery follows article approval. "
-        "Nothing is merged or published and the roadmap stays unchanged.",
+        description="Check current coverage before drafting the next item in your content "
+        "plan, in your style: a new article, an answer page for a buyer question AI assistants "
+        "miss you on, or a refresh of an existing page's title, snippet and opening. Save useful "
+        "copy for review, or explain why no draft is needed. After approval an article follows "
+        "your delivery setting, an answer page goes to your site through website.change at the "
+        "route you chose, and a refresh changes exactly the approved lines. The roadmap stays "
+        "unchanged.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.7.0",
+        version_label="1.16.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         # A weekly occurrence drafts the next article in plan order and holds while an
         # earlier draft from the same program still waits for review.
@@ -693,6 +1161,124 @@ BUILTIN_WORKFLOWS = (
             output_path_template=content_draft.PATH_TEMPLATE,
             output_validator=content_draft.EDITORIAL_VALIDATOR,
             output_max_bytes=80_000,
+            # An article's figures and embeds (page_assets), approved with its words.
+            output_assets=AssetPolicy(max_files=12, max_bytes=2_000_000),
+            project_skills=(
+                ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=content_refresh.WORKFLOW_ID,
+        key=content_refresh.KEY,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "pick",
+                    "step",
+                    "Pick the page from the audit",
+                    "most impressions, each page 6 weeks apart",
+                ),
+                DiagramNode(
+                    "draft",
+                    "step",
+                    "Propose the new lines",
+                    "title, description, H1, opening, in Codex",
+                ),
+                DiagramNode(
+                    "none_due",
+                    "store",
+                    "No page due this week",
+                    "report in reports/content-refresh",
+                ),
+                DiagramNode(
+                    "review",
+                    "gate",
+                    "Approve the new lines",
+                    "PR, commit to main, or keep in Files",
+                ),
+                DiagramNode(
+                    "apply",
+                    "step",
+                    "Change exactly those lines",
+                    "finds each old text verbatim in the source",
+                ),
+                DiagramNode(
+                    "pull_request", "surface", "Pull request", "left open for you to merge"
+                ),
+                DiagramNode("commit", "surface", "Commit to main", "on the default branch, no PR"),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Delivery receipt",
+                    "later runs report clicks before and after",
+                ),
+            ),
+            edges=(
+                DiagramEdge("pick", "draft"),
+                DiagramEdge("pick", "none_due", "call", "no page is due"),
+                DiagramEdge("draft", "review"),
+                DiagramEdge("review", "apply", "signal", "approved"),
+                DiagramEdge("apply", "pull_request", "call", "if pull request"),
+                DiagramEdge("apply", "commit", "call", "if commit to main"),
+                DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("commit", "receipt"),
+            ),
+        ),
+        title="Refresh an existing page",
+        description=(
+            "Retired: Draft planned content refreshes the pages your content plan schedules. "
+            "Saved schedules keep running: pick the page from your latest audit with the most "
+            "search impressions at stake: "
+            "searchers see it near the top but rarely click, or it ranks just below the top "
+            "results. Propose a new title, meta description and, where they miss the search, "
+            "H1 and opening answer, in your positioning and voice. After you approve in "
+            "Decisions, Tin changes exactly those lines in your site's source and follows your "
+            "delivery setting. A page waits six weeks after a refresh goes live, and later "
+            "runs report its clicks before and after."
+        ),
+        executor=CODEX_PROCEDURE_EXECUTOR,
+        version_label="1.1.0",
+        system=ORGANIC_TRAFFIC_SYSTEM,
+        schedule_modes=("on_demand", "weekly"),
+        review_policy=CONTENT_REFRESH_REVIEW_POLICY,
+        prerequisites=(
+            WorkflowPrerequisite(
+                kind="run",
+                workflow="organic.audit",
+                level="recommended",
+                reason="The refresh picks its page from the latest audit's search findings.",
+            ),
+            WorkflowPrerequisite(
+                kind="artifact",
+                level="recommended",
+                path=STYLE_PATH,
+                producer=style_capture.KEY,
+                reason="The writing guide shapes expression, not product facts.",
+            ),
+        ),
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to add?",
+                    "x-tin-ui": {"control": "textarea", "order": 40},
+                },
+            },
+            "required": ["project_id"],
+        },
+        procedure=CodexProcedureSource(
+            root=Path(__file__).resolve().parents[2] / "codex_procedures" / content_refresh.KEY,
+            entry_skill="page-refresh",
+            output_path_template=content_refresh.PATH_TEMPLATE,
+            output_validator=content_refresh.VALIDATOR,
+            output_max_bytes=40_000,
             project_skills=(
                 ProjectSkillDependency(name="writing-style", path=STYLE_PATH, required=False),
             ),
@@ -701,16 +1287,57 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000030"),
         key=style_capture.KEY,
+        public_mcp=PublicMCPExposure("start_style_capture", destructive=True, open_world=False),
         title="Capture writing style",
         description=(
             "Use your coding agent to select writing samples, or add samples here. "
-            "Review the proposed voice guide in Decisions; once you approve it, future "
-            "content uses it. Nothing is published."
+            "Review the proposed voice guide in Decisions; your coding agent can revise it "
+            "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.1.0",
+        version_label="1.3.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "read",
+                    "step",
+                    "Read the selected samples",
+                    "up to 8 samples in one 100 KB packet",
+                ),
+                DiagramNode(
+                    "extract",
+                    "step",
+                    "Extract voice and preferences",
+                    "one model call, keeps stated preferences",
+                ),
+                DiagramNode(
+                    "proposal",
+                    "store",
+                    "Proposed guide in Files",
+                    "style/proposals, current guide unchanged",
+                ),
+                DiagramNode(
+                    "review", "gate", "Approve the guide", "binds the exact version you read"
+                ),
+                DiagramNode(
+                    "guide",
+                    "store",
+                    "Writing guide in Files",
+                    ".agents/skills/writing-style/SKILL.md",
+                ),
+                DiagramNode("discard", "ghost", "Discarded", "current guide stays in place"),
+            ),
+            edges=(
+                DiagramEdge("read", "extract"),
+                DiagramEdge("extract", "proposal"),
+                DiagramEdge("proposal", "review"),
+                DiagramEdge("review", "proposal", "signal", "your coding agent revises it"),
+                DiagramEdge("review", "guide", "signal", "approved"),
+                DiagramEdge("review", "discard", "signal", "discard"),
+            ),
+        ),
         review_policy=STYLE_CAPTURE_REVIEW_POLICY,
-        system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         model_route=style_capture.ROUTE,
         prerequisites=(
@@ -747,30 +1374,267 @@ BUILTIN_WORKFLOWS = (
         },
     ),
     BuiltinWorkflow(
+        id=x_feedback.WORKFLOW_ID,
+        key=x_feedback.KEY,
+        title="Revise X writing",
+        description="Revise an X draft and remember clear writing preferences from feedback.",
+        executor=x_feedback.KEY,
+        version_label="1.2.0",
+        system=SOCIAL_SYSTEM,
+        schedule_modes=("on_demand",),
+        agent_only=True,
+        input_schema=x_feedback.INPUT_SCHEMA,
+        model_route=x_feedback.ROUTE,
+    ),
+    BuiltinWorkflow(
+        id=x_draft.WORKFLOW_ID,
+        key=x_draft.KEY,
+        title="Draft for X",
+        description=(
+            "Describe a product update. Tin sets up your voice if needed, then writes a draft."
+        ),
+        executor=x_draft.KEY,
+        version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "voice",
+                    "step",
+                    "Find your X voice guide",
+                    "saved guide for your connected X account",
+                ),
+                DiagramNode(
+                    "style", "step", "Learn your X voice first", "a Learn my X writing style run"
+                ),
+                DiagramNode(
+                    "review", "gate", "Review the voice guide", "drafting waits until you approve"
+                ),
+                DiagramNode(
+                    "compose", "step", "Write the posts", "one GPT-6 Sol call, 1 to 6 posts"
+                ),
+                DiagramNode(
+                    "stopped", "ghost", "Stopped, no draft", "you discarded the voice guide"
+                ),
+                DiagramNode(
+                    "draft",
+                    "store",
+                    "Draft in project Files",
+                    "numbers and links come from sources",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Draft ready to edit",
+                    "posting is a separate approved step",
+                ),
+            ),
+            edges=(
+                DiagramEdge("voice", "style", "call", "no guide, can learn"),
+                DiagramEdge("voice", "compose", "call", "otherwise"),
+                DiagramEdge("style", "review"),
+                DiagramEdge("review", "compose", "signal", "approved"),
+                DiagramEdge("review", "stopped", "signal", "discarded"),
+                DiagramEdge("compose", "draft"),
+                DiagramEdge("draft", "receipt"),
+            ),
+        ),
+        system=SOCIAL_SYSTEM,
+        schedule_modes=("on_demand",),
+        input_schema=x_draft.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
+        id=UUID("4ef1b9e9-5107-4ddc-9ce7-dde8a84e092c"),
+        key=x_style.KEY,
+        title="Learn my X writing style",
+        description=(
+            "Learn your voice from your own public X posts and replies, up to 50 spread across "
+            "your history, together with any writing you supply. Review the proposed guide "
+            "before future X drafts use it."
+        ),
+        executor=x_style.KEY,
+        version_label="1.2.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "x",
+                    "surface",
+                    "Your public X posts",
+                    "if connected: posts, replies, newest 150",
+                ),
+                DiagramNode(
+                    "pick", "step", "Pick up to 50 samples", "spread out, plus writing you supply"
+                ),
+                DiagramNode(
+                    "learn",
+                    "step",
+                    "Write the voice guide",
+                    "one GPT-6 Sol call, never copies a post",
+                ),
+                DiagramNode(
+                    "proposal",
+                    "store",
+                    "Proposal in project Files",
+                    "style/proposals, current guide unchanged",
+                ),
+                DiagramNode(
+                    "review", "gate", "Review the guide", "drafts keep the current guide until then"
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Saved X writing guide",
+                    "future X drafts write in this voice",
+                ),
+            ),
+            edges=(
+                DiagramEdge("x", "pick"),
+                DiagramEdge("pick", "learn"),
+                DiagramEdge("learn", "proposal"),
+                DiagramEdge("proposal", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
+        review_policy=STYLE_CAPTURE_REVIEW_POLICY,
+        system=SOCIAL_SYSTEM,
+        schedule_modes=("on_demand",),
+        model_route=x_style.ROUTE,
+        input_schema={
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "project_id": {"type": "string", "format": "uuid"},
+                "sample_source": {
+                    "type": "string",
+                    "enum": ["auto", "connected", "supplied"],
+                    "default": "auto",
+                    "title": "Learn from",
+                    "description": (
+                        "Auto learns from your connected public account and any samples or "
+                        "file you supply, together. Choose one to use only that source."
+                    ),
+                },
+                "supplied_samples": {
+                    "type": "string",
+                    "maxLength": 32000,
+                    "default": "",
+                    "title": "Your writing samples",
+                    "description": "Optional; Auto uses it with your connected public X account.",
+                    "x-tin-ui": {"control": "textarea", "order": 10},
+                },
+                "source_path": {
+                    "type": "string",
+                    "maxLength": 512,
+                    "default": "",
+                    "title": "Samples in project Files",
+                },
+                "account_id": {
+                    "type": "string",
+                    "pattern": "^(|[0-9]{1,19})$",
+                    "default": "",
+                    "title": "X account ID",
+                    "description": "Optional for samples; connected sampling uses your account.",
+                },
+                "preferences": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "default": "",
+                    "title": "Writing preferences",
+                    "x-tin-ui": {"control": "textarea", "order": 20},
+                },
+                "direction": {
+                    "type": "string",
+                    "maxLength": 2000,
+                    "default": "",
+                    "title": "Anything to change?",
+                    "x-tin-ui": {"control": "textarea", "order": 30},
+                },
+            },
+            "required": ["project_id"],
+        },
+    ),
+    BuiltinWorkflow(
+        id=x_posts.WORKFLOW_ID,
+        key=x_posts.KEY,
+        title="Publish an approved X post",
+        description="Publish the exact post and media confirmed through Tin's X preview.",
+        executor=x_posts.KEY,
+        version_label="1.0.0",
+        schedule_modes=("on_demand",),
+        system=SOCIAL_SYSTEM,
+        agent_only=True,
+        input_schema=x_posts.INPUT_SCHEMA,
+    ),
+    BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000028"),
         key=technical_fix.KEY,
-        title="Fix an audited technical issue",
+        # Hidden (public_discovery: false): the public plugin no longer starts it either.
+        title="Fix what the audit found",
         description=(
-            "Recheck one missing-title or missing-description finding and propose a verified PR. "
-            "Supports exact static HTML and bounded Python-wheel HTML templates. "
-            "Lists unsupported pages separately. "
-            "If no safe repair is available, explain why "
-            "without a PR. Never merges or deploys; GitHub may run its configured PR checks."
+            "Recheck an audit's findings on the live site and fix every one Tin can in one PR: "
+            "indexing, the sitemap and robots.txt, redirects and merges, page structure, "
+            "accessibility, structured data, social previews and internal links, in any "
+            "framework. Your coding agent answers the judgment calls first. Copy stays with "
+            "the content workflows, and steps outside the repository are listed. Tin checks "
+            "each finding on the live site after you deploy. Never merges or deploys."
         ),
-        version_label="0.4.1",
+        version_label="0.6.1",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "plan",
+                    "step",
+                    "Plan the audit's repairs",
+                    "up to 30, unanswered judgment calls left out",
+                ),
+                DiagramNode(
+                    "recheck",
+                    "step",
+                    "Recheck the live site",
+                    "up to 40 page reads, drops what is fixed",
+                ),
+                DiagramNode(
+                    "fix",
+                    "step",
+                    "Repair in the site's own code",
+                    "Codex sandbox, at most 20 files, 800 lines",
+                ),
+                DiagramNode(
+                    "pull_request",
+                    "surface",
+                    "Pull request on your repo",
+                    "GitHub, never merged by Tin",
+                ),
+                DiagramNode("no_change", "ghost", "No change made", "RESULT.md says why, no PR"),
+                DiagramNode(
+                    "receipt", "receipt", "Fix receipt", "RESULT.md, live check after you merge"
+                ),
+            ),
+            edges=(
+                DiagramEdge("plan", "recheck"),
+                DiagramEdge("recheck", "fix"),
+                DiagramEdge("recheck", "no_change", "call", "all already fixed"),
+                DiagramEdge("fix", "pull_request"),
+                DiagramEdge("fix", "no_change", "call", "no safe patch"),
+                DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("no_change", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
                 level="required",
                 workflow=AUDIT_KEY,
                 via_input="audit_run_id",
-                reason="A technical fix repairs one finding from a successful, pinned audit.",
+                reason="A technical fix repairs findings from a successful, pinned audit.",
             ),
         ),
         executor="codex.procedure",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
-        input_schema=technical_fix.INPUT_SCHEMA,
+        input_schema=technical_fix.BATCH_INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 provider_key=GITHUB_PROVIDER,
@@ -785,24 +1649,84 @@ BUILTIN_WORKFLOWS = (
         ),
         procedure=CodexProcedureSource(
             root=Path(__file__).parents[2] / "codex_procedures" / technical_fix.KEY,
-            entry_skill="audit-title-repair",
+            entry_skill="audit-batch-repair",
             github_pull_request=GitHubPullRequestProcedure(
                 receipt_path_template="reports/technical-fix/{run_id}/RESULT.md",
-                verification_commands=(technical_fix.CHECK_COMMAND,),
-                repair_policy=technical_fix.POLICY,
+                verification_commands=tuple(
+                    technical_fix.policy_commands(technical_fix.BATCH_POLICY)
+                ),
+                repair_policy=technical_fix.BATCH_POLICY,
+                max_files=technical_fix.POLICY_MAX_FILES[technical_fix.BATCH_POLICY],
             ),
         ),
     ),
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000025"),
         key=content_plan.KEY,
+        public_mcp=PublicMCPExposure("start_content_plan", destructive=True, open_world=True),
         title="Plan upcoming content",
         description=(
-            "Turn an audit and keyword research into an editable two-week to six-month roadmap. "
-            "Save to My system to prepare weekly batches. Does not write articles or publish."
+            "Turn an audit and keyword research into an editable two-week to six-month roadmap: "
+            "new articles, answer pages for buyer questions AI assistants miss you on, and "
+            "refreshes of existing pages. Save to My system to prepare weekly batches. Does not "
+            "write or publish anything."
         ),
         executor=content_plan.KEY,
-        version_label="0.6.0",
+        version_label="0.9.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "program",
+                    "step",
+                    "Check the content program",
+                    "saved program, exact audit and keyword plan",
+                ),
+                DiagramNode(
+                    "research",
+                    "step",
+                    "Gather the research",
+                    "audit, keywords, page decisions, traffic",
+                ),
+                DiagramNode(
+                    "batch", "step", "Prepare the next batch", "next due batch, no model call"
+                ),
+                DiagramNode(
+                    "pages", "step", "Read existing pages", "up to 60, four at a time, 20 s each"
+                ),
+                DiagramNode(
+                    "model", "step", "Propose the briefs", "one model call, no paid retries"
+                ),
+                DiagramNode(
+                    "allocate",
+                    "step",
+                    "Spread them over the weeks",
+                    "Tin sets dates, at most 3 pieces a week",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Plan in project Files",
+                    "PLAN.md, plan.json and evidence.json",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Publish receipt",
+                    "one commit, nothing drafted or published",
+                ),
+            ),
+            edges=(
+                DiagramEdge("program", "research", "call", "first run or a revision"),
+                DiagramEdge("program", "batch", "call", "later runs"),
+                DiagramEdge("research", "pages"),
+                DiagramEdge("pages", "model"),
+                DiagramEdge("model", "allocate"),
+                DiagramEdge("allocate", "files"),
+                DiagramEdge("batch", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
@@ -832,6 +1756,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=UUID("00000000-0000-4000-8000-000000000024"),
         key=KEYWORD_KEY,
+        public_mcp=PublicMCPExposure("start_keyword_plan", destructive=True, open_world=True),
         title="Plan keyword opportunities",
         description=(
             "Research buyer searches, competitor keywords, and a bounded sample of Google results. "
@@ -839,9 +1764,65 @@ BUILTIN_WORKFLOWS = (
             "No audit or GitHub required; does not create a calendar, write articles, or publish."
         ),
         executor=KEYWORD_KEY,
-        version_label="0.6.0",
+        # 0.7.1 added monthly/quarterly schedules; 0.8.0 pins keyword-plan-v8, 0.9.0 v9.
+        version_label="0.9.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "seeds",
+                    "step",
+                    "Propose seed phrases",
+                    "up to 8 by one model call, or your own",
+                ),
+                DiagramNode(
+                    "search_console",
+                    "surface",
+                    "Search Console queries",
+                    "90 days, only when the property matches",
+                ),
+                DiagramNode(
+                    "lookups",
+                    "surface",
+                    "DataForSEO keyword data",
+                    "your site, up to 3 rivals, platforms dropped",
+                ),
+                DiagramNode(
+                    "screen",
+                    "step",
+                    "Screen for your buyers",
+                    "up to 600 in calls of 50, best 300 kept",
+                ),
+                DiagramNode(
+                    "samples",
+                    "surface",
+                    "Sample Google results",
+                    "up to 40 live result pages, best fit first",
+                ),
+                DiagramNode(
+                    "group",
+                    "step",
+                    "Group by buyer intent",
+                    "up to 80, high only with measured demand",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Keyword plan in project Files",
+                    "PLAN.md, keywords.json, evidence.json",
+                ),
+            ),
+            edges=(
+                DiagramEdge("seeds", "lookups"),
+                DiagramEdge("lookups", "screen"),
+                DiagramEdge("search_console", "screen"),
+                DiagramEdge("screen", "samples"),
+                DiagramEdge("samples", "group"),
+                DiagramEdge("group", "files"),
+            ),
+        ),
         system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "monthly"),
         model_route=ModelRoute(
             key=KEYWORD_ROUTE_KEY,
             provider=ProviderName.OPENAI,
@@ -939,16 +1920,77 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ORGANIC_AUDIT_WORKFLOW_ID,
         key=AUDIT_KEY,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "reads",
+                    "step",
+                    "Read the site and Search Console",
+                    "robots, sitemaps, picks up to 100 pages",
+                ),
+                DiagramNode(
+                    "crawl",
+                    "surface",
+                    "DataForSEO crawl",
+                    "OnPage API, sitemap or links, JavaScript off",
+                ),
+                DiagramNode(
+                    "pages", "step", "Read the chosen pages", "static HTML, four at a time"
+                ),
+                DiagramNode("poll", "wait", "Every 30 seconds", "until done, at most an hour"),
+                DiagramNode(
+                    "questions",
+                    "step",
+                    "Ask the buyer questions",
+                    "up to 8, 3 answers with search, 1 without",
+                ),
+                DiagramNode(
+                    "engines",
+                    "surface",
+                    "Six AI engines",
+                    "ChatGPT, Gemini, Google, Claude, Perplexity",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Audit in project Files",
+                    "AUDIT.md, findings, evidence, LATEST.json",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Publish receipt",
+                    "one commit, only LATEST.json is replaced",
+                ),
+            ),
+            edges=(
+                DiagramEdge("reads", "crawl"),
+                DiagramEdge("reads", "pages"),
+                DiagramEdge("crawl", "poll"),
+                DiagramEdge("pages", "poll"),
+                DiagramEdge("poll", "questions", "signal"),
+                DiagramEdge("questions", "engines"),
+                DiagramEdge("engines", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
+        public_mcp=PublicMCPExposure("start_organic_audit", destructive=True, open_world=True),
         title="Audit organic visibility",
         description=(
             "Audit technical SEO and AI visibility (GEO). Read robots.txt, sitemaps and "
             "Search Console queries, check up to 100 public pages by default, chosen by "
             "search impressions and URL section, and see whether AI answers mention, cite, "
-            "or recommend your business. Get prioritized findings with evidence and fixes. "
-            "No GitHub required."
+            "or recommend your business, in the ChatGPT and Gemini apps, Google AI Mode and "
+            "AI Overviews, and the Claude and Perplexity API models. Get prioritized findings "
+            "with evidence and fixes. No GitHub required."
         ),
         executor=AUDIT_KEY,
-        version_label="0.6.0",
+        # 0.9.1: the same organic-audit-v13 run, now also on a monthly or quarterly schedule.
+        # 0.10.0: organic-audit-v14 follows links when the site has no sitemap.
+        # 0.11.0: organic-audit-v15 drafts up to sixteen questions from public pages and
+        # Search Console searches, and no longer reads organic.prompt_panel.
+        version_label="0.11.0",
         model_route=ModelRoute(
             key="organic.audit.visibility.v1",
             provider=ProviderName.OPENAI,
@@ -956,7 +1998,7 @@ BUILTIN_WORKFLOWS = (
             capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,
-        schedule_modes=("on_demand",),
+        schedule_modes=("on_demand", "monthly"),
         input_schema={
             "type": "object",
             "additionalProperties": False,
@@ -1003,22 +2045,97 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=DESIGN_MD_WORKFLOW_ID,
         key=WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_design", destructive=True, open_world=False),
         title="Generate project design",
         description="Analyze a project repository and publish its DESIGN.md.",
         executor=WORKFLOW_NAME,
         version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "files", "store", "Project Files", "checked out in an isolated sandbox"
+                ),
+                DiagramNode(
+                    "describe",
+                    "step",
+                    "Describe the product design",
+                    "Codex, only DESIGN.md, 30 min by default",
+                ),
+                DiagramNode(
+                    "design",
+                    "store",
+                    "DESIGN.md in project Files",
+                    "one commit at the root, at most 1 MB",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Design document",
+                    "observed design kept apart from advice",
+                ),
+            ),
+            edges=(
+                DiagramEdge("files", "describe"),
+                DiagramEdge("describe", "design"),
+                DiagramEdge("design", "receipt"),
+            ),
+        ),
     ),
     BuiltinWorkflow(
         id=PROJECT_MEMORY_WORKFLOW_ID,
         key=PROJECT_MEMORY_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_memory", destructive=True, open_world=False),
         title="Garden project memory",
         description="Consolidate durable project outputs into the project wiki.",
         executor=PROJECT_MEMORY_WORKFLOW_NAME,
         version_label="1.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "outputs",
+                    "store",
+                    "Recent run outputs in Files",
+                    "last 20 succeeded runs, up to 700 KB",
+                ),
+                DiagramNode(
+                    "product",
+                    "store",
+                    "Product section of the index",
+                    "Feature and Code maps, never rewritten",
+                ),
+                DiagramNode(
+                    "garden",
+                    "step",
+                    "Rewrite the memory index",
+                    "one model call, every source cited",
+                ),
+                DiagramNode(
+                    "index",
+                    "store",
+                    "Memory index in project Files",
+                    "wiki/INDEX.md, Product section put back",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Project memory updated",
+                    "later scans read it, not raw outputs",
+                ),
+            ),
+            edges=(
+                DiagramEdge("outputs", "garden"),
+                DiagramEdge("garden", "index"),
+                DiagramEdge("product", "index", "call", "kept verbatim"),
+                DiagramEdge("index", "receipt"),
+            ),
+        ),
     ),
     BuiltinWorkflow(
         id=SCAN_REPORT_WORKFLOW_ID,
         key=SCAN_REPORT_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_project_scan", destructive=True, open_world=True),
         title="Scan project",
         description=(
             "Review durable project knowledge against the system scanning guide and publish "
@@ -1026,6 +2143,45 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=SCAN_REPORT_WORKFLOW_NAME,
         version_label="1.2.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "guide", "store", "Tin's scanning guide", "system wiki, pinned commit per run"
+                ),
+                DiagramNode(
+                    "memory", "store", "Project memory", "wiki/INDEX.md, else last 20 run outputs"
+                ),
+                DiagramNode(
+                    "collect",
+                    "step",
+                    "Collect the sources",
+                    "plus connection status, 200 KB in all",
+                ),
+                DiagramNode(
+                    "write", "step", "Write the scan", "one model call, facts, risks, next actions"
+                ),
+                DiagramNode(
+                    "report",
+                    "store",
+                    "Scan in project Files",
+                    "reports/SCAN.md, cites every source",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Scan ready in Activity",
+                    "one commit, replaces the last scan",
+                ),
+            ),
+            edges=(
+                DiagramEdge("guide", "collect"),
+                DiagramEdge("memory", "collect"),
+                DiagramEdge("collect", "write"),
+                DiagramEdge("write", "report"),
+                DiagramEdge("report", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="artifact",
@@ -1040,28 +2196,64 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=SITE_HEALTH_WORKFLOW_ID,
         key=SITE_HEALTH_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure(
+            "start_site_health_improvement", destructive=True, open_world=True
+        ),
         title="Improve site health",
         description=(
-            "Inspect one public site against its selected GitHub repository, make one bounded "
-            "mechanical improvement, and open a pull request for review. "
-            "When no safe change is justified, save a no-change report without opening a PR."
+            "Retired: use Fix what the audit found, which repairs every finding of an organic "
+            "audit in one pull request. Saved schedules of this workflow keep running: it "
+            "inspects one public site against its GitHub repository, makes one bounded "
+            "mechanical improvement and opens a pull request for review."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="2.2.2",
+        version_label="2.3.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         presentation=WorkflowDiagram(
+            direction="TD",
             nodes=(
-                DiagramNode("inspect", "step", "inspect site + repo", "pinned evidence"),
-                DiagramNode("change", "step", "make one fix", "bounded change"),
-                DiagramNode("verify", "step", "run checks", "repository commands"),
-                DiagramNode("pull_request", "surface", "GitHub pull request", "left unmerged"),
-                DiagramNode("receipt", "receipt", "receipt", "PR linked in Files"),
+                DiagramNode(
+                    "repo", "surface", "GitHub repository", "pinned snapshot and its open PRs"
+                ),
+                DiagramNode(
+                    "inspect",
+                    "step",
+                    "Inspect the live page",
+                    "traced to its source in the repository",
+                ),
+                DiagramNode(
+                    "change", "step", "Make one bounded fix", "1 file by default, 3 at most"
+                ),
+                DiagramNode(
+                    "no_change",
+                    "ghost",
+                    "No change proposed",
+                    "nothing evidenced, or already in a PR",
+                ),
+                DiagramNode(
+                    "verify",
+                    "step",
+                    "Run the checks",
+                    "repo checks, then Tin reruns git diff --check",
+                ),
+                DiagramNode(
+                    "pull_request",
+                    "surface",
+                    "Unmerged pull request",
+                    "opened by Tin, merged only by you",
+                ),
+                DiagramNode(
+                    "receipt", "receipt", "Receipt in Files", "reports/site-health, PR linked"
+                ),
             ),
             edges=(
+                DiagramEdge("repo", "inspect"),
                 DiagramEdge("inspect", "change"),
+                DiagramEdge("inspect", "no_change", "call", "nothing to fix"),
                 DiagramEdge("change", "verify"),
                 DiagramEdge("verify", "pull_request"),
                 DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("no_change", "receipt"),
             ),
         ),
         input_schema={
@@ -1134,13 +2326,70 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=VISIBILITY_AUDIT_WORKFLOW_ID,
         key=VISIBILITY_AUDIT_WORKFLOW_NAME,
+        # Hidden from discovery, so it has no ChatGPT plugin tool either; saved
+        # configurations keep running.
         title="Audit AI visibility",
         description=(
-            "Measure whether Luna finds and recommends a chosen target across five target-blind "
-            "buyer questions, then publish AI_VISIBILITY.md."
+            "Retired: the organic audit measures AI visibility on the buyer prompt panel's "
+            "questions. Saved schedules keep running: measure whether Luna finds and recommends "
+            "a chosen target across five target-blind buyer questions, then publish "
+            "AI_VISIBILITY.md."
         ),
         executor=VISIBILITY_AUDIT_WORKFLOW_NAME,
-        version_label="1.2.0",
+        version_label="1.3.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "sources",
+                    "store",
+                    "Project memory and integrations",
+                    "else last 20 run outputs, 200 KB in all",
+                ),
+                DiagramNode(
+                    "panel",
+                    "step",
+                    "Write five buyer questions",
+                    "one model call, none may name the target",
+                ),
+                DiagramNode(
+                    "web",
+                    "step",
+                    "Ask each with web search",
+                    "Luna, 5 calls, up to 3 searches each",
+                ),
+                DiagramNode(
+                    "probe", "step", "Ask each without tools", "Luna, 5 calls, model knowledge only"
+                ),
+                DiagramNode(
+                    "score",
+                    "step",
+                    "Score where the target appears",
+                    "one model call, from found to top choice",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Audit in project Files",
+                    "AI_VISIBILITY.md and raw evidence.json",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Bottleneck and next moves",
+                    "1 to 3 moves, one commit, no review",
+                ),
+            ),
+            edges=(
+                DiagramEdge("sources", "panel"),
+                DiagramEdge("panel", "web"),
+                DiagramEdge("panel", "probe"),
+                DiagramEdge("web", "score"),
+                DiagramEdge("probe", "score"),
+                DiagramEdge("score", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
         system=ORGANIC_TRAFFIC_SYSTEM,
         input_schema={
             "type": "object",
@@ -1166,19 +2415,64 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=ANSWER_PAGE_WORKFLOW_ID,
         key=ANSWER_PAGE_WORKFLOW_NAME,
+        # Retired from discovery, so it has no ChatGPT plugin tool either; content.generate
+        # (start_content_draft) drafts answer pages, and saved configurations keep running.
         title="Draft an answer page",
         description=(
-            "Create a public-facing Markdown content draft from the latest AI visibility "
-            "findings; not for general advice or internal business questions."
+            "Retired: Draft planned content writes answer pages for the AI-visibility gaps your "
+            "content plan schedules. Saved schedules keep running: create a public-facing "
+            "Markdown content draft from the latest AI visibility findings; not for general "
+            "advice or internal business questions."
         ),
         executor=ANSWER_PAGE_WORKFLOW_NAME,
-        version_label="1.4.0",
+        version_label="1.7.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "sources",
+                    "store",
+                    "Audit, memory and positioning",
+                    "newest organic or AI visibility audit",
+                ),
+                DiagramNode(
+                    "draft",
+                    "step",
+                    "Research and write the page",
+                    "one model call, 12 searches, one repair",
+                ),
+                DiagramNode(
+                    "page", "store", "Page in project Files", "content/answers, plus evidence.json"
+                ),
+                DiagramNode("review", "gate", "Review the draft", "no deadline, it stays on hold"),
+                DiagramNode(
+                    "pull_request", "surface", "Pull request", "left open for you to merge"
+                ),
+                DiagramNode("commit", "surface", "Commit to main", "lands on your default branch"),
+                DiagramNode(
+                    "receipt", "receipt", "Approved page", "stays in Files whatever delivery does"
+                ),
+            ),
+            edges=(
+                DiagramEdge("sources", "draft"),
+                DiagramEdge("draft", "page"),
+                DiagramEdge("page", "review"),
+                DiagramEdge("review", "pull_request", "signal", "if pull request"),
+                DiagramEdge("review", "commit", "signal", "if commit to main"),
+                DiagramEdge("review", "receipt", "signal", "keep in Files"),
+                DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("commit", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="run",
                 level="recommended",
-                workflow=VISIBILITY_AUDIT_WORKFLOW_NAME,
-                reason="The latest AI visibility audit supplies the questions the page answers.",
+                workflow=AUDIT_KEY,
+                reason=(
+                    "The latest organic audit's AI buyer questions supply the questions the "
+                    "page answers."
+                ),
             ),
         ),
         system=ORGANIC_TRAFFIC_SYSTEM,
@@ -1187,6 +2481,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=WEEKLY_BRIEF_WORKFLOW_ID,
         key=WEEKLY_BRIEF_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_weekly_brief", destructive=True, open_world=False),
         title="Create a weekly project brief",
         description=(
             "Summarize what moved, what needs attention, and the smallest useful next steps "
@@ -1195,16 +2490,34 @@ BUILTIN_WORKFLOWS = (
         executor=WEEKLY_BRIEF_WORKFLOW_NAME,
         version_label="1.1.0",
         presentation=WorkflowDiagram(
+            direction="TD",
             nodes=(
-                DiagramNode("collect", "step", "collect the week", "runs · files · activity"),
-                DiagramNode("context", "store", "project state", "durable evidence"),
-                DiagramNode("summarize", "step", "write the brief", "one bounded model call"),
-                DiagramNode("publish", "receipt", "weekly brief", "dated file + activity"),
+                DiagramNode(
+                    "context", "store", "Context and memory", "context files, memory, integrations"
+                ),
+                DiagramNode(
+                    "week", "store", "Last 7 days of work", "runs and activity, analytics first"
+                ),
+                DiagramNode("collect", "step", "Collect the sources", "16 KB each, 220 KB in all"),
+                DiagramNode(
+                    "write", "step", "Write the brief", "one model call, Tin adds the sources"
+                ),
+                DiagramNode(
+                    "brief", "store", "Dated brief in Files", "reports/weekly, named by period end"
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Brief ready in Activity",
+                    "evidence.json pins sources and model",
+                ),
             ),
             edges=(
-                DiagramEdge("collect", "context"),
-                DiagramEdge("context", "summarize"),
-                DiagramEdge("summarize", "publish"),
+                DiagramEdge("context", "collect"),
+                DiagramEdge("week", "collect"),
+                DiagramEdge("collect", "write"),
+                DiagramEdge("write", "brief"),
+                DiagramEdge("brief", "receipt"),
             ),
         ),
         input_schema={
@@ -1272,6 +2585,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=RESEARCH_DEEP_DIVE_WORKFLOW_ID,
         key=RESEARCH_DEEP_DIVE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_deep_research", destructive=True, open_world=True),
         title="Research a question deeply",
         description=(
             "Test a project question and its upstream assumptions against current, "
@@ -1279,6 +2593,47 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "context", "store", "Project files", "read first, so known work is not redone"
+                ),
+                DiagramNode(
+                    "frame",
+                    "step",
+                    "Frame the question in layers",
+                    "Codex, 15 minutes, premise before execution",
+                ),
+                DiagramNode("web", "surface", "Web sources", "primary first, every claim linked"),
+                DiagramNode(
+                    "reassess",
+                    "step",
+                    "Reassess after each layer",
+                    "a failed premise stops what depends on it",
+                ),
+                DiagramNode(
+                    "report",
+                    "store",
+                    "Report in project Files",
+                    "300 KB at most, RESEARCH_DEEP_DIVE.md in reports",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Research report",
+                    "answer first, open questions, nothing sent",
+                ),
+            ),
+            edges=(
+                DiagramEdge("context", "frame"),
+                DiagramEdge("frame", "web"),
+                DiagramEdge("web", "reassess"),
+                DiagramEdge("reassess", "web", "call", "next layer"),
+                DiagramEdge("reassess", "report"),
+                DiagramEdge("report", "receipt"),
+            ),
+        ),
         input_schema={
             "type": "object",
             "additionalProperties": False,
@@ -1335,13 +2690,58 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PUBLIC_ARTICLE_WORKFLOW_ID,
         key=PUBLIC_ARTICLE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_public_article", destructive=True, open_world=True),
         title="Draft a public article",
         description=(
             "Turn durable project evidence and original thinking into a rigorous, reviewable "
             "public article."
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.5.0",
+        version_label="1.15.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "context",
+                    "store",
+                    "Project Files and voice guide",
+                    "brand, notes, memory, Start here plan",
+                ),
+                DiagramNode(
+                    "write", "step", "Write the article", "Codex, web search only if Sources allows"
+                ),
+                DiagramNode(
+                    "draft",
+                    "store",
+                    "Draft in project Files",
+                    "article, notes, up to 12 figure files",
+                ),
+                DiagramNode(
+                    "review", "gate", "Review the article", "no deadline, it stays on hold"
+                ),
+                DiagramNode(
+                    "pull_request", "surface", "Pull request", "left open for you to merge"
+                ),
+                DiagramNode("commit", "surface", "Commit to main", "lands on your default branch"),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Approved article",
+                    "stays in Files whatever delivery does",
+                ),
+            ),
+            edges=(
+                DiagramEdge("context", "write"),
+                DiagramEdge("write", "draft"),
+                DiagramEdge("draft", "review"),
+                DiagramEdge("review", "write", "signal", "request changes"),
+                DiagramEdge("review", "pull_request", "signal", "if pull request"),
+                DiagramEdge("review", "commit", "signal", "if commit to main"),
+                DiagramEdge("review", "receipt", "signal", "keep in Files"),
+                DiagramEdge("pull_request", "receipt"),
+                DiagramEdge("commit", "receipt"),
+            ),
+        ),
         system=ORGANIC_TRAFFIC_SYSTEM,
         prerequisites=(
             WorkflowPrerequisite(
@@ -1414,6 +2814,8 @@ BUILTIN_WORKFLOWS = (
             output_path_template=article_review.PATH_TEMPLATE,
             output_validator="public-article.v2",
             output_max_bytes=300_000,
+            # Its figures and embeds (page_assets), approved with its words.
+            output_assets=AssetPolicy(max_files=12, max_bytes=2_000_000),
             project_skills=(
                 ProjectSkillDependency(
                     name="writing-style",
@@ -1426,6 +2828,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CONTENT_DIAGRAM_WORKFLOW_ID,
         key=CONTENT_DIAGRAM_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_content_diagram", destructive=True, open_world=False),
         title="Create a diagram",
         description=(
             "Turn a process or system into one clear diagram using approved brand guidance. "
@@ -1433,6 +2836,43 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="2.3.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "brand",
+                    "store",
+                    "Brand guide and DESIGN.md",
+                    "active palette and shape, when present",
+                ),
+                DiagramNode(
+                    "draw", "step", "Draw the diagram", "Codex, Mermaid, at most 15 minutes"
+                ),
+                DiagramNode(
+                    "inspect",
+                    "step",
+                    "Render and inspect both themes",
+                    "light and dark, at most two repairs",
+                ),
+                DiagramNode(
+                    "diagram", "store", "Diagram in project Files", "diagrams folder, at most 64 KB"
+                ),
+                DiagramNode(
+                    "review", "gate", "Review the diagram", "no deadline, it stays on hold"
+                ),
+                DiagramNode(
+                    "receipt", "receipt", "Approved diagram", "source stays editable in Files"
+                ),
+            ),
+            edges=(
+                DiagramEdge("brand", "draw"),
+                DiagramEdge("draw", "inspect"),
+                DiagramEdge("inspect", "draw", "call", "needs repair"),
+                DiagramEdge("inspect", "diagram"),
+                DiagramEdge("diagram", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
         review_policy=CONTENT_DIAGRAM_REVIEW_POLICY,
         schedule_modes=("on_demand",),
         input_schema={
@@ -1488,6 +2928,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=EMAIL_SHORTLIST_WORKFLOW_ID,
         key=EMAIL_SHORTLIST_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_email_shortlist", destructive=True, open_world=True),
         title="Build an email outreach shortlist",
         description=(
             "Review the connected Gmail and Calendar history to create a bounded, "
@@ -1495,7 +2936,42 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.0.0",
-        system=COLD_OUTREACH_SYSTEM,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "gmail", "surface", "Your Gmail", "read only, 365 days back by default"
+                ),
+                DiagramNode(
+                    "calendar",
+                    "surface",
+                    "Your Google Calendar",
+                    "meetings, if Calendar context is on",
+                ),
+                DiagramNode(
+                    "rank", "step", "Pick and rank people", "Codex, by objective, skips bulk mail"
+                ),
+                DiagramNode(
+                    "shortlist",
+                    "store",
+                    "Shortlist in project Files",
+                    "SHORTLIST.csv, 50 rows by default",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Shortlist to review",
+                    "nothing sent, every row starts as review",
+                ),
+            ),
+            edges=(
+                DiagramEdge("gmail", "rank"),
+                DiagramEdge("calendar", "rank"),
+                DiagramEdge("rank", "shortlist"),
+                DiagramEdge("shortlist", "receipt"),
+            ),
+        ),
+        system=OUTREACH_SYSTEM,
         input_schema={
             "type": "object",
             "additionalProperties": False,
@@ -1561,6 +3037,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=EMAIL_CAMPAIGN_WORKFLOW_ID,
         key=EMAIL_CAMPAIGN_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_email_campaign", destructive=True, open_world=True),
         title="Run an email outreach campaign",
         description=(
             "Snapshot selected shortlist recipients and exact email copy for approval, then "
@@ -1577,23 +3054,38 @@ BUILTIN_WORKFLOWS = (
                 reason="The campaign sends only to rows marked selected in the shortlist.",
             ),
         ),
-        system=COLD_OUTREACH_SYSTEM,
+        system=OUTREACH_SYSTEM,
         review_policy=EMAIL_CAMPAIGN_REVIEW_POLICY,
         schedule_modes=("on_demand",),
         presentation=WorkflowDiagram(
+            direction="TD",
             nodes=(
-                DiagramNode("snapshot", "store", "campaign snapshot", "recipients + exact copy"),
-                DiagramNode("approval", "gate", "needs you", "approve the campaign"),
-                DiagramNode("send", "surface", "Gmail", "paced initial sends"),
-                DiagramNode("wait", "wait", "wait", "⧖ follow-up window"),
-                DiagramNode("follow_up", "step", "check + follow up", "suppressed on reply"),
-                DiagramNode("receipt", "receipt", "delivery ledger", "one receipt per touch"),
+                DiagramNode(
+                    "plan", "store", "Campaign plan in Files", "selected shortlist rows, exact copy"
+                ),
+                DiagramNode(
+                    "approve", "gate", "Approve the campaign", "nothing sends until you approve"
+                ),
+                DiagramNode(
+                    "send", "step", "Send from your Gmail", "60 s apart, 25 a day, 09:00 to 17:00"
+                ),
+                DiagramNode(
+                    "wait",
+                    "wait",
+                    "Wait, then check for a reply",
+                    "4 days by default, if a follow-up is set",
+                ),
+                DiagramNode("follow_up", "step", "Send the follow-up", "same thread, same pacing"),
+                DiagramNode(
+                    "receipt", "receipt", "Delivery ledger", "one row per recipient and email"
+                ),
             ),
             edges=(
-                DiagramEdge("snapshot", "approval"),
-                DiagramEdge("approval", "send"),
+                DiagramEdge("plan", "approve"),
+                DiagramEdge("approve", "send", "signal", "approved"),
                 DiagramEdge("send", "wait"),
-                DiagramEdge("wait", "follow_up"),
+                DiagramEdge("wait", "follow_up", "signal", "no reply"),
+                DiagramEdge("wait", "receipt", "signal", "replied"),
                 DiagramEdge("follow_up", "receipt"),
             ),
         ),
@@ -1693,6 +3185,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=QA_SIGNUP_WALKTHROUGH_WORKFLOW_ID,
         key=QA_SIGNUP_WALKTHROUGH_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_signup_walkthrough", destructive=True, open_world=True),
         title="Walk the signup as a new user",
         description=(
             "Sign up for your product as a stranger with a Tin-owned test account, verify the "
@@ -1700,6 +3193,56 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.3.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "identity",
+                    "step",
+                    "Create a test identity",
+                    "new +tin alias of your Gmail, random password",
+                ),
+                DiagramNode(
+                    "signup",
+                    "step",
+                    "Sign up as a stranger",
+                    "Codex in one browser, 30 minutes at most",
+                ),
+                DiagramNode(
+                    "mail", "surface", "Your Gmail", "verification mail, polled up to 3 minutes"
+                ),
+                DiagramNode(
+                    "activate",
+                    "step",
+                    "Reach first activation",
+                    "core action once, a card trial is cancelled",
+                ),
+                DiagramNode(
+                    "signin", "step", "Sign out and back in", "marks the account active or blocked"
+                ),
+                DiagramNode(
+                    "report",
+                    "store",
+                    "Report in project Files",
+                    "reports/qa/signup per host, no password",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Signup report",
+                    "activation reached or not, each break quoted",
+                ),
+            ),
+            edges=(
+                DiagramEdge("identity", "signup"),
+                DiagramEdge("signup", "mail"),
+                DiagramEdge("mail", "activate"),
+                DiagramEdge("activate", "signin"),
+                DiagramEdge("signin", "report"),
+                DiagramEdge("signup", "report", "call", "at a wall"),
+                DiagramEdge("report", "receipt"),
+            ),
+        ),
         system=PRODUCT_QA_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema={
@@ -1754,6 +3297,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PRODUCT_CODE_MAP_WORKFLOW_ID,
         key=PRODUCT_CODE_MAP_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_code_map", destructive=True, open_world=False),
         title="Map the product from its code",
         description=(
             "Read the connected GitHub repository and write the Code map section of project "
@@ -1762,6 +3306,51 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.0.1",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "repo",
+                    "surface",
+                    "GitHub repository",
+                    "read-only snapshot of the default branch",
+                ),
+                DiagramNode(
+                    "orient", "step", "Read the stack", "README, manifests, deploy config, 10 files"
+                ),
+                DiagramNode(
+                    "routes",
+                    "step",
+                    "List routes and navigation",
+                    "Codex, 30 minutes, 60 to 300 files by depth",
+                ),
+                DiagramNode(
+                    "guards",
+                    "step",
+                    "Find who reaches each surface",
+                    "one of five statuses, from the guard read",
+                ),
+                DiagramNode(
+                    "section",
+                    "store",
+                    "Code map in project memory",
+                    "wiki/INDEX.md, 16 KB, rest kept as it was",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Project memory updated",
+                    "nothing changed in your repository",
+                ),
+            ),
+            edges=(
+                DiagramEdge("repo", "orient"),
+                DiagramEdge("orient", "routes"),
+                DiagramEdge("routes", "guards"),
+                DiagramEdge("guards", "section"),
+                DiagramEdge("section", "receipt"),
+            ),
+        ),
         system=PRODUCT_QA_SYSTEM,
         schedule_modes=("on_demand", "weekly"),
         input_schema={
@@ -1813,6 +3402,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PRODUCT_DEEP_DIVE_WORKFLOW_ID,
         key=PRODUCT_DEEP_DIVE_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_deep_dive", destructive=True, open_world=True),
         title="Map what the product actually does",
         description=(
             "Read the docs, sign in and use your product with a Tin-owned account, reconcile "
@@ -1821,6 +3411,62 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "claims",
+                    "store",
+                    "Code map and signup report",
+                    "read first, as claims to verify",
+                ),
+                DiagramNode(
+                    "docs",
+                    "step",
+                    "Read what the product says",
+                    "landing, pricing, docs, 6 to 20 pages by depth",
+                ),
+                DiagramNode(
+                    "getin",
+                    "step",
+                    "Sign in with the test account",
+                    "the walkthrough's account, codes from Gmail",
+                ),
+                DiagramNode(
+                    "product",
+                    "surface",
+                    "Your product, logged in",
+                    "Codex, 60 minutes, 12 to 50 screens by depth",
+                ),
+                DiagramNode(
+                    "reconcile",
+                    "step",
+                    "Reconcile docs, code and live",
+                    "live only when it was seen working",
+                ),
+                DiagramNode(
+                    "section",
+                    "store",
+                    "Feature map in project memory",
+                    "wiki/INDEX.md, 24 KB, rest kept as it was",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Project memory updated",
+                    "tin-qa test records listed, none deleted",
+                ),
+            ),
+            edges=(
+                DiagramEdge("claims", "docs"),
+                DiagramEdge("docs", "getin"),
+                DiagramEdge("getin", "product"),
+                DiagramEdge("product", "reconcile"),
+                DiagramEdge("getin", "reconcile", "call", "at a wall"),
+                DiagramEdge("reconcile", "section"),
+                DiagramEdge("section", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="identity",
@@ -1920,6 +3566,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=QA_PRODUCT_AUDIT_WORKFLOW_ID,
         key=QA_PRODUCT_AUDIT_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_audit", destructive=True, open_world=True),
         title="Audit the product feature by feature",
         description=(
             "Exercise every feature in the project's Feature map as a user with a Tin-owned "
@@ -1928,6 +3575,62 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "map",
+                    "store",
+                    "Feature map from memory",
+                    "known gaps first, then the core action",
+                ),
+                DiagramNode(
+                    "getin",
+                    "step",
+                    "Sign in with the test account",
+                    "the walkthrough's account, codes from Gmail",
+                ),
+                DiagramNode(
+                    "product",
+                    "surface",
+                    "Your product, logged in",
+                    "Codex, 60 minutes, 10 to 60 features by depth",
+                ),
+                DiagramNode(
+                    "exercise",
+                    "step",
+                    "Exercise each feature once",
+                    "tin-qa data, submit once, nothing deleted",
+                ),
+                DiagramNode(
+                    "checks",
+                    "step",
+                    "Run the cross-cutting checks",
+                    "dead links, console, forms, observe only",
+                ),
+                DiagramNode(
+                    "report",
+                    "store",
+                    "Audit in project Files",
+                    "reports/qa/audit, findings blocker first",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Product audit",
+                    "what works, what broke, what to fix first",
+                ),
+            ),
+            edges=(
+                DiagramEdge("map", "getin"),
+                DiagramEdge("getin", "product"),
+                DiagramEdge("product", "exercise"),
+                DiagramEdge("exercise", "checks"),
+                DiagramEdge("getin", "checks", "call", "at a wall"),
+                DiagramEdge("checks", "report"),
+                DiagramEdge("report", "receipt"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="identity",
@@ -2024,6 +3727,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CREATIVE_CHARACTER_WORKFLOW_ID,
         key=CREATIVE_CHARACTER_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_brand_character", destructive=True, open_world=True),
         title="Design a brand character",
         description=(
             "Use when the founder has an explicit brand-design need. "
@@ -2035,6 +3739,46 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CREATIVE_CHARACTER_WORKFLOW_NAME,
         version_label="1.2.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "page", "surface", "Your product page", "if given: public HTTPS, 3 stylesheets"
+                ),
+                DiagramNode(
+                    "memory", "store", "Project memory", "first 8,000 characters of the index"
+                ),
+                DiagramNode(
+                    "draw", "step", "Draw the character", "one GPT-6 Sol call, an animatable SVG"
+                ),
+                DiagramNode(
+                    "check",
+                    "step",
+                    "Check and refine the drawing",
+                    "up to 2 repair calls, then 1 refine call",
+                ),
+                DiagramNode(
+                    "file",
+                    "store",
+                    "Character in project Files",
+                    "characters/name.svg, under 64 KB",
+                ),
+                DiagramNode(
+                    "review", "gate", "Review the character", "no deadline, it stays on hold"
+                ),
+                DiagramNode(
+                    "receipt", "receipt", "Approved character", "a demo video can narrate with it"
+                ),
+            ),
+            edges=(
+                DiagramEdge("page", "draw"),
+                DiagramEdge("memory", "draw"),
+                DiagramEdge("draw", "check"),
+                DiagramEdge("check", "file"),
+                DiagramEdge("file", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="artifact",
@@ -2096,6 +3840,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=CREATIVE_PRODUCT_DEMO_WORKFLOW_ID,
         key=CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME,
+        public_mcp=PublicMCPExposure("start_product_demo", destructive=True, open_world=True),
         title="Make a product demo video",
         description=(
             "Capture the founder's live product at phone size and render a smooth 9:16 "
@@ -2105,6 +3850,50 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=CODEX_PROCEDURE_EXECUTOR,
         version_label="1.1.1",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "pages",
+                    "surface",
+                    "Your live product pages",
+                    "public only, no sign-up, forms or buying",
+                ),
+                DiagramNode(
+                    "capture",
+                    "step",
+                    "Script and capture the screens",
+                    "Codex, phone-size keyframes, 1 hour cap",
+                ),
+                DiagramNode(
+                    "voice", "step", "Record the voiceover", "24 lines and 3,000 characters a run"
+                ),
+                DiagramNode(
+                    "render",
+                    "step",
+                    "Render and check the video",
+                    "1080x1920, 8 to 90 s, character if named",
+                ),
+                DiagramNode(
+                    "video", "store", "Video in project Files", "demos/name.mp4, at most 16 MB"
+                ),
+                DiagramNode("review", "gate", "Watch the video", "no deadline, it stays on hold"),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Approved demo video",
+                    "an MP4 in Files, Tin posts nothing",
+                ),
+            ),
+            edges=(
+                DiagramEdge("pages", "capture"),
+                DiagramEdge("capture", "voice"),
+                DiagramEdge("voice", "render"),
+                DiagramEdge("render", "video"),
+                DiagramEdge("video", "review"),
+                DiagramEdge("review", "receipt", "signal", "approved"),
+            ),
+        ),
         prerequisites=(
             WorkflowPrerequisite(
                 kind="artifact",
@@ -2263,6 +4052,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_ASSESSMENT_WORKFLOW_ID,
         key=paid_ads.KEY,
+        public_mcp=PublicMCPExposure("start_ads_assessment", destructive=True, open_world=True),
         title="Assess paid ads for this business",
         description=(
             "Decide whether Google Search ads fit: a verdict, the constraint that binds it, a "
@@ -2274,6 +4064,66 @@ BUILTIN_WORKFLOWS = (
         # model steps read evidence, label keywords, diagnose history and shape the campaign.
         executor=paid_ads.KEY,
         version_label="0.2.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "read",
+                    "step",
+                    "Read your answers and the site",
+                    "earlier runs, Search Console if connected",
+                ),
+                DiagramNode(
+                    "profile",
+                    "step",
+                    "Profile the business, pick seeds",
+                    "model, up to 15 seeds and 6 competitors",
+                ),
+                DiagramNode(
+                    "planner",
+                    "surface",
+                    "Google Keyword Planner",
+                    "ideas, then volume for up to 40 keywords",
+                ),
+                DiagramNode(
+                    "dataforseo", "surface", "DataForSEO", "CPC, up to 3 bid forecasts and 5 SERPs"
+                ),
+                DiagramNode(
+                    "score",
+                    "step",
+                    "Label keywords, score in code",
+                    "40 per model call, verdict set by code",
+                ),
+                DiagramNode(
+                    "write",
+                    "step",
+                    "Write the reasons and campaign",
+                    "held inside code's budget and CPA ranges",
+                ),
+                DiagramNode(
+                    "files",
+                    "store",
+                    "Assessment in project Files",
+                    "ASSESSMENT.md, keywords.csv, evidence.json",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Verdict and binding constraint",
+                    "advisory, nothing created or spent on ads",
+                ),
+            ),
+            edges=(
+                DiagramEdge("read", "profile"),
+                DiagramEdge("read", "files", "call", "not now, no research"),
+                DiagramEdge("profile", "planner"),
+                DiagramEdge("planner", "dataforseo"),
+                DiagramEdge("dataforseo", "score"),
+                DiagramEdge("score", "write"),
+                DiagramEdge("write", "files"),
+                DiagramEdge("files", "receipt"),
+            ),
+        ),
         system=PAID_ADS_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=paid_ads.INPUT_SCHEMA,
@@ -2308,6 +4158,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_LAUNCH_WORKFLOW_ID,
         key=paid_ads_launch.KEY,
+        public_mcp=PublicMCPExposure("start_ads_launch", destructive=True, open_world=True),
         title="Launch a Google Ads campaign",
         description=(
             "Turn an assessment's campaign shape into one live Google Search campaign in your "
@@ -2317,6 +4168,70 @@ BUILTIN_WORKFLOWS = (
         # steps write the ads and the founder brief; the founder approves before any write.
         executor=paid_ads_launch.KEY,
         version_label="0.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "check",
+                    "step",
+                    "Read the assessment and account",
+                    "link, billing, conversions, tag on the page",
+                ),
+                DiagramNode(
+                    "plan",
+                    "step",
+                    "Set budget, bids and groups",
+                    "code only, up to 5 groups, never broad match",
+                ),
+                DiagramNode(
+                    "tracking",
+                    "step",
+                    "Prepare tracking first",
+                    "a conversion action, tag PR if GitHub writes",
+                ),
+                DiagramNode(
+                    "write",
+                    "step",
+                    "Write the ads and the brief",
+                    "3 model steps, 12 headlines per ad group",
+                ),
+                DiagramNode(
+                    "review",
+                    "gate",
+                    "Approve the Google Ads step",
+                    "nothing happens in Google Ads until then",
+                ),
+                DiagramNode(
+                    "ads",
+                    "surface",
+                    "Your Google Ads account",
+                    "campaign switched on, or a conversion action",
+                ),
+                DiagramNode(
+                    "none",
+                    "ghost",
+                    "Nothing created in Google Ads",
+                    "if not ready, SETUP.md says what to fix",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Result in project Files",
+                    "RESULT.md and campaign.json in ads/google",
+                ),
+            ),
+            edges=(
+                DiagramEdge("check", "plan", "call", "ready"),
+                DiagramEdge("check", "tracking", "call", "tracking first"),
+                DiagramEdge("check", "none", "call", "not ready"),
+                DiagramEdge("plan", "write"),
+                DiagramEdge("write", "review"),
+                DiagramEdge("tracking", "review"),
+                DiagramEdge("review", "ads", "signal", "approved"),
+                DiagramEdge("review", "none", "signal", "you stop it"),
+                DiagramEdge("ads", "receipt"),
+            ),
+        ),
         system=PAID_ADS_SYSTEM,
         review_policy=PAID_ADS_LAUNCH_REVIEW_POLICY,
         schedule_modes=("on_demand",),
@@ -2342,6 +4257,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=PAID_ADS_MONITOR_WORKFLOW_ID,
         key=paid_ads_monitor.KEY,
+        public_mcp=PublicMCPExposure("start_ads_monitor", destructive=True, open_world=True),
         title="Check the Google Ads campaign",
         description=(
             "Read the launched campaign, add negatives from wasted search terms, pause "
@@ -2350,6 +4266,62 @@ BUILTIN_WORKFLOWS = (
         ),
         executor=paid_ads_monitor.KEY,
         version_label="0.1.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "launch",
+                    "store",
+                    "Launch result in project Files",
+                    "campaign.json, only for a live campaign",
+                ),
+                DiagramNode(
+                    "campaign",
+                    "surface",
+                    "Your Google Ads campaign",
+                    "7, 14 and 30 days, 500 costliest terms",
+                ),
+                DiagramNode(
+                    "label",
+                    "step",
+                    "Label last week's search terms",
+                    "one model step, five fixed labels",
+                ),
+                DiagramNode(
+                    "decide",
+                    "step",
+                    "Decide by fixed rules",
+                    "code only, no changes in the first 3 days",
+                ),
+                DiagramNode(
+                    "auto",
+                    "step",
+                    "Make the automatic changes",
+                    "20 negatives by default, pauses disapproved ads",
+                ),
+                DiagramNode(
+                    "proposal",
+                    "store",
+                    "Proposal in project Files",
+                    "budget or bidding, applied once you approve",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Check report in Files",
+                    "changes, proposals and alerts, in ads/google",
+                ),
+            ),
+            edges=(
+                DiagramEdge("launch", "campaign"),
+                DiagramEdge("campaign", "label"),
+                DiagramEdge("label", "decide"),
+                DiagramEdge("decide", "auto"),
+                DiagramEdge("decide", "proposal", "call", "if one is due"),
+                DiagramEdge("auto", "receipt"),
+                DiagramEdge("proposal", "receipt"),
+            ),
+        ),
         system=PAID_ADS_SYSTEM,
         schedule_modes=("on_demand", "daily", "weekly"),
         input_schema=paid_ads_monitor.INPUT_SCHEMA,
@@ -2369,6 +4341,7 @@ BUILTIN_WORKFLOWS = (
     BuiltinWorkflow(
         id=AWESOME_SUBMIT_WORKFLOW_ID,
         key=awesome_submit.KEY,
+        public_mcp=PublicMCPExposure("start_awesome_submission", destructive=True, open_world=True),
         title="Submit to awesome lists",
         description=(
             "Take the lists an awesome lists run found, place your entry in each list's "
@@ -2380,13 +4353,126 @@ BUILTIN_WORKFLOWS = (
         # every GitHub write, and each list has a project-wide receipt.
         executor=awesome_submit.KEY,
         version_label="1.0.0",
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "report",
+                    "store",
+                    "Awesome lists report",
+                    "latest run, top 5 or the lists you name",
+                ),
+                DiagramNode(
+                    "place",
+                    "step",
+                    "Place your entry in each list",
+                    "code, no model, skips lists sent before",
+                ),
+                DiagramNode(
+                    "plan", "store", "Plan in project Files", "PLAN.md, each exact line and PR text"
+                ),
+                DiagramNode(
+                    "approve", "gate", "Approve and send", "nothing is sent until you approve"
+                ),
+                DiagramNode(
+                    "github",
+                    "surface",
+                    "Your GitHub account",
+                    "a fork and PR, or an issue, per list",
+                ),
+                DiagramNode(
+                    "receipt",
+                    "receipt",
+                    "Result in project Files",
+                    "RESULT.md, never the same list twice",
+                ),
+            ),
+            edges=(
+                DiagramEdge("report", "place"),
+                DiagramEdge("place", "plan"),
+                DiagramEdge("plan", "approve"),
+                DiagramEdge("approve", "github", "signal", "approved"),
+                DiagramEdge("github", "receipt"),
+            ),
+        ),
         review_policy=AWESOME_SUBMIT_REVIEW_POLICY,
+        system=OUTREACH_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=awesome_submit.INPUT_SCHEMA,
         integration_requirements=(
             IntegrationRequirement(
                 GITHUB_USER_PROVIDER,
                 ("forks.write", "public_pull_requests.write", "public_issues.write"),
+                required=True,
+            ),
+        ),
+    ),
+    BuiltinWorkflow(
+        id=PAYMENT_RECOVERY_WORKFLOW_ID,
+        key=payment_recovery.KEY,
+        presentation=WorkflowDiagram(
+            direction="TD",
+            nodes=(
+                DiagramNode(
+                    "find",
+                    "step",
+                    "Find failed, unpaid invoices",
+                    "Stripe read-only, then your recent mail",
+                ),
+                DiagramNode(
+                    "draft",
+                    "step",
+                    "Draft one email per person",
+                    "one model call, with Stripe's pay link",
+                ),
+                DiagramNode(
+                    "approve", "gate", "Approve the emails", "all at once, sent from your Gmail"
+                ),
+                DiagramNode("send", "step", "Recheck and send", "skips any paid since, 15 s apart"),
+                DiagramNode("expired", "ghost", "Closed unsent", "the plan stays in Files"),
+                DiagramNode(
+                    "receipt", "receipt", "Result in Files", "one receipt per invoice, 30-day hold"
+                ),
+            ),
+            edges=(
+                DiagramEdge("find", "draft"),
+                DiagramEdge("draft", "approve"),
+                DiagramEdge("approve", "send", "signal", "approved"),
+                DiagramEdge("approve", "expired", "signal", "no answer in 6 days"),
+                DiagramEdge("send", "receipt"),
+                DiagramEdge("find", "receipt", "call", "nothing to recover"),
+            ),
+        ),
+        public_mcp=PublicMCPExposure("start_payment_recovery", destructive=True, open_world=True),
+        title="Recover failed payments",
+        description=(
+            "Find customers whose automatic Stripe payment failed and is still unpaid, and "
+            "write each one a short personal email in your voice: their plan, why the card "
+            "failed, their history with you and your latest mail with them, with Stripe's own "
+            "payment link. After you approve, Tin checks each invoice again and sends only the "
+            "unpaid ones from your Gmail. Runs weekly by default; a person is emailed at most "
+            "once a month, and an unanswered Decision closes unsent after six days."
+        ),
+        # Code reads Stripe and the mailbox and checks every draft; one model step writes the
+        # emails; one approval gates every send, and each invoice has a project-wide receipt.
+        executor=payment_recovery.KEY,
+        # 1.1.0: product scope, one email per person, weekly schedules and expiring Decisions.
+        version_label="1.1.0",
+        system=REVENUE_SYSTEM,
+        review_policy=PAYMENT_RECOVERY_REVIEW_POLICY,
+        # Stripe retries a card for two to four weeks; weekly catches a failure inside that.
+        schedule_modes=("on_demand", "weekly", "monthly"),
+        default_schedule={"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00"},
+        input_schema=payment_recovery.INPUT_SCHEMA,
+        integration_requirements=(
+            IntegrationRequirement(
+                STRIPE_PROVIDER,
+                ("invoices.read", "subscriptions.read", "charges.read", "prices.read"),
+                required=True,
+            ),
+            IntegrationRequirement(
+                GOOGLE_WORKSPACE_PROVIDER,
+                ("gmail.messages.send", "gmail.messages.read"),
                 required=True,
             ),
         ),
@@ -2409,7 +4495,14 @@ def executor_replaced_by(builtin_key: str, executor: str) -> str | None:
 
 
 PARENT_CHILD_KEYS: dict[str, tuple[str, ...]] = {
-    organic_system.KEY: tuple(organic_system.STEPS.values()),
+    x_draft.KEY: tuple(x_draft.STEPS.values()),
+    # The weekly page refresh is pinned beside the steps, so a v5 run reads its exact definition.
+    organic_system.KEY: (
+        *organic_system.STEPS.values(),
+        organic_system.REFRESH_KEY,
+        # v7 pins the two weekly measurement packages, with their code, beside the steps.
+        *organic_system.MEASURE_STEPS.values(),
+    ),
     growth_onboarding.KEY: tuple(growth_onboarding.STEPS.values()),
 }
 
@@ -2449,6 +4542,8 @@ async def sync_builtin_workflows(
         ):
             raise RuntimeError("published workflow executor and source location cannot change")
         validate_input_schema(definition["input_schema"])
+        if definition.get("presentation") is not None:
+            validate_presentation(definition["presentation"])
         if definition.get("system") is not None and definition["system"] not in WORKFLOW_SYSTEM_IDS:
             raise ValueError(f"workflow {builtin.key} references an unknown system")
         parse_integration_requirements(definition.get("integration_requirements"))
@@ -2464,6 +4559,9 @@ async def sync_builtin_workflows(
         validate_prerequisite_graph(prerequisites)
     except ValueError as exc:
         raise RuntimeError(f"built-in workflow prerequisites are invalid: {exc}") from exc
+    for parent, children in PARENT_CHILD_KEYS.items():
+        if parent in prepared and (missing := set(children) - prepared.keys()):
+            raise RuntimeError(f"workflow {parent} needs selected children: {sorted(missing)}")
     for system in WORKFLOW_SYSTEMS:
         await database.upsert_workflow_system(
             system_id=system.id,

@@ -63,8 +63,10 @@ async def test_hosted_default_policy_funds_scheduled_runs_until_cleared(billed):
         "SELECT * FROM billing_project_policies WHERE project_id=$1", f.project.id
     )
     assert policy["revision"] == 1
-    assert policy["per_run_nanos"] == policy["monthly_nanos"] == DEFAULT
-    assert policy["schedule_max_nanos"] == DEFAULT
+    # New hosted projects start above migration 047's $10 defaults; saved policies keep theirs.
+    assert policy["per_run_nanos"] == 25_000_000_000
+    assert policy["monthly_nanos"] == 100_000_000_000
+    assert policy["schedule_max_nanos"] == 50_000_000_000
 
     saved = await saved_schedule(f)
     run = await direct(f, "organic.audit", SITE, configured=saved)
@@ -76,9 +78,8 @@ async def test_hosted_default_policy_funds_scheduled_runs_until_cleared(billed):
         f.project.id,
         ACTOR,
         ProjectSpendingPolicy(
-            per_run_nanos=DEFAULT,
-            monthly_nanos=DEFAULT,
-            concurrency=1,
+            per_run_nanos=policy["per_run_nanos"],
+            monthly_nanos=policy["monthly_nanos"],
             expected_revision=1,
             schedule_max_nanos=None,
         ),

@@ -24,6 +24,7 @@ from tin_lite.growth_onboarding import (
     current_plan_text,
     plan_readiness,
 )
+from tin_lite.integrations import connection_readiness
 from tin_lite.organic_audit import digest
 from tin_lite.project_files import StaleProjectRevisionError
 
@@ -144,6 +145,18 @@ async def record_onboarding_picks(
                             "start_integration_connection, have the founder finish it in the "
                             "browser, confirm with get_integration, then record it again; "
                             "or record it as not_now with their reason.",
+                        )
+                    # Signed in is not connected: setup starts work that reads this provider.
+                    readiness = connection_readiness(
+                        row, site_url=(run.input or {}).get("product_url") or None
+                    )
+                    if not readiness["ready"]:
+                        raise OnboardingPickError(
+                            "not_ready",
+                            f"{pick.provider} is signed in but not ready: "
+                            f"{readiness['next_action']} Have the founder do that, confirm "
+                            "get_integration shows ready, then record it again; or record it "
+                            "as not_now with their reason.",
                         )
                 text, head = await current_plan_text(storage=runtime.storage, project=project)
                 original_text = text

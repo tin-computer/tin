@@ -1,0 +1,227 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "organic.traffic_snapshot",
+    "title": "Take a weekly traffic snapshot and growth readout",
+    "description": "Each week, read Search Console, and PostHog when it is connected, once into one file. Per landing page it holds clicks, impressions and top searches, the latest audit's checks and, with PostHog, sessions by channel, first-touch signups and activation and reading depth; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages (search only without PostHog), with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
+    "version": "1.2.0",
+    "executor": "workflow.code",
+    "system": "organic-traffic",
+    "schedule_modes": [
+      "on_demand",
+      "weekly"
+    ],
+    "prerequisites": [
+      {
+        "kind": "run",
+        "level": "recommended",
+        "workflow": "organic.audit",
+        "reason": "The audit's summary (reports/organic-audit/LATEST.json, from policy v12) names the site's host and the checks that flag each page."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "signup_event": {
+          "type": "string",
+          "maxLength": 128,
+          "title": "Signup event",
+          "description": "The PostHog event a new account sends, such as signed_up. Leave empty to skip signups. Needs PostHog, like every event and exclusion setting here."
+        },
+        "activation_event": {
+          "type": "string",
+          "maxLength": 128,
+          "title": "Activation event",
+          "description": "The PostHog event that means a new account got value. Leave empty to skip activation."
+        },
+        "activation_window_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 30,
+          "default": 7,
+          "title": "Days after signup that count as activation"
+        },
+        "paid_event": {
+          "type": "string",
+          "maxLength": 128,
+          "title": "Paid event",
+          "description": "The PostHog event for a first payment, counted within 28 days of signup. Leave empty to skip."
+        },
+        "website_hosts": {
+          "type": "array",
+          "maxItems": 5,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 253
+          },
+          "title": "Website hosts",
+          "description": "Leave empty to use the audited host, or the top host in Search Console."
+        },
+        "brand_terms": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "title": "Brand terms (regular expressions)",
+          "description": "Searches that name the product. Leave empty to derive them from the host."
+        },
+        "exclude_email_domains": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "title": "Team email domains to exclude"
+        },
+        "internal_flag_property": {
+          "type": "string",
+          "maxLength": 71,
+          "title": "Internal-user flag property",
+          "description": "A PostHog property that is true for team members; person properties start with person:."
+        },
+        "always_include": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "string",
+            "maxLength": 300
+          },
+          "title": "Paths to always list in detail, such as /pricing"
+        },
+        "impressions_reliable_from": {
+          "type": "string",
+          "maxLength": 10,
+          "title": "Impressions reliable from (YYYY-MM-DD)",
+          "description": "Only when the Search Console property changed: earlier impressions are left out of weekly and monthly rows."
+        },
+        "audit_run_id": {
+          "type": "string",
+          "format": "uuid",
+          "title": "Organic audit run",
+          "description": "Leave empty to use the newest audit's summary (LATEST.json). A named run needs a SUMMARY.json, which audits write from policy v12."
+        },
+        "content_paths": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 100
+          },
+          "title": "Content path prefixes",
+          "description": "For the readout's content table. Defaults to /blog/, /docs/, /guides/ and /changelog/."
+        },
+        "min_count": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 100,
+          "default": 20,
+          "title": "Smallest count a change is tested on"
+        },
+        "optional_rules": {
+          "type": "array",
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "plateau",
+              "platform_dependence"
+            ]
+          },
+          "title": "Extra decision rules"
+        },
+        "launch_dates": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 10
+          },
+          "title": "Launch or announcement dates (YYYY-MM-DD)",
+          "description": "Weeks holding one are marked, so a spike is not read as a trend."
+        }
+      },
+      "required": [
+        "project_id"
+      ]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "analytics.gsc",
+        "capabilities": [
+          "search_analytics.read"
+        ],
+        "required": true
+      },
+      {
+        "provider_key": "analytics.posthog",
+        "capabilities": [
+          "query.read"
+        ],
+        "required": false
+      }
+    ],
+    "code": {
+      "runtime": "python3.12.8-stdlib-v1",
+      "entrypoint": "main.py",
+      "files": [
+        "main.py",
+        "channels.py",
+        "readout.py"
+      ],
+      "timeout_seconds": 60,
+      "services": {
+        "gsc": {
+          "provider_key": "analytics.gsc",
+          "max_calls": 4,
+          "max_response_bytes": 256000
+        },
+        "posthog": {
+          "provider_key": "analytics.posthog",
+          "max_calls": 4,
+          "max_response_bytes": 64000
+        }
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path": "analytics/traffic-snapshot.json",
+        "media_type": "application/json",
+        "max_bytes": 64000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "a year of days, pages, queries, 4 reads"},
+          {"id": "posthog", "kind": "surface", "label": "PostHog", "fact": "sessions, signups, reading, 4 queries"},
+          {"id": "pages", "kind": "step", "label": "Build a row per landing page", "fact": "top 30 in detail, audit checks added"},
+          {"id": "test", "kind": "step", "label": "Test each weekly change", "fact": "exact test with Holm's correction"},
+          {"id": "kept", "kind": "ghost", "label": "Previous snapshot stays", "fact": "no provider read returned data"},
+          {"id": "receipt", "kind": "receipt", "label": "Snapshot with weekly readout", "fact": "decisions name the workflow that acts"}
+        ],
+        "edges": [
+          {"from": "search_console", "to": "posthog", "kind": "call", "label": "if connected"},
+          {"from": "search_console", "to": "pages", "kind": "call", "label": "without PostHog"},
+          {"from": "posthog", "to": "pages", "kind": "call"},
+          {"from": "pages", "to": "test", "kind": "call"},
+          {"from": "pages", "to": "kept", "kind": "call", "label": "nothing read"},
+          {"from": "test", "to": "receipt", "kind": "call"}
+        ]
+      }
+    }
+  }
+}

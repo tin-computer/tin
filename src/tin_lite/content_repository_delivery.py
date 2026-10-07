@@ -6,10 +6,17 @@ Sources are approved planned articles (content.generate), answer pages and publi
 articles. An approval can start this procedure itself (see ContentDelivery.adapt); when
 the founder's delivery setting commits to main, Tin then merges the pull request, but
 only one that adds nothing except the approved page, once GitHub reports it clean.
+
+website.change (website_change.py) adapts pages with this same machinery: source pinning,
+the page check, the saved patch, recovery and the merge loop. Its runs keep their pinned
+source under the same receipt key, and their own policy decides whether Tin merges (see
+publish_after_pull_request): website.change merges once the repository's required checks
+pass. content.deliver's own rules are unchanged.
 """
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 from dataclasses import asdict
@@ -31,6 +38,11 @@ from tin_lite.integrations import GitHubFileChange, GitHubRepositoryBinding
 KEY = "content.deliver"
 WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000036")
 OPERATION = "content_repository_delivery_source_v1"
+# website.change, which puts approved changes on a founder's website, reuses this machinery.
+WEBSITE_CHANGE_ID = UUID("00000000-0000-4000-8000-000000000045")
+WEBSITE_CHANGE_OPERATION = "website_change_source_v1"
+ADAPTER_WORKFLOW_IDS = frozenset({WORKFLOW_ID, WEBSITE_CHANGE_ID})
+SOURCE_OPERATIONS = {WORKFLOW_ID: OPERATION, WEBSITE_CHANGE_ID: WEBSITE_CHANGE_OPERATION}
 CHECK_COMMAND = "git diff --check"
 RECOVERY_OPERATION = "content_repository_delivery_recovery_v1"
 MERGE_OPERATION = "content_repository_delivery_merge_v1"
@@ -38,6 +50,13 @@ MERGE_OPERATION = "content_repository_delivery_merge_v1"
 # delivery activity allows five minutes; this leaves room for the merge call itself.
 MERGE_WAIT_SECONDS = 210
 MERGE_POLL_SECONDS = 15
+# GitHub's mergeable_state values that let Tin merge. `clean`: every check passed.
+# `has_hooks`: the same, with pre-receive hooks. content.deliver merges only on these.
+MERGE_READY = frozenset({"clean", "has_hooks"})
+# website.change merges once the checks the repository requires pass (Emre, 10/1). GitHub
+# reports `unstable` for a pull request that can merge while a check the repository does not
+# require fails or is still running; a failing required check reports `blocked` instead.
+REQUIRED_CHECKS_READY = MERGE_READY | {"unstable"}
 # GitHub's mergeable_state values that no amount of waiting fixes, in the founder's words.
 MERGE_STOPS = {
     "dirty": "It conflicts with the default branch.",
@@ -52,6 +71,42 @@ def recovery_key(run_id):
 
 def merge_key(run_id):
     return f"content-delivery:{UUID(str(run_id))}:merge"
+
+
+# A website.change run whose changes come from the latest audit (website_change_audit) rather
+# than an approved page. Its source receipt sits under the same key; nothing else is shared.
+AUDIT_SOURCE = "audit"
+# Sources a website.change run repairs the site from with site-fix-v5's machinery: the audit's
+# findings, and the URL changes other workflows planned.
+REPAIR_SOURCES = frozenset({AUDIT_SOURCE, "planned"})
+# A website.change run that applies the blog index plan's files as they are, without Codex.
+BLOG_INDEX_SOURCE = "blog_index"
+
+
+def _website_source(run):
+    if getattr(run, "workflow_id", None) != WEBSITE_CHANGE_ID:
+        return None
+    return (getattr(run, "input", None) or {}).get("source")
+
+
+def repairs_site(run):
+    """Whether this is a website.change run that repairs the site from change rows (the
+    audit's findings or planned URL changes) with site-fix-v5's preparation."""
+    return _website_source(run) in REPAIR_SOURCES
+
+
+def applies_plan(run):
+    """Whether this is a website.change run that applies the blog index plan's files."""
+    return _website_source(run) == BLOG_INDEX_SOURCE
+
+
+def adapts(run):
+    """Whether this run adapts an approved page to the site: content.deliver or website.change."""
+    return (
+        getattr(run, "workflow_id", None) in ADAPTER_WORKFLOW_IDS
+        and not repairs_site(run)
+        and not applies_plan(run)
+    )
 
 
 def status_projection(run, source, publication, recovery, merge=None):
@@ -90,6 +145,15 @@ def status_projection(run, source, publication, recovery, merge=None):
         "merge": merge,
         "merged": bool(merge and merge.get("status") == "merged"),
         "merged_at": merge.get("merged_at") if merge else None,
+        # A website.change run also says which change it made and whether it may publish.
+        **(
+            {
+                "change_id": source["change"]["change_id"],
+                "publish": (source.get("publish") or {}).get("mode"),
+            }
+            if source.get("change")
+            else {}
+        ),
     }
 
 
@@ -217,30 +281,40 @@ async def discover(database, project_id):
     }
 
 
+async def page_source(*, database, storage, project_id, source_run_id):
+    """The approved page's exact copy and provenance: a planned article, answer page or
+    public article. Refuses anything not approved in this project."""
+    candidate = await database.get_run(UUID(str(source_run_id)))
+    if approved_document.kind_for(candidate):
+        return await approved_document.select(
+            database=database,
+            storage=storage,
+            project_id=project_id,
+            source_run_id=source_run_id,
+        )
+    return {
+        "source_kind": "article",
+        **await approved_article.select(
+            database=database,
+            storage=storage,
+            project_id=project_id,
+            source_run_id=source_run_id,
+        ),
+    }
+
+
 async def select_source(*, database, storage, integrations, project_id, inputs, approval=False):
     """Pin the approved page and repository; `approval` marks a start by the page's approval.
 
     Only that start carries the founder's delivery (a pull request, or commit to main) into
     the run. Prepare PR and agent starts always leave their pull request open.
     """
-    candidate = await database.get_run(UUID(str(inputs["source_run_id"])))
-    if approved_document.kind_for(candidate):
-        source = await approved_document.select(
-            database=database,
-            storage=storage,
-            project_id=project_id,
-            source_run_id=inputs["source_run_id"],
-        )
-    else:
-        source = {
-            "source_kind": "article",
-            **await approved_article.select(
-                database=database,
-                storage=storage,
-                project_id=project_id,
-                source_run_id=inputs["source_run_id"],
-            ),
-        }
+    source = await page_source(
+        database=database,
+        storage=storage,
+        project_id=project_id,
+        source_run_id=inputs["source_run_id"],
+    )
     run = await database.get_run(UUID(source["source_run_id"]))
     selected = await database.get_effect(content_draft.selection_key(run.id))
     # The approval-time choice, else the pinned intent: the one the exact publisher uses.
@@ -272,52 +346,71 @@ async def select_source(*, database, storage, integrations, project_id, inputs, 
         pinned["approval"] = {
             "mode": chosen_mode(intent),
             "requested_by": intent.get("chosen_by"),
+            **({"route": intent["route"]} if intent.get("route") else {}),
         }
     return pinned
+
+
+async def guard_page(conn, *, project_id, source):
+    """Recheck the pinned page's approval under the project lock. A planned item (it carries
+    its brief) is a content.generate run, whatever kind of page it drafted."""
+    if source.get("source_kind") in {"answer_page", "public_article"} and "item" not in source:
+        await approved_document.guard(conn, project_id=project_id, source=source)
+    else:
+        await approved_article.guard(conn, project_id=project_id, source=source)
 
 
 async def guard_source(conn, *, project_id, inputs, source):
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
     if inputs["source_run_id"] != source["source_run_id"]:
         raise ValueError("The selected article is not approved for delivery.")
-    if source.get("source_kind") in {"answer_page", "public_article"}:
-        await approved_document.guard(conn, project_id=project_id, source=source)
-    else:
-        await approved_article.guard(conn, project_id=project_id, source=source)
+    await guard_page(conn, project_id=project_id, source=source)
+    await guard_attempts(conn, project_id=project_id, inputs=inputs, source=source)
+
+
+async def guard_attempts(conn, *, project_id, inputs, source):
+    """One adaptation per page and repository, whether content.deliver or website.change
+    made it, so the two can never open two pull requests for the same page."""
     duplicate = await conn.fetchval(
         "SELECT r.id FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
-        "AND s.operation=$4 AND s.status='completed' "
-        "WHERE r.project_id=$1 AND r.workflow_id=$2 "
+        "AND s.operation = ANY($4::text[]) AND s.status='completed' "
+        "WHERE r.project_id=$1 AND r.workflow_id = ANY($2::uuid[]) "
         "AND s.result->>'source_run_id'=$3 "
         "AND s.result->'binding'->>'repository_id'=$5 "
         "ORDER BY r.created_at DESC LIMIT 1",
         project_id,
-        WORKFLOW_ID,
+        list(ADAPTER_WORKFLOW_IDS),
         source["source_run_id"],
-        OPERATION,
+        list(SOURCE_OPERATIONS.values()),
         str(source["binding"]["repository_id"]),
     )
-    if duplicate and inputs.get("retry_run_id") == str(duplicate):
-        prior = await conn.fetchrow("SELECT status FROM workflow_runs WHERE id=$1", duplicate)
-        external = await conn.fetchrow(
-            "SELECT status FROM integration_call_receipts WHERE execution_key=$1",
-            f"{duplicate}:procedure_pull_request",
-        )
-        checkpoint = await conn.fetchval(
-            "SELECT true FROM effect_receipts WHERE execution_key=$1 AND status='completed'",
-            f"{duplicate}:procedure_artifact_persist",
-        )
-        if prior["status"] != "failed" or external or checkpoint:
-            raise ValueError("Reconcile the previous delivery before purchasing a new adaptation.")
-        return
-    if inputs.get("retry_run_id"):
+    retry = inputs.get("retry_run_id")
+    if retry and retry != str(duplicate):
         raise ValueError("Choose the latest failed adaptation for this article and repository.")
-    if duplicate:
+    if not duplicate:
+        return
+    prior = await conn.fetchrow("SELECT status FROM workflow_runs WHERE id=$1", duplicate)
+    # GitHub refused the earlier PR before writing anything (for example another open PR
+    # changed a shared file), or never got the request: nothing was delivered, so a fresh
+    # adaptation may replace it. A PR that opened, or a request with an unknown outcome,
+    # still has to be reconciled first. A saved patch alone no longer blocks; Retry delivery
+    # stays the free way to send it.
+    delivered = await conn.fetchval(
+        "SELECT status IN ('started', 'completed') FROM integration_call_receipts "
+        "WHERE execution_key=$1",
+        f"{duplicate}:procedure_pull_request",
+    )
+    if prior["status"] == "failed" and not delivered:
+        return
+    if prior["status"] in {"pending", "running", "needs_input"}:
         raise ValueError(
-            f"This article already has a delivery attempt. Open run {duplicate}; "
-            "retry its saved delivery rather than drafting or paying again."
+            f"This article's delivery run {duplicate} is still working; wait for it to finish."
         )
+    raise ValueError(
+        f"This article already has a delivery. Open run {duplicate} for its pull request"
+        + (" and reconcile it before paying for a new adaptation." if retry else ".")
+    )
 
 
 async def saved_source(database, run_id):
@@ -400,7 +493,7 @@ async def recover_delivery(*, database, storage, integrations, run):
             ):
                 raise ValueError("The saved delivery no longer has an approved source.")
             manifest = validate_procedure_pull_request(checkpoint, spec=spec)
-            proof = validate_copy(manifest, source)
+            proof = validate_patch(manifest, source)
             binding = binding_from(source)
             result = await integrations.github_create_pull_request(
                 project_id=run.project_id,
@@ -413,6 +506,7 @@ async def recover_delivery(*, database, storage, integrations, run):
                 expected_base_sha=binding.head_sha,
                 expected_binding=binding,
                 allow_unrelated_base_advance=True,
+                blocking_paths=blocking_paths(proof),
             )
             result = {**asdict(result), **proof}
             async with conn.transaction():
@@ -448,11 +542,32 @@ async def start_approved_adaptation(*, runtime, settings, run, intent):
     The ordinary run service does the rest: source pinning, one metered procedure session
     charged on its actual usage, and an idempotent Temporal start under one start key.
     """
+    from tin_lite.page_routes import direction
     from tin_lite.run_service import start_workflow_run
 
+    if intent.get("via") == "website.change":
+        # A content.generate answer page goes to the site through website.change.
+        workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
+        if workflow is None:
+            raise LookupError("website.change is not installed on this Tin.")
+        return await start_workflow_run(
+            runtime=runtime,
+            settings=settings,
+            workflow=workflow,
+            project_id=run.project_id,
+            started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
+            start_idempotency_key=adaptation_start_key(run.id),
+            input_payload={
+                "source": "content_draft",
+                "source_run_id": str(run.id),
+                "expected_repository": intent["settings"]["repository"],
+            },
+            trigger_source=intent.get("trigger_source") or "manual",
+        )
     workflow = await runtime.database.get_workflow(WORKFLOW_ID)
     if workflow is None:
         raise LookupError("Page adaptation is not installed on this Tin.")
+    route = intent.get("route")
     return await start_workflow_run(
         runtime=runtime,
         settings=settings,
@@ -463,7 +578,7 @@ async def start_approved_adaptation(*, runtime, settings, run, intent):
         input_payload={
             "source_run_id": str(run.id),
             "expected_repository": intent["settings"]["repository"],
-            "direction": "",
+            "direction": direction(route) if route else "",
         },
         trigger_source=intent.get("trigger_source") or "manual",
         _approval_delivery=True,
@@ -498,11 +613,142 @@ async def saved_manifest(database, storage, run):
     return validate_procedure_pull_request(checkpoint, spec=spec)
 
 
+# Settings that reach every page, whatever folder they sit in.
+# Dependency and package-manager files. They reach every page, wherever they sit, so a patch
+# that changes one always waits for the founder's review.
+DEPENDENCY_FILES = frozenset(
+    {
+        "package.json",
+        "package-lock.json",
+        "npm-shrinkwrap.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "pnpm-workspace.yaml",
+        "bun.lock",
+        "bun.lockb",
+        ".npmrc",
+        ".yarnrc.yml",
+        "Gemfile.lock",
+        "composer.lock",
+        "poetry.lock",
+        "uv.lock",
+        "Cargo.lock",
+        "go.sum",
+    }
+)
+SITE_WIDE_NAMES = DEPENDENCY_FILES | {
+    "vercel.json",
+    "netlify.toml",
+    "wrangler.toml",
+    "wrangler.json",
+    "tsconfig.json",
+    "jsconfig.json",
+}
+SITE_WIDE_STEMS = (
+    "middleware.",
+    "next.config.",
+    "astro.config.",
+    "nuxt.config.",
+    "svelte.config.",
+    "vite.config.",
+    "remix.config.",
+    "gatsby-config.",
+)
+# Framework entry files that wrap or replace every page below them, wherever they sit:
+# Next.js layouts, templates, error and loading boundaries, route handlers and the pages
+# router's _app/_document, SvelteKit's +layout and +error, Remix's root.
+FRAMEWORK_ENTRY_STEMS = frozenset(
+    {
+        "layout",
+        "template",
+        "error",
+        "global-error",
+        "not-found",
+        "loading",
+        "default",
+        "route",
+        "instrumentation",
+        "_app",
+        "_document",
+        "_error",
+        "_middleware",
+        "+layout",
+        "+error",
+        "+server",
+        "root",
+    }
+)
+# Source folders frameworks route from. A chosen route named after one (`/app/{slug}`,
+# `/pages/{slug}`) can't tell the route's folder from the framework's, so it merges nothing
+# but the page itself.
+FRAMEWORK_ROOT_FOLDERS = frozenset(
+    {"app", "pages", "src", "routes", "api", "components", "lib", "layouts", "public", "static"}
+)
+
+
+def outside_route(manifest, proof, route):
+    """The patch's files besides the page that don't sit in the chosen route's own folder.
+
+    For `/guides/{slug}` a file serves the route only when its directories include `guides`
+    (`src/app/guides/[slug]/page.tsx`, `content/guides/...`). Root layouts, middleware, host and
+    build settings, shared components and dotfiles reach other pages, so they stay a PR, as do
+    framework entry files (a layout or _document) anywhere. A route named after a framework's
+    own source folder (`/app/{slug}`) can't be told apart from it, so only the page merges.
+    """
+    folders = [part for part in route.split("{slug}", 1)[0].strip("/").split("/") if part]
+    if FRAMEWORK_ROOT_FOLDERS.intersection(folders):
+        folders = []
+    outside = []
+    for item in manifest.get("files") or []:
+        path = item["path"]
+        if path == proof["article_path"]:
+            continue
+        parts = path.split("/")
+        name = parts[-1]
+        directories = parts[:-1]
+        inside = bool(folders) and any(
+            directories[index : index + len(folders)] == folders
+            for index in range(len(directories) - len(folders) + 1)
+        )
+        if (
+            not inside
+            or any(part.startswith(".") for part in parts)
+            or name in SITE_WIDE_NAMES
+            or name.startswith(SITE_WIDE_STEMS)
+            or name.split(".", 1)[0] in FRAMEWORK_ENTRY_STEMS
+        ):
+            outside.append(path)
+    return outside
+
+
+def merge_rule(manifest, proof, route):
+    """Which rule lets Tin merge this patch under a commit-to-main setting, else None.
+
+    `page_only`: the approved page alone, the change the Markdown publisher commits today.
+    `chosen_route`: the page plus the site code that serves it, when the founder chose where
+    these pages live, the PR puts the page at that route and every other file sits in that
+    route's own folder. Neither applies when Tin can't confirm the page keeps the approved
+    wording; any other site change stays a PR.
+    """
+    from tin_lite.page_routes import matches
+
+    if "not_confirmed" in {proof.get("copy_check"), proof.get("figure_check")}:
+        return None
+    if page_only(manifest, proof):
+        return "page_only"
+    if (
+        route
+        and matches(route, proof.get("public_route"))
+        and not outside_route(manifest, proof, route)
+    ):
+        return "chosen_route"
+    return None
+
+
 def page_only(manifest, proof):
     """True when the patch adds nothing but the approved page as one Markdown file.
 
-    That is the same change the Markdown publisher commits to main today. A route, a
-    component or an index is site code the founder has not reviewed; it stays a PR.
+    That is the same change the Markdown publisher commits to main today.
     """
     files = manifest.get("files") or []
     return (
@@ -518,13 +764,18 @@ async def publish_after_pull_request(
     """Honor a commit-to-main setting after the adaptation's PR opens, or leave it open.
 
     Only a run started by the page's approval, with the founder's setting to commit to
-    main, is merged: when its patch is the approved page alone, its branch still holds
-    exactly that patch, and GitHub calls it clean (no conflicts, no failing or pending
-    checks, no required review) within a few minutes. Otherwise the PR stays open and
-    the receipt says why. The outcome is recorded once; retries reuse it.
+    main, is merged: when its patch passes `merge_rule`, the page is a file it adds rather
+    than one it rewrites, its branch still holds exactly that patch, and GitHub calls it
+    clean (no conflicts, no failing or pending checks, no required review) within a few
+    minutes. A website.change run merges once the repository's required checks pass, so a
+    failing optional check does not hold it (REQUIRED_CHECKS_READY), and its receipt names
+    the state that allowed the merge. Otherwise the PR stays open and the receipt says why.
+    The outcome is recorded once; retries reuse it.
     """
     source = await saved_source(database, run.id)
-    if (source.get("approval") or {}).get("mode") != "github_commit":
+    # A website.change run always records its outcome: merged, or open and why.
+    website = bool(source.get("change"))
+    if not website and (source.get("approval") or {}).get("mode") != "github_commit":
         return None
     publication = await database.get_effect(f"{run.id}:procedure_canonical_commit")
     published = (publication.result or {}) if publication else {}
@@ -544,40 +795,84 @@ async def publish_after_pull_request(
         await database.start_effect(conn, execution_key=key, operation=MERGE_OPERATION)
         try:
             manifest = await saved_manifest(database, storage, run)
-            proof = validate_copy(manifest, source)
+            proof = validate_patch(manifest, source)
             number = published["pull_request_number"]
             base = {"pull_request": published["external_url"], "number": number}
-            if not page_only(manifest, proof):
+            hold = None
+            if website:
+                from tin_lite import website_change
+
+                route = source.get("route")
+                hold = await website_change.hold_reason(database, run, source, manifest, proof)
+            else:
+                route = (source.get("approval") or {}).get("route")
+            rule = merge_rule(manifest, proof, route)
+            from tin_lite.page_routes import matches
+
+            outside = (
+                outside_route(manifest, proof, route)
+                if route and matches(route, proof.get("public_route"))
+                else []
+            )
+            if hold:
+                result = {**base, "status": "left_open", "reason": hold}
+            elif proof["copy_check"] == "not_confirmed":
                 result = {
                     **base,
                     "status": "left_open",
-                    "reason": "It changes site files besides the page, so it waits for "
-                    "your review.",
+                    "reason": "Tin couldn't confirm the page keeps the approved wording word for "
+                    "word, so it waits for your review.",
+                }
+            elif proof.get("figure_check") == "not_confirmed":
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": "Tin couldn't confirm every approved figure, interactive piece, "
+                    "diagram and video is on the page, so it waits for your review.",
+                }
+            elif rule is None:
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": (
+                        f"It also changes {', '.join(outside[:3])}, outside your chosen route "
+                        f"{route}, so it waits for your review."
+                        if outside
+                        else f"It changes site files besides the page and does not put the page "
+                        f"at your chosen route {route}, so it waits for your review."
+                        if route
+                        else "It changes site files besides the page, so it waits for your review."
+                    ),
                 }
             else:
                 result = {
                     **base,
+                    "merge_rule": rule,
                     **await _merge_when_clean(
                         integrations=integrations,
                         run=run,
                         source=source,
                         manifest=manifest,
+                        new_paths=(proof["article_path"],),
                         number=number,
                         branch=published.get("pull_request_branch"),
                         sleep=sleep,
                         clock=clock,
+                        ready=REQUIRED_CHECKS_READY if website else MERGE_READY,
+                        record_state=website,
                     ),
                 }
+            prefix = "website_change" if website else "content_delivery"
             if result["status"] == "merged":
                 event, summary = (
-                    "content_delivery_merged",
+                    f"{prefix}_merged",
                     f"Tin merged PR #{number} into {manifest['default_branch']}."
                     if result.get("merged_by") == "tin"
                     else f"PR #{number} was merged into {manifest['default_branch']}.",
                 )
             else:
                 event, summary = (
-                    "content_delivery_left_open",
+                    f"{prefix}_left_open",
                     f"PR #{number} is open. {result['reason']}",
                 )
             async with conn.transaction():
@@ -607,10 +902,93 @@ async def publish_after_pull_request(
             raise
 
 
-async def _merge_when_clean(*, integrations, run, source, manifest, number, branch, sleep, clock):
+async def _merge_when_clean(
+    *,
+    integrations,
+    run,
+    source,
+    manifest,
+    new_paths,
+    number,
+    branch,
+    sleep,
+    clock,
+    ready=MERGE_READY,
+    record_state=False,
+):
+    """Merge once GitHub reports one of the `ready` states, or say why the PR stays open.
+
+    Each of `new_paths` must be a file the pull request adds (a page), never one it rewrites.
+
+    `dirty`, `behind` and `draft` stop at once. `blocked` and `unknown` never merge; Tin
+    waits for them to change until the deadline. With `record_state`, the merge receipt
+    names the state that allowed the merge.
+
+    `unstable` counts only where the base branch requires status checks (Emre, 10/1): with
+    none, or none Tin can read, nothing says which checks matter, so Tin waits for every
+    check to pass (`clean`). The receipt records which rule applied (`checks_rule`).
+    """
     binding = binding_from(source)
-    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
+    rule = {}
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
+    if "unstable" in ready:
+        required = await required_checks(integrations, run, binding)
+        if required:
+            rule = {"checks_rule": "required_checks", "required_checks": required}
+            reason = "Its required checks had not passed after a few minutes, so Tin left it open."
+        else:
+            ready = MERGE_READY
+            rule = {"checks_rule": "all_checks", "required_checks": []}
+            reason = (
+                "Your repository requires no status checks, so Tin waits for every check to "
+                "pass. They had not all passed after a few minutes, so Tin left it open."
+            )
+    result = await _merge_loop(
+        integrations=integrations,
+        run=run,
+        binding=binding,
+        manifest=manifest,
+        new_paths=new_paths,
+        number=number,
+        branch=branch,
+        sleep=sleep,
+        clock=clock,
+        ready=ready,
+        record_state=record_state,
+        reason=reason,
+    )
+    return {**result, **rule}
+
+
+async def required_checks(integrations, run, binding):
+    """The status checks the base branch requires; none when GitHub can't say."""
+    try:
+        found = await integrations.github_required_status_checks(
+            project_id=run.project_id,
+            repository=binding.repository,
+            branch=binding.default_branch,
+        )
+    except Exception:
+        return []
+    return list(found.get("contexts") or []) if found.get("readable") else []
+
+
+async def _merge_loop(
+    *,
+    integrations,
+    run,
+    binding,
+    manifest,
+    new_paths,
+    number,
+    branch,
+    sleep,
+    clock,
+    ready,
+    record_state,
+    reason,
+):
+    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
     while True:
         state = await integrations.github_pull_request_merge_state(
             project_id=run.project_id, repository=binding.repository, number=number
@@ -635,10 +1013,7 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
         stop = MERGE_STOPS.get(state.get("mergeable_state"))
         if stop:
             return {"status": "left_open", "reason": stop}
-        if state.get("mergeable") is True and state.get("mergeable_state") in {
-            "clean",
-            "has_hooks",
-        }:
+        if state.get("mergeable") is True and state.get("mergeable_state") in ready:
             from tin_lite.integrations import IntegrationAuthorizationError
 
             try:
@@ -652,6 +1027,7 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
                     files=tuple(GitHubFileChange(**item) for item in manifest["files"]),
                     expected_binding=binding,
                     commit_title=f"{manifest['title']} (#{number})"[:200],
+                    new_paths=tuple(new_paths),
                 )
             except IntegrationAuthorizationError as exc:
                 # A changed branch or connection is final; the PR stays for the founder.
@@ -666,6 +1042,7 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
                     "url": merged.get("url"),
                     "merged_at": clock().isoformat(),
                     "merged_by": "tin",
+                    **({"mergeable_state": state["mergeable_state"]} if record_state else {}),
                 }
             return {"status": "left_open", "reason": merged.get("reason") or reason}
         if state.get("mergeable_state") == "blocked":
@@ -679,12 +1056,15 @@ async def _merge_when_clean(*, integrations, run, source, manifest, number, bran
 
 
 def validate_copy(manifest, source):
-    """Prove lossless article storage, not that a site's renderer displays every byte.
+    """Find the page in the patch and say how closely it keeps the approved wording.
 
-    A Markdown site stores the reviewed body directly. Component-based sites retain
-    it as a JSON string literal consumed by their existing Markdown renderer. The
-    adapter may not introduce a renderer dependency or rewrite the prose as JSX.
-    Actual rendering/build checks are separate and must never be implied by this proof.
+    The page takes whatever form the site uses: a Markdown or MDX file, a component, a typed
+    page registry or plain HTML. A pull request is the founder's to review, so neither the
+    page's format nor its wording refuses one; only the pinned source and repository do.
+    `copy_check` decides whether Tin may merge on its own (merge_rule): it may when the
+    article is stored exactly (`exact_source_preserved`) or every paragraph reads word for
+    word in the page (`wording_preserved`), never when `not_confirmed`. Rendering and build
+    checks are separate and never implied.
     """
     article = source["article"]
     if hashlib.sha256(article.encode()).hexdigest() != source["article_sha256"]:
@@ -694,44 +1074,130 @@ def validate_copy(manifest, source):
         or manifest["head_sha"] != source["binding"]["head_sha"]
     ):
         raise ValueError("The repository differs from the pinned delivery source.")
-    matches = []
+    # Embed, video and diagram blocks are figures, not prose; a figure line has no words.
+    prose = FIGURE_FENCE.sub("\n\n", article)
+    paragraphs = [words for block in re.split(r"\n\s*\n", prose) if (words := _words(block))]
+    exact, worded, closest = [], [], (0, None)
     for item in manifest["files"]:
         path, text = item["path"], item["content"]
-        if path.rsplit("/", 1)[-1] in {
-            "package.json",
-            "package-lock.json",
-            "yarn.lock",
-            "pnpm-lock.yaml",
-        }:
-            raise ValueError("Article delivery cannot change dependencies.")
-        if path.endswith((".md", ".mdx")):
-            body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
-            if body.lstrip("\n") == article:
-                matches.append(path)
-        elif path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
-            # Decode complete JSON string tokens, not fragment matches in escaped
-            # prose. This proves source storage, not runtime consumption/rendering.
-            for token in re.findall(
-                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
-            ):
-                if json.loads(token) == article:
-                    matches.append(path)
-                    break
-    if len(matches) != 1:
-        raise ValueError(
-            "Keep the approved article unchanged in exactly one Markdown file "
-            "or JSON string consumed by the site's Markdown renderer."
-        )
+        if _stores_exactly(path, text, article):
+            exact.append(path)
+            continue
+        page = f" {' '.join(_words(text))} "
+        found = sum(f" {' '.join(words)} " in page for words in paragraphs)
+        if paragraphs and found == len(paragraphs):
+            worded.append(path)
+        elif found > closest[0]:
+            closest = (found, path)
+    if len(exact) == 1:
+        path, check = exact[0], "exact_source_preserved"
+    elif not exact and len(worded) == 1:
+        path, check = worded[0], "wording_preserved"
+    else:
+        path, check = (exact or worded or [closest[1]])[0], "not_confirmed"
     from tin_lite.page_urls import public_route
 
     route = public_route(manifest.get("body"))
+    figures = figure_check(manifest, source)
     return {
-        "article_path": matches[0],
+        "article_path": path,
         "article_sha256": source["article_sha256"],
-        "copy_check": "exact_source_preserved",
+        "copy_check": check,
+        **({"figure_check": figures} if figures else {}),
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
+
+
+VIDEO_BLOCK = re.compile(r"^(`{3,}|~{3,})[ \t]*tin-video\b(.*?)^\1[ \t]*$", re.M | re.S)
+MERMAID_BLOCK = re.compile(r"^(?:`{3,}|~{3,})[ \t]*mermaid\b", re.M)
+
+
+def figure_check(manifest, source):
+    """Whether every approved figure, embed, diagram and video is on the page, or None.
+
+    An approved file must arrive byte for byte (the same checksum), a video by its address or
+    its last path segment (the provider's ID), and each diagram as an SVG or the site's own
+    Mermaid support. Like copy_check this decides only Tin's own merge, never the PR.
+    """
+    article = source["article"]
+    assets = source.get("assets") or []
+    videos = [
+        match.group(1).strip()
+        for block in VIDEO_BLOCK.finditer(article)
+        if (match := re.search(r"(?m)^\s*url\s*:\s*(\S+)", block.group(2)))
+    ]
+    diagrams = len(MERMAID_BLOCK.findall(article))
+    if not (assets or videos or diagrams):
+        return None
+    files = manifest.get("files") or []
+    digests = {hashlib.sha256(item["content"].encode()).hexdigest() for item in files}
+    text = "\n".join(item["content"] for item in files)
+    # Diagrams arrive as new SVG files (not the approved figures' copies) or inline SVG.
+    approved = {asset["sha256"] for asset in assets}
+    drawn = sum(
+        (hashlib.sha256(item["content"].encode()).hexdigest() not in approved)
+        if item["path"].endswith(".svg")
+        else item["content"].count("<svg")
+        for item in files
+    )
+    confirmed = (
+        all(asset["sha256"] in digests for asset in assets)
+        and all(_video_shown(url, text) for url in videos)
+        and (drawn >= diagrams or "mermaid" in text.casefold())
+    )
+    return "confirmed" if confirmed else "not_confirmed"
+
+
+def _video_shown(url, text):
+    from urllib.parse import parse_qs, urlsplit
+
+    if url in text:
+        return True
+    parts = urlsplit(url)
+    ids = [parts.path.rstrip("/").rsplit("/", 1)[-1], *parse_qs(parts.query).get("v", [])]
+    return any(len(value) >= 4 and value in text for value in ids)
+
+
+FIGURE_FENCE = re.compile(
+    r"^(`{3,}|~{3,})[ \t]*(?:tin-embed|tin-video|mermaid)\b.*?^\1[ \t]*$", re.M | re.S
+)
+
+
+def _stores_exactly(path, text, article):
+    """The article byte for byte: a Markdown body, or one complete JSON string token."""
+    if path.endswith((".md", ".mdx")):
+        body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
+        return body.lstrip("\n") == article
+    if path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
+        # Complete JSON string tokens, not fragment matches in escaped prose.
+        return any(
+            json.loads(token) == article
+            for token in re.findall(
+                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
+            )
+        )
+    return False
+
+
+def _words(text):
+    """The words a reader sees, in order: no markup, link targets, scripts or styles."""
+    text = re.sub(r"<(script|style)\b.*?</\1\s*>|<!--.*?-->", " ", text, flags=re.S | re.I)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)|\]\([^)]*\)", " ", text)
+    text = html.unescape(re.sub(r"</?[A-Za-z!][^>]*>", " ", text))
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
+def blocking_paths(proof):
+    """The page's own path, the one file another open PR must not also add; None when the
+    patch has no recognizable page, so every file blocks as for any other PR."""
+    return frozenset({proof["article_path"]}) if proof.get("article_path") else None
+
+
+def validate_patch(manifest, source):
+    """The page check for content.deliver and website.change alike. The procedure's own file
+    and byte caps bound the patch; website_change.hold_reason decides a website merge."""
+    return validate_copy(manifest, source)
 
 
 async def delivery_history(executor, *, project_id, source_ids):

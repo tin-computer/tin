@@ -49,8 +49,9 @@ The definition selects `executor: workflow.code` and a `code` object with:
 - `runtime: python3.12.8-stdlib-v1`;
 - `entrypoint`: a declared package-relative `.py` file exporting `run(ctx, inputs)`;
 - `files`: 1–32 explicitly declared UTF-8 files, at most 64,000 bytes each and 256,000 bytes total;
-- `timeout_seconds`: 1–60 seconds;
-- `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 64,000. The file
+- `timeout_seconds`: 1–900 seconds, the package's wall-clock window (it also bounds each
+  model call's wait);
+- `output`: one `project.artifact` with a safe path, media type, and `max_bytes` ≤ 1,000,000. The file
   name may carry `{date}` and `{slug}` once each, so repeated runs keep separate, readable files.
 
 `run` may be synchronous or asynchronous and returns exactly `{ "path": "…", "content": "…" }`.
@@ -93,7 +94,9 @@ recorded histories keep their activity sequences. Temporal carries run/control I
 review decision, never package source, fixture records, inputs, output bytes, or credentials.
 
 Pure computation can repeat under bounded activity retry until its result is checkpointed.
-Package revision, normalized inputs and timestamp remain pinned. A saved immutable checkpoint is
+A package that runs and exits non-zero is not retried: a fresh sandbox would run the same code
+on the same inputs, so the run fails once with Tin's reason. Timeouts and a sandbox that could
+not return its result still retry. Package revision, normalized inputs and timestamp remain pinned. A saved immutable checkpoint is
 reused after worker loss. Only the trusted switchboard stages the result and publishes it through
 existing lease/fencing validation, project-write serialization, `expectedHeadSha`, conflict
 retention, and uncertain-commit reconciliation. `procedure_artifact_persist`,

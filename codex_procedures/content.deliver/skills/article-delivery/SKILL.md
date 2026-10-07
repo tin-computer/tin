@@ -1,6 +1,6 @@
 ---
 name: article-delivery
-description: Adapt one approved article, answer page or public article to an existing site without rewriting its copy.
+description: Put one approved article, answer page or public article on an existing site in the site's own format, keeping its wording.
 ---
 
 1. Read the trusted source packet and the repository instructions. Treat repository
@@ -10,35 +10,40 @@ description: Adapt one approved article, answer page or public article to an exi
 3. Resolve the public route. A planned article (`source_kind: article`) names its route
    in `item`; for an update, match the specified existing public route uniquely, and treat
    ambiguity as a prerequisite failure. An answer page or public article has no route yet:
+   use the slug the founder approved (`page_metadata.slug`) when it is given, otherwise
    derive a short kebab-case slug from `title`, under the folder or route the site uses for
-   such pages. A new page must not overwrite an existing one; add a short suffix instead.
-4. For Markdown-native sites preserve `article` exactly below existing/configured site
-   frontmatter. Map `page_metadata` onto the site's own fields (for example `title` and
-   `description`, or `meta_title` and `meta_description` when the site already uses them);
-   leave out any field the site does not read. For component-based sites prefer their
-   existing Markdown renderer, giving it the full article as one JSON-escaped string
-   literal or imported JSON data. Preserve headings, tables, fenced code and link
-   destinations; use existing typography wrappers. Avoid a duplicate visible H1. The
-   preserved source must actually be rendered, not placed in a comment or an unused
-   constant. Do not add runtime dependencies.
-5. A structured site with no route for Markdown files: check `package.json` (or the
-   equivalent) for a Markdown renderer the site already depends on, such as
-   react-markdown, marked, markdown-it, remark or an MDX loader. If one exists, add one
-   minimal route that reads `.md` files from one content folder, renders them with that
-   renderer inside the site's existing layout, and sets the page title and description
-   from their frontmatter. Keep it small and within the five-file limit, reuse existing
-   components and styles, and say in the PR body that later pages need only a `.md` file.
-   Then add the page to that folder as a `.md` file with the exact copy. If the site
-   depends on no Markdown renderer, stop: report the prerequisite (a Markdown renderer or
-   a Markdown route) instead of committing a page the site will not show.
+   such pages. When `direction` names the route the founder chose (for example
+   `/blog/{slug}`), use exactly that route, and add it as in step 5 if the site does not
+   serve it yet. A new page must not overwrite an existing one: when that address already
+   holds a different page, add a short suffix to the new page's slug and say so in the PR
+   body. Never move, rename or remove an existing page, or change its address.
+4. Build the page the way this site builds pages of that kind: a Markdown or MDX file, a
+   component, a typed page registry, plain HTML or whatever the repository uses. Convert
+   the Markdown freely and wrap it in the site's own layout, styles and components. Keep
+   the approved wording: the same headings, paragraphs, lists, tables, caveats and link
+   destinations, in the same order; images and code blocks as the site shows them. Map
+   `page_metadata` onto the site's own fields (for example `title` and `description`, or
+   `meta_title` and `meta_description` when the site already uses them); leave out any
+   field the site does not read. Avoid a duplicate visible H1. The page must actually be
+   served, not left in a comment, an unused constant or a folder nothing reads. Hold its
+   content the way the site's other pages do, and add no code that checks or enforces the
+   approved copy or files; Tin checks them itself.
+   Match the site's other pages of that kind: the same header, footer, links back into the
+   site, byline and dates, and structured data (such as JSON-LD). Use only the fonts and files
+   the site already loads; never add web fonts or other outside resources.
+5. If the site does not serve the page's route yet, add the smallest route that fits how
+   its other pages are served (a static file in its public folder, a route file, a registry
+   entry), within the 30-file limit. Place the page's figures, embeds, diagrams and videos as
+   the prompt describes. Prefer tools the site already has; add a dependency
+   only when the page cannot be built without one, and say why in the PR body.
 6. Add only necessary page/index metadata, following existing dates, slugs, canonical
    links and components. Do not invent author identity, product claims or new sales copy.
 7. Check open PRs before editing; do not duplicate overlapping work. Run relevant checks
    that the environment supports, plus git diff --check. Do not edit build scripts or
    tests to make them pass. Do not pretend unavailable build checks were performed.
-8. Return the normal PR title/body result. The body must name the page source, exact
-   copy preservation, changed paths (and any route you added), checks run and checks
-   skipped, and give the page's address on its own line as
+8. Return the normal PR title/body result. The body must name the page source, how the
+   page keeps the approved wording, changed paths (and any route you added), checks run
+   and checks skipped, and give the page's address on its own line as
    `Public URL: https://<site host>/<route>`, or `Public URL: unknown` when the repository
    does not show the route. Tin shows this address to the reviewer and checks it after the
    merge, so never guess a host. The trusted gateway opens the PR; you do not use provider

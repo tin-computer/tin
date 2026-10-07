@@ -43,6 +43,8 @@ NATIVE_EXECUTORS = {
     "content.plan",
     "creative.character",
     "style.capture",
+    "social.x_style",
+    "social.x_revise",
     "content.answer_page",
     "project.memory",
     "project.weekly_brief",
@@ -54,8 +56,9 @@ NATIVE_EXECUTORS = {
     "ads.assessment",
     "ads.launch",
     "ads.monitor",
+    "revenue.payment_recovery",
 }
-PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding"}
+PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_draft"}
 
 # Organic audit ceiling, from its bounded calls at the GPT-6 Luna rates above. A run makes at
 # most 28 searched calls (two research attempts, 12 questions asked twice, two brand checks) and
@@ -67,10 +70,29 @@ PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding"}
 # would cost $1.92. Real runs cost far less: a production audit, keyword plan and content plan
 # together came to $0.73.
 AUDIT_MAXIMUM_USD = 2
+
+
+def audit_maximum_nanos(policy: dict | None) -> int:
+    """An audit's own ceiling: organic-audit-v15 pins its own ($4 for sixteen questions)."""
+    pinned = amount_nanos((policy or {}).get("billing_maximum_usd"))
+    return pinned if pinned is not None else AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR
+
+
+# The organic parent's spending pool beyond the founder's keyword limit: about five times what a
+# production run spent ($2.49 for audit, keyword research, content plan and one draft, with the
+# technical fix and page adaptation costing nothing that run). Every child keeps its own
+# ceiling, but each paid call also reserves against the parent's maximum, so the parent's
+# maximum is the run's real total. Typical runs finish well inside it; a run whose early
+# steps spent unusually much stops its later paid steps rather than exceeding the pool.
+TRAFFIC_SYSTEM_POOL_USD = 10
 # The content plan's share inside the organic parent. Its one model call reads at most
-# 240,000 bytes of evidence plus instructions and schema and writes at most 16,000 tokens:
-# under $0.10 even at long-context rates. Standalone plans keep the $2 native ceiling.
+# 240,000 bytes of evidence plus instructions and schema (about 254,000 tokens) and writes at
+# most 32,000 tokens (content-editorial-v8; v7 wrote 16,000): $0.088 even at long-context
+# rates, under $0.10. Standalone plans keep the $2 native ceiling.
 CONTENT_PLAN_SHARE_USD = 1
+# Page decisions' share inside the organic parent (organic-traffic-v7): at most two GPT-6 Luna
+# calls of 30,000 input bytes and 2,048 output tokens each, a few cents even at the bound.
+PAGE_DECISIONS_SHARE_USD = 1
 
 
 def amount_nanos(value):
@@ -95,22 +117,33 @@ def service_terms(definition, *, inputs=None):
     maximum = 2 * NANOS_PER_DOLLAR
     kinds = ["native_model"]
     if executor == "organic.audit":
-        maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
+        maximum = audit_maximum_nanos(definition.get("audit_policy"))
+        kinds = ["native_model", "tool"]
+        # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
+        # ceiling ($1; eight questions cost at most $0.63 at the pinned request prices).
+        engines = (definition.get("audit_policy") or {}).get("ai_engines_max_cost_usd")
+        if engines is not None:
+            maximum += amount_nanos(engines) or 0
     elif executor == "organic.keyword_plan":
         maximum = amount_nanos(inputs.get("max_cost_usd", 9))
         kinds = ["native_model", "tool"]
     elif executor == "organic.traffic_system":
-        maximum = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
+        keywords = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
+        maximum = keywords
         if maximum is not None:
             maximum += (
                 AUDIT_MAXIMUM_USD
                 + CONTENT_PLAN_SHARE_USD
                 + (5 if inputs.get("technical_fix") else 0)
             ) * NANOS_PER_DOLLAR
-            if definition.get("organic_system_policy", {}).get("version") in {
+            version = definition.get("organic_system_policy", {}).get("version")
+            if version in {
                 "organic-traffic-v2",
                 "organic-traffic-v3",
                 "organic-traffic-v4",
+                "organic-traffic-v5",
+                "organic-traffic-v6",
+                "organic-traffic-v7",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -118,7 +151,27 @@ def service_terms(definition, *, inputs=None):
                 maximum += (
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
+            pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
+            if version in {"organic-traffic-v5", "organic-traffic-v6", "organic-traffic-v7"}:
+                # v5's first page refresh is a child run; later weekly refreshes are ordinary
+                # scheduled runs with their own funding. The pool grows by the refresh's own
+                # ceiling, since a production run has not measured one yet. v6 keeps v5's
+                # children; its technical and delivery steps are website.change runs, each
+                # with the same $5 procedure ceiling as the workflows they replace.
+                from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
+
+                maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]
+                pool += PROCEDURE_MAXIMUMS["content-refresh.v1"]
+            if version == "organic-traffic-v7":
+                # v7's first traffic snapshot (no model call) and Page decisions run as children.
+                maximum += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
+                pool += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
+            # The children's ceilings add up to more than a run spends; the pool bounds the run.
+            maximum = min(maximum, pool)
         kinds = []  # The parent itself never buys a model call.
+    elif executor == "social.x_draft":
+        # One bounded voice capture and one composition; only actual child usage is charged.
+        maximum, kinds = 4 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding_plan":
@@ -135,12 +188,14 @@ def service_terms(definition, *, inputs=None):
     elif executor == "ads.monitor":
         maximum = amount_nanos(inputs.get("max_cost_usd", 2))
         kinds = ["native_model", "tool"]
+    elif executor == "revenue.payment_recovery":
+        # One drafting step; Stripe and Gmail calls go through the founder's own accounts.
+        maximum, kinds = 2 * NANOS_PER_DOLLAR, ["native_model", "tool"]
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
     return {
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "parent" if executor in PARENT_EXECUTORS else "metered_workflow",

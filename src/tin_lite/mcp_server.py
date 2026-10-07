@@ -7,7 +7,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from typing import Annotated, Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -27,6 +27,7 @@ from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
+from tin_lite.capture_revisions import ProposalFile
 from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
@@ -44,7 +45,7 @@ from tin_lite.content_program_api import (
     stop_content_run,
 )
 from tin_lite.content_programs import ContentPrograms
-from tin_lite.document_handoff import document_handoff
+from tin_lite.document_handoff import document_handoff, document_url
 from tin_lite.domain import (
     EMAIL_CAMPAIGN_WORKFLOW_NAME,
     PROJECT_TASK_WORKFLOW_NAME,
@@ -118,10 +119,9 @@ from tin_lite.run_service import (
     start_workflow_run,
 )
 from tin_lite.runtime import RuntimeServices
-from tin_lite.schedules import WorkflowSchedule
+from tin_lite.schedules import WorkflowSchedule, monthly_words, require_saveable_schedule
 from tin_lite.settings import Settings
-from tin_lite.technical_fix_api import TechnicalFixSelection
-from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
+from tin_lite.technical_fix_live import live_service
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
     client_input_schema,
@@ -130,6 +130,7 @@ from tin_lite.workflow_inputs import (
 from tin_lite.workflow_prerequisites import PrerequisiteError, project_readiness
 from tin_lite.workflow_source_inputs import selected_run_sources
 from tin_lite.writing_style import style_capture_preparation
+from tin_lite.x_posts import XPosts
 
 MCP_SCOPE = "openid"
 logger = logging.getLogger(__name__)
@@ -197,14 +198,9 @@ async def _content_program_next_call(
                 "request_id": str(uuid4()),
             },
         },
-        "then": {
-            "name": "start_project_workflow",
-            "arguments": {
-                "project_id": str(project_id),
-                "project_workflow_id": "<id returned by create_project_workflow>",
-                "request_id": str(uuid4()),
-            },
-        },
+        # Saving a schedule runs it once right away; starting it again would plan twice.
+        "then": "create_project_workflow starts the program's first run itself; read it with "
+        "get_run using first_run.id.",
     }
 
 
@@ -415,6 +411,9 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 def _mcp_integration_view(
     definition: Any, connection: Any | None, *, configured: bool
 ) -> dict[str, Any]:
+    from tin_lite.integrations import connection_readiness
+
+    readiness = connection_readiness(connection)
     return {
         "key": definition.key,
         "name": definition.name,
@@ -426,6 +425,9 @@ def _mcp_integration_view(
         "configured": configured,
         "connection_id": str(connection.id) if connection is not None else None,
         "status": connection.status if connection is not None else "available",
+        # Connected and the site, repository or project it works on chosen.
+        "ready": readiness["ready"],
+        "next_action": None if connection is None else readiness["next_action"],
         "external_account_label": (
             connection.external_account_label if connection is not None else None
         ),
@@ -478,6 +480,14 @@ def _project_workflow_message(configured: Any, *, created: bool) -> str:
         f"{name} {verb}: {when}{first}. Results show under My system; anything needing your "
         "yes waits in Decisions."
     )
+
+
+def _first_run_message(first_run: dict[str, Any]) -> str:
+    if first_run.get("id"):
+        return "It is also running once now, so the first result does not wait for the calendar."
+    if first_run.get("status") == "waits_for_start":
+        return "Its first run waits for the start date you chose; nothing runs before then."
+    return f"Its first run could not start now: {first_run.get('reason', 'unknown reason')}"
 
 
 def _mcp_project_workflow_view(configured: Any) -> dict[str, Any]:
@@ -539,10 +549,9 @@ async def _sync_mcp_project_workflow(
             paused=paused,
         )
     except Exception as exc:
-        await runtime.database.project_workflow_failed(
-            project_workflow_id=configured.id,
-            error_message=f"{type(exc).__name__}: schedule synchronization failed",
-        )
+        from tin_lite.project_workflow_operations import sync_failed
+
+        await sync_failed(runtime=runtime, settings=settings, configured=configured, error=exc)
         raise ToolError("Tin could not synchronize this workflow schedule") from exc
 
 
@@ -638,11 +647,12 @@ Unknown repository details are a reason to ask which repository serves the site,
 useful access. Ask for mailbox access only for selected work that needs it. Explain
 delivery_destination: reports, review queue, and whether notifications are enabled. Offer only
 supported delivery channels. Say each connection takes about a minute in the browser
-and GitHub also asks which repository; for the ones they allow, call
+and GitHub and Search Console also ask which repository or site; for the ones they allow, call
 start_integration_connections with every provider at once (one page, one visit;
 start_integration_connection for a single one), open the link in their browser yourself when your
 shell allows it (the result's open_command), otherwise paste it, and confirm each with
-get_integration; note each they decline with their reason.
+get_integration until it shows `ready` (follow its next_action otherwise); note each they
+decline with their reason.
 Then call record_onboarding_picks once with the run_id, the systems (or ["suggested"]), the
 control and every connection they decided (connected, or not_now with the reason); it ticks the
 plan for you. Then approve_workflow_run; it refuses until the picks are recorded. Say Tin now
@@ -769,6 +779,22 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
         error = type(exc).__name__
         raise
     finally:
+        _record_tool_call(ctx, tool, arguments, project_id, user_id, token, started, result, error)
+
+
+def _record_tool_call(
+    ctx: Any,
+    tool: str,
+    arguments: Any,
+    project_id: Any,
+    user_id: str | None,
+    token: Any,
+    started: float,
+    result: Any,
+    error: str | None,
+) -> None:
+    """Queue the call's metadata; a failure here never replaces the tool's own outcome."""
+    try:
         _, args_size = clip(arguments)
         if result is not None:
             received, is_error = _result_view(result)
@@ -791,6 +817,8 @@ async def analytics_middleware(ctx: Any, call_next: Callable[[Any], Any]) -> Any
                 **_client_info(ctx),
             },
         )
+    except Exception:  # analytics must never change what the client receives
+        logger.exception("MCP tool call analytics failed for %s", tool)
 
 
 _is_personal_project = is_personal_project
@@ -914,6 +942,8 @@ def _schedule_words(schedule: Any) -> str:
     data = schedule.model_dump() if hasattr(schedule, "model_dump") else dict(schedule)
     if data.get("cadence") == "daily":
         return f"every day at {data.get('local_time', '09:00')}"
+    if data.get("cadence") == "monthly":
+        return f"{monthly_words(data)} at {data.get('local_time', '09:00')}"
     days = ", ".join(str(d).capitalize() for d in data.get("weekdays") or [])
     return f"{days or 'weekly'} at {data.get('local_time', '09:00')}"
 
@@ -973,14 +1003,23 @@ def create_mcp_app(
     settings: Settings,
     auth: ClerkAuth,
     runtime: Callable[[], RuntimeServices],
+    public_plugin: bool = False,
 ) -> tuple[MCPServer, Starlette]:
-    resource = f"{settings.switchboard_public_url.rstrip('/')}/mcp"
-    server = GuardedMCPServer(
+    from tin_lite.mcp_public import (
+        PUBLIC_INSTRUCTIONS,
+        PUBLIC_MCP_PATH,
+        PublicMCPServer,
+        require_public_workflow,
+    )
+
+    path = PUBLIC_MCP_PATH if public_plugin else "/mcp"
+    resource = f"{settings.switchboard_public_url.rstrip('/')}{path}"
+    server = (PublicMCPServer if public_plugin else GuardedMCPServer)(
         "Tin",
         title="Tin workflow registry",
         description="Discover and run the workflows available to your Tin projects.",
-        instructions=SERVER_INSTRUCTIONS,
-        middleware=[analytics_middleware],
+        instructions=PUBLIC_INSTRUCTIONS if public_plugin else SERVER_INSTRUCTIONS,
+        middleware=[] if public_plugin else [analytics_middleware],
         token_verifier=ClerkOAuthTokenVerifier(auth, resource=resource),
         auth=AuthSettings(
             # Clerk is the authorization server clients discover. Codex requires the
@@ -993,7 +1032,9 @@ def create_mcp_app(
         ),
     )
     # Before streamable_http_app(): PostHog wraps that factory to mint session ids.
-    server.posthog_client = install_posthog_mcp_analytics(server, settings)
+    server.posthog_client = (
+        None if public_plugin else install_posthog_mcp_analytics(server, settings)
+    )
 
     async def caller() -> AccessToken:
         token = get_access_token()
@@ -1001,7 +1042,7 @@ def create_mcp_app(
             raise ToolError("forbidden: authenticated Tin user required")
         if MCP_SCOPE not in token.scopes:
             raise ToolError(f"forbidden: OAuth scope {MCP_SCOPE} is required")
-        if await runtime().database.record_tin_user(token.subject):
+        if not public_plugin and await runtime().database.record_tin_user(token.subject):
             analytics.capture(
                 "tin_user_created",
                 distinct_id=token.subject,
@@ -1017,6 +1058,7 @@ def create_mcp_app(
         token: AccessToken,
         *,
         tool_name: str,
+        missing: str = "project not found",
     ) -> None:
         clerk_user_id = token.subject
         assert clerk_user_id is not None
@@ -1025,13 +1067,21 @@ def create_mcp_app(
             clerk_user_id=clerk_user_id,
         )
         if not allowed:
-            raise ToolError("not_found: project not found")
+            raise ToolError(f"not_found: {missing}")
         await runtime().database.record_mcp_usage(
             project_id=project_id,
             clerk_user_id=clerk_user_id,
             oauth_client_id=token.client_id,
             tool_name=tool_name,
         )
+
+    async def require_run(run_id: UUID, token: AccessToken, *, tool_name: str) -> Any:
+        """The caller's run. A missing run and another project's run read the same."""
+        run = await runtime().database.get_run(run_id)
+        if run is None:
+            raise ToolError("not_found: run not found")
+        await require_project(run.project_id, token, tool_name=tool_name, missing="run not found")
+        return run
 
     from tin_lite.billing_mcp import register_billing_tools
 
@@ -1159,10 +1209,10 @@ def create_mcp_app(
     ) -> dict[str, Any]:
         """Save the program's future delivery, using the user's chosen GitHub destination.
 
-        settings: mode=draft_only|github_pr, repository=owner/repo,
+        settings: mode=draft_only|github_pr|github_commit, repository=owner/repo,
         path_pattern=content/blog/{slug}.md, frontmatter={}, item_paths={item_id:path}.
-        Updates require an explicit file mapping. Approval of newly configured drafts
-        opens an unmerged PR; it never merges/publishes. Share this consequence with
+        Updates require an explicit file mapping. With github_pr, approval opens an
+        unmerged PR; with github_commit it commits to main. Share this consequence with
         the user. Do not infer a repository from the product's name. Settings and
         revision are tool metadata, not choices to burden the user with.
         """
@@ -1186,6 +1236,252 @@ def create_mcp_app(
             raise ToolError(str(exc)) from exc
 
     @server.tool()
+    async def save_page_route(
+        project_id: str,
+        page_type: Literal["answer_page", "article"],
+        route: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Save where the founder wants answer pages or articles to live on their site.
+
+        Ask the founder first, as get_run's ask_the_founder describes, and save only the route
+        they confirm: a site path ending in {slug}, such as /answers/{slug}. Later approvals
+        tell the adaptation to publish at that route, adding a minimal route once if the site
+        has none. With delivery set to commit to main, Tin merges a pull request that adds the
+        page at this route when GitHub reports it clean. Reuse request_id when retrying.
+        """
+        from tin_lite.page_routes import PageRouteService
+        from tin_lite.project_files import ProjectFileError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="save_page_route")
+        try:
+            saved = await PageRouteService(
+                database=runtime().database, storage=runtime().storage
+            ).save(
+                project_id=project,
+                kind=page_type,
+                route=route,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+                actor=token.subject,
+                client_id=token.client_id,
+            )
+        except (LookupError, ValueError, ProjectFileError, RuntimeError) as exc:
+            raise ToolError(str(exc)) from exc
+        return {
+            "routes": saved["routes"],
+            "revision": saved.get("revision"),
+            **_founder_words(
+                relay=[
+                    f"Saved: Tin publishes {page_type.replace('_', ' ')}s at {route} from now on."
+                ]
+            ),
+        }
+
+    @server.tool()
+    async def list_website_changes(
+        project_id: str, status: Literal["pending", "approved", "declined"] | None = None
+    ) -> dict[str, Any]:
+        """List proposed changes to the project's website and the founder's decision on each.
+
+        A change row has a source, a stable change_id, a kind, the site paths it touches and
+        its status. Pending rows wait for the founder: show each one and ask; never decide
+        for them. A decided row stays decided and is never proposed again. Approved pages
+        are not listed here: approve_workflow_run approves a page.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="list_website_changes")
+        return {
+            "changes": await website_change.list_changes(
+                runtime().database, project_id=project, status=status
+            )
+        }
+
+    async def _decide_website_change(
+        tool: str, action: str, project_id: str, change_id: str, content_sha256: str, request_id
+    ) -> dict[str, Any]:
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name=tool)
+        try:
+            row = await website_change.decide(
+                runtime().database,
+                project_id=project,
+                change_id=change_id,
+                action=action,
+                actor=token.subject,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+                content_sha256=content_sha256,
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: change not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        said = (
+            "Approved. When website.change makes this change, Tin publishes it, unless it "
+            "touches a protected page; then it opens a pull request for the founder to merge."
+            if action == "approve"
+            else "Declined. Tin will not make this change, and later runs will not propose it."
+        )
+        return {"change": row, **_founder_words(relay=[said])}
+
+    @server.tool()
+    async def approve_website_change(
+        project_id: str, change_id: str, content_sha256: str, request_id: str
+    ) -> dict[str, Any]:
+        """Record the founder's approval of one proposed website change, once.
+
+        Only after the founder says yes to this exact row. Pass the content_sha256 you showed
+        them from list_website_changes, so the approval covers the content they read. An
+        approved change publishes when website.change makes it, unless it touches a protected
+        page such as /sign-in. Reuse request_id when retrying.
+        """
+        return await _decide_website_change(
+            "approve_website_change", "approve", project_id, change_id, content_sha256, request_id
+        )
+
+    @server.tool()
+    async def decline_website_change(
+        project_id: str, change_id: str, content_sha256: str, request_id: str
+    ) -> dict[str, Any]:
+        """Record the founder's decision not to make one proposed website change, once.
+
+        Tin never makes a declined change, and later runs do not propose it again. Pass the
+        content_sha256 from list_website_changes. Reuse request_id when retrying.
+        """
+        return await _decide_website_change(
+            "decline_website_change", "decline", project_id, change_id, content_sha256, request_id
+        )
+
+    @server.tool()
+    async def preflight_website_change(
+        project_id: str,
+        expected_repository: str,
+        repository_serves_site: StrictBool,
+        source: Literal["audit", "planned"] = "audit",
+        finding_ids: list[str] | None = None,
+        decisions: list[str] | None = None,
+        protected_paths: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Preview what website.change would make from a source, and record its change rows
+        (list_website_changes) so the founder can approve or decline each once, here or in
+        Decisions. No run, paid compute, branch or pull request is created.
+
+        source audit: the technical fixes the latest audit found. planned: the redirects and
+        noindex changes page decisions made.
+
+        plan.repairs is what the next run makes, decisions_needed the judgment calls, and
+        plan.left_out the rest (copy, manual steps such as deleting a page, declined rows,
+        rows already in a pull request, rows waiting for approval). Answer each
+        decisions_needed item yourself from the codebase and what you know about the product,
+        following ask; ask the founder only the ones you're unsure of, and pass the answers as
+        decisions (["finding_id=choice"]). changes shows each row's status and whether it
+        touches a protected page (suggestion ask). next_run says whether the next run
+        publishes (Tin merges once the required checks pass, for approved rows) or opens a
+        pull request for the founder. Start website.change with the same source and arguments.
+        """
+        from tin_lite import website_change_audit
+        from tin_lite.integrations import IntegrationError
+        from tin_lite.technical_fix_sources import TechnicalFixError
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preflight_website_change")
+        try:
+            found = await website_change_audit.preview(
+                database=runtime().database,
+                storage=runtime().storage,
+                integrations=runtime().integrations,
+                project_id=project,
+                source=source,
+                inputs={
+                    "expected_repository": expected_repository,
+                    "repository_serves_site": repository_serves_site,
+                    "finding_ids": finding_ids or [],
+                    "decisions": decisions or [],
+                    "protected_paths": protected_paths or [],
+                },
+            )
+        except TechnicalFixError as exc:
+            raise ToolError(f"{exc.code}: {exc}") from exc
+        except (LookupError, ValueError, IntegrationError) as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        relay = found.pop("relay")
+        return {**found, **_founder_words(relay=relay)}
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_protected_paths(project_id: str) -> dict[str, Any]:
+        """Read the project's protected pages: site paths whose changes always wait for the
+        founder's merge, even when approved.
+
+        `defaults` (/sign-in, /sign-up, /auth-complete) are always protected and cannot be
+        removed. `paths` are the pages the founder added; `effective` is both. `revision` is
+        what set_protected_paths needs, and `history` shows who changed the list and when.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="get_protected_paths")
+        try:
+            return await website_change.read_protected_paths(
+                runtime().database, project_id=project, actor=token.subject
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+
+    @server.tool()
+    async def set_protected_paths(
+        project_id: str, paths: list[str], expected_revision: int, request_id: str
+    ) -> dict[str, Any]:
+        """Replace the project's protected pages, after the founder names them.
+
+        A protected page, and every page under it, always opens a pull request for the
+        founder to merge, even when the change was approved: use it for pages another app
+        shares, such as /partners or /app. Pass site paths such as /partners (a full URL is
+        reduced to its path); [] keeps only the defaults, which cannot be removed. Pass the
+        revision from get_protected_paths. Reuse request_id when retrying.
+        """
+        from tin_lite import website_change
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="set_protected_paths")
+        try:
+            saved = await website_change.save_protected_paths(
+                runtime().database,
+                project_id=project,
+                actor=token.subject,
+                paths=paths,
+                expected_revision=expected_revision,
+                request_id=_mcp_uuid(request_id, field="request_id"),
+            )
+        except LookupError as exc:
+            raise ToolError("not_found: project not found") from exc
+        except website_change.WebsiteChangeConflict as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        except ValueError as exc:
+            raise ToolError(f"invalid: {exc}") from exc
+        pages = ", ".join(saved["effective"])
+        return {
+            **saved,
+            **_founder_words(
+                relay=[
+                    f"Saved. Changes to these pages always wait for your merge: {pages}, and "
+                    "every page under them."
+                ]
+            ),
+        }
+
+    @server.tool()
     async def retry_content_delivery(project_id: str, run_id: str) -> dict[str, Any]:
         """Retry only GitHub delivery for an already approved, delivery-enabled draft.
 
@@ -1207,73 +1503,8 @@ def create_mcp_app(
         except (LookupError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
 
-    async def technical_fix_service(project_id: str, tool_name: str):
-        token = await caller()
-        parsed = _mcp_uuid(project_id, field="project_id")
-        await require_project(parsed, token, tool_name=tool_name)
-        services = runtime()
-        return parsed, TechnicalFixSources(
-            database=services.database,
-            storage=services.storage,
-            integrations=services.integrations,
-        )
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def list_technical_fix_sources(project_id: str, offset: int = 0) -> dict[str, Any]:
-        """List successful audit references. Inspect a source to check finding eligibility."""
-        parsed, preparation = await technical_fix_service(project_id, "list_technical_fix_sources")
-        try:
-            return await preparation.list_sources(project_id=parsed, offset=offset)
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def get_technical_fix_source(project_id: str, audit_run_id: str) -> dict[str, Any]:
-        """Verify an exact audit and inspect repair availability. Does not start compute.
-
-        findings contains technical findings with source_eligible and ineligible_reason.
-        excluded_findings identifies content recommendations and their suggested next action.
-        Only source_eligible technical findings may be selected for organic.technical_fix.
-        """
-        parsed, preparation = await technical_fix_service(project_id, "get_technical_fix_source")
-        try:
-            return await preparation.inspect(
-                project_id=parsed, audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id")
-            )
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def preflight_technical_fix(
-        project_id: str,
-        audit_run_id: str,
-        audit_revision: str,
-        finding_id: str,
-        expected_repository: str,
-        repository_serves_site: StrictBool,
-    ) -> dict[str, Any]:
-        """Read-only finding/repository preview. No run, paid compute, branch or PR is created.
-
-        repository_serves_site records a member's assertion, not proof of route mapping.
-        A repair run must revalidate and pin its own binding. Content recommendations
-        return content_finding; finding_not_found means the ID is absent from this audit.
-        """
-        parsed, preparation = await technical_fix_service(project_id, "preflight_technical_fix")
-        try:
-            selection = TechnicalFixSelection(
-                audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id"),
-                audit_revision=audit_revision,
-                finding_id=finding_id,
-                expected_repository=expected_repository,
-                repository_serves_site=repository_serves_site,
-            )
-            return await preparation.preflight(project_id=parsed, **selection.model_dump())
-        except ValidationError as exc:
-            raise ToolError(
-                "invalid_selection: Choose an exact audit finding and repository."
-            ) from exc
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
+    # organic.technical_fix is retired for new work; website.change (source audit) previews
+    # and records the same repairs with preflight_website_change.
 
     @server.tool()
     async def list_projects() -> list[dict[str, Any]]:
@@ -2082,10 +2313,11 @@ def create_mcp_app(
     async def stop_content_plan(run_id: str) -> dict[str, Any]:
         """Stop new planning/publication work; accepted model requests may still incur costs."""
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if not run or run.executor != "content.plan":
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_content_plan"
+        )
+        if run.executor != "content.plan":
             raise LookupError("Content plan run not found.")
-        await require_project(run.project_id, token, tool_name="stop_content_plan")
         return await stop_content_run(
             runtime=runtime(),
             project_id=run.project_id,
@@ -2193,11 +2425,19 @@ def create_mcp_app(
         request_id: str,
         schedule: WorkflowSchedule | None = None,
     ) -> dict[str, Any]:
-        """Save reusable workflow inputs and an optional daily or weekly schedule.
+        """Save reusable workflow inputs and an optional daily, weekly or monthly schedule.
 
         schedule is {"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00",
-        "timezone": "America/New_York"} or {"cadence": "daily", "local_time": "09:00",
-        "timezone": "..."}; the workflow's schedule_modes must allow the cadence.
+        "timezone": "America/New_York"}, {"cadence": "daily", "local_time": "09:00",
+        "timezone": "..."} or {"cadence": "monthly", "day_of_month": 1, "local_time": "09:00",
+        "timezone": "..."}. A monthly schedule runs on day_of_month (1-28) of every month, or
+        only in `months` (1-12; [1, 4, 7, 10] is quarterly). The workflow's schedule_modes must
+        allow the cadence.
+
+        A saved schedule also runs once right away, so the founder sees a result now rather
+        than at the first slot; `first_run` has that run's id and status, or why it could not
+        start (the schedule is saved either way). Do not also call start_project_workflow for
+        it. Without a schedule nothing runs until started.
         """
         token = await caller()
         clerk_user_id = token.subject
@@ -2227,6 +2467,7 @@ def create_mcp_app(
         try:
             normalized_name = _mcp_project_workflow_name(name)
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
+            require_saveable_schedule(parsed_schedule)
             normalized_inputs = normalize_workflow_inputs(
                 schema=schema,
                 project_id=parsed_project_id,
@@ -2253,10 +2494,73 @@ def create_mcp_app(
             )
         except (LookupError, RuntimeError, ValueError, WorkflowInputError) as exc:
             raise ToolError(str(exc)) from exc
+        first_run = None
+        if configured.schedule is not None:
+            starts_at = WorkflowSchedule.model_validate(configured.schedule).start_at
+            if starts_at is not None and starts_at > datetime.now(UTC):
+                # The founder chose when the schedule begins; running now would spend early.
+                first_run = {"status": "waits_for_start", "starts_at": starts_at.isoformat()}
+            else:
+                first_run = await _start_first_run(
+                    services=services,
+                    workflow=workflow,
+                    configured=configured,
+                    clerk_user_id=clerk_user_id,
+                    oauth_client_id=token.client_id,
+                )
+        message = _project_workflow_message(configured, created=True)
         return {
             **_mcp_project_workflow_view(configured),
-            **_founder_words(relay=_project_workflow_message(configured, created=True)),
+            **({"first_run": first_run} if first_run else {}),
+            **_founder_words(
+                relay=[message, _first_run_message(first_run)] if first_run else message
+            ),
         }
+
+    async def _start_first_run(
+        *, services, workflow, configured, clerk_user_id, oauth_client_id
+    ) -> dict[str, Any]:
+        """The one run a newly saved schedule makes right away, billed like any run.
+
+        Its start key is derived from the saved configuration, so a retried save returns the
+        same run. A refusal (limits, credits, prerequisites) leaves the schedule in place and
+        says why; the next scheduled slot runs as usual.
+        """
+        try:
+            run = await start_workflow_run(
+                runtime=services,
+                settings=settings,
+                workflow=workflow,
+                project_id=configured.project_id,
+                started_by_clerk_user_id=clerk_user_id,
+                start_idempotency_key=f"first-run:{configured.id}",
+                input_payload=configured.inputs,
+                project_workflow_id=configured.id,
+                definition_commit_sha=configured.definition_commit_sha,
+                input_schema=configured.input_schema,
+                trigger_source="mcp",
+                started_by_oauth_client_id=oauth_client_id,
+            )
+        except PrerequisiteError as exc:
+            return {"status": "not_started", "reason": str(exc)[:500]}
+        except (
+            IntegrationError,
+            LookupError,
+            RuntimeError,
+            TemporalStartError,
+            ValueError,
+            WorkflowExecutorUnavailableError,
+            WorkflowInputError,
+        ) as exc:
+            # A lost start reply still leaves the accepted run; recovery dispatches it.
+            accepted = await services.database.get_run_by_start_key(
+                project_id=configured.project_id,
+                start_idempotency_key=f"first-run:{configured.id}",
+            )
+            if accepted is not None:
+                return {"id": str(accepted.id), "status": accepted.status.value}
+            return {"status": "not_started", "reason": str(exc)[:500]}
+        return {"id": str(run.id), "status": run.status.value, **_prerequisite_facts(run)}
 
     @server.tool()
     async def update_project_workflow(
@@ -2306,6 +2610,7 @@ def create_mcp_app(
                     else None
                 )
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
+            require_saveable_schedule(parsed_schedule, previous=existing.schedule)
             normalized_inputs = normalize_workflow_inputs(
                 schema=existing.input_schema,
                 project_id=parsed_project_id,
@@ -2342,7 +2647,6 @@ def create_mcp_app(
                 settings=settings,
                 configured=configured,
                 previous_schedule=existing.schedule,
-                paused=existing.status == "paused",
             )
         except (
             LookupError,
@@ -2383,6 +2687,8 @@ def create_mcp_app(
         workflow = await services.database.get_workflow(configured.workflow_id)
         if workflow is None:
             raise ToolError("workflow is unavailable")
+        if public_plugin:
+            require_public_workflow(workflow, input_schema=configured.input_schema)
         try:
             run = await start_workflow_run(
                 runtime=services,
@@ -2429,10 +2735,7 @@ def create_mcp_app(
         """Stop future audit work. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_organic_audit")
+        await require_run(parsed, token, tool_name="stop_organic_audit")
         try:
             stopped = await stop_organic_audit_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2446,10 +2749,7 @@ def create_mcp_app(
         """Stop future paid-ads research. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_assessment")
+        await require_run(parsed, token, tool_name="stop_paid_ads_assessment")
         try:
             stopped = await stop_paid_ads_assessment_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2464,10 +2764,7 @@ def create_mcp_app(
         created stays paused in Google Ads."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_launch")
+        await require_run(parsed, token, tool_name="stop_paid_ads_launch")
         try:
             stopped = await stop_paid_ads_launch_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2481,10 +2778,7 @@ def create_mcp_app(
         """Stop today's Google Ads check. Changes already applied stand."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_paid_ads_monitor")
+        await require_run(parsed, token, tool_name="stop_paid_ads_monitor")
         try:
             stopped = await stop_paid_ads_monitor_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2512,8 +2806,13 @@ def create_mcp_app(
         parsed = _mcp_uuid(proposal_id, field="proposal_id")
         proposal = await runtime().database.get_paid_ads_proposal(parsed)
         if proposal is None:
-            raise ToolError("proposal not found")
-        await require_project(proposal["project_id"], token, tool_name="approve_paid_ads_proposal")
+            raise ToolError("not_found: proposal not found")
+        await require_project(
+            proposal["project_id"],
+            token,
+            tool_name="approve_paid_ads_proposal",
+            missing="proposal not found",
+        )
         try:
             row = await approve_paid_ads_proposal_service(
                 runtime=runtime(), proposal_id=parsed, clerk_user_id=token.subject
@@ -2529,8 +2828,13 @@ def create_mcp_app(
         parsed = _mcp_uuid(proposal_id, field="proposal_id")
         proposal = await runtime().database.get_paid_ads_proposal(parsed)
         if proposal is None:
-            raise ToolError("proposal not found")
-        await require_project(proposal["project_id"], token, tool_name="discard_paid_ads_proposal")
+            raise ToolError("not_found: proposal not found")
+        await require_project(
+            proposal["project_id"],
+            token,
+            tool_name="discard_paid_ads_proposal",
+            missing="proposal not found",
+        )
         try:
             row = await discard_paid_ads_proposal_service(
                 runtime=runtime(), proposal_id=parsed, clerk_user_id=token.subject
@@ -2544,10 +2848,7 @@ def create_mcp_app(
         """Stop future keyword research. Accepted provider requests may still incur costs."""
         token = await caller()
         parsed = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed)
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="stop_keyword_plan")
+        await require_run(parsed, token, tool_name="stop_keyword_plan")
         try:
             stopped = await stop_keyword_plan_service(
                 runtime=runtime(), run_id=parsed, clerk_user_id=token.subject
@@ -2615,10 +2916,9 @@ def create_mcp_app(
         token = await caller()
         clerk_user_id = token.subject
         assert clerk_user_id is not None
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run")
+        run = await require_run(_mcp_uuid(run_id, field="run_id"), token, tool_name="get_run")
+        from tin_lite.x_draft import facts as x_draft_facts
+
         review_summary = await _review_summary(runtime().database, run)
         delivery = await delivery_service(runtime()).status(run)
         selected_sources = await selected_run_sources(
@@ -2629,6 +2929,11 @@ def create_mcp_app(
             "project_id": str(run.project_id),
             "workflow_id": str(run.workflow_id),
             "workflow": run.workflow_name,
+            **(
+                {"x_draft": await x_draft_facts(runtime().database, run)}
+                if run.executor == "social.x_draft"
+                else {}
+            ),
             "status": run.status.value,
             "status_label": STATUS_LABELS.get(run.status.value, run.status.value),
             "artifact_path": run.artifact_path,
@@ -2652,6 +2957,8 @@ def create_mcp_app(
             "content_delivery": delivery,
             # Where a proposed page will appear, and whether Tin has found it live.
             "page_url": await page_url_service(runtime(), settings).view(run, delivery, check=True),
+            # After a technical fix's PR merges: whether the live site still shows the problem.
+            "live_check": await live_service(runtime()).view(run, check=True),
             # Before approval: what Publish does for a page Tin adapts to the site.
             **(
                 {
@@ -2717,10 +3024,7 @@ def create_mcp_app(
         from tin_lite.run_usage import read_run_usage
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run_usage")
+        run = await require_run(_mcp_uuid(run_id, field="run_id"), token, tool_name="get_run_usage")
         return await read_run_usage(database=runtime().database, run=run)
 
     async def _organic_system_facts(run):
@@ -2736,18 +3040,17 @@ def create_mcp_app(
         from tin_lite.organic_system_control import stop_system
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_organic_system"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_organic_system")
             return await stop_system(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, ValueError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
 
     @server.tool()
     async def stop_procedure(run_id: str) -> dict[str, Any]:
-        """Stop a code workflow or Codex procedure and its sandbox before publication starts.
+        """Stop a code workflow, Codex procedure or X draft before publication starts.
 
         Saved output is retained. Never recalls a PR or undoes an external action.
         If cleanup is pending, call again to retry cleanup. Does not pause or resume tasks.
@@ -2756,11 +3059,10 @@ def create_mcp_app(
         from tin_lite.procedure_control import stop_procedure as stop
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_procedure"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_procedure")
             return await stop(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
@@ -2771,11 +3073,10 @@ def create_mcp_app(
         from tin_lite.organic_system_control import stop_technical
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise ToolError("run not found")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="stop_technical_fix"
+        )
         try:
-            await require_project(run.project_id, token, tool_name="stop_technical_fix")
             return await stop_technical(runtime=runtime(), run_id=run.id, actor=token.subject)
         except (LookupError, ValueError, SideEffectConflictError) as exc:
             raise ToolError(str(exc)) from exc
@@ -2789,10 +3090,9 @@ def create_mcp_app(
         This is read-only. It does not apply a conflict, approve output, or retry a run.
         """
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="read_run_output")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="read_run_output"
+        )
         project = await runtime().database.get_project(run.project_id)
         if project is None:
             raise LookupError("project not found")
@@ -2818,11 +3118,20 @@ def create_mcp_app(
             "byte_count": len(output.content),
             "truncated": len(content) > 100_000,
             **(
-                document_handoff(settings, run)
+                document_handoff(settings, run, await _capture_proposal(run))
                 if source == "canonical" and output.path == run.artifact_path
                 else {}
             ),
         }
+
+    async def _capture_proposal(run: Any) -> Any:
+        """A waiting 1.2.0 brand or style proposal's revision contract, else None."""
+        from tin_lite.capture_revisions import contract
+        from tin_lite.document_handoff import review_pending
+
+        if not review_pending(run):
+            return None
+        return await contract(runtime().database, runtime().storage, run)
 
     @server.tool()
     async def compare_run_output(run_id: str) -> dict[str, Any]:
@@ -2833,10 +3142,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="compare_run_output")
+        await require_run(parsed_run_id, token, tool_name="compare_run_output")
         try:
             return await runtime().output_resolution.compare(run_id=parsed_run_id)
         except OutputResolutionError as exc:
@@ -2855,10 +3161,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_run_output_resolution")
+        await require_run(parsed_run_id, token, tool_name="get_run_output_resolution")
         assert token.subject is not None
         try:
             return await runtime().output_resolution.status(
@@ -2891,10 +3194,7 @@ def create_mcp_app(
         """
         token = await caller()
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="resolve_run_output")
+        await require_run(parsed_run_id, token, tool_name="resolve_run_output")
         request = OutputResolutionRequest(
             request_id=_mcp_uuid(request_id, field="request_id"),
             action=action,
@@ -2947,6 +3247,8 @@ def create_mcp_app(
         )
         workflows = await runtime().database.list_workflows(project_id=parsed_project_id)
         workflow = _mcp_workflow(workflows, workflow_id.strip())
+        if public_plugin:
+            require_public_workflow(workflow)
         supplied_inputs = _mcp_bound_inputs(inputs, parsed_project_id)
         task_fields = {"instruction": instruction, "title": title}
         if workflow.executor != PROJECT_TASK_WORKFLOW_NAME and any(
@@ -3128,10 +3430,7 @@ def create_mcp_app(
         clerk_user_id = token.subject
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_outreach_campaign")
+        await require_run(parsed_run_id, token, tool_name="get_outreach_campaign")
         campaign = await runtime().database.get_outreach_campaign_projection(parsed_run_id)
         if campaign is None:
             raise LookupError("campaign not found")
@@ -3165,10 +3464,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_request_id = _mcp_uuid(request_id, field="request_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="revise_email_campaign")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="revise_email_campaign")
         try:
             revision = await request_email_campaign_revision(
                 database=runtime().database,
@@ -3193,10 +3491,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_revision_id = _mcp_uuid(revision_id, field="revision_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="approve_email_campaign_revision")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="approve_email_campaign_revision")
         try:
             updated = await runtime().database.approve_email_campaign_revision(
                 run_id=parsed_run_id,
@@ -3223,10 +3520,9 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_revision_id = _mcp_uuid(revision_id, field="revision_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="discard_email_campaign_revision")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="discard_email_campaign_revision")
         try:
             updated = await runtime().database.discard_email_campaign_revision(
                 run_id=parsed_run_id,
@@ -3243,24 +3539,26 @@ def create_mcp_app(
         }
 
     @server.tool()
-    async def get_workflow_review(run_id: str) -> dict[str, Any]:
+    async def get_workflow_review(run_id: str, post_id: str = "") -> dict[str, Any]:
         """Read the current review and exact-version token, including proposed document pairs.
 
         Collect feedback in one pass; do not ask again if the user already stated changes.
         Attach only relevant, authorized project files. Requesting changes does not approve,
-        publish, or save permanent writing preferences.
+        publish. X feedback automatically remembers clear reusable writing preferences in the
+        account-specific X guide; one-off edits remain local to the draft. Pass post_id for a batch.
         """
         from fastapi.encoders import jsonable_encoder
 
         from tin_lite.workflow_reviews import WorkflowReviews
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="get_workflow_review")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="get_workflow_review"
+        )
         return jsonable_encoder(
-            await WorkflowReviews(runtime=runtime(), settings=settings).view(run.id, token.subject)
+            await WorkflowReviews(runtime=runtime(), settings=settings).view(
+                run.id, token.subject, post_id
+            )
         )
 
     @server.tool()
@@ -3270,28 +3568,37 @@ def create_mcp_app(
         review_token: str,
         request_id: str,
         reference_files: list[str] | None = None,
+        post_id: str = "",
         billing_quote_id: str | None = None,
     ) -> dict[str, Any]:
-        """Revise the exact article/assessment using feedback and optional project-file paths.
+        """Revise an article, X post or X guide from the user's verbatim feedback.
+
+        Relay the user's words unchanged. For X, pass post_id from get_workflow_review.
+        Clear reusable writing preferences are automatically saved to the X guide; factual
+        corrections and one-off edits stay with the draft. No remember checkbox is needed.
+        X revisions never publish, change attachments, or approve an initial guide.
 
         First get_workflow_review. Reuse request_id when retrying a lost response. This admits
         one separately metered generation of the SAME piece, not the next roadmap item.
         Feedback may name or describe project files for the procedure to inspect; no file
         selection is required. reference_files optionally pins exact supplied file contents.
-        Return its run/review link; approval of the revised copy is a separate user decision.
+        For X, an X writing guide accepts reference_files (up to eight text project files,
+        such as writing samples or notes to learn the voice from); an X post does not.
+        Return its run/review link. Article and initial-guide approval remain separate;
+        X post publication still requires an exact preview and explicit confirmation.
         """
         from tin_lite.workflow_reviews import WorkflowReviews
 
         token = await caller()
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="request_workflow_changes")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="request_workflow_changes"
+        )
         try:
             revised = await WorkflowReviews(runtime=runtime(), settings=settings).request_changes(
                 run_id=run.id,
                 actor=token.subject,
                 feedback=feedback,
+                post_id=post_id,
                 token=review_token,
                 request_id=_mcp_uuid(request_id, field="request_id"),
                 reference_files=reference_files or [],
@@ -3310,6 +3617,60 @@ def create_mcp_app(
             "version": revised.review_version,
             "source_run_id": str(run.id),
             "result": "Revision accepted; queued for execution.",
+        }
+
+    @server.tool()
+    async def revise_capture_proposal(
+        run_id: str,
+        review_token: str,
+        request_id: str,
+        files: list[ProposalFile],
+        note: str = "",
+        client: TriggerClient | None = None,
+    ) -> dict[str, Any]:
+        """Revise a brand.capture or style.capture proposal that waits in Decisions.
+
+        First get_workflow_review: it gives review_token and the proposal files (documents[].path).
+        Send the complete new text of one or both files, not a patch. Tin checks them with the
+        capture's own validators, replaces the proposal files and keeps the run waiting. Only
+        that run's proposal files, only before the founder decides. Reuse request_id to retry.
+        `note` is a one-line summary of the change; Tin shortens a longer one to 500 characters.
+        This never approves: the founder still approves or discards it in Decisions.
+        """
+        from tin_lite.capture_revisions import CaptureRevisions, review_view
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="revise_capture_proposal"
+        )
+        services = runtime()
+        result = await CaptureRevisions(
+            database=services.database, storage=services.storage
+        ).revise(
+            run_id=run.id,
+            actor=token.subject,
+            review_token=review_token,
+            request_id=_mcp_uuid(request_id, field="request_id"),
+            files=[item.model_dump() for item in files],
+            note=note,
+            source="mcp",
+            client=client,
+            oauth_client_id=token.client_id,
+        )
+        view = await review_view(services.database, services.storage, run.id, token.subject)
+        url = document_url(settings, run)
+        return {
+            **result,
+            "review_token": view["review_token"],
+            "proposal_revisions": view.get("proposal_revisions"),
+            "review_url": url,
+            **_founder_words(
+                relay=[
+                    f"Tin saved revision {result['revision_number']} of the proposed "
+                    f"{result['proposal']}. It still waits in Decisions, where they approve or "
+                    f"discard it: {url}",
+                ]
+            ),
         }
 
     async def _adaptation_words(
@@ -3331,15 +3692,59 @@ def create_mcp_app(
             "Approved. Tin is adapting the page to the site's own format in a separate run"
             + (f", up to {about}, charged on actual usage." if about else ".")
         ]
+        route = chosen.get("route")
         if chosen_mode(chosen) == "github_commit":
             words.append(
-                "Tin merges its pull request into main when the pull request adds only the page "
-                "and GitHub reports it clean; otherwise the pull request stays open and get_run "
+                "Tin merges its pull request into main when it adds only the page, or the page "
+                f"at your chosen route {route}, and GitHub reports it clean; otherwise the pull "
+                "request stays open and get_run says why."
+                if route
+                else "Tin merges its pull request into main when it adds only the page and "
+                "GitHub reports it clean; otherwise the pull request stays open and get_run "
                 "says why."
             )
         else:
             words.append("It opens a pull request; merge it when you like.")
+        if not route:
+            words.append(
+                "No one has chosen where these pages live on the site yet, so this adaptation "
+                "picks a route itself. Ask the founder now, with ask_the_founder, so later "
+                "pages use the route they choose."
+            )
         return words, cost
+
+    @server.tool()
+    async def discard_workflow_review(run_id: str) -> dict[str, Any]:
+        """Discard what a run has waiting in Decisions, only when the founder asked you to.
+
+        The proposal is declined: the run ends as declined, nothing it proposed is used,
+        published or applied, and its files stay readable in Files. Use it for a draft or
+        guide the founder turned down, or for an older proposal a newer one replaced. A
+        one-off project task is stopped instead. Discarding again returns the same result.
+        """
+        from tin_lite.proposal_decline import discard_review
+
+        token = await caller()
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="discard_workflow_review"
+        )
+        try:
+            discarded = await discard_review(runtime=runtime(), run_id=run.id, actor=token.subject)
+        except LookupError as exc:
+            raise ToolError(f"not_found: {exc}") from exc
+        except project_task_control.ProjectTaskDeliveryError as exc:
+            raise ToolError(f"delivery_failed: {exc}") from exc
+        except (ValueError, RuntimeError) as exc:
+            raise ToolError(f"conflict: {exc}") from exc
+        return {
+            "id": str(discarded.id),
+            "project_id": str(discarded.project_id),
+            "status": discarded.status.value,
+            "review_decision": discarded.review_decision,
+            **_founder_words(
+                relay="Discarded. Nothing from it was used, and its files stay in Files."
+            ),
+        }
 
     @server.tool()
     async def approve_workflow_run(
@@ -3353,8 +3758,8 @@ def create_mcp_app(
         For a content draft (answer page, article, content program draft) `delivery` says how
         the approved draft ships: github_pr opens a pull request, github_commit publishes to the
         default branch now, none keeps it in Tin; `remember` makes it the program's default.
-        Without `delivery` the program's setting applies. Tell the founder the result's
-        `relay` in your words.
+        Without `delivery` the program's setting applies; a page outside a saved workflow
+        stays in Tin, like none. Tell the founder the result's `relay` in your words.
 
         An answer page or public article with a GitHub repository is not committed as-is:
         approving with github_pr or github_commit starts a separately metered adaptation
@@ -3366,15 +3771,15 @@ def create_mcp_app(
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
         and supply its review_token. Approval applies both declared destinations atomically;
-        delivery and writing-style feedback do not apply to these pairs.
+        delivery and writing-style feedback do not apply to these pairs. A writing style
+        proposal from style.capture 1.2.0 needs its review_token the same way.
         """
         token = await caller()
         clerk_user_id = token.subject
         assert clerk_user_id is not None
-        run = await runtime().database.get_run(_mcp_uuid(run_id, field="run_id"))
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="approve_workflow_run")
+        run = await require_run(
+            _mcp_uuid(run_id, field="run_id"), token, tool_name="approve_workflow_run"
+        )
         from tin_lite.review_revisions import approval_conflict
         from tin_lite.workflow_reviews import SUPPORTED_IDS, WorkflowReviews
 
@@ -3384,6 +3789,7 @@ def create_mcp_app(
             raise ToolError(f"conflict: {conflict}")
         delivery_words = None
         delivery_cost_view: dict[str, Any] | None = None
+        route_question: dict[str, Any] | None = None
         if delivery is not None:
             from tin_lite.content_delivery import CHOICE_WORKFLOW_IDS
             from tin_lite.project_files import ProjectFileError
@@ -3412,12 +3818,25 @@ def create_mcp_app(
                 delivery_words, delivery_cost_view = await _adaptation_words(
                     run, chosen, clerk_user_id
                 )
+                if not chosen.get("route"):
+                    from tin_lite.page_routes import ask_the_founder, page_type
 
+                    route_question = ask_the_founder(page_type(run), None)
+
+        from tin_lite.capture_revisions import STYLE_KEY, binds_style_approval
         from tin_lite.reviewed_documents import document_spec
 
-        if run.workflow_id in SUPPORTED_IDS or (
-            run.executor == "codex.procedure"
-            and await document_spec(runtime().database, runtime().storage, run)
+        if (
+            run.executor == "social.x_style"
+            or run.workflow_id in SUPPORTED_IDS
+            or (
+                run.executor == "codex.procedure"
+                and await document_spec(runtime().database, runtime().storage, run)
+            )
+            or (
+                run.executor == STYLE_KEY
+                and await binds_style_approval(runtime().database, runtime().storage, run)
+            )
         ):
             approved = await WorkflowReviews(runtime=runtime(), settings=settings).approve(
                 run_id=run.id,
@@ -3430,6 +3849,7 @@ def create_mcp_app(
                 "status": approved.status.value,
                 "review_decision": approved.review_decision,
                 **({"delivery_cost": delivery_cost_view} if delivery_cost_view else {}),
+                **({"ask_the_founder": route_question} if route_question else {}),
                 **_founder_words(relay=delivery_words),
             }
         if run.executor == PROJECT_TASK_WORKFLOW_NAME:
@@ -3506,6 +3926,9 @@ def create_mcp_app(
                 "When get_run shows it done, its quote is Tin's words on what runs and what is "
                 "already there (relay them as given) and its relay the facts to tell in your "
                 "words: what to expect, where to watch, what was left out."
+                if run.executor == GROWTH_ONBOARDING_KEY
+                else "Recorded durably. Tin picks it up within a minute or two; read the run "
+                "again then rather than re-approving."
             ),
             "links": _project_links(settings, run.project_id),
         }
@@ -3535,10 +3958,7 @@ def create_mcp_app(
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
         parsed_request_id = _mcp_uuid(request_id, field="request_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise LookupError("run not found")
-        await require_project(run.project_id, token, tool_name="record_onboarding_picks")
+        run = await require_run(parsed_run_id, token, tool_name="record_onboarding_picks")
         from tin_lite.growth_onboarding_control import onboarding_run
 
         try:
@@ -3582,11 +4002,8 @@ def create_mcp_app(
         parsed_request_id = (
             _mcp_uuid(request_id, field="request_id") if request_id is not None else None
         )
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None:
-            raise ToolError("run not found")
+        await require_run(parsed_run_id, token, tool_name="send_project_task_message")
         try:
-            await require_project(run.project_id, token, tool_name="send_project_task_message")
             result = await project_task_control.send_project_task_message(
                 runtime=runtime(),
                 run_id=parsed_run_id,
@@ -3614,10 +4031,9 @@ def create_mcp_app(
         clerk_user_id = token.subject
         assert clerk_user_id is not None
         parsed_run_id = _mcp_uuid(run_id, field="run_id")
-        run = await runtime().database.get_run(parsed_run_id)
-        if run is None or run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
+        run = await require_run(parsed_run_id, token, tool_name="stop_email_campaign")
+        if run.workflow_name != EMAIL_CAMPAIGN_WORKFLOW_NAME:
             raise LookupError("email campaign not found")
-        await require_project(run.project_id, token, tool_name="stop_email_campaign")
         if run.status is RunStatus.STOPPED:
             return {"id": run_id, "status": RunStatus.STOPPED.value}
         stopped = await runtime().database.stop_email_campaign(run_id=parsed_run_id)
@@ -3769,6 +4185,55 @@ def create_mcp_app(
             }
         if (
             parsed_project_id is not None
+            and workflow.key == "website.change"
+            and workflow.project_id is None
+        ):
+            from tin_lite import website_change
+            from tin_lite.content_repository_delivery import discover
+            from tin_lite.page_routes import PageRouteService, ask_the_founder
+
+            try:
+                routes = (
+                    await PageRouteService(
+                        database=runtime().database, storage=runtime().storage
+                    ).read(parsed_project_id)
+                )["routes"]
+            except (LookupError, ValueError):
+                routes = {}
+            # One question at a time: answer pages first, then articles.
+            unchosen = [kind for kind in ("answer_page", "article") if kind not in routes]
+            protected = await website_change.project_protected_paths(
+                runtime().database.pool, project_id=parsed_project_id
+            )
+            draft_preparation = {
+                "preparation": {
+                    **await discover(runtime().database, parsed_project_id),
+                    "page_routes": routes,
+                    "protected_paths": protected["effective"],
+                    **({"ask_the_founder": ask_the_founder(unchosen[0], None)} if unchosen else {}),
+                    "instruction": "Choose an approved article, answer page or public article "
+                    "by title from preparation.articles, and confirm the website repository "
+                    "with get_integration(infra.github). Start website.change with "
+                    "source_run_id and expected_repository through the ordinary quote/start "
+                    "flow. An answer page or public article needs a chosen route first: when "
+                    "preparation.page_routes has none for its type, ask the founder as "
+                    "ask_the_founder describes and call save_page_route. A page approved in "
+                    "Tin by a named reviewer, with commit to main, publishes (Tin merges the "
+                    "PR once the repository's required checks pass); otherwise, and for the "
+                    "pages in preparation.protected_paths, the PR waits for the founder. To "
+                    "protect more pages, such as ones another app shares, ask the founder and "
+                    "call set_protected_paths. Never approve a draft just to publish it. For "
+                    "the technical fixes the latest audit found (source audit) or the URL "
+                    "changes page decisions made (planned), call preflight_website_change "
+                    "first, then start website.change with that source, "
+                    "repository_serves_site and any answered "
+                    "decisions; changes the founder approved (in Decisions, or "
+                    "approve_website_change) publish, the rest open a PR. Deleting a page stays "
+                    "with the founder.",
+                }
+            }
+        if (
+            parsed_project_id is not None
             and workflow.key == "content.generate"
             and workflow.project_id is None
         ):
@@ -3785,8 +4250,9 @@ def create_mcp_app(
                         "arguments": {"project_id": str(parsed_project_id)},
                     },
                     "instruction": "Choose a content program, then start content.generate "
-                    "with only program_id. Tin selects the next article in chronological plan "
-                    "order and prevents duplicate drafts. Do not ask the user to pick an article "
+                    "with only program_id. Tin selects the next item in chronological plan "
+                    "order (an article, an answer page or a page refresh) and prevents duplicate "
+                    "drafts. Do not ask the user to pick an article "
                     "by default. Only supply item_id when they explicitly choose another article; "
                     "rewrite=true also requires that explicit item_id. "
                     "Reuse request_id when retrying the same start. If your tool list is cached, "
@@ -3886,6 +4352,121 @@ def create_mcp_app(
             for run in runs
         ]
 
+    def x_draft_handoff(project_id: UUID, path: str) -> dict[str, str]:
+        query = urlencode({"project": str(project_id), "x_draft": path})
+        url = f"{dashboard_url(settings)}/activity?{query}"
+        return {"upload_url": url, "open_command": _open_command(url)}
+
+    @server.tool()
+    async def read_x_drafts(project_id: str, path: str) -> dict[str, Any]:
+        """Read a bounded X draft in project Files and get its browser editor/upload link.
+
+        The returned JSON has separate publishable text, facts, notes and attachments.
+        Reading or editing a draft never publishes to X.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="read_x_drafts")
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).read(project, token.subject, path)
+        except ValidationError as exc:
+            raise ToolError("X draft is invalid or unavailable") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def save_x_draft(
+        project_id: str,
+        path: str,
+        expected_revision: str,
+        request_id: str,
+        draft: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Save an edited X draft as an ordinary project file at expected_revision.
+
+        Preserve stable post IDs and separate notes from publishable text. Reuse the
+        same request_id only when retrying identical edits after an uncertain response.
+        This does not approve or publish any post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        request = _mcp_uuid(request_id, field="request_id")
+        await require_project(project, token, tool_name="save_x_draft")
+        _validate_revision(expected_revision)
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).save(
+                project,
+                token.subject,
+                path=path,
+                expected_revision=expected_revision,
+                request_id=request,
+                draft=draft,
+                client_id=token.client_id,
+            )
+        except ValidationError as exc:
+            raise ToolError("X draft has an invalid field") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def preview_x_post(project_id: str, path: str, post_id: str) -> dict[str, Any]:
+        """Prepare one exact X post preview; do not treat its token as consent to publish.
+
+        Show the person the destination account, exact text and media. Any later edit
+        requires a fresh preview. Publishing is a separate explicit confirmation.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="preview_x_post")
+        assert token.subject is not None
+        try:
+            view = await XPosts(runtime(), settings).preview(
+                project, token.subject, path=path, post_id=post_id
+            )
+        except ValidationError as exc:
+            raise ToolError("X draft has an invalid field") from exc
+        return {**view, **x_draft_handoff(project, path)}
+
+    @server.tool()
+    async def publish_x_post(
+        project_id: str,
+        preview_token: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Publish only after the person explicitly confirms this exact X preview.
+
+        The call starts durable delivery; return its run ID immediately and check
+        list_project_runs for progress. Retry an uncertain call only with the SAME
+        preview_token and request_id. Never silently send another post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="publish_x_post")
+        assert token.subject is not None
+        return await XPosts(runtime(), settings).publish(
+            project,
+            token.subject,
+            preview_token=_mcp_uuid(preview_token, field="preview_token"),
+            request_id=_mcp_uuid(request_id, field="request_id"),
+            client_id=token.client_id,
+        )
+
+    @server.tool()
+    async def prepare_x_media_upload(project_id: str, path: str) -> dict[str, str]:
+        """Give the member the secure X draft editor to upload local images or video.
+
+        MCP accepts project file paths in draft attachments but never raw media bytes,
+        local device paths or arbitrary external URLs.
+        """
+        from tin_lite.project_files import safe_project_file_path
+
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="prepare_x_media_upload")
+        if not safe_project_file_path(path) or not path.endswith(".json"):
+            raise ToolError("Choose an X draft JSON path in this project")
+        return x_draft_handoff(project, path)
+
     @server.tool()
     async def list_project_files(project_id: str, revision: str | None = None) -> dict[str, Any]:
         """List ordinary files at the current or requested project-state revision."""
@@ -3948,8 +4529,8 @@ def create_mcp_app(
         paths: list[str] | None = None,
         limit: int = 50,
     ) -> dict[str, Any]:
-        """Search bounded project-state text without checking out the repository."""
-        from tin_lite.project_files import safe_project_file_path
+        """Search project-state files for literal text without checking out the repository."""
+        from tin_lite.project_files import safe_project_search_path
 
         token = await caller()
         clerk_user_id = token.subject
@@ -3958,7 +4539,7 @@ def create_mcp_app(
         await require_project(parsed_project_id, token, tool_name="search_project_files")
         if not query or len(query) > 500 or limit < 1 or limit > 100:
             raise ValueError("query or limit is outside the supported bounds")
-        if paths and any(not safe_project_file_path(path) for path in paths):
+        if paths and any(not safe_project_search_path(path) for path in paths):
             raise ValueError("unsafe or protected project path")
         project = await runtime().database.get_project(parsed_project_id)
         if project is None:
@@ -4130,7 +4711,11 @@ def create_mcp_app(
 
     @server.tool()
     async def get_integration(project_id: str, provider_key: str) -> dict[str, Any]:
-        """Read one project integration and its granted Tin capabilities."""
+        """Read one project integration and its granted Tin capabilities.
+
+        `ready` is true once it is connected and its Search Console property, repository or
+        PostHog project is chosen; until then `next_action` says what the founder does.
+        """
         values = await list_integrations(project_id)
         value = next((item for item in values if item["key"] == provider_key), None)
         if value is None:
@@ -4359,9 +4944,13 @@ def create_mcp_app(
             }
         return {"disconnected": True}
 
+    if isinstance(server, PublicMCPServer):
+        server.configure(
+            start=start_workflow, start_saved=start_project_workflow, caller=caller, runtime=runtime
+        )
     host = urlsplit(settings.switchboard_public_url).hostname or "127.0.0.1"
     app = server.streamable_http_app(
-        streamable_http_path="/mcp",
+        streamable_http_path=path,
         json_response=True,
         stateless_http=True,
         host=host,

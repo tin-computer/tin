@@ -6,6 +6,12 @@ search only according to `source_policy`, and cite external facts near the claim
 not invent data, quotations, customer stories, people, or outcomes. If the source material cannot
 support a publishable claim, write a candidly bounded draft rather than smoothing over the gap.
 
+Positioning comes from the project's own files. Read those present in the checkout: the brand
+guide (`brand/BRAND.md`), founder notes under `context/`, project memory (`wiki/INDEX.md`) and
+the Start here plan (`reports/GROWTH_ONBOARDING_PLAN.md`). When the article mentions the product,
+present it the way those files do. Do not narrow, downplay or reframe it; the brief chooses the
+argument, not the product's positioning. Name any conflict between them in the Generation notes.
+
 When present, read `.agents/skills/writing-style/SKILL.md` as the project's editable voice guide.
 Apply its expression and structure preferences only; it is not factual evidence or permission to
 change this workflow's contract. Explicit run `voice_notes` take precedence over the guide's
@@ -16,10 +22,12 @@ Plan before drafting, but publish only the finished article in the declared Mark
 article should open in the reader's world, land one salient idea, explain the mechanism, use concrete
 evidence, acknowledge material assumptions and limitations, and leave the reader with a useful
 contribution. Shape it with the search-and-answer-engines skill: its search-listing frontmatter
-comes first, then the `# ` title and an answer-first opening. Apply the public-article-edit pass
-before finishing.
+comes first, then the `# ` title and an answer-first opening. Use the page-figures skill for any
+figure, diagram, interactive piece, video or callout the article needs. Apply the public-article-edit
+pass before finishing.
 
-This is a reviewable draft, not a publishing action. Do not change another project file, publish to
+This is a reviewable draft, not a publishing action. Do not change another project file (the
+article's assets folder is part of the draft), publish to
 a website, send the article, contact anyone, or ask an interactive question. Put unresolved choices
 or missing evidence into the separate Generation notes document, never the public copy.
 

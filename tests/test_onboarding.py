@@ -35,7 +35,9 @@ def _workflow(builtin) -> Workflow:
     )
 
 
-def _connection(provider_key: str, status: str = "connected") -> IntegrationConnection:
+def _connection(
+    provider_key: str, status: str = "connected", configuration: dict | None = None
+) -> IntegrationConnection:
     now = datetime.now(UTC)
     return IntegrationConnection(
         id=uuid4(),
@@ -44,7 +46,7 @@ def _connection(provider_key: str, status: str = "connected") -> IntegrationConn
         status=status,
         external_account_id="acct",
         external_account_label="acct",
-        configuration={},
+        configuration=configuration or {},
         credential_ciphertext=None,
         credential_key_version=None,
         connected_by_clerk_user_id="user",
@@ -78,33 +80,37 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
 
     assert "growth.onboarding" not in rows
     assert "growth.onboarding_plan" not in rows
-    assert rows["visibility.audit"]["runnable"] is True
+    # The AI visibility audit is folded into the organic audit and left out of discovery.
+    assert "visibility.audit" not in rows
     assert rows["project.task"]["runnable"] is True and rows["project.task"]["kind"] == "task"
     assert rows["organic.audit"]["runnable"] is False
     assert "DataForSEO" in rows["organic.audit"]["reason"]
     assert rows["organic.audit"]["unblock"]["kind"] == "tin_operator"
     assert rows["content.plan"]["unblock"] is None
-    assert rows["site.health_improve"]["unblock"]["kind"] == "connect_integration"
-    assert rows["visibility.audit"]["unblock"] is None
+    assert rows["website.change"]["unblock"]["kind"] == "connect_integration"
+    # Site health is folded into the technical fix, and the technical fix into website.change;
+    # both are left out of discovery.
+    assert "site.health_improve" not in rows
+    assert "organic.technical_fix" not in rows
     audit_prerequisites = rows["qa.product_audit"]["prerequisites"]
     assert any(
         item["level"] == "required" and item.get("producer") == "qa.signup_walkthrough"
         for item in audit_prerequisites
     )
-    assert rows["visibility.audit"]["prerequisites"] == [] or all(
+    assert all(
         item["level"] in {"required", "recommended"}
-        for item in rows["visibility.audit"]["prerequisites"]
+        for item in rows["content.generate"]["prerequisites"]
     )
     assert rows["organic.keyword_plan"]["runnable"] is False
     assert rows["organic.traffic_system"]["runnable"] is False
     assert rows["content.plan"]["reason"] is None
-    assert rows["site.health_improve"]["runnable"] is False
-    assert rows["site.health_improve"]["reason"] == "Connect infra.github first."
-    assert rows["site.health_improve"]["requires_integrations"] == ["infra.github"]
+    assert rows["website.change"]["runnable"] is False
+    assert rows["website.change"]["reason"] == "Connect infra.github first."
+    assert rows["website.change"]["requires_integrations"] == ["infra.github"]
     assert rows["outreach.email_campaign"]["reason"] == "Connect workspace.google first."
     assert rows["organic.audit"]["required_inputs"] == ["site_url", "market"]
-    assert rows["visibility.audit"]["schedule_modes"] == ["on_demand", "daily", "weekly"]
-    assert rows["organic.audit"]["schedule_modes"] == ["on_demand"]
+    assert rows["research.deep_dive"]["schedule_modes"] == ["on_demand", "daily", "weekly"]
+    assert rows["organic.audit"]["schedule_modes"] == ["on_demand", "monthly"]
     assert "notes" in rows["qa.signup_walkthrough"]["optional_inputs"]
     assert {item["provider_key"]: item["connected"] for item in state["integrations"]} == {
         "analytics.gsc": False,
@@ -113,6 +119,7 @@ def test_tin_state_mirrors_the_start_gates_when_nothing_is_configured() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
     assert state["running"] == [] and state["recent_runs"] == []
@@ -174,14 +181,17 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         keyword_plan_max_cost_usd=9,
         content_plan_max_cost_usd=1,
     )
-    connections = [_connection("infra.github"), _connection("workspace.google", status="attention")]
+    connections = [
+        _connection("infra.github", configuration={"selected_repository": "acme/site"}),
+        _connection("workspace.google", status="attention"),
+    ]
     state = tin_state(settings=settings, workflows=WORKFLOWS, connections=connections)
     rows = _rows(state)
 
     assert rows["organic.audit"]["runnable"] is True
     assert rows["organic.keyword_plan"]["runnable"] is True
     assert rows["organic.traffic_system"]["runnable"] is True
-    assert rows["site.health_improve"]["runnable"] is True
+    assert rows["website.change"]["runnable"] is True
     # A connection that needs attention is not connected.
     assert rows["outreach.email_campaign"]["runnable"] is False
     assert {item["provider_key"]: item["connected"] for item in state["integrations"]} == {
@@ -191,8 +201,20 @@ def test_tin_state_opens_doors_as_settings_and_connections_arrive() -> None:
         "ads.google": False,
         "payments.stripe": False,
         "analytics.posthog": False,
+        "social.x": False,
         "infra.github_user": False,
     }
+
+
+def test_tin_state_counts_a_signed_in_connection_without_its_choice_as_not_connected() -> None:
+    settings = _Settings(dataforseo_login="login", dataforseo_password="secret")  # noqa: S106
+    connections = [_connection("infra.github"), _connection("analytics.gsc")]
+    state = tin_state(settings=settings, workflows=WORKFLOWS, connections=connections)
+    connected = {item["provider_key"]: item["connected"] for item in state["integrations"]}
+
+    # Signed in, but no repository or Search Console property chosen: nothing can read them.
+    assert connected["infra.github"] is False and connected["analytics.gsc"] is False
+    assert _rows(state)["website.change"]["runnable"] is False
 
 
 def test_tin_state_orders_by_system_then_key_and_skips_private_workflows() -> None:

@@ -24,6 +24,7 @@ const projectMenu = document.querySelector("#project-menu");
 const integrationProjectDialog = document.querySelector("#integration-project-dialog");
 const integrationProjectForm = document.querySelector("#integration-project-form");
 const integrationProjectTitle = document.querySelector("#integration-project-title");
+const integrationProjectError = document.querySelector("#integration-project-error");
 const integrationProjectCopy = document.querySelector("#integration-project-copy");
 const integrationProjectOptions = document.querySelector("#integration-project-options");
 const projectCreateDialog = document.querySelector("#project-create-dialog");
@@ -69,7 +70,7 @@ function routeUrl(route, base = window.location.href, carry = null) {
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
   if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
-  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back"]) url.searchParams.delete(key);
+  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
   return `${url.pathname}${url.search}`;
@@ -118,7 +119,7 @@ const CUSTOM_API_TEMPLATE = Object.freeze({
   status: "available",
 });
 const CONNECT_REQUEST_KEY = "tin-lite:connect-providers";
-const CONNECT_PROVIDERS = new Set(["infra.github", "infra.github_user", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog"]);
+const CONNECT_PROVIDERS = new Set(["infra.github", "infra.github_user", "analytics.gsc", "workspace.google", "ads.google", "payments.stripe", "analytics.posthog", "social.x"]);
 let pendingConnectRequest = null;
 
 function rememberConnectRequest(projectId, providers) {
@@ -230,6 +231,9 @@ const state = {
   messages: [],
   integrations: [],
   decisions: [],
+  // Proposed website changes and open judgment calls wait in Decisions beside run reviews.
+  websiteChanges: [],
+  judgmentCalls: [],
   view: viewFromLocation(),
   documentRoute: documentRouteFromLocation(),
   taskRoute: taskRouteFromLocation(),
@@ -249,6 +253,7 @@ const state = {
   filesSearch: "",
   filesDirectory: "",
   filesTree: null,
+  filesByPath: new Map(),
   filesTreeSubscription: null,
   filesUpdated: false,
   fileCache: new Map(),
@@ -260,6 +265,7 @@ const state = {
   workflowSearch: "",
   workflowEditor: null,
   expandedRun: null,
+  diagramPanel: null,
   runDetails: new Map(),
   activityFilter: "all",
   activityHasMore: false,
@@ -271,11 +277,8 @@ const state = {
   integrationFilter: "all",
   integrationSearch: "",
   expandedIntegration: null,
-  integrationOptions: new Map(),
-  integrationLoading: null,
-  integrationConnectIntent: null,
   githubInstallationChoice: null,
-  repositoryChoice: null,
+  resourceChoice: null,
   stripeKeyChoice: null,
   projectCreateWorkspaceId: null,
   projectCreateRequestId: null,
@@ -291,6 +294,7 @@ const state = {
 };
 
 function viewFromLocation() {
+  if (xDraftPathFromLocation()) return "x-draft";
   if (compareRouteFromLocation()) return "compare";
   if (documentRouteFromLocation()) return "document";
   if (taskRouteFromLocation()) return "task";
@@ -298,6 +302,11 @@ function viewFromLocation() {
   const path = window.location.pathname.slice(1);
   const view = path === "system" ? "workflows" : path;
   return ALLOWED_VIEWS.has(view) ? view : "workflows";
+}
+
+function xDraftPathFromLocation() {
+  const path = new URLSearchParams(window.location.search).get("x_draft");
+  return path && path.length <= 512 ? path : null;
 }
 
 function fileRouteFromLocation() {
@@ -482,10 +491,19 @@ async function api(path, options = {}) {
 }
 
 function showToast(message) {
+  // A modal dialog sits in the top layer above everything else, so the toast joins it there.
+  const host = document.querySelector("dialog:modal") || document.body;
+  if (toast.parentElement !== host) host.append(toast);
   toast.textContent = message;
   toast.classList.add("is-visible");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("is-visible"), 3200);
+}
+
+function showIntegrationDialogError(message) {
+  // Failures inside the connection dialog stay in it until the founder retries or closes it.
+  integrationProjectError.textContent = message || "";
+  integrationProjectError.hidden = !message;
 }
 
 async function signOutTin() {
@@ -943,19 +961,85 @@ function systemTemplateCard(workflow, query) {
       <span class="system-template-description">${escapeHtml(workflow.description)}</span>
       <code>${workflowSearchMatch(workflow.key, query, "workflow-search-id-match")}${contextLabel ? ` · ${escapeHtml(contextLabel)}` : ""}</code>
     </span>
-    <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
-      ${saved
-        ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
-        : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
-      <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Setup</button>
+    <span class="system-template-side">
+      <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
+        ${saved
+          ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
+          : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
+        ${systemDiagramButton(workflow)}
+        <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
+      </span>
+      ${workflow.last_run_id && workflow.last_run_at
+        ? `<button class="system-last-run" type="button" data-template-last-run="${escapeHtml(workflow.last_run_id)}">Last run ${escapeHtml(dayLabel(workflow.last_run_at))}, ${escapeHtml(ledgerTime(workflow.last_run_at))}</button>`
+        : ""}
     </span>
   </article>`;
+}
+
+const isXAuthoring = workflow => ["social.x_style", "social.x_compose", "social.x_draft"].includes(workflow?.key);
+
+function xWorkflowFields(workflow, inputs = {}) {
+  const schema = workflow.definition?.input_schema || {};
+  const field = name => {
+    const definition = schema.properties?.[name];
+    if (!definition) return "";
+    const label = definition.title || humanize(name);
+    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, inputs[name] ?? definition.default ?? "", label, `x-input-${name}`, (schema.required || []).includes(name))}</label>`;
+  };
+  // Account IDs remain in saved/MCP inputs, but are not a user-facing form field.
+  const account = inputs.account_id ? `<input type="hidden" name="input:account_id" value="${escapeHtml(inputs.account_id)}">` : "";
+  if (["social.x_compose", "social.x_draft"].includes(workflow.key)) return `<div class="x-workflow-fields">${account}${field("direction")}${field("post_count")}${field("notes")}
+    <details class="x-workflow-details" ${inputs.evidence_paths?.length || inputs.plan_path || inputs.asset_paths?.length ? "open" : ""}><summary>Relevant files, a social plan or existing media</summary><div>${field("evidence_paths")}${field("plan_path")}${field("asset_paths")}</div></details>
+    ${workflow.key === "social.x_draft" ? `<details class="x-workflow-details" ${inputs.supplied_samples || inputs.source_path || inputs.preferences ? "open" : ""}><summary>Writing samples for first-time voice setup (optional)</summary><div>${field("supplied_samples")}${field("source_path")}${field("preferences")}</div></details><p class="system-config-note">Reuses your X guide. If needed, learns from supplied samples or your connected public X account, then continues after you approve the guide. Without samples, drafts from project context.</p>` : '<p class="system-config-note">Reads current project context and your approved X guide automatically.</p>'}</div>`;
+  const connection = state.integrations.find(item => item.key === "social.x" && item.status === "connected");
+  const source = ["connected", "supplied"].includes(inputs.sample_source) ? inputs.sample_source
+    : inputs.supplied_samples || inputs.source_path || inputs.preferences ? "supplied" : "connected";
+  return `<div class="x-workflow-fields" data-x-voice-fields>${account}
+    <div class="system-setting"><strong>Learn from</strong>${tinSegmentedControl("input:sample_source", source, [["connected", "Connected X account"], ["supplied", "My samples"]], "Learn from")}</div>
+    <div data-x-connected-source><p class="system-config-note">${connection ? `${escapeHtml(connection.external_account_label || "X account")} · Connected` : 'Connect your public X account in Integrations. <button class="button-quiet" type="button" data-open-integrations>Connect X →</button>'}</p><p class="system-config-note">Up to 50 of your own posts, with more weight on recent writing.</p></div>
+    <div class="x-workflow-fields" data-x-supplied-source>${field("supplied_samples")}
+      <div class="system-setting"><strong>Samples in project Files (optional)</strong><div data-x-sample-picker>${tinSelectControl("input:source_path", inputs.source_path || "", [["", "Choose a Markdown file…"], ...(inputs.source_path ? [[inputs.source_path, inputs.source_path]] : [])], "Samples in project Files")}</div></div>
+      <p class="system-config-note">Use pasted samples, a project file or your preferences. An X connection is optional.</p>
+    </div>${field("preferences")}${field("direction")}</div>`;
+}
+
+function xWorkflowRunControls(workflow) {
+  return `<input type="hidden" name="schedule_mode" value="manual"><strong class="system-config-note">Run</strong><p class="system-config-note">Manually, when you ${workflow.key === "social.x_style" ? "want to capture or refresh your X voice" : "have something to share"}.</p><p class="system-config-note">${workflow.key === "social.x_style" ? "The proposed guide waits in Decisions. Approving it makes it available to future X drafts." : "Drafts are saved in Files. Open a post, edit it, then preview and confirm before publishing."}</p>`;
+}
+
+function bindXWorkflowFields(root) {
+  const context = currentProjectContext();
+  root.querySelectorAll("[data-x-voice-fields]").forEach(fields => {
+    const source = fields.querySelector('[name="input:sample_source"]');
+    const supplied = fields.querySelector("[data-x-supplied-source]");
+    const connected = fields.querySelector("[data-x-connected-source]");
+    const update = () => {
+      supplied.hidden = source.value !== "supplied";
+      connected.hidden = !supplied.hidden;
+      supplied.querySelectorAll("input, textarea, select").forEach(input => { input.disabled = supplied.hidden; });
+    };
+    source.addEventListener("change", update);
+    update();
+    const picker = fields.querySelector("[data-x-sample-picker]");
+    api(`/api/projects/${encodeURIComponent(state.project.id)}/files`).then(inventory => {
+      if (!isCurrentProjectContext(context) || !picker.isConnected) return;
+      const value = picker.querySelector("input").value;
+      const choices = [["", "Choose a Markdown file…"], ...(value ? [[value, value]] : [])];
+      for (const file of inventory.files || []) {
+        if (!file.path.endsWith(".md") || file.path === ".agents/skills/x-writing-style/SKILL.md" || choices.some(option => option[0] === file.path)) continue;
+        choices.push([file.path, file.path]);
+      }
+      picker.innerHTML = tinSelectControl("input:source_path", value, choices, "Samples in project Files");
+      bindTinControls(picker);
+      update();
+    }).catch(() => {});
+  });
 }
 
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</label>`;
@@ -970,25 +1054,24 @@ function systemTemplateSetupCard(workflow) {
   return `<form class="system-template-card is-open workflow-config-form ${workflow.key === "content.plan" ? "is-weekly" : "is-manual"}" data-workflow-id="${escapeHtml(workflow.id)}">
     <header class="system-template-open-header">
       <span class="system-template-identity"><strong>${escapeHtml(workflow.title)}</strong><span class="system-template-description">${escapeHtml(workflow.description)}</span><code>${escapeHtml(workflow.key)} · v${escapeHtml(workflow.version_label)}</code></span>
-      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
+      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}${systemDiagramButton(workflow)}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
     </header>
     <div class="system-template-setup-body">
       <section>
-        <code class="system-config-kicker">what it works on</code>
-        <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>
+        ${isXAuthoring(workflow) ? "" : `<code class="system-config-kicker">what it works on</code><label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>`}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
+        ${isXAuthoring(workflow) ? `<label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></label>` : ""}
         ${requirementRows ? `<div class="system-requirements"><code class="system-config-kicker">connections</code>${requirementRows}</div>` : ""}
       </section>
       <section class="system-config-when">
-        <code class="system-config-kicker">when</code>
-        ${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : null, false, workflow.definition?.schedule_modes)}
-        <p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
       <span class="system-config-note">Goes to My system when you finish.</span>
-      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Finish setup</button>
-      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Finish setup and run now</button>
+      <button class="button-secondary" type="submit" data-save-workflow ${blocked ? "disabled" : ""}>Set up</button>
+      <button class="button" type="submit" data-save-and-run ${blocked ? "disabled" : ""}>Set up and run now</button>
     </footer>
   </form>`;
 }
@@ -1065,8 +1148,10 @@ function isCampaignRevisionReview(run) {
 }
 
 function pendingReviewQueue() {
+  // Runs with something to approve, as Decisions lists them: a task asking a question waits
+  // on an answer, and a reviewed task that changed nothing has nothing to approve.
   const waiting = state.runs.filter((run) => {
-    const isTaskGate = run.workflow_name === "project.task";
+    const isTaskGate = run.workflow_name === "project.task" && run.task_phase === "review" && run.task_has_changes !== false;
     return run.status === "needs_input" && (run.review_required || isTaskGate);
   });
 
@@ -1095,8 +1180,22 @@ function waitingLabel(value) {
 }
 
 function workflowForRun(run) {
+  if (!run) return null;
   return state.workflows.find((workflow) => workflow.id === run.workflow_id)
     || state.runWorkflows.get(run.workflow_id) || null;
+}
+
+async function includeDecisionRuns(runs, decisions, projectId) {
+  // Recent history is capped; an older run can still need a decision.
+  const known = new Set(runs.map(run => run.id));
+  const missing = [...new Set(decisions.map(decision => decision.run_id))].filter(id => !known.has(id));
+  const older = await Promise.all(missing.map(async id => {
+    try {
+      const run = await api(`/api/workflows/runs/${encodeURIComponent(id)}`);
+      return run?.id === id && run.project_id === projectId ? run : null;
+    } catch { return null; }
+  }));
+  return [...runs, ...older.filter(Boolean)];
 }
 
 async function loadRunWorkflows(runs) {
@@ -1126,19 +1225,15 @@ function updateRail() {
   if (!state.project) return;
   projectName.textContent = state.project.name;
   projectSwitcher.setAttribute("aria-label", `Current project: ${state.project.name}`);
-  const reviewQueue = pendingReviewQueue();
   const active = state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
-  const needsYou = reviewQueue.length;
-  projectSummary.textContent = [
-    state.project.workspace_name,
-    `${active} running`,
-    needsYou ? `${needsYou} needs you` : null,
-  ].filter(Boolean).join(" · ");
+  // What waits for you is counted once, on the Decisions badge.
+  projectSummary.textContent = [state.project.workspace_name, `${active} running`].filter(Boolean).join(" · ");
   const runningCount = state.systemSummary?.running_count ?? state.runs.filter(
     (run) => run.workflow_name !== "project.task" && RUNNING_STATES.has(run.status),
   ).length;
   workflowCount.textContent = runningCount ? String(runningCount) : "";
-  decisionCount.textContent = state.decisions.length ? String(state.decisions.length) : "";
+  const waiting = decisionItems().length;
+  decisionCount.textContent = waiting ? String(waiting) : "";
   updateAgentRail();
 }
 
@@ -1291,6 +1386,9 @@ function retainedOutputMessage(run) {
   if (run.retained_output.reason === "execution_interrupted") {
     return "This workflow stopped before finishing. Its partial result is saved for reading and has not been applied to Files.";
   }
+  if (run.retained_output.reason === "not_published") {
+    return "This result is saved for reading and was not added to Files.";
+  }
   return run.retained_output.reason === "output_conflict"
     ? "The result was saved because this file changed while the workflow ran. The current file was left alone."
     : "The result is saved. Tin has not yet confirmed whether it reached Files.";
@@ -1314,11 +1412,57 @@ function openRunArtifact(runId, returnView = state.view) {
   const run = state.runs.find((item) => item.id === runId);
   if (hasOutputConflict(run)) { openOutputComparison(runId, returnView); return; }
   const output = availableRunOutput(run);
+  if (output?.source === "canonical" && /^social\/x-drafts\/[^/]+\.json$/.test(output.path) && window.TinXPosts) {
+    openXComposer(output.path, runId);
+    return;
+  }
   if (!output || isMarkdownPath(output.path)) {
     openDocument(runId, returnView, output?.source || "canonical");
     return;
   }
   openRunOutputFile(run, output, returnView);
+}
+
+function openXComposer(path, runId = "manual") {
+  if (!window.TinXPosts || !state.project || state.projectAccess !== "ready") return;
+  goToRoute(`files?${new URLSearchParams({x_draft: path, x_run: runId, x_back: currentRoute()})}`);
+}
+
+function renderXComposer() {
+  const path = xDraftPathFromLocation();
+  if (!path || !window.TinXPosts) return;
+  const query = new URLSearchParams(window.location.search);
+  const runId = query.get("x_run") || "manual";
+  const candidate = query.get("x_back") || "files";
+  const back = DASHBOARD_ROUTE.test(candidate) && !new URLSearchParams(candidate.split("?")[1]).has("x_draft") ? candidate : "files";
+  const backView = back.split("?")[0];
+  const context = currentProjectContext();
+  window.TinXPosts.open({
+    host: main,
+    actorId: state.signedInUserId,
+    returnLabel: backView === "file" ? "files" : backView === "system" ? "my system" : backView,
+    onClose: () => goToRoute(back),
+    projectId: context.projectId,
+    path,
+    runId,
+    supportsAltText: state.integrations.find(item => item.key === "social.x")?.configuration?.supports_alt_text !== false,
+    api: async (apiPath, options) => {
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      const result = await api(apiPath, options);
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      return result;
+    },
+    rawFetch: async (apiPath, options) => {
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      const result = await authorizedFetch(apiPath, options);
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen the draft in the current project.");
+      return result;
+    },
+    onPublished: async () => {
+      if (!isCurrentProjectContext(context)) return;
+      await pollRuns();
+    },
+  });
 }
 
 function hasOutputConflict(run) {
@@ -1431,6 +1575,7 @@ function comparisonFileLabel(route) {
 }
 
 function render() {
+  if (state.view !== "x-draft" || state.projectAccess !== "ready") window.TinXPosts?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
   disposeDocument();
@@ -1444,12 +1589,13 @@ function render() {
       item.dataset.view === state.view ||
         (state.view === "task" && item.dataset.view === "workflows") ||
         (state.view === "document" && state.documentRoute?.returnView === item.dataset.view) ||
-        (state.view === "file" && item.dataset.view === "files"),
+        (["file", "x-draft"].includes(state.view) && item.dataset.view === "files"),
     );
     // On the mobile strip a deep link can land on a tab that sits past the edge; bring it into view.
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
   updateRail();
+  if (state.diagramPanel && (state.view !== "workflows" || !hasProject)) closeWorkflowDiagram({ restoreFocus: false });
   if (state.projectAccess === "locked") {
     if (state.view === "integrations" && connectRequest().length) renderIntegrations();
     else renderLockPage();
@@ -1467,6 +1613,7 @@ function render() {
     workspaceName: state.project.workspace_name || "Workspace",
     onChange: (value) => { state.billing = value; renderProjectMenu(); },
   });
+  if (state.view === "x-draft") renderXComposer();
   if (state.view === "document") renderDocument();
   if (state.view === "task") renderTask();
   if (state.view === "file") renderFile();
@@ -1570,12 +1717,12 @@ function renderChatTurn(turn) {
   if (run) {
     const workflow = workflowForRun(run);
     let action = run.workflow_name === "project.task"
-      ? `<button type="button" data-open-task="${escapeHtml(run.id)}">Open task →</button>`
-      : `<button type="button" data-open-run="${escapeHtml(run.id)}">Watch →</button>`;
+      ? `<button class="open-button" type="button" data-open-task="${escapeHtml(run.id)}">Open</button>`
+      : `<button class="open-button" type="button" data-open-run="${escapeHtml(run.id)}">Open</button>`;
     if (run.retained_output && !run.canonical_commit_sha) {
       action = `<button type="button" data-artifact-run="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
     } else if (availableRunOutput(run)) {
-      action = `<button type="button" data-artifact-run="${escapeHtml(run.id)}">${run.status === "needs_input" && isMarkdownArtifact(run) ? "Review" : "Open"} →</button>`;
+      action = `<button class="open-button" type="button" data-artifact-run="${escapeHtml(run.id)}">Open</button>`;
     }
     receipt = `<div class="run-receipt">
       <span class="status-dot is-${escapeHtml(run.status)}"></span>
@@ -1701,6 +1848,9 @@ function bindWorkflowResultControls(root) {
   root.querySelectorAll("[data-save-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.saveTemplate, true, button));
   });
+  root.querySelectorAll("[data-template-last-run]").forEach((button) => {
+    button.addEventListener("click", () => openTemplateLastRun(button.dataset.templateLastRun));
+  });
   root.querySelectorAll("[data-remove-saved-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.removeSavedTemplate, false, button));
   });
@@ -1790,27 +1940,24 @@ function bindWorkflowResultControls(root) {
     window.TinStyleCapture.bind(form, styleCaptureServices());
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
   root.querySelectorAll(".system-config-form").forEach((form) => {
+    // Polling may refresh the saved configuration while this editor stays open.
+    // Save against the revision and schema whose values the user actually edited.
+    form.tinConfiguredWorkflow = state.projectWorkflows.find(
+      (item) => item.id === form.dataset.projectWorkflowId,
+    );
     form.addEventListener("submit", saveSystemWorkflowSettings);
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
+  bindXWorkflowFields(root);
   root.querySelectorAll(".workflow-ledger-form").forEach((form) => {
     form.addEventListener("submit", saveProjectWorkflowField);
     bindTinControls(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
     bindWorkflowFieldValidation(form);
   });
   root.querySelectorAll(".workflow-config-form, .system-config-form").forEach((form) => {
@@ -1852,6 +1999,13 @@ function bindWorkflowResultControls(root) {
   });
   root.querySelectorAll("[data-skip-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => skipProjectWorkflow(button.dataset.skipProjectWorkflow, button));
+  });
+  root.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      // The row opens its settings on click; the diagram is a separate thing.
+      event.stopPropagation();
+      toggleWorkflowDiagram(button);
+    });
   });
   root.querySelectorAll("[data-remove-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => removeProjectWorkflow(button.dataset.removeProjectWorkflow, button));
@@ -1895,7 +2049,18 @@ function updateWorkflowSearchResults() {
   bindActivityControls(workflowResults, "workflows");
 }
 
-function renderWorkflows() {
+function renderWorkflows({ preserveEditor = false } = {}) {
+  // Background status updates must not recreate inputs or restart their setup checks.
+  const editor = preserveEditor ? main.querySelector(".system-config-form, .workflow-config-form") : null;
+  const focused = editor?.contains(document.activeElement) ? document.activeElement : null;
+  const selection = focused && typeof focused.selectionStart === "number"
+    ? [focused.selectionStart, focused.selectionEnd] : null;
+  if (editor?.dataset.projectWorkflowId && state.workflowEditor) {
+    const active = state.runs.filter((run) => run.project_workflow_id === editor.dataset.projectWorkflowId && RUNNING_STATES.has(run.status));
+    if (!active.some((run) => run.id === state.workflowEditor.runId)) {
+      state.workflowEditor.runId = active[0]?.id || null;
+    }
+  }
   const registry = registryWorkflows();
   const projection = workflowSearchProjection(registry);
   const query = projection.query;
@@ -1919,9 +2084,9 @@ function renderWorkflows() {
     </header>
     <div class="workflow-sections system-sections" aria-label="System sections">
       <button class="workflow-section ${state.workflowSection === "yours" ? "is-active" : ""}" type="button" data-workflow-section="yours">My system ${runningCount ? `<i aria-hidden="true"></i><span>${runningCount}</span>` : ""}</button>
-      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Add workflows</button>
+      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Workflows</button>
       <button class="workflow-section ${state.workflowSection === "activity" ? "is-active" : ""}" type="button" data-workflow-section="activity">Activity</button>
-      <span class="system-pace">${escapeHtml(state.workflowSection === "activity" ? systemActivityPace() : systemPaceLine())}</span>
+      <span class="system-pace">${state.workflowSection === "activity" ? escapeHtml(systemActivityPace()) : `<span class="system-pace-long">${escapeHtml(systemPaceLine())}</span><span class="system-pace-short">${escapeHtml(systemPaceShort())}</span>`}</span>
     </div>
     ${sectionContent}
   </section>`;
@@ -1938,9 +2103,33 @@ function renderWorkflows() {
     state.workflowSearch = event.target.value;
     updateWorkflowSearchResults();
   });
+  const replacement = editor && [...main.querySelectorAll(".system-config-form, .workflow-config-form")].find((form) =>
+    form.dataset.workflowId === editor.dataset.workflowId &&
+    form.dataset.projectWorkflowId === editor.dataset.projectWorkflowId);
+  const statusSelector = ".system-card-row, .system-running-detail, .system-run-detail, .system-progress";
+  const freshStatus = replacement?.matches(".system-workflow-card")
+    ? [...replacement.children].filter((node) => node.matches(statusSelector)) : [];
+  const placeholder = replacement ? document.createElement("div") : null;
+  if (placeholder) {
+    // Bind new status controls without rebinding the preserved form or its inputs.
+    placeholder.append(...freshStatus);
+    replacement.replaceWith(placeholder);
+  }
   bindWorkflowResultControls(document);
   bindWorkflowRunControls(main);
+  if (state.diagramPanel) renderDiagramPanel();
   if (state.workflowSection === "activity") bindActivityControls(main, "workflows");
+  if (placeholder) {
+    if (freshStatus.length) {
+      [...editor.children].filter((node) => node.matches(statusSelector)).forEach((node) => node.remove());
+      editor.prepend(...freshStatus.filter((node) => !node.matches(".system-progress")));
+      editor.append(...freshStatus.filter((node) => node.matches(".system-progress")));
+      editor.classList.toggle("is-running", replacement.classList.contains("is-running"));
+    }
+    placeholder.replaceWith(editor);
+    focused?.focus({ preventScroll: true });
+    if (selection) focused.setSelectionRange(...selection);
+  }
 }
 
 function systemActivityPace() {
@@ -1980,6 +2169,17 @@ function systemPaceLine() {
   return `${firstRun}${workflowCountValue} saved ${workflowCountValue === 1 ? "workflow" : "workflows"} · ${runningCount} running · ${runsThisMonth} runs this month · ${next}`;
 }
 
+// Beside the diagram panel the pace line keeps only the count and the next run.
+function systemPaceShort() {
+  const summary = state.systemSummary;
+  const workflowCountValue = summary?.workflow_count ?? state.projectWorkflows.length;
+  const nextRunAt = summary?.next_run_at || state.projectWorkflows
+    .map((item) => item.next_run_at)
+    .filter(Boolean)
+    .sort()[0];
+  return `${workflowCountValue} saved · ${nextRunAt ? `next ${systemDateTime(nextRunAt)}` : "nothing scheduled"}`;
+}
+
 function systemDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "later";
@@ -2012,10 +2212,33 @@ function systemShortDate(value) {
   }
 }
 
+function syncScheduleMode(form) {
+  const mode = form.elements.schedule_mode.value;
+  form.classList.toggle("is-weekly", mode === "weekly");
+  form.classList.toggle("is-monthly", mode === "monthly");
+  form.classList.toggle("is-manual", mode === "manual");
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function ordinalDay(day) {
+  const value = Number(day) || 1;
+  const suffix = value % 100 >= 10 && value % 100 <= 20 ? "th" : ({1: "st", 2: "nd", 3: "rd"}[value % 10] || "th");
+  return `${value}${suffix}`;
+}
+
+// "the 1st of every month" or "the 15th of Jan, Apr, Jul, Oct"; `short` abbreviates months.
+function monthlyWords(schedule, short = false) {
+  const months = (schedule.months || []).map((month) => MONTH_NAMES[month - 1]).filter(Boolean);
+  if (!months.length) return `the ${ordinalDay(schedule.day_of_month)} of every month`;
+  return `the ${ordinalDay(schedule.day_of_month)} of ${months.map((name) => (short ? name.slice(0, 3) : name)).join(", ")}`;
+}
+
 function systemScheduleLabel(configured) {
   const schedule = configured?.schedule;
   if (!schedule) return "manual";
   if (schedule.cadence === "daily") return `day · ${schedule.local_time}`;
+  if (schedule.cadence === "monthly") return `${monthlyWords(schedule, true)} · ${schedule.local_time}`;
   const days = (schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ");
   return `${days} · ${schedule.local_time}`;
 }
@@ -2156,7 +2379,7 @@ function emailCampaignRunDetail(run, detail) {
     return '<p class="system-run-loading">Loading campaign…</p>';
   }
   if (detail.error) {
-    return `<p class="system-run-loading">Campaign details could not load. <button type="button" data-retry-run-detail="${escapeHtml(run.id)}">Try again</button></p>`;
+    return `<p class="system-run-loading">Campaign details could not load. <button type="button" data-retry-run-detail="${escapeHtml(run.id)}">Retry</button></p>`;
   }
   const campaign = detail.campaign;
   const deliveries = detail.deliveries || [];
@@ -2233,6 +2456,7 @@ function systemCardIndicator(kind) {
   if (kind === "running") return '<span class="system-card-dot is-running" aria-hidden="true"></span>';
   if (kind === "pending") return '<span class="system-card-dot is-pending" aria-hidden="true"></span>';
   if (kind === "failed") return '<span class="system-card-failed" aria-hidden="true">×</span>';
+  if (kind === "open") return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 6.5 5 3.5 8 6.5" /></svg>';
   return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" /></svg>';
 }
 
@@ -2253,20 +2477,22 @@ function systemRunCard(run, configured = null) {
     ? `data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" data-editor-run-id="${escapeHtml(run.id)}"`
     : "";
   const expanded = state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null;
-  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""}">
+  const diagramShown = workflow ? diagramPanelShows(workflow.id, configured?.id) : false;
+  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row ${configured ? "is-configurable" : ""}" ${configured ? `data-open-system-workflow ${configureAttributes}` : ""}>
       ${configured
         ? `<button class="system-card-mark is-toggle" type="button" ${configureAttributes} aria-label="Open ${escapeHtml(title)} settings">${systemCardIndicator(run.status)}</button>
            <button class="system-card-identity is-toggle" type="button" ${configureAttributes}><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></button>`
         : `<span class="system-card-mark">${systemCardIndicator(run.status)}</span>
            <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></span>`}
+      ${systemDiagramButton(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
     </div>
     <div class="system-running-detail">
       <span>${escapeHtml(systemRunningSentence(run, title))}</span>
-      <button type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Observe →"}</button>
+      <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button>
     </div>
     ${expanded ? systemRunDetailHtml(run, false) : ""}
     ${systemProgressBar(run)}
@@ -2281,7 +2507,7 @@ function systemConfiguredCard(configured) {
   const failed = configured.last_run_status === "failed";
   const scheduled = Boolean(configured.schedule);
   const actions = failed
-    ? `<button class="system-action is-retry" type="button" data-retry-project-workflow="${escapeHtml(configured.id)}">Retry →</button>
+    ? `<button class="system-action is-retry" type="button" data-retry-project-workflow="${escapeHtml(configured.id)}">Retry</button>
        <button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`
     : scheduled && configured.status === "paused"
       ? `<button class="system-action is-strong" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="resume">Resume</button>
@@ -2290,10 +2516,12 @@ function systemConfiguredCard(configured) {
         ? `<button class="system-action is-strong" type="button" data-skip-project-workflow="${escapeHtml(configured.id)}">Skip once</button>
            <button class="system-action" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="pause">Pause</button>`
         : `<button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`;
-  return `<article class="system-workflow-card ${failed ? "is-failed" : ""}">
+  const diagramShown = diagramPanelShows(configured.workflow_id, configured.id);
+  return `<article class="system-workflow-card ${failed ? "is-failed" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row is-configurable" data-open-system-workflow data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
       <button class="system-card-mark is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" aria-label="Open ${escapeHtml(configured.name)} settings">${systemCardIndicator(failed ? "failed" : "idle")}</button>
       <button class="system-card-identity is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}"><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2402,6 +2630,11 @@ function systemWeekAheadHtml() {
     const schedule = configured.schedule;
     if (schedule.end_at && new Date(schedule.end_at) <= date) return false;
     if (schedule.cadence === "daily") return true;
+    if (schedule.cadence === "monthly") {
+      const day = Number(format(date, { day: "numeric" }));
+      const month = Number(format(date, { month: "numeric" }));
+      return day === schedule.day_of_month && (!(schedule.months || []).length || schedule.months.includes(month));
+    }
     const weekday = format(date, { weekday: "long" }).toLowerCase();
     return (schedule.weekdays || []).some((day) => String(day).toLowerCase() === weekday);
   };
@@ -2443,15 +2676,21 @@ function systemWeekAheadHtml() {
   const weekdayName = (day) => `${String(day).charAt(0).toUpperCase()}${String(day).slice(1)}s`;
   const WEEK = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
   const firstDay = (configured) => Math.min(...(configured.schedule.weekdays || []).map((day) => WEEK.indexOf(String(day).toLowerCase())), 7);
-  const rhythm = [...scheduled].sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
+  const isMonthly = (configured) => configured.schedule.cadence === "monthly";
+  const rhythm = [...scheduled].filter((item) => !isMonthly(item)).sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
     const schedule = configured.schedule;
     if (schedule.cadence === "daily") return `${configured.name} every day`;
     return `${configured.name} ${(schedule.weekdays || []).map(weekdayName).join(" and ") || "weekly"}`;
   });
+  const monthly = scheduled.filter(isMonthly).map((configured) => `${configured.name} on ${monthlyWords(configured.schedule)}`);
   const nextRunAt = scheduled.map((item) => item.next_run_at).filter(Boolean).sort()[0];
   const nextConfigured = scheduled.find((item) => item.next_run_at === nextRunAt);
-  const footer = rhythm.length
-    ? `Then every week: ${rhythm.join(", ")}.${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
+  const cadences = [
+    rhythm.length ? `Then every week: ${rhythm.join(", ")}.` : "",
+    monthly.length ? `${rhythm.length ? "And" : "Then"} ${monthly.join(", ")}.` : "",
+  ].filter(Boolean).join(" ");
+  const footer = cadences
+    ? `${cadences}${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
     : "Nothing is on the calendar yet; the runs above were one-offs.";
   const city = timeZone ? String(timeZone).split("/").pop().replace(/_/g, " ") : "";
   const range = `${format(days[0], { month: "short" }).toLowerCase()} ${format(days[0], { day: "numeric" })} – ${format(days[6], { day: "numeric" })}`;
@@ -2466,7 +2705,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   if (workflow.key === "content.plan") return systemContentProgramEditor(workflow, configured, run);
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
@@ -2485,16 +2724,17 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   const runningDetail = isRunning
     ? `<div class="system-running-detail">
         <span>${escapeHtml(systemRunningSentence(run, configured.name))}</span>
-        <button type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Observe →"}</button>
+        <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button>
        </div>`
     : "";
   const runDetail = isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null
     ? systemRunDetailHtml(run, false)
     : "";
-  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
+  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2504,14 +2744,13 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     ${runDetail}
     <div class="system-config-body">
       <section>
-        <code class="system-config-kicker">what it works on</code>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">what it works on</code>'}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
         <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}" /></label>
       </section>
       <section class="system-config-when">
-        <code class="system-config-kicker">when</code>
-        ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly"] : workflow.definition?.schedule_modes)}
-        <p>${escapeHtml(systemConfigurationFact(configured))}</p>
+        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -2530,13 +2769,14 @@ function systemContentProgramEditor(workflow, configured, run) {
   const mode = configured.schedule?.cadence || "manual";
   return `<article class="system-workflow-card content-program-card ${isRunning ? "is-running" : ""}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramButton(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
     </div>
-    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Observe →"}</button></div>` : ""}
+    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button></div>` : ""}
     ${isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? systemRunDetailHtml(run, false) : ""}
     <div class="system-config-body">
       <section class="content-program-work" aria-label="Upcoming content">
@@ -2544,7 +2784,7 @@ function systemContentProgramEditor(workflow, configured, run) {
         <div class="content-program-panel" data-content-program="${escapeHtml(configured.id)}" data-content-projection="${escapeHtml(JSON.stringify([configured.content_revision || null, configured.last_run_id, configured.last_run_status, configured.run_count, state.runs.filter(run => ["00000000-0000-4000-8000-000000000031", "00000000-0000-4000-8000-000000000036"].includes(run.workflow_id)).map(runFingerprint)]))}"></div>
       </section>
       <section class="system-config-when">
-        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
+        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
           <code class="system-config-kicker">when</code>
           ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.schedule_modes)}
           <p class="system-config-note">${escapeHtml(systemConfigurationFact(configured))}</p>
@@ -3061,21 +3301,28 @@ function renderDocument() {
   }
   const reviewedRun = state.runs.find(item => item.id === route.runId);
   const previousReviewCopy = reviewedRun?.review_source_run_id && !reviewedRun.artifact_path;
-  const cacheKey = route.taskPath ? `task:${route.runId}:${route.taskPath}` : `run:${route.runId}:${route.source || "canonical"}${previousReviewCopy ? ":previous" : ""}`;
+  const xGuide = reviewedRun?.workflow_name === "social.x_style";
+  const cacheKey = route.taskPath ? `task:${route.runId}:${route.taskPath}` : `run:${route.runId}:${route.source || "canonical"}:${reviewedRun?.canonical_commit_sha || ""}${previousReviewCopy ? ":previous" : ""}`;
   const cached = state.documentCache.get(cacheKey);
   if (cached) {
     const run = state.runs.find((item) => item.id === route.runId);
+    // A saved output shows its project path with each folder linked, as Files does. A retained
+    // result or a task's proposed file may not exist in the project, so its name stays plain.
+    const projectPath = !route.taskPath && route.source !== "retained" && !previousReviewCopy
+      ? cached.path || run?.artifact_path : null;
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached, {
       mode: "in-app",
+      loadAsset: route.source !== "retained" ? bundleAssetLoader(cached.revision) : undefined,
       contextLabel: route.source === "retained" && run?.retained_output?.reason === "execution_interrupted"
         ? `Partial result · ${cached.filename}` : undefined,
+      pathElement: projectPath ? projectFilePathElement({ path: projectPath }, "markdown-filename") : undefined,
       returnTo: {
         label: route.returnView,
         onActivate: () => route.taskPath ? openTask(route.runId) : navigate(route.returnView),
       },
       secondaryAction: route.source !== "retained" && isCampaignRevisionReview(run)
         ? {
-            label: "Discard revision",
+            label: "Discard",
             onActivate: (button) => discardCampaignRevision(run.id, button),
           }
         : route.source !== "retained" && run?.status === "needs_input" && repositoryDeliveryAvailable(run) && !supportsArticleFeedback(run) && !publishPreview(run)
@@ -3093,7 +3340,7 @@ function renderDocument() {
             }
           : route.source !== "retained" && run?.status === "needs_input"
           ? {
-              label: publishPreview(run) ? "Publish" : repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
+              label: publishPreview(run) ? "Publish" : repositoryDeliveryAvailable(run) ? "Publish now" : run?.content_delivery?.approval_label || (["style.capture", "brand.capture"].includes(workflowForRun(run)?.key || run?.workflow_name) ? "Approve" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"),
               onActivate: async (button) => approveRun(run.id, button, await publishDelivery(run)),
             }
           : null,
@@ -3105,7 +3352,13 @@ function renderDocument() {
     }
     if (route.source !== "retained" && supportsArticleFeedback(run)) {
       const cleanReader = state.documentCleanup;
-      const cleanReview = mountArticleFeedback(main, run.id, true);
+      const cleanReview = mountArticleFeedback(main, run.id, true, {
+        documentSha: cached.sha256,
+        reloadDocument: () => {
+          state.documentCache.delete(cacheKey);
+          render();
+        },
+      });
       state.documentCleanup = () => {cleanReview(); cleanReader();};
     }
     return;
@@ -3117,7 +3370,7 @@ function renderDocument() {
   const context = currentProjectContext();
   const endpoint = route.taskPath
     ? `/api/tasks/${encodeURIComponent(route.runId)}/review/document?path=${encodeURIComponent(route.taskPath)}`
-    : previousReviewCopy ? `/api/workflows/runs/${encodeURIComponent(route.runId)}/review/document`
+    : previousReviewCopy || (xGuide && route.source !== "retained") ? `/api/workflows/runs/${encodeURIComponent(route.runId)}/review/document`
     : `/api/workflows/runs/${encodeURIComponent(route.runId)}/artifact/document` + (route.source === "retained" ? "?source=retained" : "");
   api(endpoint)
     .then((documentData) => {
@@ -3164,7 +3417,7 @@ function liveWorkflowRunCard(run) {
     </div>
     <span class="workflow-version">started ${escapeHtml(waitingLabel(started))}</span>
     <span class="workflow-state workflow-description-slot">${escapeHtml(stateLabel)} · ${escapeHtml(runTriggerLabel(run))}</span>
-    <button class="button-secondary" type="button" data-observe-run="${escapeHtml(run.id)}">Observe →</button>
+    <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">Open</button>
   </article>`;
 }
 
@@ -3216,6 +3469,7 @@ function workflowForProjectWorkflow(configured) {
     description: configured.workflow_description,
     version_label: configured.version_label,
     definition: { input_schema: configured.input_schema },
+    drawn: Boolean(configured.workflow_drawn),
   };
 }
 
@@ -3258,7 +3512,7 @@ function scheduleLabel(schedule, nextRunAt) {
   const time = schedule.local_time || "";
   const base = schedule.cadence === "weekly"
     ? `${(schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ")} · ${time}`
-    : `daily · ${time}`;
+    : schedule.cadence === "monthly" ? `${monthlyWords(schedule, true)} · ${time}` : `daily · ${time}`;
   if (!nextRunAt) return base;
   return `${base} · next ${timeLabel(nextRunAt)}`;
 }
@@ -3292,7 +3546,7 @@ function orderedWorkflowFields(schema) {
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
     .map(([name, definition]) => workflowInputField(
       name,
       definition,
@@ -3312,9 +3566,8 @@ function workflowDraftForm(workflow) {
         <div class="workflow-row-control"><input class="workflow-inline-input" id="workflow-name-${escapeHtml(workflow.id)}" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></div>
       </div>
       ${fields || '<p class="workflow-no-inputs">This workflow has no additional inputs.</p>'}
-      ${workflowHowItRuns(workflow)}
       <div class="workflow-config-divider"><span>Schedule</span></div>
-      ${workflowScheduleControls(workflow.id, null, false, workflow.definition?.schedule_modes)}
+      ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}
     </div>
     <div class="workflow-config-actions">
       <code>Run now uses these inputs once · saving pins v${escapeHtml(workflow.version_label)}</code>
@@ -3329,42 +3582,165 @@ function loadDiagramRenderer() {
   return window.TinDiagramLoader.load();
 }
 
-function workflowHowItRuns(workflow) {
-  const flow = workflow.definition?.presentation?.flow;
-  if (!flow) return "";
-  const counts = flow.nodes.reduce((value, node) => {
-    value[node.kind] = (value[node.kind] || 0) + 1;
-    return value;
-  }, {});
-  const facts = [
-    `${flow.nodes.length} ${flow.nodes.length === 1 ? "step" : "steps"}`,
-    counts.gate ? `${counts.gate} gate` : null,
-    counts.wait ? `${counts.wait} wait` : null,
-  ].filter(Boolean).join(" · ");
-  return `<section class="workflow-how-it-runs" aria-label="How it runs">
-    <header><strong>How it runs</strong><code>derived from the pinned definition · ${escapeHtml(facts)}</code></header>
-    <div class="tin-diagram workflow-diagram" data-workflow-diagram="${escapeHtml(workflow.id)}"><span>Drawing workflow…</span></div>
-  </section>`;
+// The workflow diagram panel. A row's diagram button opens one workflow's
+// presentation flow in a narrow sheet on the right, read top to bottom
+// (workflow-spine.js); the page stays usable beside it.
+const DIAGRAM_ICON = '<svg aria-hidden="true" viewBox="0 0 14 14"><rect x="3.5" y="0.75" width="7" height="3.5" rx="1" /><rect x="3.5" y="9.75" width="7" height="3.5" rx="1" /><path d="M7 4.25v5.5" /></svg>';
+let diagramSpine = null;
+
+function workflowFlow(workflow) {
+  return workflow?.definition?.presentation?.flow || null;
 }
 
-async function hydrateWorkflowDiagrams(root) {
-  const targets = [...root.querySelectorAll("[data-workflow-diagram]")];
-  if (!targets.length) return;
-  try {
-    const renderer = await loadDiagramRenderer();
-    for (const target of targets) {
-      if (!target.isConnected) continue;
-      const workflow = state.workflows.find((item) => item.id === target.dataset.workflowDiagram);
-      const flow = workflow?.definition?.presentation?.flow;
-      if (!flow) continue;
-      const rendered = await renderer.renderFlow(flow);
-      if (target.isConnected) target.innerHTML = rendered.svg;
-    }
-  } catch (_error) {
-    for (const target of targets) {
-      if (target.isConnected) target.innerHTML = "<span>Diagram unavailable.</span>";
-    }
+// A saved workflow the catalog hides (content.refresh) is drawn all the same; its drawing
+// comes from the saved workflow's diagram endpoint rather than the catalog.
+function workflowDrawn(workflow) {
+  return Boolean(workflowFlow(workflow) || workflow?.drawn);
+}
+
+function diagramPanelShows(workflowId, projectWorkflowId) {
+  const open = state.diagramPanel;
+  return Boolean(open && open.workflowId === workflowId && (open.projectWorkflowId || "") === (projectWorkflowId || ""));
+}
+
+function systemDiagramButton(workflow, configured = null) {
+  if (!workflowDrawn(workflow)) return "";
+  const shown = diagramPanelShows(workflow.id, configured?.id);
+  const name = configured?.name || workflow.title || workflow.key;
+  return `<button class="system-card-diagram" type="button" data-show-workflow-diagram="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured?.id || "")}" aria-pressed="${shown}" aria-label="Workflow diagram for ${escapeHtml(name)}" title="Show workflow diagram">${DIAGRAM_ICON}</button>`;
+}
+
+function diagramTrigger(configured) {
+  const schedule = configured?.schedule;
+  if (!schedule) return "";
+  const label = systemScheduleLabel(configured);
+  const when = schedule.cadence === "monthly" ? label : `every ${label}`;
+  return configured.status === "paused" ? `paused · ${when}` : when;
+}
+
+// A saved workflow is drawn from its pinned revision, or from today's definition when the
+// pin has no drawing (the API says which); a template is drawn from today's definition.
+const savedDiagrams = new Map();
+
+function savedDiagramKey(configured) {
+  return `${configured.id}:${configured.settings_revision ?? ""}:${configured.version_label ?? ""}`;
+}
+
+function loadSavedDiagram(configured) {
+  const key = savedDiagramKey(configured);
+  if (savedDiagrams.has(key)) return;
+  savedDiagrams.set(key, null);
+  const context = currentProjectContext();
+  api(`/api/projects/${encodeURIComponent(context.projectId)}/workflows/${encodeURIComponent(configured.id)}/diagram`)
+    .then((value) => savedDiagrams.set(key, value))
+    .catch(() => savedDiagrams.set(key, { failed: true }))
+    .finally(() => {
+      if (isCurrentProjectContext(context)) renderDiagramPanel();
+    });
+}
+
+function closeDiagramPanelElement(existing) {
+  state.diagramPanel = null;
+  diagramSpine?.dispose();
+  diagramSpine = null;
+  existing?.remove();
+  document.body.classList.remove("has-diagram-panel");
+}
+
+function renderDiagramPanel() {
+  const open = state.diagramPanel;
+  const existing = document.getElementById("workflow-diagram-panel");
+  const configured = open?.projectWorkflowId
+    ? state.projectWorkflows.find((item) => item.id === open.projectWorkflowId) : null;
+  const workflow = configured
+    ? workflowForProjectWorkflow(configured)
+    : open ? state.workflows.find((item) => item.id === open.workflowId) : null;
+  if (!open || !workflowDrawn(workflow) || (open.projectWorkflowId && !configured)) {
+    closeDiagramPanelElement(existing);
+    return;
   }
+  const saved = configured ? savedDiagrams.get(savedDiagramKey(configured)) : undefined;
+  if (configured && saved === undefined) loadSavedDiagram(configured);
+  const loading = Boolean(configured) && !saved;
+  const resolved = saved && !saved.failed ? saved : null;
+  const flow = resolved?.flow || workflowFlow(workflow);
+  if (!flow && !loading) {
+    closeDiagramPanelElement(existing);
+    return;
+  }
+  // One line under the title: the key and version, and which version drew it when the
+  // schedule is pinned to an older one.
+  const runs = resolved?.pinned_version;
+  const drawn = resolved?.version || configured?.version_label || workflow.version_label;
+  const versionLine = runs && drawn && runs !== drawn
+    ? `${workflow.key} · runs v${runs} · drawn from v${drawn}`
+    : `${workflow.key}${drawn ? ` · v${drawn}` : ""}`;
+  const trigger = diagramTrigger(configured);
+  const title = configured?.name || workflow.title || workflow.key;
+  const key = JSON.stringify([workflow.id, configured?.id || "", title, versionLine, trigger, loading, flow]);
+  document.body.classList.add("has-diagram-panel");
+  if (existing?.dataset.panelKey === key) return;
+  const panel = existing || document.createElement("aside");
+  panel.id = "workflow-diagram-panel";
+  panel.className = "workflow-diagram-panel";
+  panel.tabIndex = -1;
+  panel.dataset.panelKey = key;
+  panel.setAttribute("aria-labelledby", "workflow-diagram-title");
+  panel.innerHTML = `<header>
+      <h2 id="workflow-diagram-title">${escapeHtml(title)}</h2>
+      <button class="diagram-panel-close" type="button" data-close-workflow-diagram aria-label="Close the workflow diagram"><svg aria-hidden="true" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" /></svg></button>
+      <code>${escapeHtml(versionLine)}</code>
+    </header>
+    <div class="diagram-panel-canvas ${loading ? "is-loading" : ""}" tabindex="0" aria-label="${escapeHtml(title)}, from start to finish" aria-busy="${loading}"></div>
+    <footer>
+      <code>${flow ? escapeHtml(window.TinWorkflowSpine.summary(flow)) : ""}</code>
+      ${configured ? `<button type="button" data-diagram-workflow-settings>Workflow settings</button>` : ""}
+    </footer>`;
+  diagramSpine?.dispose();
+  diagramSpine = flow ? window.TinWorkflowSpine.render(flow, { trigger }) : null;
+  if (diagramSpine) panel.querySelector(".diagram-panel-canvas").append(diagramSpine.element);
+  if (!existing) document.body.append(panel);
+  window.requestAnimationFrame(() => diagramSpine?.redraw());
+  panel.querySelector("[data-close-workflow-diagram]").addEventListener("click", () => closeWorkflowDiagram());
+  panel.querySelector("[data-diagram-workflow-settings]")?.addEventListener("click", () => {
+    state.workflowSection = "yours";
+    state.expandedRun = null;
+    state.workflowEditor = { workflowId: configured.workflow_id, projectWorkflowId: configured.id, runId: null, field: null };
+    renderWorkflows();
+    main.querySelector(`.system-config-form[data-project-workflow-id="${CSS.escape(configured.id)}"], .workflow-config-ledger[data-project-workflow-id="${CSS.escape(configured.id)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  });
+}
+
+function syncDiagramButtons() {
+  document.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    const shown = diagramPanelShows(button.dataset.showWorkflowDiagram, button.dataset.projectWorkflowId);
+    if (button.matches(".system-card-diagram")) button.setAttribute("aria-pressed", String(shown));
+    button.closest(".system-workflow-card")?.classList.toggle("is-diagram-open", shown);
+  });
+}
+
+function toggleWorkflowDiagram(button) {
+  const workflowId = button.dataset.showWorkflowDiagram;
+  const projectWorkflowId = button.dataset.projectWorkflowId || "";
+  if (diagramPanelShows(workflowId, projectWorkflowId)) {
+    closeWorkflowDiagram();
+    return;
+  }
+  state.diagramPanel = { workflowId, projectWorkflowId };
+  renderDiagramPanel();
+  syncDiagramButtons();
+  document.getElementById("workflow-diagram-panel")?.focus({ preventScroll: true });
+}
+
+function closeWorkflowDiagram({ restoreFocus = true } = {}) {
+  const open = state.diagramPanel;
+  state.diagramPanel = null;
+  renderDiagramPanel();
+  syncDiagramButtons();
+  if (!restoreFocus || !open) return;
+  document.querySelector(`[data-show-workflow-diagram="${CSS.escape(open.workflowId)}"][data-project-workflow-id="${CSS.escape(open.projectWorkflowId || "")}"]`)
+    ?.focus({ preventScroll: true });
 }
 
 function projectWorkflowLedger(workflow, configured, editingField) {
@@ -3381,6 +3757,7 @@ function projectWorkflowLedger(workflow, configured, editingField) {
     <div class="workflow-config-heading">
       <span class="status-dot is-${escapeHtml(configured.status)}"></span>
       <div><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(workflow.key)} · v${escapeHtml(configured.version_label)}</code></div>
+      ${systemDiagramButton(workflow, configured)}
       <button class="workflow-collapse" type="button" data-cancel-workflow-editor>collapse ↑</button>
     </div>
     <div class="workflow-config-rows">
@@ -3441,21 +3818,42 @@ function workflowLedgerSchedule(configured, editing) {
     if (mode === "weekly") {
       rows.push(workflowLedgerRestingRow("Day", (schedule.weekdays || []).map(humanize).join(", "), "schedule", true));
     }
+    if (mode === "monthly") {
+      rows.push(workflowLedgerRestingRow("Day", monthlyWords(schedule).replace(/^the /, ""), "schedule", true));
+    }
     if (mode !== "manual") {
       rows.push(workflowLedgerRestingRow("Time", `${schedule.local_time} · ${schedule.timezone}`, "schedule", true));
     }
     return rows.join("");
   }
   const workflow = state.workflows.find((item) => item.id === configured.workflow_id);
-  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
+  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
     ${workflowScheduleControls(configured.workflow_id, schedule, true, workflow?.definition?.schedule_modes)}
   </form>`;
+}
+
+// A workflow may declare the cadence a new setup starts with, in the project's timezone.
+function workflowDefaultSchedule(workflow) {
+  const schedule = workflow.definition?.default_schedule;
+  return schedule ? {...schedule, timezone: state.project?.timezone || "UTC"} : null;
 }
 
 function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = null) {
   const mode = schedule?.cadence || "manual";
   const timezone = schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const weekday = schedule?.weekdays?.[0] || "tuesday";
+  const dayOfMonth = String(schedule?.day_of_month || 1);
+  const months = (schedule?.months || []).join(",");
+  const monthOptions = [
+    ["", "Every month"],
+    ["1,4,7,10", "Jan, Apr, Jul, Oct"],
+    ["2,5,8,11", "Feb, May, Aug, Nov"],
+    ["3,6,9,12", "Mar, Jun, Sep, Dec"],
+  ];
+  // A saved set of months the presets don't cover stays selectable as it is.
+  if (months && !monthOptions.some(([value]) => value === months)) {
+    monthOptions.push([months, (schedule.months || []).map((month) => MONTH_NAMES[month - 1].slice(0, 3)).join(", ")]);
+  }
   const localTime = schedule?.local_time || "09:00";
   const actions = ledger ? workflowLedgerActions() : "";
   const allowed = new Set(scheduleModes || ["on_demand", "daily", "weekly"]);
@@ -3463,8 +3861,9 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     ["manual", "On demand", "on_demand"],
     ["daily", "Daily", "daily"],
     ["weekly", "Weekly", "weekly"],
+    ["monthly", "Monthly", "monthly"],
   ].filter((item) => allowed.has(item[2])).map((item) => item.slice(0, 2));
-  return `<div class="workflow-config-row ${ledger ? "workflow-ledger-row is-editing" : ""}">
+  return `<div class="workflow-config-row schedule-mode ${ledger ? "workflow-ledger-row is-editing" : ""}">
       <span class="workflow-row-label">Runs</span>
       <div class="workflow-row-control">${tinSegmentedControl("schedule_mode", mode, modeOptions, "Runs")}</div>
       ${actions}
@@ -3472,6 +3871,14 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     <div class="workflow-config-row schedule-weekday ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <span class="workflow-row-label">Day</span>
       <div class="workflow-row-control">${tinSelectControl("schedule_weekday", weekday, ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => [day, humanize(day)]), "Day")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Day</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_day_of_month", dayOfMonth, Array.from({ length: 28 }, (_, index) => [String(index + 1), ordinalDay(index + 1)]), "Day of the month")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Months</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_months", months, monthOptions, "Months")}</div>
     </div>
     <div class="workflow-config-row schedule-timed ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <label for="schedule-time-${escapeHtml(id)}">Time</label>
@@ -3864,7 +4271,7 @@ function readWorkflowInputs(form, schema) {
   for (const [name, definition] of Object.entries(schema.properties || {})) {
     if (name === "project_id") continue;
     const field = form.elements[`input:${name}`];
-    if (!field) continue;
+    if (!field || field.disabled) continue;
     inputs[name] = readWorkflowInputValue(field, definition);
   }
   return inputs;
@@ -3884,8 +4291,9 @@ function readWorkflowInputValue(field, definition) {
 function workflowScheduleFromForm(form) {
   const mode = form.elements.schedule_mode.value;
   if (mode === "manual") return null;
-  return {
-    ...(form.tinCodeSchedule || {}),
+  const { day_of_month: _day, months: _months, ...saved } = form.tinCodeSchedule || {};
+  const schedule = {
+    ...saved,
     cadence: mode,
     weekdays: mode === "weekly" ? (form.querySelector("[data-code-weekdays]")
       ? [...form.querySelectorAll("[name=schedule_days]:checked")].map((field) => field.value)
@@ -3893,6 +4301,11 @@ function workflowScheduleFromForm(form) {
     local_time: form.elements.schedule_time.value,
     timezone: form.elements.schedule_timezone.value.trim(),
   };
+  if (mode === "monthly") {
+    schedule.day_of_month = Number.parseInt(form.elements.schedule_day_of_month.value, 10);
+    schedule.months = String(form.elements.schedule_months.value || "").split(",").filter(Boolean).map(Number);
+  }
+  return schedule;
 }
 
 async function saveProjectWorkflowField(event) {
@@ -3966,9 +4379,7 @@ async function saveSystemWorkflowSettings(event) {
   event.preventDefault();
   if (!state.project) return;
   const form = event.currentTarget;
-  const configured = state.projectWorkflows.find(
-    (item) => item.id === form.dataset.projectWorkflowId,
-  );
+  const configured = form.tinConfiguredWorkflow;
   if (!configured) return;
   const submit = event.submitter || form.querySelector("[type=submit]");
   const idleLabel = submit.textContent;
@@ -4215,18 +4626,19 @@ async function discardCampaignRevision(runId, button) {
     schedulePolling();
   } catch (error) {
     button.disabled = false;
-    button.textContent = "Discard revision";
+    button.textContent = "Discard";
     showToast(`Could not discard revision: ${error.message}`);
   }
 }
 
 function supportsArticleFeedback(run) {
   if (!run) return false;
+  // A writing style proposal reads its review too: approval binds the exact version shown.
   return Boolean(workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval) ||
-    ["content.generate", "content.public_article"].includes(workflowForRun(run)?.key || run?.workflow_name);
+    ["content.generate", "content.public_article", "social.x_style", "style.capture"].includes(workflowForRun(run)?.key || run?.workflow_name);
 }
 
-function mountArticleFeedback(host, runId, reader = false) {
+function mountArticleFeedback(host, runId, reader = false, documentContext = {}) {
   const context = currentProjectContext();
   const run = state.runs.find(item => item.id === runId);
   const repositoryDelivery = repositoryDeliveryAvailable(run);
@@ -4236,14 +4648,16 @@ function mountArticleFeedback(host, runId, reader = false) {
     deliveryOptions: reader && repositoryDelivery && !adapted ? [{ label: "Open a pull request", delivery: "github_pr" }] : [],
     onApprove: async (button, delivery = null) => approveRun(runId, button, delivery ? { delivery } : await publishDelivery(run, repositoryDelivery ? "github_commit" : null)),
     api, projectId: context.projectId, runId, reader, toast: showToast,
+    ...documentContext,
     loadRenderer: loadComparisonRenderer,
     openRun: id => openDocument(id, "decisions"),
     onRevised: successor => {
       if (!isCurrentProjectContext(context)) return;
       const source = state.runs.find(r => r.id === runId);
-      if (source) upsertRun({...source, status: "superseded"});
+      const xGuide = source?.workflow_name === "social.x_style";
+      if (source && !xGuide) upsertRun({...source, status: "superseded"});
       upsertRun(successor);
-      state.decisions = state.decisions.filter(d => d.run_id !== runId);
+      if (!xGuide) state.decisions = state.decisions.filter(d => d.run_id !== runId);
       state.workflowSection = "yours";
       navigate("workflows");
       showToast("Revising from your feedback. The previous copy remains readable.");
@@ -4252,16 +4666,42 @@ function mountArticleFeedback(host, runId, reader = false) {
   });
 }
 
+// Everything that waits for the founder: run reviews, then proposed website changes, then the
+// judgment calls a coding agent will answer with the next website change run.
+function decisionItems() {
+  const changes = state.websiteChanges.map((change) => ({
+    id: `change:${change.change_id}`, kind: "website_change", title: change.title, created_at: change.proposed_at, change,
+  }));
+  const calls = state.judgmentCalls.map((call) => ({
+    id: `question:${call.id}`, kind: "judgment_call", title: call.question, created_at: call.recorded_at, call,
+  }));
+  return [...state.decisions, ...changes, ...calls];
+}
+
+async function fetchWebsiteChanges(projectId) {
+  const id = encodeURIComponent(projectId);
+  const [changes, questions] = await Promise.all([
+    api(`/api/projects/${id}/website-changes?status=pending`).catch(() => []),
+    api(`/api/projects/${id}/website-changes/questions`).catch(() => ({ questions: [] })),
+  ]);
+  return {
+    changes: Array.isArray(changes) ? changes : [],
+    questions: Array.isArray(questions?.questions) ? questions.questions : [],
+  };
+}
+
 function selectedDecision() {
-  if (!state.decisions.length) return null;
-  return state.decisions.find((item) => item.id === state.decisionId) || state.decisions[0];
+  const items = decisionItems();
+  if (!items.length) return null;
+  return items.find((item) => item.id === state.decisionId) || items[0];
 }
 
 function sameText(left, right) {
   return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
 }
 
-const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page"]);
+// A page refresh delivers the same way: exact replacements in a pull request or a commit.
+const REPOSITORY_DELIVERY_WORKFLOWS = new Set(["content.generate", "content.public_article", "content.answer_page", "content.refresh"]);
 
 function connectedRepository() {
   const github = state.integrations.find((item) => item.key === "infra.github");
@@ -4278,11 +4718,18 @@ function repositoryDeliveryAvailable(run) {
   return !run?.content_delivery?.system_run_id && isContentDraftReview(run) && Boolean(connectedRepository());
 }
 
-// Answer pages and public articles that Tin adapts to the site (a metered content.deliver run)
-// get one Publish button. The server says whether adaptation applies and, from the saved
-// delivery setting and the cost preview, the footer line: what Publish does and about what it
-// costs. Everything about that card lives here so its wording and layout stay easy to change.
-const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page"]);
+// A proposed writing style or brand guide: approve it, leave it for later, or discard it.
+const PROPOSAL_WORKFLOWS = new Set(["style.capture", "brand.capture"]);
+function isProposal(decision) {
+  return decision.kind === "review" && PROPOSAL_WORKFLOWS.has(decision.workflow_key);
+}
+
+// Answer pages and public articles that Tin adapts to the site (a metered content.deliver or
+// website.change run) get one Publish button. The server says whether adaptation applies (for
+// content.generate, only its answer pages) and, from the saved delivery setting and the cost
+// preview, the footer line: what Publish does and about what it costs. Everything about that
+// card lives here so its wording and layout stay easy to change.
+const ADAPTED_PAGE_WORKFLOWS = new Set(["content.public_article", "content.answer_page", "content.generate"]);
 const publishPreviews = new Map();
 
 function publishPreview(run) {
@@ -4311,62 +4758,53 @@ async function publishDelivery(run, fallback = "github_commit") {
   return repositoryDeliveryAvailable(run) && fallback ? { delivery: fallback } : {};
 }
 
-function publishButtonHtml(decisionId, preview, blocked) {
+// Anything waiting for approval can be discarded; Discard sits just before the approval.
+function discardButtonHtml(decision) {
+  return decision.kind === "review" ? '<button class="decision-discard" type="button" data-decision-discard>Discard</button>' : "";
+}
+
+function publishButtonHtml(decision, preview, blocked) {
   const waiting = preview.loading ? " disabled" : blocked;
-  return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="decision-approval" type="button" data-apply-decision="${escapeHtml(decisionId)}" data-delivery="${escapeHtml(preview.mode || "")}" data-adapted="true"${waiting}>Publish</button>`;
+  return `${discardButtonHtml(decision)}
+      <button class="decision-approval" type="button" data-apply-decision="${escapeHtml(decision.id)}" data-delivery="${escapeHtml(preview.mode || "")}" data-adapted="true"${waiting}>Publish</button>`;
 }
 
 function decisionApprovalHtml(decision, run) {
   const id = escapeHtml(decision.id);
+  if (!run) return `<button class="decision-approval" type="button" data-apply-decision="${id}" disabled>Approve</button>`;
   const revision = decision.revision;
-  // A waiting revision must be resolved first. Once applied, the older copy may stay in Tin
-  // but never be published; the server refuses both too.
-  const blocked = revision?.state === "waiting" ? " disabled" : "";
+  // A waiting revision must be resolved first: every approval shows it is blocked. Once
+  // applied, the older copy may stay in Tin but never be published; the server refuses both.
+  const blocked = revision?.state === "waiting" ? ' disabled data-blocked="true"' : "";
+  const discard = discardButtonHtml(decision);
   if (revision?.state === "applied" && isContentDraftReview(run)) {
-    return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+    return `${discard}
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="none">Keep in Tin</button>`;
   }
   const adapted = publishPreview(run);
-  if (adapted) return publishButtonHtml(decision.id, adapted, blocked);
+  if (adapted) return publishButtonHtml(decision, adapted, blocked);
   if (repositoryDeliveryAvailable(run)) {
-    return `<label class="decision-remember"><input type="checkbox" data-decision-remember${blocked}> Do this for future drafts</label>
-      <button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+    return `${blocked ? "" : '<label class="decision-remember"><input type="checkbox" data-decision-remember> Do this for future drafts</label>'}
+      ${discard}
       <button class="button-secondary" type="button" data-apply-decision="${id}" data-delivery="github_pr"${blocked}>Open a pull request</button>
       <button class="decision-approval" type="button" data-apply-decision="${id}" data-delivery="github_commit"${blocked}>Publish now</button>`;
   }
+  // Emre, 10/1: a proposal is approved or discarded; the coding agent revises it, not a button.
+  if (isProposal(decision)) {
+    return `${discard}
+      <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>Approve</button>`;
+  }
   const label = run?.content_delivery?.approval_label || (run?.workflow_name === "project.task" ? "Approve changes" : workflowForRun(run)?.definition?.procedure?.output?.apply_on_approval ? "Use documents" : "Approve");
-  return `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
+  return `${discard}
     <button class="decision-approval" type="button" data-apply-decision="${id}"${blocked}>${escapeHtml(label)}</button>`;
 }
 
-function versionTime(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "earlier";
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
-  const options = { hour: "2-digit", minute: "2-digit", hour12: false };
-  try {
-    const day = (item) => item.toLocaleDateString(undefined, { timeZone });
-    const time = date.toLocaleTimeString([], { ...options, timeZone });
-    if (day(date) === day(new Date())) return time;
-    return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone })}, ${time}`;
-  } catch {
-    return ledgerTime(date);
-  }
-}
-
-// Names the exact copy an approval uses, and any newer revision of it, so an older copy
-// cannot go out unnoticed.
-function decisionVersionLabel(decision, run) {
-  if (decision.kind === "output_conflict") return "";
-  const when = versionTime(decision.version_saved_at || decision.created_at);
-  const revision = decision.revision?.state;
-  const version = revision === "applied" && isContentDraftReview(run)
-    ? `Keeps the draft from ${when} in Tin`
-    : run?.workflow_name === "project.task" ? `Applies the changes from ${when}` : `Approves the draft from ${when}`;
-  if (revision === "waiting") return `${version} · a newer revision is waiting in Decisions`;
-  if (revision === "applied") return `${version} · a newer revision was applied`;
-  return version;
+// Only the newest version of a page is listed, so a card names an older copy just once a task
+// has revised it: the revised copy is in Files, and this one can only stay in Tin.
+function revisionNote(decision) {
+  return decision.revision?.state === "applied"
+    ? "A one-off task revised this after it was saved. The revised copy is in Files; this one can only stay in Tin."
+    : "";
 }
 
 function pageUrlLine(run, mode = "card") {
@@ -4389,10 +4827,12 @@ function bindPageUrls() {
 function decisionHeading(decision, run) {
   const output = decision.output_title || (run?.workflow_name === "project.task" ? run.task_title : "") || "";
   const waited = waitingLabel(decision.created_at);
+  // "Social post batch · Sep 29" already names its workflow.
+  const namesWorkflow = sameText(output, decision.workflow_title) || String(output).startsWith(`${decision.workflow_title} · `);
   return {
     title: output || decision.workflow_title || "Decision",
     subtitle: [
-      output && !sameText(output, decision.workflow_title) ? decision.workflow_title : null,
+      output && !namesWorkflow ? decision.workflow_title : null,
       waited === "now" ? "Just arrived" : `Waiting ${waited}`,
       decision.kind === "output_conflict" ? "result saved" : null,
     ].filter(Boolean).join(" · "),
@@ -4421,7 +4861,7 @@ const GENERIC_REVIEW_LINE = /^(?:[^.]*\bis ready for your review|Review the comp
 function decisionBodyLine(decision, run, heading) {
   const isTask = run?.workflow_name === "project.task";
   const text = isTask
-    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run)
+    ? String(run.task_summary || run.task_result || "").trim() || taskChangeLine(run) || "Finished without changing any files."
     : String(decision.explanation || "").replace(GENERIC_REVIEW_LINE, "").trim();
   const line = (text.match(/[^.!?]+[.!?]+(?=\s|$)/g) || [text]).slice(0, isTask ? 3 : 1).join(" ").trim();
   return [heading.title, heading.subtitle].some((text) => sameText(text, line)) ? "" : line;
@@ -4429,62 +4869,146 @@ function decisionBodyLine(decision, run, heading) {
 
 function decisionDetailHtml(decision) {
   if (!decision) return "";
-  const outputs = decision.items || [];
   const run = state.runs.find((item) => item.id === decision.run_id);
-  const isTask = run?.workflow_name === "project.task";
-  const runActionLabel = isTask ? "Open task" : outputs.length && decision.kind !== "output_conflict" ? "Open draft" : "Open run";
   const deliveryNote = decision.kind !== "output_conflict" && isContentDraftReview(run) && !connectedRepository()
     ? 'Approved drafts stay in Tin until GitHub is connected. <a href="/integrations" data-decision-connect-github>Connect GitHub</a>'
     : "";
   const consequence = String(decision.consequence || "").trim();
   const heading = decisionHeading(decision, run);
   const bodyLine = decisionBodyLine(decision, run, heading);
-  const version = decisionVersionLabel(decision, run);
-  const adapted = decision.kind !== "output_conflict" && decision.revision?.state !== "waiting" ? publishPreview(run) : null;
-  const footerNote = adapted ? escapeHtml(adapted.footer || "") : [
-    version ? `<span class="decision-version">${escapeHtml(version)}</span>` : "",
-    [escapeHtml(consequence), deliveryNote].filter(Boolean).join(" "),
-  ].filter(Boolean).join(" · ");
+  const conflict = decision.kind === "output_conflict";
+  // The footer holds only controls; what a decision does reads in the body.
+  const bodyNote = [escapeHtml(consequence), conflict ? "" : escapeHtml(revisionNote(decision)), conflict ? "" : deliveryNote]
+    .filter(Boolean).join(" ");
   return `<article class="decision-detail-card">
     <header>
       <span class="decision-workflow-mark">${escapeHtml((decision.workflow_title || "W").slice(0, 1))}</span>
       <span><strong>${escapeHtml(heading.title)}</strong><code title="${escapeHtml(`${decision.workflow_key} · ${shortRunId(decision.run_id)}`)}">${escapeHtml(heading.subtitle)}</code></span>
-      <button type="button" data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →</button>
+      <button class="open-button" type="button" data-decision-read="${escapeHtml(decision.id)}">Open</button>
     </header>
     <div class="decision-detail-body">
+      ${!run ? '<p role="status">This decision’s run could not load. Tin will retry.</p>' : ""}
       ${bodyLine ? `<p class="decision-summary">${escapeHtml(bodyLine)}</p>` : ""}
       ${decision.kind !== "output_conflict" ? pageUrlLine(run) : ""}
+      ${bodyNote ? `<p class="decision-note">${bodyNote}</p>` : ""}
     </div>
-    <footer${footerNote ? "" : ' class="is-actions-only"'}>
-      ${footerNote ? `<span>${footerNote}</span>` : ""}
-      ${decision.kind === "output_conflict" ? `<button class="button-quiet" type="button" data-decision-not-now>Not now</button>
-      <button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
+    <footer>
+      ${conflict ? `<button class="compare-confirm" type="button" data-output-compare="${escapeHtml(decision.run_id)}">${decision.output_resolution?.state === "applying" ? "Check outcome" : "Compare"}</button>` : decisionApprovalHtml(decision, run)}
     </footer>
   </article>`;
 }
 
+// The badge already counts what waits; the heading only adds a deadline when one exists.
 function decisionsPace() {
-  if (!state.decisions.length) return "nothing waiting";
   const nearestDeadline = state.decisions
     .map((item) => item.deadline_at)
     .filter(Boolean)
     .sort()[0];
-  return `${state.decisions.length} waiting${nearestDeadline ? ` · nearest deadline ${systemDateTime(nearestDeadline)}` : ""}`;
+  return nearestDeadline ? `nearest deadline ${systemDateTime(nearestDeadline)}` : "";
+}
+
+// Older decisions were saved as "Review: <name>"; the list is all reviews, so the word adds nothing.
+function decisionListTitle(item) {
+  return String(item.title || "").replace(/^Review:\s*/, "");
+}
+
+const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index" };
+
+// What the change does, in one line: the audit's repair, the planned move, or the plan's summary.
+function websiteChangeSummary(change) {
+  const detail = change.detail || {};
+  const planned = detail.planned;
+  if (planned) {
+    return change.kind === "redirect"
+      ? `Redirect ${planned.from} to ${planned.to}.`
+      : `Keep ${planned.from} out of search (noindex).`;
+  }
+  if (change.source === "blog_index") return detail.summary || `A blog index at ${detail.route || change.paths?.[0] || ""}.`;
+  const decided = detail.decision ? ` Decision: ${detail.decision}.` : "";
+  return detail.change ? `Tin ${detail.change}.${decided}` : change.title;
+}
+
+function websiteChangeDetailHtml(item) {
+  const change = item.change;
+  const files = change.detail?.files || [];
+  const paths = change.paths || [];
+  return `<article class="decision-detail-card website-change-card" data-change-id="${escapeHtml(change.change_id)}">
+    <header>
+      <span class="decision-workflow-mark">W</span>
+      <span><strong>${escapeHtml(change.title)}</strong><code title="${escapeHtml(change.change_id)}">${escapeHtml(`${CHANGE_SOURCES[change.source] || change.source} · ${change.kind}`)}</code></span>
+    </header>
+    <div class="decision-detail-body">
+      <p class="decision-summary">${escapeHtml(websiteChangeSummary(change))}</p>
+      ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
+      ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
+      ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
+      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
+    </div>
+    <footer>
+      <button class="decision-discard" type="button" data-change-action="decline">Decline</button>
+      <button class="decision-approval" type="button" data-change-action="approve">Approve</button>
+    </footer>
+  </article>`;
+}
+
+function judgmentCallDetailHtml(item) {
+  const call = item.call;
+  return `<article class="decision-detail-card judgment-call-card">
+    <header>
+      <span class="decision-workflow-mark">?</span>
+      <span><strong>${escapeHtml(call.question)}</strong><code title="${escapeHtml(call.id)}">${escapeHtml(`Judgment call · ${CHANGE_SOURCES[call.source] || call.source}`)}</code></span>
+    </header>
+    <div class="decision-detail-body">
+      ${call.finding?.issue ? `<p class="decision-summary">${escapeHtml(call.finding.issue)}</p>` : ""}
+      <ul class="judgment-options" aria-label="Options">${(call.options || []).map((option) => `<li${option.value === call.suggestion ? ' class="is-suggested"' : ""}><strong>${escapeHtml(option.label)}</strong>${option.value === call.suggestion ? '<span class="judgment-suggested">Tin suggests</span>' : ""}</li>`).join("")}</ul>
+      ${call.why ? `<p class="decision-note">${escapeHtml(call.why)}</p>` : ""}
+      <p class="decision-note">Your coding agent answers this with the next website change run, and asks you when it is unsure.</p>
+    </div>
+  </article>`;
+}
+
+async function decideWebsiteChange(item, button) {
+  const context = currentProjectContext();
+  const action = button.dataset.changeAction;
+  const buttons = [...main.querySelectorAll("[data-change-action]")];
+  buttons.forEach((each) => { each.disabled = true; });
+  try {
+    await api(`/api/projects/${encodeURIComponent(context.projectId)}/website-changes/${encodeURIComponent(item.change.change_id)}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ request_id: window.crypto.randomUUID(), content_sha256: item.change.content_sha256 }),
+    });
+    if (!isCurrentProjectContext(context)) return;
+    state.websiteChanges = state.websiteChanges.filter((change) => change.change_id !== item.change.change_id);
+    state.decisionId = null;
+    render();
+    showToast(action === "decline"
+      ? "Declined. Tin won't make this change or propose it again."
+      : item.change.protected
+        ? "Approved. It touches a protected page, so its pull request waits for your merge."
+        : "Approved. Tin publishes it with the next website change run.");
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    buttons.forEach((each) => { each.disabled = false; });
+    showToast(`Could not record your decision: ${error.message}`);
+  }
 }
 
 function renderDecisions() {
   disposeDocument();
   const decision = selectedDecision();
   if (decision && state.decisionId !== decision.id) state.decisionId = decision.id;
+  const items = decisionItems();
+  const detail = decision?.kind === "website_change" ? websiteChangeDetailHtml(decision)
+    : decision?.kind === "judgment_call" ? judgmentCallDetailHtml(decision) : decisionDetailHtml(decision);
   main.innerHTML = `<section class="product-view decisions-view">
-    <header class="decisions-header"><h1>Decisions</h1><code>${escapeHtml(decisionsPace())}</code></header>
-    ${state.decisions.length ? `<div class="decisions-layout">
-      <div class="decision-list">${state.decisions.map((item) => `<button class="decision-list-item ${item.id === decision.id ? "is-active" : ""}" type="button" data-decision-id="${escapeHtml(item.id)}">
+    <header class="decisions-header"><h1>Decisions</h1>${decisionsPace() ? `<code>${escapeHtml(decisionsPace())}</code>` : ""}</header>
+    ${items.length ? `<div class="decisions-layout">
+      <div class="decision-list">${items.map((item) => `<button class="decision-list-item ${item.id === decision.id ? "is-active" : ""}" type="button" data-decision-id="${escapeHtml(item.id)}">
         <span class="activity-marker is-needs-you" aria-hidden="true"></span>
-        <span><strong>${escapeHtml(item.title)}</strong></span>
+        <span><strong>${escapeHtml(decisionListTitle(item))}</strong></span>
         <code>${escapeHtml(waitingLabel(item.created_at))}</code>
       </button>`).join("")}</div>
-      ${decisionDetailHtml(decision)}
+      ${detail}
     </div>` : '<div class="decisions-empty"><strong>Nothing needs you.</strong><span>When a workflow needs review or an answer, it will appear here.</span><button class="button-secondary" type="button" data-open-system>Open System</button></div>'}
   </section>`;
   main.querySelectorAll("[data-decision-id]").forEach((button) => {
@@ -4494,23 +5018,23 @@ function renderDecisions() {
     });
   });
   main.querySelector("[data-open-system]")?.addEventListener("click", () => navigate("workflows"));
-  main.querySelector("[data-decision-not-now]")?.addEventListener("click", () => {
-    state.decisionId = state.decisions.find((item) => item.id !== decision.id)?.id || decision.id;
-    renderDecisions();
-  });
   main.querySelectorAll("[data-decision-read]").forEach((button) => {
     button.addEventListener("click", () => openDecisionReview(decision));
   });
   main.querySelectorAll("[data-apply-decision]").forEach((button) => {
     button.addEventListener("click", (event) => applyDecision(decision, event.currentTarget));
   });
+  main.querySelector("[data-decision-discard]")?.addEventListener("click", (event) => discardDecision(decision, event.currentTarget));
   main.querySelector("[data-decision-connect-github]")?.addEventListener("click", (event) => {
     event.preventDefault();
     navigate("integrations");
   });
   main.querySelector("[data-output-compare]")?.addEventListener("click", () => openOutputComparison(decision.run_id, "decisions"));
+  main.querySelectorAll("[data-change-action]").forEach((button) => {
+    button.addEventListener("click", (event) => decideWebsiteChange(decision, event.currentTarget));
+  });
   bindPageUrls();
-  if (decision && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
+  if (decision?.run_id && supportsArticleFeedback(state.runs.find(run => run.id === decision.run_id) || {workflow_name: decision.workflow_key})) {
     state.documentCleanup = mountArticleFeedback(main.querySelector(".decision-detail-card"), decision.run_id);
   }
 }
@@ -4542,7 +5066,7 @@ async function applyDecision(decision, button) {
   const originalLabel = button.textContent;
   const delivery = button.dataset.delivery || null;
   const remember = Boolean(delivery && main.querySelector("[data-decision-remember]")?.checked);
-  const siblings = [...main.querySelectorAll("[data-apply-decision]")].filter((item) => item !== button);
+  const siblings = [...main.querySelectorAll("[data-apply-decision], [data-decision-discard]")].filter((item) => item !== button);
   siblings.forEach((item) => { item.disabled = true; });
   button.disabled = true;
   button.textContent = "Applying";
@@ -4568,6 +5092,45 @@ async function applyDecision(decision, button) {
     button.disabled = false;
     button.textContent = originalLabel;
     showToast(`Could not apply decision: ${error.message}`);
+    // A proposal revised after the card opened asks again: reload it with its new version.
+    if (isProposal(decision) && state.view === "decisions") {
+      schedulePolling({ immediate: true });
+      renderDecisions();
+    }
+  }
+}
+
+// Discarding ends what is waiting without using it: a draft or proposal ends as declined and stays
+// in Files, and a task stops without applying its changes. Drafts ask once first.
+function discardToast(decision) {
+  if (isProposal(decision)) return "Proposal discarded. The current guide is unchanged.";
+  if (decision.workflow_key === "project.task") return "Task stopped. Its changes were not applied.";
+  return "Discarded. It stays in Files, and nothing was published.";
+}
+
+async function discardDecision(decision, button) {
+  const run = state.runs.find((item) => item.id === decision.run_id);
+  if (isContentDraftReview(run) && !window.confirm("Discard this draft? It stays in Files, and nothing is published.")) return;
+  const context = currentProjectContext();
+  const actions = [...main.querySelectorAll("[data-apply-decision], [data-decision-discard]")];
+  const disabled = actions.map((item) => item.disabled);
+  actions.forEach((item) => { item.disabled = true; });
+  try {
+    const result = await api(`/api/decisions/${encodeURIComponent(decision.id)}/apply`, {
+      method: "POST",
+      body: JSON.stringify({ action: "decline" }),
+    });
+    if (!isCurrentProjectContext(context)) return;
+    upsertRun(result);
+    state.decisions = state.decisions.filter((item) => item.id !== decision.id);
+    state.decisionId = state.decisions[0]?.id || null;
+    render();
+    showToast(discardToast(decision));
+    schedulePolling({ immediate: true });
+  } catch (error) {
+    if (!isCurrentProjectContext(context)) return;
+    actions.forEach((item, index) => { item.disabled = disabled[index]; });
+    showToast(`Could not discard: ${error.message}`);
   }
 }
 
@@ -4671,7 +5234,7 @@ function activityStatus(event) {
 
 function activityAction(event) {
   if (["procedure_output_applied", "procedure_output_kept"].includes(event.event_type) && event.details?.path) {
-    return `<button type="button" data-current-output="${escapeHtml(event.details.path)}">Open file →</button>`;
+    return `<button class="open-button" type="button" data-current-output="${escapeHtml(event.details.path)}" title="${escapeHtml(event.details.path)}">Open</button>`;
   }
   const externalUrl = safeHttpsUrl(event.details?.external_url);
   if (externalUrl) {
@@ -4680,18 +5243,50 @@ function activityAction(event) {
   }
   const run = state.runs.find((item) => item.id === event.run_id);
   if (!run) return "";
-  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) {
-    return `<button type="button" data-activity-task="${escapeHtml(run.id)}">Open task →</button>`;
+  const target = runOpenTarget(run);
+  if (target === "task") {
+    return `<button class="open-button" type="button" data-activity-task="${escapeHtml(run.id)}">Open</button>`;
   }
-  if (run.retained_output && !run.canonical_commit_sha) {
+  if (target === "retained") {
     return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
   }
-  if (!availableRunOutput(run)) {
-    return `<button type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Observe →</button>`;
+  if (target === "details") {
+    return `<button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Open</button>`;
   }
-  const filename = String(run.artifact_path).split("/").at(-1) || "receipt";
-  const label = run.status === "needs_input" && isMarkdownArtifact(run) ? "Review draft" : filename;
-  return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${escapeHtml(label)} →</button>`;
+  return `<button class="open-button" type="button" data-activity-artifact="${escapeHtml(run.id)}" title="${escapeHtml(run.artifact_path)}">Open</button>`;
+}
+
+// What Open does for a run, shared by Activity rows and the Workflows tab's last-run link.
+function runOpenTarget(run) {
+  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) return "task";
+  if (run.retained_output && !run.canonical_commit_sha) return "retained";
+  if (!availableRunOutput(run)) return "details";
+  return "artifact";
+}
+
+// The Workflows tab's "Last run" link opens the run as Activity's Open button would. The run
+// may be older than the recent runs the dashboard holds, so it is fetched when missing. A run
+// without output expands its details in Activity, where they render.
+async function openTemplateLastRun(runId) {
+  let run = state.runs.find((item) => item.id === runId);
+  if (!run) {
+    try {
+      run = await api(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
+    if (!state.runs.some((item) => item.id === runId)) state.runs.push(run);
+  }
+  const target = runOpenTarget(run);
+  if (target === "task") { openTask(run.id); return; }
+  if (target !== "details") { openRunArtifact(run.id, "workflows"); return; }
+  const event = state.activity.find((item) => item.run_id === run.id);
+  if (!event) { openRunArtifact(run.id, "workflows"); return; }
+  state.workflowSection = "activity";
+  state.workflowEditor = null;
+  state.expandedRun = null;
+  await toggleRunDetails(run.id, event.id);
 }
 
 function safeHttpsUrl(value) {
@@ -4808,6 +5403,21 @@ function projectDirectoryCountLabel(path, paths) {
   return `${count} item${count === 1 ? "" : "s"}`;
 }
 
+function projectFileModified(path) {
+  const raw = state.filesByPath.get(path)?.modified_at;
+  const date = raw ? new Date(raw) : null;
+  if (!date || Number.isNaN(date.getTime())) return { text: "—", title: "Last modified date unavailable" };
+  return {
+    text: date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }),
+    title: `Last modified ${date.toLocaleString(undefined, { dateStyle: "full", timeStyle: "long" })}`,
+  };
+}
+
+function projectFileMetadataHtml(path) {
+  const modified = projectFileModified(path);
+  return `<span class="file-modified" title="${escapeHtml(modified.title)}" aria-label="${escapeHtml(modified.title)}">${escapeHtml(modified.text)}</span><span class="file-type">${escapeHtml(projectFileType(path))}</span>`;
+}
+
 function projectFileTreeUnsafeCss() {
   const colorScheme = document.documentElement.dataset.theme === "dark" ? "dark" : "light";
   return `
@@ -4841,8 +5451,8 @@ function projectFileTreeUnsafeCss() {
       flex: 0 0 auto;
     }
     [data-item-section="decoration"] {
-      flex: 0 0 76px;
-      width: 76px;
+      flex: 0 0 204px;
+      width: 204px;
       margin-left: auto;
       font-size: 11px;
     }
@@ -4885,7 +5495,10 @@ function mountProjectFileTree() {
       openProjectFile(path, state.filesSnapshot.revision);
     },
     renderRowDecoration: ({ item }) => {
-      if (item.kind !== "directory") return { text: projectFileType(item.path) };
+      if (item.kind !== "directory") {
+        const modified = projectFileModified(item.path);
+        return { text: `${modified.text} · ${projectFileType(item.path)}`, title: modified.title };
+      }
       return { text: projectDirectoryCountLabel(item.path, paths) };
     },
     unsafeCSS: projectFileTreeUnsafeCss(),
@@ -4979,7 +5592,7 @@ function filesSearchResults(paths, query) {
       return `<button type="button" data-project-file="${escapeHtml(path)}">
         <span>${projectFileIcon(path)}<strong>${highlightFileMatch(filename, query)}</strong></span>
         <code>${escapeHtml(parts.length ? `${parts.join("/")}/` : "Project /")}</code>
-        <small>${escapeHtml(projectFileType(path))}</small>
+        <small class="file-metadata">${projectFileMetadataHtml(path)}</small>
       </button>`;
     }).join("")}</div>`;
 }
@@ -5047,7 +5660,7 @@ function renderFilesDrilldown() {
     <div class="files-drill-rows">${entries.map((entry) => `<button type="button" ${entry.kind === "directory" ? `data-files-directory="${escapeHtml(entry.path)}"` : `data-project-file="${escapeHtml(entry.path)}"`}>
       ${projectFileIcon(entry.path, entry.kind === "directory")}
       ${filesDrillName(entry)}
-      <small>${entry.kind === "directory" ? projectDirectoryCountLabel(entry.path, paths) : escapeHtml(projectFileType(entry.path))}</small>
+      <small class="file-metadata">${entry.kind === "directory" ? projectDirectoryCountLabel(entry.path, paths) : projectFileMetadataHtml(entry.path)}</small>
     </button>`).join("")}</div>`;
   bindProjectFileLinks(container);
   container.querySelectorAll("[data-files-directory]").forEach((button) => {
@@ -5172,9 +5785,10 @@ async function loadProjectFiles({ silent = false, renderWhenReady = true } = {})
   if (!silent) state.filesError = null;
   const previousRevision = state.filesSnapshot?.revision || null;
   try {
-    const snapshot = await api(`/api/projects/${encodeURIComponent(context.projectId)}/files`);
+    const snapshot = await api(`/api/projects/${encodeURIComponent(context.projectId)}/files?include_modified=true`);
     if (!isCurrentProjectContext(context)) return;
     state.filesSnapshot = snapshot;
+    state.filesByPath = new Map(snapshot.files.map((file) => [file.path, file]));
     state.filesError = null;
     if (previousRevision && previousRevision !== snapshot.revision) state.filesUpdated = true;
   } catch (error) {
@@ -5192,6 +5806,14 @@ function projectFileRawUrl(route, download = false, projectId = state.project.id
   const query = new URLSearchParams({ path: route.path, revision: route.revision });
   if (download) query.set("download", "true");
   return `/api/projects/${encodeURIComponent(projectId)}/files/raw?${query.toString()}`;
+}
+
+// A draft's figures and embeds, read at the document's revision with the member's session.
+function bundleAssetLoader(revision, projectId = state.project?.id) {
+  if (!revision || !projectId) return undefined;
+  return (path) => authorizedFetch(projectFileRawUrl({ path, revision }, false, projectId), {
+    headers: { Accept: "*/*" },
+  }).then((response) => response.arrayBuffer());
 }
 
 function formatFileSize(bytes) {
@@ -5322,6 +5944,18 @@ function renderJsonProjectFile(route, file) {
       }
     },
   });
+  if (route.source === "canonical" && !route.compareRun && /^social\/x-drafts\/[^/]+\.json$/.test(route.path)) {
+    const actions = main.querySelector(".project-json-actions");
+    if (actions) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "project-file-action";
+      edit.textContent = "Edit X drafts";
+      edit.title = "Open the latest saved X draft";
+      edit.addEventListener("click", () => openXComposer(route.path));
+      actions.prepend(edit);
+    }
+  }
 }
 
 function renderTextProjectFile(route, file) {
@@ -5531,6 +6165,7 @@ function renderFile() {
   if (cached?.kind === "markdown") {
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached.document, {
       mode: "in-app",
+      loadAsset: bundleAssetLoader(route.revision),
       contextLabel: route.path,
       pathElement: projectFilePathElement(route, "markdown-filename"),
       factsText: `markdown · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`,
@@ -5664,10 +6299,13 @@ function bindIntegrationCardControls() {
   document.querySelectorAll("[data-integration-connect]").forEach((button) => {
     button.addEventListener("click", () => connectIntegration(button.dataset.integrationConnect));
   });
+  document.querySelectorAll("[data-integration-choose]").forEach((button) => {
+    button.addEventListener("click", () => configureIntegrationResource(button.dataset.integrationChoose));
+  });
   document.querySelectorAll("[data-integration-upgrade]").forEach((button) => {
     button.addEventListener("click", () => connectIntegration(
       button.dataset.integrationUpgrade,
-      ["gmail.messages.send"],
+      button.dataset.integrationCapabilities?.split(",") || ["gmail.messages.send"],
     ));
   });
   document.querySelectorAll("[data-integration-disconnect]").forEach((button) => {
@@ -5678,19 +6316,6 @@ function bindIntegrationCardControls() {
   });
   document.querySelectorAll("[data-stripe-refresh]").forEach((button) => {
     button.addEventListener("click", () => refreshStripe(button));
-  });
-  document.querySelectorAll("[data-integration-form]").forEach((form) => {
-    bindTinControls(form);
-    const selection = form.querySelector('input[name="option_id"]');
-    selection?.addEventListener("change", () => {
-      if (selection.value) {
-        saveIntegrationSelection(form.dataset.integrationForm, selection.value);
-      }
-    });
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      saveIntegrationSelection(form.dataset.integrationForm, new FormData(form).get("option_id"));
-    });
   });
 }
 
@@ -5783,6 +6408,9 @@ function renderIntegrationCard(integration) {
       : selected || integration.external_account_label || "Choose an account";
   const health = integration.key.startsWith("custom.api.")
     ? integration.configuration?.access_verified ? "access verified" : "saved · not verified"
+    : integration.key === "social.x" && connected
+    ? integration.status === "needs_attention" ? "reconnect required"
+      : (integration.configuration?.granted_capabilities || []).includes("x.posts.publish") ? "ready to publish approved posts" : "reading only"
     : integration.key === "ads.google" && connected
     ? googleAdsHealth(integration)
     : integration.key === "payments.stripe" && connected
@@ -5805,7 +6433,9 @@ function renderIntegrationCard(integration) {
       <span class="integration-state-mark is-${escapeHtml(integration.status)}" aria-hidden="true"></span>
       ${connected ? `<span class="integration-primary">${escapeHtml(primary)}</span>
         <span class="integration-health">${escapeHtml(health)}</span>
-        <button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">${needsResource ? "Finish setup" : "Configure"}</button>`
+        ${RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
+          ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Set up" : "Configure"}</button>`
+          : `<button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">Configure</button>`}`
         : `<span class="integration-unlocks">would unlock ${escapeHtml(unlocks)}</span>
         <button class="integration-connect" type="button" data-integration-connect="${escapeHtml(integration.key)}">Connect</button>`}
     </div>
@@ -5873,12 +6503,38 @@ function renderStripeExpanded(integration) {
   </div>`;
 }
 
+function renderXIntegrationExpanded(integration) {
+  const granted = new Set(integration.configuration?.granted_capabilities || []);
+  const capabilityRows = [
+    ["x.posts.read", "Read your own posts"],
+    ["x.posts.publish", "Publish posts you approve"],
+    ["x.media.upload", "Upload media for approved posts"],
+  ];
+  const missingPublish = !granted.has("x.posts.publish");
+  const missingMedia = !granted.has("x.media.upload");
+  return `<div class="integration-expanded">
+    ${integration.status === "needs_attention" ? `<p class="integration-setup-prompt" role="status"><strong>X needs reconnecting.</strong> Tin cannot use this connection until access is restored.</p>` : ""}
+    <div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Connected X account")}</span></div>
+    <div class="integration-detail-row"><span class="integration-detail-label">Access</span><span class="integration-detail-value">${capabilityRows.map(([key, label]) => `${granted.has(key) ? "✓" : "○"} ${escapeHtml(label)}`).join(" · ")}</span></div>
+    <div class="integration-detail-row"><span class="integration-detail-label">Unlocks</span><span class="integration-detail-value is-muted">${escapeHtml((integration.unlocks || []).join(" · "))}</span></div>
+    <p class="integration-setup-prompt">Drafting never posts to X. Tin publishes only the exact post you preview and confirm.</p>
+    <div class="integration-control-footer">
+      <span>connected ${escapeHtml(integration.connected_at ? timeLabel(integration.connected_at) : "recently")} · ${escapeHtml(integration.last_checked_at ? `checked ${timeLabel(integration.last_checked_at)}` : "not checked yet")}</span>
+      ${missingPublish ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.posts.publish">Enable publishing</button>` : ""}
+      ${missingMedia ? `<button class="integration-reconnect" type="button" data-integration-upgrade="social.x" data-integration-capabilities="x.media.upload">Enable media</button>` : ""}
+      ${integration.status === "needs_attention" ? `<button class="integration-reconnect" type="button" data-integration-connect="social.x">Reconnect</button>` : ""}
+      <button class="integration-disconnect" type="button" data-integration-disconnect="social.x">Disconnect</button>
+      <button class="integration-done" type="button" data-integration-expand="social.x">Done</button>
+    </div>
+  </div>`;
+}
+
 function renderIntegrationExpanded(integration) {
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
-  const options = state.integrationOptions.get(integration.key);
+  if (integration.key === "social.x") return renderXIntegrationExpanded(integration);
   const selected = integrationSelection(integration) || "";
   const isPostHog = integration.key === "analytics.posthog";
-  const optionLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
+  const resourceLabel = integration.key === "infra.github" ? "Repository" : isPostHog ? "PostHog project" : "Search property";
   const isWorkspace = integration.key === "workspace.google";
   const isAds = integration.key === "ads.google";
   const isGitHubAccount = integration.key === "infra.github_user";
@@ -5928,25 +6584,10 @@ function renderIntegrationExpanded(integration) {
         : `The invitation is ${escapeHtml(link)}. Send it again to link the account.`;
     selectionControl = `<div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(integration.external_account_label || "Google Ads")}</span></div>
       <p class="integration-setup-prompt" role="status">${linkCopy} <button class="integration-row-action" type="button" data-integration-refresh="${escapeHtml(integration.key)}">Check again</button>${link !== "active" && link !== "pending" ? ` <button class="integration-row-action" type="button" data-integration-connect="${escapeHtml(integration.key)}">Send again</button>` : ""}</p>`;
-  } else if (state.integrationLoading === integration.key) {
-    selectionControl = `<span class="integration-detail-value is-muted">Checking the connected account…</span>`;
-  } else if (options) {
-    const availableOptions = options.map((option) => [
-      option.id,
-      option.detail ? `${option.label} · ${option.detail}` : option.label,
-    ]);
-    const controlOptions = options.length
-      ? [
-          ...(!selected ? [["", `Choose a ${optionLabel.toLowerCase()}`]] : []),
-          ...availableOptions,
-        ]
-      : [["", `No ${optionLabel.toLowerCase()} available`]];
-    selectionControl = `<form class="integration-config-form" data-integration-form="${escapeHtml(integration.key)}">
-      <label>${escapeHtml(optionLabel)}</label>
-      ${tinSelectControl("option_id", selected, controlOptions, optionLabel)}
-    </form>`;
   } else {
-    selectionControl = `<span class="integration-detail-value is-muted">Choices unavailable. Close and reopen to retry.</span>`;
+    selectionControl = selected
+      ? `<div class="integration-detail-row"><span class="integration-detail-label">${escapeHtml(resourceLabel)}</span><span class="integration-detail-value">${escapeHtml(isPostHog ? integration.external_account_label || selected : selected)}</span></div>`
+      : "";
   }
   const connectedLabel = integration.connected_at ? timeLabel(integration.connected_at) : "recently";
   const checkedLabel = integration.last_checked_at
@@ -5954,7 +6595,7 @@ function renderIntegrationExpanded(integration) {
     : "not checked yet";
   return `<div class="integration-expanded">
     ${setupPrompt}
-    <div class="integration-selection-row">${selectionControl}</div>
+    ${selectionControl ? `<div class="integration-selection-row">${selectionControl}</div>` : ""}
     <div class="integration-detail-row">
       <span class="integration-detail-label">Access</span>
       <span class="integration-detail-value" title="${escapeHtml(accessCopy)}">${escapeHtml(accessValue)}</span>
@@ -5984,24 +6625,17 @@ async function toggleIntegration(providerKey) {
     return;
   }
   state.expandedIntegration = providerKey;
-  const integration = state.integrations.find((item) => item.key === providerKey);
-  const context = currentProjectContext();
-  if (integration?.connection_id && !["workspace.google", "ads.google", "payments.stripe", "infra.github_user"].includes(providerKey) && !state.integrationOptions.has(providerKey)) {
-    state.integrationLoading = providerKey;
-    renderIntegrations();
-    try {
-      const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
-      if (!isCurrentProjectContext(context)) return;
-      state.integrationOptions.set(providerKey, options);
-    } catch (error) {
-      if (!isCurrentProjectContext(context)) return;
-      showToast(`Could not load ${integration.name}: ${error.message}`);
-    } finally {
-      if (isCurrentProjectContext(context)) state.integrationLoading = null;
-    }
-  }
-  if (!isCurrentProjectContext(context)) return;
   renderIntegrations();
+}
+
+// "Set up" and "Configure" open the same question the connection asked, with the row's
+// details (access, disconnect) left open underneath for when it closes.
+function configureIntegrationResource(providerKey) {
+  if (state.expandedIntegration !== providerKey) {
+    state.expandedIntegration = providerKey;
+    renderIntegrations();
+  }
+  chooseIntegrationResource(providerKey);
 }
 
 async function openCustomApi(connection = null) {
@@ -6023,64 +6657,10 @@ async function promptForIntegrationResource(providerKey) {
   const integration = state.integrations.find((item) => item.key === providerKey);
   const selected = integrationSelection(integration);
   if (!integration?.connection_id || selected) return;
-  if (providerKey === "infra.github") {
-    await chooseGitHubRepository();
-    return;
-  }
-  if (state.expandedIntegration !== providerKey) await toggleIntegration(providerKey);
-  const form = document.querySelector(`[data-integration-form="${providerKey}"]`);
-  if (!form) return;
-  form.scrollIntoView({ block: "center", behavior: "smooth" });
-  form.querySelector("[data-tin-select-trigger]")?.focus({ preventScroll: true });
-  showToast(`Choose a ${integrationResourceNoun(providerKey)} to finish connecting ${integration.name}.`);
+  await chooseIntegrationResource(providerKey);
 }
 
-function renderIntegrationProjectOptions({ focusProjectId = null } = {}) {
-  integrationProjectOptions.replaceChildren();
-  for (const project of state.projects) {
-    const selected = project.id === state.integrationConnectIntent?.projectId;
-    const option = document.createElement("button");
-    option.type = "button";
-    option.className = `integration-project-option${selected ? " is-selected" : ""}`;
-    option.dataset.integrationProjectId = project.id;
-    option.setAttribute("role", "radio");
-    option.setAttribute("aria-checked", String(selected));
-    option.innerHTML = `<span><strong>${escapeHtml(project.name)}</strong>${project.id === state.project?.id ? "<small>Current project</small>" : ""}</span><i aria-hidden="true"></i>`;
-    option.addEventListener("click", () => {
-      state.integrationConnectIntent.projectId = project.id;
-      renderIntegrationProjectOptions({ focusProjectId: project.id });
-    });
-    integrationProjectOptions.append(option);
-  }
-  if (focusProjectId) {
-    integrationProjectOptions.querySelector(`[data-integration-project-id="${focusProjectId}"]`)?.focus();
-  }
-}
-
-function chooseIntegrationProject(providerKey, capabilities) {
-  const integration = state.integrations.find((item) => item.key === providerKey);
-  if (!integration || !state.project) return;
-  state.integrationConnectIntent = {
-    providerKey,
-    capabilities,
-    projectId: state.project.id,
-  };
-  const nextStep = providerKey === "infra.github"
-    ? "After GitHub authorizes Tin, you’ll choose the repository this project can use."
-    : providerKey === "analytics.posthog"
-      ? "PostHog then asks which one of your PostHog projects Tin may read."
-    : providerKey === "infra.github_user"
-      ? "GitHub then asks you to allow access to your public repositories. Tin only uses it to send the list submissions you approve."
-      : "After Google authorizes Tin, you’ll choose the Search Console property this project can use.";
-  integrationProjectTitle.textContent = `Connect ${integration.name} to a project`;
-  integrationProjectCopy.textContent = `Connections are project-owned. Choose the Tin project for this connection. ${nextStep}`;
-  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = `Continue to ${integration.name}`;
-  renderIntegrationProjectOptions();
-  integrationProjectDialog.showModal();
-  integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
-}
-
-async function connectIntegration(providerKey, capabilities = null, targetProjectId = null) {
+async function connectIntegration(providerKey, capabilities = null) {
   if (providerKey === CUSTOM_API_TEMPLATE.key) {
     await openCustomApi();
     return;
@@ -6090,8 +6670,9 @@ async function connectIntegration(providerKey, capabilities = null, targetProjec
     showToast(`${integration?.name || "This integration"} is not configured on this Tin deployment.`);
     return;
   }
+  const context = currentProjectContext();
   if (providerKey === "network.linkedin") {
-    const projectId = targetProjectId || currentProjectContext().projectId;
+    const projectId = context.projectId;
     try {
       const grant = await api(`/api/projects/${projectId}/connection-collection/pairing`, { method: "POST" });
       const id = crypto.randomUUID();
@@ -6106,71 +6687,36 @@ async function connectIntegration(providerKey, capabilities = null, targetProjec
         window.addEventListener("message", listener);
         window.postMessage({ source: "tin.dashboard.collection.v3", type: "PAIR", id, grant: grant.grant }, location.origin);
       });
+      if (!isCurrentProjectContext(context)) return;
       showToast(`${paired.actor || "LinkedIn"} connected.`);
       await bootstrap();
     } catch (error) { showToast(error.message); }
     return;
   }
   if (providerKey === "ads.google") {
-    chooseGoogleAdsAccount(targetProjectId || currentProjectContext().projectId);
+    chooseGoogleAdsAccount(context.projectId);
     return;
   }
   if (providerKey === "payments.stripe") {
-    chooseStripeKey(targetProjectId || currentProjectContext().projectId);
+    chooseStripeKey(context.projectId);
     return;
   }
-  if (
-    !targetProjectId &&
-    !integration.connection_id &&
-    RESOURCE_SCOPED_INTEGRATIONS.has(providerKey)
-  ) {
-    chooseIntegrationProject(providerKey, capabilities);
-    return;
-  }
-  const context = currentProjectContext();
-  const projectId = targetProjectId || context.projectId;
+  // Connect links the service to the project you are in. Its sign-in returns here, and a
+  // resource-scoped service then asks which repository, property or project to link.
   try {
-    const result = await api(`/api/projects/${encodeURIComponent(projectId)}/integrations/${encodeURIComponent(providerKey)}/connect`, {
+    const result = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/connect`, {
       method: "POST",
       ...(capabilities ? { body: JSON.stringify({ capabilities }) } : {}),
     });
     if (!isCurrentProjectContext(context)) return;
-    if (
-      targetProjectId &&
-      (!state.integrationConnectIntent ||
-        state.integrationConnectIntent.providerKey !== providerKey ||
-        state.integrationConnectIntent.projectId !== targetProjectId)
-    ) {
-      return;
-    }
-    persistProjectSelection(projectId);
+    persistProjectSelection(context.projectId);
     if (state.projectAccess === "locked" || connectRequest().length) {
-      rememberConnectRequest(projectId, [...connectRequest(projectId), providerKey]);
+      rememberConnectRequest(context.projectId, [...connectRequest(context.projectId), providerKey]);
     }
-    if (integrationProjectDialog.open) integrationProjectDialog.close();
     window.location.assign(result.authorization_url);
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
     showToast(`Could not connect ${integration.name}: ${error.message}`);
-  }
-}
-
-async function saveIntegrationSelection(providerKey, optionId) {
-  if (!optionId) return;
-  const context = currentProjectContext();
-  try {
-    const updated = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}`, {
-      method: "PUT",
-      body: JSON.stringify({ option_id: optionId }),
-    });
-    if (!isCurrentProjectContext(context)) return;
-    const index = state.integrations.findIndex((item) => item.key === providerKey);
-    if (index >= 0) state.integrations[index] = updated;
-    showToast(`${updated.name} configuration saved.`);
-    renderIntegrations();
-  } catch (error) {
-    if (!isCurrentProjectContext(context)) return;
-    showToast(`Could not save integration: ${error.message}`);
   }
 }
 
@@ -6181,7 +6727,6 @@ async function disconnectIntegration(providerKey) {
   try {
     await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}`, { method: "DELETE" });
     if (!isCurrentProjectContext(context)) return;
-    state.integrationOptions.delete(providerKey);
     state.expandedIntegration = null;
     const integrations = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations`);
     if (!isCurrentProjectContext(context)) return;
@@ -6247,10 +6792,10 @@ function runsHaveChanged(previous, next) {
   return next.some((run) => before.get(run.id) !== runFingerprint(run));
 }
 
-function renderPolledRuns({ collectionsChanged }) {
+function renderPolledRuns({ collectionsChanged, summaryChanged }) {
   updateRail();
   if (state.view === "chat") renderChat();
-  if (state.view === "workflows") renderWorkflows();
+  if (state.view === "workflows" && (collectionsChanged || summaryChanged)) renderWorkflows({ preserveEditor: true });
   if (state.view === "activity" && collectionsChanged) renderActivity();
   if (state.view === "decisions" && collectionsChanged) renderDecisions();
   if (state.view === "task" && document.activeElement?.id !== "task-message") renderTask();
@@ -6262,18 +6807,25 @@ async function pollRuns() {
   const projectId = state.project.id;
   state.pollInFlight = true;
   try {
-    const [results, systemSummary, decisions] = await Promise.all([
+    const [recentRuns, systemSummary, decisions, websiteChanges] = await Promise.all([
       api(`/api/projects/${encodeURIComponent(projectId)}/runs?limit=100`),
       api(`/api/projects/${encodeURIComponent(projectId)}/system`),
       api(`/api/projects/${encodeURIComponent(projectId)}/decisions`),
+      fetchWebsiteChanges(projectId),
     ]);
+    if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
+    const results = await includeDecisionRuns(recentRuns, decisions, projectId);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const workflowsChanged = await loadRunWorkflows(results);
     if (generation !== state.projectGeneration || state.project?.id !== projectId) return;
     const collectionsChanged = workflowsChanged || runsHaveChanged(state.runs, results)
-      || JSON.stringify(state.decisions) !== JSON.stringify(decisions);
+      || JSON.stringify(state.decisions) !== JSON.stringify(decisions)
+      || JSON.stringify([state.websiteChanges, state.judgmentCalls]) !== JSON.stringify([websiteChanges.changes, websiteChanges.questions]);
     state.decisions = decisions;
+    state.websiteChanges = websiteChanges.changes;
+    state.judgmentCalls = websiteChanges.questions;
     state.runs = results;
+    const summaryChanged = JSON.stringify(state.systemSummary) !== JSON.stringify(systemSummary);
     state.systemSummary = systemSummary;
     for (const run of results) {
       if (["succeeded", "failed", "stopped"].includes(run.status)) state.pendingReviewRunIds.delete(run.id);
@@ -6305,7 +6857,7 @@ async function pollRuns() {
       state.projectWorkflows = projectWorkflows;
       state.activityHasMore = state.activity.length === 100;
     }
-    renderPolledRuns({ collectionsChanged });
+    renderPolledRuns({ collectionsChanged, summaryChanged });
   } catch (error) {
     if (generation === state.projectGeneration && state.project?.id === projectId) {
       showToast(`Live status refresh failed: ${error.message}`);
@@ -6378,6 +6930,8 @@ function resetProjectState(project) {
   state.runs = [];
   state.activity = [];
   state.decisions = [];
+  state.websiteChanges = [];
+  state.judgmentCalls = [];
   state.messages = [];
   state.integrations = [];
   state.billing = null;
@@ -6386,6 +6940,7 @@ function resetProjectState(project) {
   state.documentCache = new Map();
   state.documentLoadingRunId = null;
   state.filesSnapshot = null;
+  state.filesByPath.clear();
   state.filesLoading = false;
   state.filesError = null;
   state.filesSearch = "";
@@ -6408,9 +6963,6 @@ function resetProjectState(project) {
   state.integrationFilter = "all";
   state.integrationSearch = "";
   state.expandedIntegration = null;
-  state.integrationOptions = new Map();
-  state.integrationLoading = null;
-  state.integrationConnectIntent = null;
   if (integrationProjectDialog.open) integrationProjectDialog.close();
   if (projectCreateDialog.open) projectCreateDialog.close();
   if (projectInviteDialog.open) projectInviteDialog.close();
@@ -6454,7 +7006,7 @@ async function loadProject(project, { announce = false, integrationReturn = null
     return [];
   });
   try {
-    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, messages, integrations] = await Promise.all([
+    const [workflows, projectWorkflows, systemSummary, runs, activity, decisions, messages, integrations, websiteChanges] = await Promise.all([
       api(`/api/workflows?project_id=${projectId}`),
       api(`/api/projects/${projectId}/workflows`),
       api(`/api/projects/${projectId}/system`),
@@ -6463,20 +7015,25 @@ async function loadProject(project, { announce = false, integrationReturn = null
       decisionsRequest,
       api(`/api/projects/${projectId}/chat/messages?limit=100`),
       api(`/api/projects/${projectId}/integrations`),
+      fetchWebsiteChanges(projectId),
     ]);
+    if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
+    const allRuns = await includeDecisionRuns(runs, decisions, project.id);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     state.workflows = workflows;
     state.projectWorkflows = projectWorkflows;
     state.systemSummary = systemSummary;
-    state.runs = runs;
+    state.runs = allRuns;
     state.activity = activity;
     state.decisions = decisions;
+    state.websiteChanges = websiteChanges.changes;
+    state.judgmentCalls = websiteChanges.questions;
     state.messages = messages.map(chatTurnFromMessage);
     state.integrations = integrations;
-    await loadRunWorkflows(runs);
+    await loadRunWorkflows(allRuns);
     if (generation !== state.projectGeneration || state.project?.id !== project.id) return false;
     state.activityHasMore = activity.length === 100;
-    state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !runs.length ? "locked" : "ready";
+    state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !allRuns.length ? "locked" : "ready";
     // A callback may arrive in a new tab or from the legacy origin. Let this project
     // finish that connection while keeping its dashboard locked.
     if (state.projectAccess === "locked" && integrationReturn?.projectId === project.id) {
@@ -6571,15 +7128,15 @@ async function bootstrap(invitedProjectId = null, integrationReturn = null) {
 
 async function completeIntegrationCallback() {
   const path = window.location.pathname.replace(/\/$/, "");
-  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account"].includes(path)) return null;
+  if (!["/integrations/callback/google", "/integrations/callback/github", "/integrations/callback/posthog", "/integrations/callback/github-account", "/integrations/callback/x"].includes(path)) return null;
   const values = new URL(window.location.href).searchParams;
   const provider = path.split("/").pop();
   const stateToken = values.get("state");
   let connected;
-  if (provider === "google" || provider === "posthog" || provider === "github-account") {
+  if (provider === "google" || provider === "posthog" || provider === "github-account" || provider === "x") {
     if (!stateToken) throw new Error("The integration connection did not return a valid state.");
     const code = values.get("code");
-    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account" }[provider];
+    const label = { google: "Google", posthog: "PostHog", "github-account": "GitHub account", x: "X" }[provider];
     if (!code) throw new Error(values.get("error_description") || `${label} connection was cancelled.`);
     connected = await api(`/api/integrations/${provider}/complete`, {
       method: "POST",
@@ -6675,41 +7232,73 @@ function clearIntegrationCallbackUrl(projectId = null) {
 
 const GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations";
 
-async function chooseGitHubRepository() {
-  // Same shape as the account chooser: the connect just finished, so the pick happens here
-  // instead of hunting for a select on the Integrations page.
+// Right after a service connects, and from "Set up" or "Configure": which one repository,
+// Search Console property or PostHog project this project uses. "Later" keeps the connection.
+const RESOURCE_CHOICES = {
+  "infra.github": {
+    noun: "repository",
+    loading: "Loading repositories…",
+    copy: "Tin opens pull requests and delivers approved pages here.",
+    confirm: "Link",
+  },
+  "analytics.gsc": {
+    noun: "Search Console property",
+    loading: "Loading properties…",
+    copy: "Tin reads real searches, clicks and positions from this property.",
+    confirm: "Link",
+    empty: "This Google account has no Search Console properties yet.",
+  },
+  "analytics.posthog": {
+    noun: "PostHog project",
+    loading: "Loading projects…",
+    copy: "Tin reads events and funnels from this one project, read only.",
+    confirm: "Link",
+    empty: "This PostHog account has no projects Tin can read.",
+  },
+};
+
+async function chooseIntegrationResource(providerKey) {
+  const copy = RESOURCE_CHOICES[providerKey];
   const context = currentProjectContext();
-  if (!context.projectId) return;
-  state.repositoryChoice = { projectId: context.projectId, options: null, selected: null };
-  integrationProjectTitle.textContent = `Choose the repository for ${state.project?.name || "this project"}`;
-  integrationProjectCopy.textContent = "Tin writes approved drafts to one repository per project.";
-  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Save";
-  renderGitHubRepositoryOptions();
-  integrationProjectDialog.showModal();
-  try {
-    const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/infra.github/options`);
-    if (!isCurrentProjectContext(context) || state.repositoryChoice?.projectId !== context.projectId) return;
-    state.integrationOptions.set("infra.github", options);
-    state.repositoryChoice.options = options;
-    state.repositoryChoice.selected = options[0]?.id || null;
-  } catch (error) {
-    if (!isCurrentProjectContext(context) || !state.repositoryChoice) return;
-    state.repositoryChoice.options = [];
-    showToast(`Could not load repositories: ${error.message}`);
+  if (!copy || !context.projectId) return;
+  const integration = state.integrations.find((item) => item.key === providerKey);
+  state.resourceChoice = { providerKey, projectId: context.projectId, options: null, selected: null };
+  integrationProjectTitle.textContent = `Choose the ${copy.noun} for ${state.project?.name || "this project"}`;
+  integrationProjectCopy.textContent = copy.copy;
+  integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = copy.confirm;
+  integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Later";
+  integrationProjectOptions.setAttribute("aria-label", copy.noun);
+  renderIntegrationResourceOptions();
+  if (!integrationProjectDialog.open) {
+    showIntegrationDialogError(null);
+    integrationProjectDialog.showModal();
   }
-  renderGitHubRepositoryOptions();
+  const current = () => state.resourceChoice?.providerKey === providerKey && state.resourceChoice.projectId === context.projectId;
+  try {
+    const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
+    if (!isCurrentProjectContext(context) || !current()) return;
+    const chosen = integrationSelection(integration);
+    state.resourceChoice.options = options;
+    state.resourceChoice.selected = options.find((item) => item.id === chosen)?.id || options[0]?.id || null;
+  } catch (error) {
+    if (!isCurrentProjectContext(context) || !current()) return;
+    state.resourceChoice.options = [];
+    showIntegrationDialogError(`Could not load the choices: ${error.message}`);
+  }
+  renderIntegrationResourceOptions();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
 }
 
-function renderGitHubRepositoryOptions() {
-  const choice = state.repositoryChoice;
+function renderIntegrationResourceOptions() {
+  const choice = state.resourceChoice;
   if (!choice) return;
+  const copy = RESOURCE_CHOICES[choice.providerKey];
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
   integrationProjectOptions.replaceChildren();
   if (choice.options === null) {
     const loading = document.createElement("p");
     loading.className = "integration-project-empty";
-    loading.textContent = "Loading repositories…";
+    loading.textContent = copy.loading;
     integrationProjectOptions.append(loading);
     confirm.disabled = true;
     return;
@@ -6724,41 +7313,50 @@ function renderGitHubRepositoryOptions() {
     option.innerHTML = `<span><strong>${escapeHtml(item.label)}</strong>${item.detail ? `<small>${escapeHtml(item.detail)}</small>` : ""}</span><i aria-hidden="true"></i>`;
     option.addEventListener("click", () => {
       choice.selected = item.id;
-      renderGitHubRepositoryOptions();
+      renderIntegrationResourceOptions();
       integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
     });
     integrationProjectOptions.append(option);
   }
-  const note = document.createElement("p");
-  note.className = "integration-project-empty";
-  note.innerHTML = `Only repositories the Tin app is installed on appear here. Add the repository under <a href="${GITHUB_INSTALLATIONS_URL}" target="_blank" rel="noreferrer">the Tin app’s access on GitHub</a>, then reopen the connect link.`;
-  integrationProjectOptions.append(note);
+  if (choice.providerKey === "infra.github") {
+    const note = document.createElement("p");
+    note.className = "integration-project-empty";
+    note.innerHTML = `Only repositories the Tin app is installed on appear here. Add the repository under <a href="${GITHUB_INSTALLATIONS_URL}" target="_blank" rel="noreferrer">the Tin app’s access on GitHub</a>, then reopen the connect link.`;
+    integrationProjectOptions.append(note);
+  } else if (!choice.options.length) {
+    const empty = document.createElement("p");
+    empty.className = "integration-project-empty";
+    empty.textContent = copy.empty;
+    integrationProjectOptions.append(empty);
+  }
   confirm.disabled = !choice.selected;
 }
 
-async function confirmGitHubRepository() {
-  const choice = state.repositoryChoice;
+async function confirmIntegrationResource() {
+  const choice = state.resourceChoice;
   if (!choice?.selected) return;
+  const copy = RESOURCE_CHOICES[choice.providerKey];
+  const option = choice.options.find((item) => item.id === choice.selected);
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
   confirm.disabled = true;
-  confirm.textContent = "Saving…";
+  confirm.textContent = "Linking…";
   try {
-    const updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/infra.github`, {
+    const updated = await api(`/api/projects/${encodeURIComponent(choice.projectId)}/integrations/${encodeURIComponent(choice.providerKey)}`, {
       method: "PUT",
       body: JSON.stringify({ option_id: choice.selected }),
     });
     if (state.project?.id === choice.projectId) {
-      const index = state.integrations.findIndex((item) => item.key === "infra.github");
+      const index = state.integrations.findIndex((item) => item.key === choice.providerKey);
       if (index >= 0) state.integrations[index] = updated;
       else state.integrations.push(updated);
     }
     if (integrationProjectDialog.open) integrationProjectDialog.close();
-    showToast(`${updated.name} will write to ${updated.configuration?.selected_repository || "the chosen repository"}.`);
+    showToast(`${updated.name} now uses ${option?.label || "your choice"}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not save the repository: ${error.message}`);
+    showIntegrationDialogError(`Could not link the ${copy.noun}: ${error.message}`);
     confirm.disabled = false;
-    confirm.textContent = "Save";
+    confirm.textContent = copy.confirm;
   }
 }
 
@@ -6780,6 +7378,7 @@ function chooseGoogleAdsAccount(projectId) {
   input.value = state.googleAdsChoice.customerId;
   input.addEventListener("input", () => { state.googleAdsChoice.customerId = input.value; });
   integrationProjectOptions.append(field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   input.focus();
 }
@@ -6789,7 +7388,7 @@ async function confirmGoogleAdsAccount() {
   if (!choice) return;
   const digits = (choice.customerId || "").replace(/[^0-9]/g, "");
   if (digits.length !== 10) {
-    showToast("A Google Ads customer id has ten digits, like 123-456-7890.");
+    showIntegrationDialogError("A Google Ads customer id has ten digits, like 123-456-7890.");
     return;
   }
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
@@ -6811,7 +7410,7 @@ async function confirmGoogleAdsAccount() {
       : "Invitation sent. Accept it in Google Ads, then press Check again.");
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not link Google Ads: ${error.message}`);
+    showIntegrationDialogError(`Could not link Google Ads: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Send invitation";
   }
@@ -6840,6 +7439,7 @@ function chooseStripeKey(projectId) {
   field.className = "project-create-field";
   field.innerHTML = `<span>Stripe restricted key</span><input type="password" name="restricted_key" autocomplete="off" spellcheck="false" placeholder="rk_live_…" maxlength="300" required />`;
   integrationProjectOptions.append(link, field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   field.querySelector("input").focus();
 }
@@ -6850,7 +7450,7 @@ async function confirmStripeKey() {
   const input = integrationProjectOptions.querySelector('input[name="restricted_key"]');
   const key = (input?.value || "").trim();
   if (!/^rk_(live|test)_/.test(key)) {
-    showToast(/^(sk|pk)_/.test(key)
+    showIntegrationDialogError(/^(sk|pk)_/.test(key)
       ? "That is a secret or publishable key. Paste a restricted key starting rk_live_ or rk_test_."
       : "Paste a Stripe restricted key; it starts with rk_live_ or rk_test_.");
     return;
@@ -6873,7 +7473,7 @@ async function confirmStripeKey() {
     showToast(`Stripe connected: ${stripeHealth(updated)}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not connect Stripe: ${error.message}`);
+    showIntegrationDialogError(`Could not connect Stripe: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Save key";
   }
@@ -6923,6 +7523,7 @@ function chooseGitHubInstallation() {
     "The Tin GitHub App is installed on more than one account you can access. Choose the one that owns this project’s repository.";
   integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Continue to GitHub";
   renderGitHubInstallationOptions();
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
 }
@@ -7202,6 +7803,12 @@ projectSwitcher.addEventListener("click", () => {
   else closeProjectMenu();
 });
 
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !state.diagramPanel) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  closeWorkflowDiagram();
+});
+
 projectSwitcher.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
@@ -7320,8 +7927,9 @@ projectInviteDialog.addEventListener("close", () => {
 
 integrationProjectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (state.repositoryChoice) {
-    await confirmGitHubRepository();
+  showIntegrationDialogError(null);
+  if (state.resourceChoice) {
+    await confirmIntegrationResource();
     return;
   }
   if (state.githubInstallationChoice) {
@@ -7336,17 +7944,6 @@ integrationProjectForm.addEventListener("submit", async (event) => {
     await confirmStripeKey();
     return;
   }
-  const intent = state.integrationConnectIntent;
-  if (!intent) return;
-  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
-  const integration = state.integrations.find((item) => item.key === intent.providerKey);
-  confirm.disabled = true;
-  confirm.textContent = "Continuing…";
-  await connectIntegration(intent.providerKey, intent.capabilities, intent.projectId);
-  if (integrationProjectDialog.open) {
-    confirm.disabled = false;
-    confirm.textContent = `Continue to ${integration?.name || "provider"}`;
-  }
 });
 
 integrationProjectForm.querySelector("[data-cancel-integration-project]").addEventListener("click", () => {
@@ -7354,9 +7951,11 @@ integrationProjectForm.querySelector("[data-cancel-integration-project]").addEve
 });
 
 integrationProjectDialog.addEventListener("close", () => {
-  state.integrationConnectIntent = null;
+  showIntegrationDialogError(null);
   state.githubInstallationChoice = null;
-  state.repositoryChoice = null;
+  state.resourceChoice = null;
+  integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Cancel";
+  integrationProjectOptions.setAttribute("aria-label", "Tin project");
   state.googleAdsChoice = null;
   state.stripeKeyChoice = null;
   const stripeKey = integrationProjectOptions.querySelector('input[name="restricted_key"]');

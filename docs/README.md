@@ -22,6 +22,8 @@ remain authoritative; older contract versions are retained for compatibility.
   and [model accounting](model-service-accounting.md).
 - [Authentication and integrations](auth-and-integrations.md),
   [MCP authentication](clerk-agent-connection.md) and [domain configuration](app-domain-rollout.md).
+- [Public ChatGPT plugin](public-plugin.md): existing-project tools, isolated OAuth resource,
+  package source and public-review preparation.
 - [MCP onboarding handoff](onboarding-mcp.md): access, first results, delivery and partial setup.
 - [Codex API execution](codex-api-pilot.md), [isolated runtime](isolated-codex-runtime.md),
   [Studio execution](studio-api-and-hosted-credits.md) and [worker lanes](activity-worker-lanes.md).
@@ -46,6 +48,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   managed-model Python and Codex procedures, with explicit maintainer registration.
 - [Social planning and drafts](social-post-batch.md): an editable plan, weekly batches
   from project files, and article repurposing with the current writing guide.
+- [X drafting and publishing](x-workflow.md): account connection, personal voice capture,
+  project-file drafts and individually confirmed posts with images or video.
 - [Project files in code workflows](code-project-files.md): direct reads of current files,
   optional caller inputs, and stable retries without a source or version picker.
 - [Product analytics brief](product-analytics-brief.md): the public PostHog package and qualification limits.
@@ -56,6 +60,8 @@ your own accounts before use; ordinary contributor tests need no production cred
 - [Project API connections](project-api-connections.md): secure credentials and external requests.
 - [Stripe and PostHog connections](stripe-and-posthog-connections.md): the first-party read-only
   connections, their operations, projected records and offline test fakes.
+- [Failed-payment recovery](payment-recovery.md): the Revenue system's first workflow, from
+  Stripe's failed payments to approved emails sent from the founder's Gmail.
 - [Paid ads assessment](paid-ads-assessment-implementation.md): the native LLM flow that decides
   whether Google Search ads fit, its evidence sources, scorer and outputs.
 - [Google Ads launch and monitor](paid-ads-launch-implementation.md): the identifier-entry
@@ -63,9 +69,17 @@ your own accounts before use; ordinary contributor tests need no production cred
   with its automatic changes and approval-gated proposals.
 - [Content programs](content-program-implementation.md), [draft generation](content-generation-implementation.md),
   [review and revisions](content-review.md) and [repository-aware delivery](repository-aware-content-delivery.md).
+- [One content.generate](one-content-generate.md): typed plan items, and how articles, answer
+  pages and page refreshes are drafted, reviewed and delivered.
+- [website.change](website-change.md): approved changes to a founder's site (pages, and the
+  technical fixes the latest audit found); its two modes, recorded approvals, protected paths
+  and the change-row contract.
 - [Writing style capture](writing-style-capture.md) and [editorial judgment](content-editorial-judgment.md).
 - [Brand and design capture](brand-capture.md) and [reviewed document pairs](reviewed-project-documents.md).
 - [Organic system execution](organic-system-execution.md) and [content continuation](organic-content-continuation.md).
+- [AI answers through DataForSEO](ai-answers-dataforseo.md): what each answer engine measures,
+  vendor prices and how the organic audit calls it.
+- [Refreshing existing pages](content-refresh.md): the weekly page refresh and its exact source patch.
 - [Technical repair](technical-fix.md): finding selection, supported repairs and verification limits.
 - [Diagram renderer](diagram-renderer.md), [composition checks](diagram-composition-quality.md)
   and [creative Studio](creative-studio.md).

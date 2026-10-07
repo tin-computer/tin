@@ -239,9 +239,12 @@ class GitHubAccounts:
         settings = self.integrations._settings
         try:
             token = open_credential(self.integrations, connection)
+            # Only this connection's token. The grant is the founder's whole authorization of
+            # Tin's app, shared by every project they connected with the same account;
+            # deleting it would disconnect those projects too.
             await self._client.request(
                 "DELETE",
-                f"{API}/applications/{settings.github_oauth_client_id}/grant",
+                f"{API}/applications/{settings.github_oauth_client_id}/token",
                 json={"access_token": token},
                 auth=(
                     settings.github_oauth_client_id,

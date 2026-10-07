@@ -170,3 +170,46 @@ async def test_analytics_excludes_tool_content_errors_and_activity_prose(monkeyp
     assert "PRIVATE_" not in json.dumps(list(client._queue))
     assert client._queue[0]["properties"]["result_bytes"] > 0
     assert client._queue[-1]["properties"]["run_id"] == "run"
+
+
+def test_clip_survives_lone_surrogates() -> None:
+    value = {"title": "broken \ud83d pair", "nested": ["\udc00"]}
+    clipped, facts = clip(value)
+    assert facts["truncated"] is False and facts["bytes"] > 0
+    json.dumps(clipped, ensure_ascii=False).encode("utf-8")
+    big, facts = clip("\ud800" + "x" * (PAYLOAD_CAP + 10))
+    assert facts["truncated"] is True
+    big.encode("utf-8")
+
+
+@pytest.mark.asyncio
+async def test_middleware_returns_the_tool_result_when_analytics_fails(monkeypatch) -> None:
+    client = analytics.configure("phc_test", "https://ph.example", source="test")
+
+    def broken_capture(event, **kw):
+        raise ValueError("analytics outage")
+
+    monkeypatch.setattr(client, "capture", broken_capture)
+    monkeypatch.setattr("tin_lite.mcp_server.get_access_token", lambda: None)
+    result = SimpleNamespace(
+        structured_content={"title": "lone \ud83d surrogate"}, content=[], is_error=False
+    )
+
+    async def call_next(ctx):
+        return result
+
+    ctx = SimpleNamespace(
+        method="tools/call",
+        params={"name": "save", "arguments": {"project_id": "p1", "text": "\udc00"}},
+        session=None,
+    )
+    try:
+        assert await analytics_middleware(ctx, call_next) is result
+
+        async def failing(ctx):
+            raise LookupError("the real error")
+
+        with pytest.raises(LookupError, match="the real error"):
+            await analytics_middleware(ctx, failing)
+    finally:
+        analytics.configure(None, "")

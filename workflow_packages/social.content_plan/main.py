@@ -12,6 +12,7 @@ CONTEXT_PATHS = (
     "wiki/INDEX.md",
 )
 STYLE_PATH = ".agents/skills/writing-style/SKILL.md"
+MAX_CONTEXT_CHARS = 14_000
 MAX_INPUT_BYTES = 32_000
 MAX_OUTPUT_BYTES = 12_000
 DAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
@@ -89,7 +90,17 @@ INSTRUCTIONS = (
 )
 
 
+def _first_part(value):
+    """The start of a long file, cut at a line so no sentence stops midway."""
+    head = value[:MAX_CONTEXT_CHARS]
+    cut = head.rfind("\n")
+    return (head[:cut] if cut > MAX_CONTEXT_CHARS // 2 else head).strip()
+
+
 def _read_context(ctx, inputs):
+    # A long file (Start here's growth plan runs past 20,000 characters) gives way to a
+    # shorter source; with none, its first part is still the best context there is.
+    oversized = None
     for path in CONTEXT_PATHS:
         try:
             value = ctx.files.read_text(path)
@@ -98,10 +109,13 @@ def _read_context(ctx, inputs):
         if not isinstance(value, str):
             raise ValueError(f"{path} is not valid text")
         if value.strip():
-            if len(value) > 14_000:
-                raise ValueError(f"{path} exceeds the social planning context limit")
+            if len(value.strip()) > MAX_CONTEXT_CHARS:
+                oversized = oversized or (path, value.strip())
+                continue
             return path, value.strip()
     supplied = inputs.get("context_text")
+    if oversized and (not isinstance(supplied, str) or not supplied.strip()):
+        return f"{oversized[0]} (first part)", _first_part(oversized[1])
     if not isinstance(supplied, str) or not supplied.strip():
         raise ValueError(
             "Add context/product-marketing.md, reports/GROWTH_ONBOARDING_PLAN.md, "

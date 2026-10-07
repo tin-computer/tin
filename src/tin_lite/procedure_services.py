@@ -13,9 +13,10 @@ SERVICE_CAPABILITY = "services.call"
 
 
 class ProcedureServices:
-    def __init__(self, *, database, storage, integrations, settings):
+    def __init__(self, *, database, storage, integrations, settings, managed=None):
         self.db, self.storage = database, storage
         self.integrations, self.settings = integrations, settings
+        self.managed = managed  # Tests pass a ManagedServices with recorded responses.
 
     async def call(self, *, token, payload):
         async with self.db.pool.acquire() as conn:
@@ -70,5 +71,9 @@ class ProcedureServices:
             # Preserve code_service_call_v1 and its fingerprints/recovery semantics. Both
             # executors use the same provider checks, receipts and external usage records.
             return await CodeServices(
-                database=self.db, integrations=self.integrations, authorize=authorize
+                database=self.db,
+                integrations=self.integrations,
+                authorize=authorize,
+                settings=self.settings,
+                managed=self.managed,
             ).call(conn=conn, run=run, workflow=workflow, spec=spec, payload=payload)

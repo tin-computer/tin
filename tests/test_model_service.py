@@ -20,6 +20,7 @@ from tin_lite.model_providers import (
     MessageRole,
     ModelCapability,
     ModelMessage,
+    ModelOutputTruncated,
     ModelProviderError,
     ModelRequest,
     ModelRoute,
@@ -29,6 +30,7 @@ from tin_lite.model_providers import (
     ProviderName,
     ReasoningEffort,
     _optional_int,
+    model_failure_reason,
 )
 from tin_lite.model_usage import OPERATION, ModelUsageRecorder, model_usage_scope, model_usage_step
 
@@ -53,7 +55,7 @@ ROUTE = ModelRoute(
 )
 
 
-def response_body(text='{"answer":"good"}', *, choices=True):
+def response_body(text='{"answer":"good"}', *, choices=True, finish="stop"):
     return {
         "id": "generation-test",
         "object": "chat.completion",
@@ -63,7 +65,7 @@ def response_body(text='{"answer":"good"}', *, choices=True):
             [
                 {
                     "index": 0,
-                    "finish_reason": "stop",
+                    "finish_reason": finish,
                     "message": {"role": "assistant", "content": text},
                 }
             ]
@@ -217,6 +219,9 @@ async def test_concurrent_duplicate_has_one_observation_and_one_paid_attempt(pub
         assert record["run_id"] == str(run.id) and record["project_id"] == str(run.project_id)
         assert record["definition_commit_sha"] == run.definition_commit_sha
         assert record["usage"]["total_tokens"] == 16
+        # The call's cap and the provider's stop signal, so a cut-off answer is visible.
+        assert record["max_output_tokens"] == 100
+        assert record["stop_reason"] == "stop" and record["output_truncated"] is False
         encoded = json.dumps(record)
         for secret in (
             "private founder context",
@@ -240,6 +245,27 @@ async def test_invalid_output_is_accounted_and_not_rebought(publication_db):
                 await invoke(db, run, router)
         [(status, record)] = await receipts(db)
         assert status == "completed" and record["outcome"] == "invalid_output"
+        assert record["usage"]["total_tokens"] == 16 and len(calls) == 1
+        assert record["stop_reason"] == "stop" and record["output_truncated"] is False
+    finally:
+        await router.close()
+
+
+@pytest.mark.parametrize("text", ["", '{"answer":"go'])
+async def test_a_cut_off_answer_is_named_and_its_receipt_says_so(publication_db, text):
+    """OpenRouter's `length` finish is its cap: an empty or unparseable answer is cut off."""
+    db = publication_db
+    run, router, calls = await fixture(
+        db, lambda _: httpx.Response(200, json=response_body(text, finish="length"))
+    )
+    try:
+        with pytest.raises(ModelOutputTruncated) as failed:
+            await invoke(db, run, router)
+        assert model_failure_reason(failed.value) == "output_truncated"
+        [(status, record)] = await receipts(db)
+        assert status == "completed" and record["outcome"] == "invalid_output"
+        assert record["max_output_tokens"] == 100
+        assert record["stop_reason"] == "length" and record["output_truncated"] is True
         assert record["usage"]["total_tokens"] == 16 and len(calls) == 1
     finally:
         await router.close()

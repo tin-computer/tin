@@ -23,7 +23,14 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_project_spending(project_id: str) -> dict[str, Any]:
-        """Read your project's spending, or workspace billing if you are its billing admin."""
+        """Read your project's spending, or workspace billing if you are its billing admin.
+
+        spent_this_month_usd is this project's. A billing admin's transactions cover the
+        whole workspace wallet; each has a scope: project, other_project or workspace.
+        A billing admin's available_usd is what a new start can use, the figure the start
+        check uses: the balance less reserved_usd and set_aside_usd (estimates of runs
+        that are pending or running).
+        """
         token = await caller()
         return await result(service().overview(UUID(project_id), token.subject))
 
@@ -109,7 +116,6 @@ def register_billing_tools(server, *, runtime, settings, caller):
         project_id: str,
         per_run_usd: str,
         monthly_usd: str,
-        concurrency: int,
         expected_revision: int,
         schedule_max_usd: str | None = None,
     ) -> dict[str, Any]:
@@ -121,7 +127,6 @@ def register_billing_tools(server, *, runtime, settings, caller):
         policy = ProjectSpendingPolicy(
             per_run_nanos=usd_nanos(per_run_usd),
             monthly_nanos=usd_nanos(monthly_usd),
-            concurrency=concurrency,
             expected_revision=expected_revision,
             schedule_max_nanos=usd_nanos(schedule_max_usd) if schedule_max_usd else None,
         )
@@ -131,7 +136,7 @@ def register_billing_tools(server, *, runtime, settings, caller):
     async def create_billing_checkout(
         workspace_id: str, amount_cents: int, request_id: str
     ) -> dict[str, Any]:
-        """Billing admin: open a hosted Stripe test checkout. Returning does not start a run."""
+        """Billing admin: open a hosted Stripe checkout. Returning does not start a run."""
         token = await caller()
         payments = StripePayments(billing=service(), settings=settings)
         return await result(
@@ -145,14 +150,14 @@ def register_billing_tools(server, *, runtime, settings, caller):
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def list_billing_payments(workspace_id: str) -> dict[str, Any]:
-        """Billing admin: read test payments, invoices and refundable balances."""
+        """Billing admin: read payments, invoices and refundable balances."""
         token = await caller()
         payments = StripePayments(billing=service(), settings=settings)
         return {"payments": await result(payments.list_payments(UUID(workspace_id), token.subject))}
 
     @server.tool()
     async def enroll_billing_test(workspace_id: str) -> dict[str, Any]:
-        """Billing administrator: enable test-only billing; no live charge.
+        """Billing administrator: enable paid runs for a workspace in the configured Stripe mode.
 
         Hosted Tin enables billing automatically. This explicit operator/pilot control
         changes future admission only; configure limits and funds when not using hosted defaults.

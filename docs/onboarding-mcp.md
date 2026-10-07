@@ -107,8 +107,10 @@ filled with the revision the commit returns. `review_url` keeps showing the run'
 A draft waiting for review is never revised by editing its file: approval and delivery use
 the saved copy at `revision`, so the edit would not reach them. For articles `revise` names
 `request_workflow_changes` (after `get_workflow_review` for the `review_token`), a metered new
-version of the same piece that keeps the review. Other waiting drafts have `tool: null` and a
-reason until the founder decides in Decisions. After a decision the file can be edited, but
+version of the same piece that keeps the review. A brand or writing style proposal from
+capture 1.2.0 names `revise_capture_proposal`, which replaces the proposal with checked text and
+keeps it waiting in Decisions. Other waiting drafts have `tool: null` and a reason until the
+founder decides in Decisions. After a decision the file can be edited, but
 the decided copy, and any pull request or applied document made from it, stay as they were.
 A content plan snapshot points to `edit_content_plan`, an email campaign to
 `revise_email_campaign`, a waiting onboarding plan to `record_onboarding_picks`, and a file

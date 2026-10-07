@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 
 from tin_lite import analytics
 from tin_lite.api import router
@@ -27,11 +28,20 @@ STATIC_DIR = Path(__file__).with_name("static")
 def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or get_settings()
     auth = ClerkAuth(resolved_settings)
+    plugin_auth = ClerkAuth(
+        resolved_settings, oauth_resource_path="/mcp/plugins", allow_legacy_clients=False
+    )
     app_ref: dict[str, FastAPI] = {}
     mcp_server, mcp_app = create_mcp_app(
         settings=resolved_settings,
         auth=auth,
         runtime=lambda: app_ref["app"].state.runtime,
+    )
+    plugin_server, plugin_app = create_mcp_app(
+        settings=resolved_settings,
+        auth=plugin_auth,
+        runtime=lambda: app_ref["app"].state.runtime,
+        public_plugin=True,
     )
     run_tools_server, run_tools_app = create_run_tools_app(
         settings=resolved_settings,
@@ -63,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         try:
             async with (
                 mcp_app.router.lifespan_context(mcp_app),
+                plugin_app.router.lifespan_context(plugin_app),
                 run_tools_app.router.lifespan_context(run_tools_app),
             ):
                 yield
@@ -89,12 +100,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 await runtime.codex_api.close()
             await runtime.database.close()
             await auth.close()
+            await plugin_auth.close()
             await analytics.aclose()
 
     app = FastAPI(title="Tin Lite Switchboard", version="0.1.0", lifespan=lifespan)
     app_ref["app"] = app
     app.state.auth = auth
     app.state.mcp_server = mcp_server
+    app.state.plugin_mcp_server = plugin_server
     app.state.run_tools_server = run_tools_server
     app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
     app.include_router(router)
@@ -104,6 +117,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.include_router(billing_router)
     app.include_router(sms_router)
     app.mount("/internal/run-tools", run_tools_app)
+    # Exact routes retain the original path and the SDK's auth/CORS middleware.
+    # They must precede the existing root mount, without intercepting /mcp/consent.
+    app.router.routes.extend(
+        [
+            Route("/mcp/plugins", plugin_app, methods=["GET", "POST", "DELETE", "OPTIONS"]),
+            Route(
+                "/.well-known/oauth-protected-resource/mcp/plugins",
+                plugin_app,
+                methods=["GET", "OPTIONS"],
+            ),
+        ]
+    )
     app.mount("/", mcp_app)
     return app
 

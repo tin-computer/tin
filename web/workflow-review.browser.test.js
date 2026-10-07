@@ -82,21 +82,21 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     }, theme);
     const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
     await page.goto(`${base}/?project=project#decisions`);
-    await page.getByRole("button", {name: "Request changes", exact: true}).waitFor();
+    await page.locator(".decision-detail-card .decision-approval[data-apply-decision]").waitFor();
+    // Feedback is given on the draft page; the Decisions card only approves or discards.
+    assert.equal(await page.locator(".decision-detail-card").getByRole("button", {name: "Request changes", exact: true}).count(), 0);
     assert.equal(await page.evaluate(() => state.workflows.some(item => item.id === "article")), !hidden);
     if (hidden) await page.getByRole("button", {name: "Open a pull request", exact: true}).waitFor();
     for (const width of [1440, 390]) {
       await page.setViewportSize({width, height: 1000});
       const spacing = await page.locator(".decision-detail-card").evaluate(card => ({
-        gap: card.querySelector("footer").getBoundingClientRect().top - card.querySelector(".decision-summary").getBoundingClientRect().bottom,
+        // The body ends with its last visible line (the sentence, or a note under it).
+        gap: card.querySelector("footer").getBoundingClientRect().top - [...card.querySelectorAll(".decision-detail-body > *")].filter(item => getComputedStyle(item).display !== "none").at(-1).getBoundingClientRect().bottom,
         padding: parseFloat(getComputedStyle(card.querySelector(".decision-detail-body")).paddingBottom),
         emptyReviewDisplay: getComputedStyle(card.querySelector(".workflow-review")).display,
       }));
       assert.equal(spacing.emptyReviewDisplay, "none");
       assert.equal(spacing.gap, spacing.padding);
-      await page.getByRole("button", {name: "Request changes", exact: true}).click();
-      assert.equal(await page.locator(".review-composer").isVisible(), true);
-      await page.getByRole("button", {name: "Close feedback", exact: true}).click();
       assert.equal(await page.locator(".workflow-review").isVisible(), false);
       if (process.env.TIN_REVIEW_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/decision-spacing-${theme}-${width}.png`, fullPage: true});
     }
@@ -149,11 +149,10 @@ for (const hidden of [false, true]) for (const theme of ["light", "dark"]) test(
     await page.mouse.move(0, 0);
     await page.waitForTimeout(150);
     if (process.env.TIN_REVIEW_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_REVIEW_SCREENSHOTS}/decision-approval-${theme}.png`, fullPage: true});
-    await page.getByRole("button", {name: "Request changes", exact: true}).click();
-    assert.equal(await page.locator(".decision-detail-card .review-composer").count(), 1);
-    assert.doesNotMatch(await page.locator(".review-composer").innerText(), /Add reference files|Add file/);
+    assert.equal(await page.locator(".decision-detail-card").getByRole("button", {name: "Request changes", exact: true}).count(), 0);
+    assert.equal(await page.locator(".decision-detail-card .review-composer").count(), 0);
     assert.deepEqual(fileReads, []);
-    await page.getByRole("button", {name: "Open draft →", exact: true}).click();
+    await page.getByRole("button", {name: "Open", exact: true}).click();
     await page.getByRole("heading", {name: "An article with a purpose", exact: true}).waitFor();
     assert.equal(await page.locator(".review-composer").count(), 0);
     await page.getByRole("button", {name: "Compare", exact: true}).click();

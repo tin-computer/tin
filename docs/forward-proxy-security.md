@@ -53,7 +53,9 @@ The E2B runtime inserts the scoped URL into the existing proxy environment varia
 and rollout redaction set. Command errors are also redacted before reaching activity
 receipts or Temporal failures, with raw exception chaining suppressed. Grants expire
 after the invocation's timeout plus 60
-seconds (maximum 3660 seconds) and are deleted on return, exception or cancellation,
+seconds (maximum 7260 seconds; 3660 before October 2, 2026, and the proxy host's own copy of
+`proxy_grants.py` must be reinstalled before it accepts the longer grants) and are deleted on
+return, exception or cancellation,
 including failed sandbox cleanup. Failure to create a grant kills the already-created
 sandbox without starting a command. Worker startup removes orphaned grants. A
 crashed worker's grants remain bounded by expiry until that cleanup runs.

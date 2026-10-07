@@ -4,7 +4,7 @@
     "key": "custom.workflow_create",
     "title": "Create a workflow",
     "description": "Turn a brief into a candidate Tin package and versioned qualification cases. Review and qualify the candidate before activation or public contribution.",
-    "version": "1.0.7",
+    "version": "1.1.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand"
@@ -74,6 +74,65 @@
         "path": "reports/WORKFLOW_CANDIDATE.json",
         "media_type": "application/json",
         "max_bytes": 512000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {
+            "id": "brief",
+            "kind": "step",
+            "label": "Read the brief",
+            "fact": "the job, its inputs, output and effects"
+          },
+          {
+            "id": "choose",
+            "kind": "step",
+            "label": "Choose the executor",
+            "fact": "code first, a model or agent only if needed"
+          },
+          {
+            "id": "write",
+            "kind": "step",
+            "label": "Write the package",
+            "fact": "manifest, code or prompt, and its diagram"
+          },
+          {
+            "id": "check",
+            "kind": "step",
+            "label": "Check it locally",
+            "fact": "synthetic data only, no provider access"
+          },
+          {
+            "id": "candidate",
+            "kind": "receipt",
+            "label": "Candidate in project Files",
+            "fact": "reports/WORKFLOW_CANDIDATE.json, not active"
+          }
+        ],
+        "edges": [
+          {
+            "from": "brief",
+            "to": "choose",
+            "kind": "call"
+          },
+          {
+            "from": "choose",
+            "to": "write",
+            "kind": "call"
+          },
+          {
+            "from": "write",
+            "to": "check",
+            "kind": "call"
+          },
+          {
+            "from": "check",
+            "to": "candidate",
+            "kind": "call"
+          }
+        ]
       }
     }
   }

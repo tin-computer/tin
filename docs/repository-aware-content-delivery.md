@@ -42,14 +42,29 @@ and Open a pull request, which use the exact Markdown publisher below.
 - The switchboard checks exact source preservation before accepting a patch and again
   before delivery. The immutable checkpoint survives sandbox teardown. The existing
   GitHub gateway checks the destination, overlaps and retry identity, and opens an
-  unmerged PR. Unrelated base advances use the existing bounded content-delivery exception;
-  changed destination paths are not silently rebased.
+  unmerged PR. For article delivery only the page file counts as a blocking path: another
+  open PR, or a later commit on the default branch, that edits a shared file such as the
+  sitemap or an index does not block the article (GitHub shows a conflict if the same lines
+  clash). An open PR or a later commit that changes the page file itself still refuses the
+  PR, and changed page paths are not silently rebased. Other procedures keep every file as a
+  blocking path.
 - Every repository procedure (article delivery, site health, technical fixes, code maps)
-  reads a snapshot of up to 20,000 eligible files / 100 MB, each file at most 2 MB. The
+  reads a snapshot of up to 100,000 eligible files / 250 MB, each file at most 10 MB. The
   gateway downloads the pinned commit as one tarball and checks every file against its blob
   hash in the pinned tree; paths the tarball omits or rewrites (`export-ignore`,
-  `export-subst`) are read individually. Oversized repositories fail before the download,
-  with their eligible file count and byte total alongside the bound.
+  `export-subst`) are read individually (at most 500). Oversized repositories fail before
+  the download, with their eligible file count and byte total alongside the bound. The
+  tarball (at most 1 GB) and the verified files wait in temporary files on the switchboard;
+  only the finished compressed snapshot is held in memory before it goes to the sandbox. The
+  byte bounds are set by the switchboard VM's free memory and disk, which every run in flight
+  shares, not by the sandbox.
+- A file over 10 MB stays out of the snapshot. Images, video, audio, fonts, archives, PDFs,
+  WebAssembly, source maps, minified files and scripts or stylesheets under a public or static
+  folder (`public/`, `static/`, `dist/`, `build/`, `out/` and the like) can't hold what a fix
+  edits, so the snapshot still counts as complete without them. Any other file left out (a
+  source or data file over 10 MB, a symbolic link, a submodule) makes it incomplete. The
+  read's receipt lists both, with each file's size and reason, and workflows that refuse an
+  incomplete snapshot name the files.
 - A canonical receipt at `content/deliveries/{run_id}.md` links the PR. The original
   Markdown and the roadmap are unchanged. Status, article choices, titles and PR links
   are Postgres projections, shared by HTTP/MCP and the existing content card.
@@ -77,12 +92,14 @@ the original GitHub execution key. No model runs and no new article is generated
 The confirmed result is separately receipted and shown on the content card/Activity;
 the failed adaptation's historical status is not rewritten as success.
 
-An attempt with no accepted patch may be explicitly retried as a **new metered
-adaptation**, using “Try adaptation again” on the content card or `retry_run_id`
-through MCP (internal attempt context, not a revision selector). A saved
-patch or any prior provider delivery receipt prevents that fresh purchase until the
-existing effect is reconciled. Changed destination content requires fresh review;
-this slice does not silently throw away an earlier checkpoint or redirect its PR.
+A failed attempt whose PR never opened may be replaced by a **new metered adaptation**:
+Prepare PR, “Retry” on that draft’s row of the content card or `retry_run_id` through MCP (internal attempt
+context, not a revision selector). "Never opened" means GitHub refused the request before
+writing anything (for example because another open PR changed a shared file, as delivery
+refused before September 29) or never received it. A saved patch alone no longer blocks this;
+Retry delivery stays the free way to send it. A PR that opened, or a PR request whose outcome
+is unknown, still has to be reconciled first, and a delivery run that is still working must
+finish. A refusal is never replayed: each retry and each Prepare PR checks again.
 
 The older automatic `.md` delivery contract remains intact for pinned runs/settings.
 An article already enrolled in that contract must use its existing delivery action;
@@ -177,8 +194,9 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
   that file at the head Tin read; and GitHub
   reports it `clean` (no conflicts, no failing or pending checks, no required review)
   within about three and a half minutes. Tin then asks GitHub to merge that head only.
-  A PR that adds a route, a component or an index is site code the founder has not
-  reviewed, so it stays open, as does one that conflicts or waits on checks or a review.
+  A PR that adds a route, a component or an index stays open, as does one that conflicts
+  or waits on checks or a review, unless the founder chose where these pages live (below)
+  and the PR puts the page at that route.
   The merge receipt (`content-delivery:{run}:merge`) and Activity say why; a later merge
   by the founder is found by the page URL check as before.
 - **Billing.** The adaptation is an ordinary Codex procedure session charged on actual
@@ -189,3 +207,34 @@ the one `Proposed URL` line, since no file path exists until the adaptation pick
   failed with the reason and a pointer to retrying delivery or Prepare PR. Retrying the
   page's delivery tries the same start again; once the adaptation exists, it retries that
   run's saved patch instead.
+
+## Where adapted pages live
+
+Answer pages and public articles have no route until an adaptation gives them one. Tin
+asks the founder once per page type instead of letting each adaptation pick a folder.
+
+- **The question.** While `content/page-routes.json` has no route for the page's type,
+  the publish preview (MCP `get_run` `delivery_preview`) and the MCP approval response carry
+  `ask_the_founder`: the question in the founder's words ("Where on your site should pages
+  that answer buyer questions go?"), how to suggest a route, and the `save_page_route` call
+  to make with the answer. The coding agent reads the codebase, so it suggests the folder
+  the site's articles already use (`/blog`, `/guides`, `/learn`, `/resources`), and
+  `/blog/{slug}` when there is none. Google's URL guidance asks for words in the audience's
+  language, so the agent never suggests a Tin term such as "answers".
+- **The answer.** `save_page_route(project_id, page_type, route, request_id)` commits the
+  route to `content/page-routes.json` (`page_routes.py`). A route is a lowercase site path
+  that ends in one `{slug}`, with at most three folders, such as `/blog/{slug}`. Types
+  are `answer_page` and `article`.
+- **At approval.** The choice receipt pins the saved route, and the adaptation's
+  `direction` input tells it to publish at exactly that route, with a slug of three to five
+  words naming the page's main search term, adding one minimal route
+  once if the site does not serve it yet (`content.deliver` 1.3.0 skill, step 3). Runs
+  approved before a route was saved keep choosing their own route.
+- **Merging.** With a commit-to-main setting, Tin merges the adaptation's PR when it adds
+  only the page (`merge_rule: page_only`), or when the founder chose a route and the PR's
+  `Public URL:` line follows it (`merge_rule: chosen_route`), so the first PR that adds that
+  route can merge too. The exact-copy proof, the five-file limit, the dependency ban, the
+  pinned branch and GitHub's `clean` verdict still apply; a PR that adds site code for any
+  other route stays open and says so. Until a route is chosen, the preview sentence says a
+  commit-to-main setting still opens a pull request for these pages.
+

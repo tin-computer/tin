@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Hashable
 from dataclasses import dataclass, replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
@@ -36,6 +37,8 @@ _TASK_DIFF_MAX_BYTES = 1_000_000
 # Text outputs stay under the comparison limit; a declared binary output (the demo video) is
 # only ever read whole, never diffed.
 _PUBLICATION_TEXT_MAX_BYTES = 1_000_000
+# A pull-request patch saved as JSON may reach twice its procedure's 2 MB ceiling.
+_CHECKPOINT_TEXT_MAX_BYTES = 4_000_000
 _PUBLICATION_BINARY_MAX_BYTES = 16_000_000
 _BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
 # Reads addressed by a full commit SHA are immutable, so one process keeps a bounded copy.
@@ -101,15 +104,29 @@ class SandboxRemotes:
 
 
 _REF_CONFLICTS = {"conflict", "precondition_failed", "409", "412"}
+_REF_INVALID = {"invalid", "400", "422"}
+
+
+class ProjectStateChangedError(RuntimeError):
+    """The canonical head is no longer the revision a member change was made against."""
+
+
+class ProjectStorageError(RuntimeError):
+    """code.storage refused or failed a member change for a reason other than its input."""
+
+    code = "storage_failed"
 
 
 def _project_commit_error(exc: RefUpdateError) -> Exception:
     """Name a rejected member commit in the terms the file service and MCP understand."""
     if "no changes" in (exc.message or "").lower():
         return ValueError("no changes: files already match expected_revision")
-    if {str(exc.reason).lower(), str(exc.status).lower()} & _REF_CONFLICTS:
-        return RuntimeError("canonical project state changed before file commit")
-    return RuntimeError(f"code.storage rejected the project file commit ({exc.reason})")
+    reasons = {str(exc.reason).lower(), str(exc.status).lower()}
+    if reasons & _REF_CONFLICTS:
+        return ProjectStateChangedError("canonical project state changed before file commit")
+    if reasons & _REF_INVALID:
+        return ValueError(f"code.storage rejected the project file commit ({exc.reason})")
+    return ProjectStorageError(f"code.storage rejected the project file commit ({exc.reason})")
 
 
 class _PinnedReadCache:
@@ -369,7 +386,8 @@ class CodeStorage:
             not _is_commit_sha(commit_sha)
             or not safe_project_file_path(path)
             or type(max_bytes) is not int
-            or not 1 <= max_bytes <= 64_000
+            # A code workflow reads files up to the same bound publication compares.
+            or not 1 <= max_bytes <= _PUBLICATION_TEXT_MAX_BYTES
         ):
             raise ValueError("project file read requires a safe path and bounded revision")
         key = ("code_project_file", repo_id, commit_sha, path)
@@ -497,7 +515,7 @@ class CodeStorage:
     ) -> bytes:
         if not _is_commit_sha(revision) or not _safe_repo_path(path):
             raise ValueError("procedure checkpoint requires an immutable revision and safe path")
-        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _PUBLICATION_TEXT_MAX_BYTES
+        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _CHECKPOINT_TEXT_MAX_BYTES
         key = ("checkpoint", repo_id, revision, path, max_bytes)
         if (cached := self._pinned.get(key)) is not None:
             return cached
@@ -523,10 +541,14 @@ class CodeStorage:
         from uuid import UUID
 
         from tin_lite.domain import (
+            CODEX_PROCEDURE_EXECUTOR,
             GROWTH_ONBOARDING_PLAN_PATH,
             GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
+            MEMORY_INDEX_PATH,
         )
+        from tin_lite.memory import MAX_MEMORY_BYTES
         from tin_lite.project_files import safe_project_file_path
+        from tin_lite.workflow_code import MAX_OUTPUT_BYTES
         from tin_lite.writing_style import STYLE_PATH
 
         code = executor == "workflow.code"
@@ -538,15 +560,30 @@ class CodeStorage:
                 and path.split("/")[0]
                 not in {".tin-lite", "procedures", "registry", "workflow_packages"}
             )
-            limit, target = 64_000, f"procedures/{run_id}/{generation}"
+            limit, target = MAX_OUTPUT_BYTES, f"procedures/{run_id}/{generation}"
         elif executor == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
             valid_path = path == GROWTH_ONBOARDING_PLAN_PATH
             limit, target = 40_000, f"native-plan/{run_id}/{generation}"
+        elif executor == CODEX_PROCEDURE_EXECUTOR:
+            # A section-owning procedure's index, re-assembled by Tin from the pinned base and
+            # the procedure's own section. The sandbox's checkpoint keeps the raw output.
+            valid_path = path == MEMORY_INDEX_PATH
+            limit, target = MAX_MEMORY_BYTES, f"memory-sections/{run_id}/{generation}"
+        elif executor == "social.x_style":
+            valid_path = path == ".agents/skills/x-writing-style/SKILL.md"
+            limit, target = 24_000, f"native-x-style/{run_id}/{generation}"
         else:
             valid_path = path == STYLE_PATH
             limit, target = 24_000, f"native-style/{run_id}/{generation}"
         if (
-            executor not in {"style.capture", "workflow.code", GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME}
+            executor
+            not in {
+                "style.capture",
+                "social.x_style",
+                "workflow.code",
+                CODEX_PROCEDURE_EXECUTOR,
+                GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
+            }
             or str(UUID(run_id)) != run_id
             or not valid_path
             or not 0 < len(content) <= limit
@@ -595,7 +632,7 @@ class CodeStorage:
     async def _checkpoint_contents(self, repo_id, checkpoint, content):
         checkpoint.validate_content(content)
         files = {checkpoint.artifact_path: content}
-        for item in checkpoint.companions:
+        for item in (*checkpoint.companions, *checkpoint.assets):
             raw = await self.read_procedure_checkpoint(
                 repo_id=repo_id, revision=item.ephemeral_commit_sha, path=item.artifact_path
             )
@@ -987,7 +1024,12 @@ class CodeStorage:
         if pinned and (cached := self._pinned.get(key)) is not None:
             return list(cached)
         repo = await self.get_repo(repo_id)
-        result = await repo.list_files(ref=revision, ttl=300)
+        try:
+            result = await repo.list_files(ref=revision, ttl=300)
+        except (httpx.HTTPStatusError, ApiError) as exc:
+            if _storage_status(exc) == 404:
+                raise LookupError("project revision not found") from exc
+            raise
         paths = result.get("paths", [])
         if not isinstance(paths, list) or any(
             not isinstance(path, str) or not _safe_repo_path(path) for path in paths
@@ -996,6 +1038,45 @@ class CodeStorage:
         if pinned:
             self._pinned.put(key, tuple(sorted(paths)), sum(len(path) + 64 for path in paths))
         return sorted(paths)
+
+    async def canonical_file_modified_dates(
+        self, *, repo_id: str, revision: str
+    ) -> dict[str, datetime]:
+        """Bulk last-change dates at the same immutable snapshot as the file list.
+
+        Metadata pages reuse the bounded pinned cache. Never infer a file date from
+        the repository HEAD: an unrelated commit must not make every file look new.
+        """
+        if not _is_commit_sha(revision):
+            raise ValueError("file metadata requires a commit SHA")
+        repo = await self.get_repo(repo_id)
+        dates: dict[str, datetime] = {}
+        cursors: set[str] = set()
+        params = {"ref": revision, "limit": "1000"}
+        for _ in range(100):
+            result = await self._publication_json(repo, "files/metadata", **params)
+            commits = result.get("commits", {})
+            for item in result.get("files", []):
+                path = item.get("path")
+                if not isinstance(path, str) or not _safe_repo_path(path):
+                    raise RuntimeError("project state repository returned an unsafe file path")
+                raw = commits.get(item.get("last_commit_sha"), {}).get("date")
+                if not isinstance(raw, str):
+                    continue
+                try:
+                    date = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+                if date.tzinfo is not None:
+                    dates[path] = date.astimezone(UTC)
+            if not result.get("has_more"):
+                return dates
+            cursor = result.get("next_cursor")
+            if not isinstance(cursor, str) or not cursor or cursor in cursors:
+                raise RuntimeError("project file metadata pagination is incomplete")
+            cursors.add(cursor)
+            params["cursor"] = cursor
+        raise RuntimeError("project file metadata exceeds its page budget")
 
     async def search_canonical_files(
         self,
@@ -1006,20 +1087,33 @@ class CodeStorage:
         paths: list[str] | None = None,
         limit: int = 50,
     ) -> tuple[list[dict[str, Any]], bool]:
+        """Find the query as literal text; storage grep takes a regex, so it is escaped."""
+        from tin_lite.project_files import safe_project_file_path
+
         repo = await self.get_repo(repo_id)
-        result = await repo.grep(
-            pattern=query,
-            ref=revision,
-            paths=paths,
-            case_sensitive=False,
-            limits={"max_files": limit, "max_matches": limit, "max_line_length": 1000},
-            ttl=300,
-        )
+        try:
+            result = await repo.grep(
+                pattern=_literal_grep_pattern(query),
+                ref=revision,
+                paths=paths,
+                case_sensitive=False,
+                limits={"max_files": limit, "max_matches": limit, "max_line_length": 1000},
+                ttl=300,
+            )
+        except (httpx.HTTPStatusError, ApiError) as exc:
+            code = _storage_status(exc)
+            if code == 404:
+                raise LookupError("project revision not found") from exc
+            if code in {400, 408, 413, 422}:
+                raise ValueError("code.storage could not run this project search") from exc
+            raise
         matches: list[dict[str, Any]] = []
         for item in result.get("matches", []):
-            path = item.get("path")
-            if not isinstance(path, str) or not _safe_repo_path(path):
-                raise RuntimeError("project search returned an unsafe file path")
+            path = _unquote_git_path(item.get("path"))
+            # One odd path must not fail the whole search, and search must not show what
+            # read_project_file refuses (.env, keys, credentials).
+            if path is None or not safe_project_file_path(path):
+                continue
             lines = []
             for line in item.get("lines", []):
                 number = line.get("line_number")
@@ -1053,7 +1147,7 @@ class CodeStorage:
                     "message": commit["message"],
                     "author_name": commit["author_name"],
                     "date": commit["date"],
-                    "state": str(files[0].get("state", "modified")),
+                    "state": _diff_state(files[0].get("state", "modified")),
                 }
             )
         return history
@@ -1087,7 +1181,7 @@ class CodeStorage:
                         }
                     )
                 )
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         listing = await repo.list_files(ref=expected_head_sha, ttl=300)
         existing_paths = set(listing.get("paths", []))
         builder = repo.create_commit(
@@ -1101,7 +1195,11 @@ class CodeStorage:
         for change in changes:
             if change.operation == "upsert":
                 assert change.content is not None
-                builder = builder.add_file_from_string(change.path, change.content)
+                builder = (
+                    builder.add_file(change.path, change.content)
+                    if isinstance(change.content, bytes)
+                    else builder.add_file_from_string(change.path, change.content)
+                )
                 changed_paths.add(change.path)
             elif change.operation == "delete":
                 if change.path not in existing_paths:
@@ -1130,6 +1228,20 @@ class CodeStorage:
                 raise _project_commit_error(exc) from exc
             raise
 
+    async def read_project_media(self, *, repo_id: str, revision: str, path: str) -> bytes:
+        from tin_lite.project_files import safe_project_file_path
+        from tin_lite.project_media import MAX_VIDEO_BYTES
+
+        if not safe_project_file_path(path):
+            raise ValueError("Unsafe media path.")
+        repo = await self.get_repo(repo_id)
+        result = await self._publication_file(
+            repo, ref=revision, path=path, max_bytes=MAX_VIDEO_BYTES
+        )
+        if result is None:
+            raise ValueError("The selected media file is missing.")
+        return result[1]
+
     async def revert_latest_project_commit(
         self,
         *,
@@ -1154,15 +1266,19 @@ class CodeStorage:
             ):
                 diff = await repo.get_commit_diff(sha=commit_sha, ttl=300)
                 return commits[0]["sha"], _undo_changed_paths(diff)
-        if current_head != expected_head_sha or commit_sha != expected_head_sha:
-            raise RuntimeError("only the current project revision can be undone")
+        if current_head != expected_head_sha:
+            raise ProjectStateChangedError("only the current project revision can be undone")
+        if commit_sha != expected_head_sha:
+            raise ValueError("only the current project revision can be undone")
         recent = await repo.list_commits(branch=branch, limit=2, ttl=300)
         commits = recent.get("commits", [])
-        if len(commits) < 2 or commits[0].get("sha") != commit_sha:
-            raise RuntimeError("current project revision has no restorable parent")
+        if commits and commits[0].get("sha") != commit_sha:
+            raise ProjectStateChangedError("only the current project revision can be undone")
+        if len(commits) < 2:
+            raise ValueError("current project revision has no restorable parent")
         diff = await repo.get_commit_diff(sha=commit_sha, ttl=300)
         if diff.get("filtered_files"):
-            raise RuntimeError("current project revision is too large to undo safely")
+            raise ValueError("current project revision is too large to undo safely")
         changed_paths = _undo_changed_paths(diff)
         try:
             result = await repo.restore_commit(
@@ -1690,6 +1806,67 @@ def _safe_repo_path(path: str) -> bool:
     if not path or path.startswith("/") or "\\" in path:
         return False
     return all(part not in {"", ".", ".."} for part in path.split("/"))
+
+
+def _storage_status(exc: BaseException) -> int | None:
+    if isinstance(exc, httpx.HTTPStatusError):
+        return exc.response.status_code
+    return getattr(exc, "status_code", None)
+
+
+# Characters special in POSIX ERE, RE2, PCRE or Rust regex. Each is literal once
+# backslash-escaped in all of them; escaping anything else is not portable.
+_GREP_SPECIAL = frozenset("\\.^$|?*+()[]{}")
+
+
+def _literal_grep_pattern(text: str) -> str:
+    return "".join("\\" + char if char in _GREP_SPECIAL else char for char in text)
+
+
+_GIT_QUOTE_ESCAPES = {
+    "a": 7,
+    "b": 8,
+    "t": 9,
+    "n": 10,
+    "v": 11,
+    "f": 12,
+    "r": 13,
+    '"': 34,
+    "\\": 92,
+}
+
+
+def _unquote_git_path(path: Any) -> str | None:
+    """Decode git's C-style path quoting, as in "caf\\303\\251.md"; None if undecodable."""
+    if not isinstance(path, str):
+        return None
+    if len(path) < 2 or not (path.startswith('"') and path.endswith('"')):
+        return path
+    body, decoded, index = path[1:-1], bytearray(), 0
+    while index < len(body):
+        char = body[index]
+        if char != "\\":
+            decoded.extend(char.encode())
+            index += 1
+            continue
+        escape, octal = body[index + 1 : index + 2], body[index + 1 : index + 4]
+        if escape in _GIT_QUOTE_ESCAPES:
+            decoded.append(_GIT_QUOTE_ESCAPES[escape])
+            index += 2
+        elif len(octal) == 3 and all(digit in "01234567" for digit in octal):
+            decoded.append(int(octal, 8))
+            index += 4
+        else:
+            return None
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _diff_state(state: Any) -> str:
+    """DiffFileState is a str Enum whose str() is "DiffFileState.ADDED"; clients want "added"."""
+    return str(getattr(state, "value", state))
 
 
 def _undo_changed_paths(diff: dict[str, Any]) -> tuple[str, ...]:

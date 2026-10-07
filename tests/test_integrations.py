@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -53,6 +54,7 @@ from tin_lite.integrations import (
     parse_integration_requirements,
     registered_integrations,
 )
+from tin_lite.repository_limits import snapshot_reader
 
 PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 RUN_ID = UUID("00000000-0000-4000-8000-0000000000bb")
@@ -541,6 +543,11 @@ async def test_search_console_bound_clamps_trims_and_points_to_the_next_page() -
         assert page["rows"] == rows[: len(page["rows"])]
         assert 200 < len(page["rows"]) < sent[-1]["rowLimit"]
         assert page["next_start_row"] == len(page["rows"])
+
+        # The largest binding still asks Google for no more than the rows it can return,
+        # and never past Search Console's own 25,000-row maximum.
+        await read(dimensions=("query", "page"), row_limit=25_000, max_response_bytes=1_000_000)
+        assert sent[-1]["rowLimit"] == 1_000_000 // GSC_MIN_ROW_BYTES < 25_000
 
         following = await read(
             dimensions=("query", "page"),
@@ -1042,6 +1049,92 @@ async def test_workspace_send_reconciles_ambiguous_delivery_without_resending() 
     assert searches == 2
     assert recovered["id"] == "gmail-message-1"
     assert database.call_receipts["run:recipient:ambiguous"].status == "completed"
+
+
+def _gmail_values(key: str) -> dict:
+    return {
+        "project_id": PROJECT_ID,
+        "run_id": RUN_ID,
+        "execution_key": key,
+        "recipient_email": "ada@example.com",
+        "recipient_name": "Ada Lovelace",
+        "subject": "A precise hello",
+        "body": "Hello Ada.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_after_a_token_failure_is_not_treated_as_a_lost_send() -> None:
+    # The receipt used to be written before the token refresh, so a refresh blip made every
+    # retry look like a send whose answer was lost, and the recipient could never be sent.
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    token_calls = sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal token_calls, sends
+        if request.url.path == "/token":
+            token_calls += 1
+            if token_calls == 1:
+                return httpx.Response(500, json={"error": "backend_error"})
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            return httpx.Response(200, json={"id": "gmail-message-1", "threadId": "t-1"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError) as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        assert "run:recipient:token" not in database.call_receipts
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:token"))
+
+    assert sends == 1 and sent["id"] == "gmail-message-1"
+    assert database.call_receipts["run:recipient:token"].status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_workspace_send_refused_by_gmail_is_a_failure_that_may_be_retried() -> None:
+    database = FakeIntegrationDatabase()
+    _workspace_connection(database, capabilities=["gmail.messages.send"])
+    sends = 0
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        nonlocal sends
+        if request.url.path == "/token":
+            return httpx.Response(200, json={"access_token": "short-access"})
+        if request.method == "GET" and request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"messages": []})
+        if request.method == "POST" and request.url.path.endswith("/messages/send"):
+            sends += 1
+            if sends == 1:
+                return httpx.Response(429, json={"error": {"code": 429}})
+            return httpx.Response(200, json={"id": "gmail-message-2", "threadId": "t-2"})
+        raise AssertionError(f"unexpected Google request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        with pytest.raises(IntegrationError, match="refused") as caught:
+            await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+        assert not isinstance(caught.value, IntegrationDeliveryUnknownError)
+        receipt = database.call_receipts["run:recipient:refused"]
+        assert receipt.status == "failed" and receipt.error_code == "gmail_http_429"
+        sent = await service.workspace_send_message(**_gmail_values("run:recipient:refused"))
+
+    assert sends == 2 and sent["id"] == "gmail-message-2"
+    assert database.call_receipts["run:recipient:refused"].status == "completed"
 
 
 @pytest.mark.asyncio
@@ -1585,6 +1678,41 @@ def bundle_args(key: str = "run-9:procedure-repository") -> dict:
     return {"project_id": PROJECT_ID, "run_id": RUN_ID, "execution_key": key}
 
 
+async def test_only_two_repository_snapshots_are_built_at_once(monkeypatch):
+    # Snapshots are built on the switchboard's small disk; a third waits for a slot, and each
+    # archive stays in its temporary file rather than in memory.
+    files = {"README.md": b"# Site\n"}
+    github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        inside, peak, release = 0, 0, asyncio.Event()
+        download = service._github_tarball
+
+        async def slow(*args, **kwargs):
+            nonlocal inside, peak
+            inside += 1
+            peak = max(peak, inside)
+            try:
+                await release.wait()
+                return await download(*args, **kwargs)
+            finally:
+                inside -= 1
+
+        monkeypatch.setattr(service, "_github_tarball", slow)
+        runs = [
+            asyncio.create_task(service.github_repository_bundle(**bundle_args(f"run-{n}:repo")))
+            for n in range(3)
+        ]
+        await asyncio.sleep(0.1)
+        assert inside == 2
+        release.set()
+        bundles = await asyncio.gather(*runs)
+    assert peak == 2
+    for bundle in bundles:
+        assert not isinstance(bundle.archive, bytes)
+        with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
+            assert archive.extractfile("README.md").read() == files["README.md"]
+
+
 @pytest.mark.asyncio
 async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -1663,7 +1791,7 @@ async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path
     assert bundle.head_sha == head_sha
     assert bundle.file_count == 2
     assert bundle.complete is False  # The excluded symlink prevents a complete build proof.
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == [".github/workflows/ci.yml", "src/index.html"]
         assert archive.extractfile("src/index.html").read() == files["src/index.html"]
     # One tarball download; the signed codeload URL never receives the installation token.
@@ -1878,6 +2006,126 @@ async def test_github_write_refuses_paths_changed_by_an_open_pull_request(tmp_pa
             )
 
     assert not any(method == "POST" and path.endswith("/git/refs") for method, path in requests)
+
+
+class _PastOverlapCheck(Exception):
+    """Raised by the fake GitHub when a write reaches branch creation."""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("open_pr_file", "blocked"),
+    [("src/app/sitemap.ts", False), ("content/blog/new-page.md", True)],
+)
+async def test_only_blocking_paths_count_against_an_open_pull_request(
+    tmp_path, open_pr_file, blocked
+) -> None:
+    """An article PR shares a sitemap with another open PR; only its own page blocks it."""
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_key_path = tmp_path / "github-app.pem"
+    private_key_path.write_bytes(
+        private_key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    database = FakeIntegrationDatabase()
+    now = datetime.now(UTC)
+    database.connections[(PROJECT_ID, GITHUB_PROVIDER)] = IntegrationConnection(
+        id=uuid4(),
+        project_id=PROJECT_ID,
+        provider_key=GITHUB_PROVIDER,
+        status="connected",
+        external_account_id="42",
+        external_account_label="example-org/site",
+        configuration={
+            "selected_repository": "example-org/site",
+            "write_opted_in": True,
+            "permissions": {"contents": "write", "pull_requests": "write"},
+        },
+        credential_ciphertext=None,
+        credential_key_version=None,
+        connected_by_clerk_user_id=USER_ID,
+        last_checked_at=now,
+        last_error_code=None,
+        created_at=now,
+        updated_at=now,
+    )
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if request.method == "POST" and path.endswith("/access_tokens"):
+            return httpx.Response(201, json={"token": "installation-token"})
+        if request.method == "GET" and path == "/repos/example-org/site":
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and path.endswith("/git/ref/heads/main"):
+            return httpx.Response(200, json={"object": {"sha": "base-sha"}})
+        if request.method == "GET" and path.endswith("/pulls"):
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "number": 32,
+                        "title": "Improve site health",
+                        "body": "Tin's own open PR.",
+                        "html_url": "https://github.com/example-org/site/pull/32",
+                        "draft": False,
+                        "updated_at": "2026-09-29T12:00:00Z",
+                        "user": {"login": "tin"},
+                        "head": {"ref": "tin/site-health", "sha": "c" * 40},
+                    }
+                ],
+            )
+        if request.method == "GET" and path.endswith("/pulls/32/files"):
+            return httpx.Response(200, json=[{"filename": open_pr_file, "status": "modified"}])
+        if request.method == "POST" and path.endswith("/git/refs"):
+            raise _PastOverlapCheck
+        raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
+
+    configured = settings(
+        integration_credential_key=None,
+        google_oauth_client_id=None,
+        google_oauth_client_secret=None,
+        github_app_slug="tin-test",
+        github_app_id="1234",
+        github_app_client_id="Iv1.test",
+        github_app_client_secret=SecretStr("github-client-secret"),
+        github_app_private_key_path=private_key_path,
+        github_webhook_secret=SecretStr("webhook-secret"),
+    )
+    files = (
+        GitHubFileChange(path="content/blog/new-page.md", content="# New page\n"),
+        GitHubFileChange(path="src/app/sitemap.ts", content="export default []\n"),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        expected = IntegrationAuthorizationError if blocked else _PastOverlapCheck
+        with pytest.raises(expected):
+            await service.github_create_pull_request(
+                project_id=PROJECT_ID,
+                execution_key="run-12:github-pr",
+                title="Add the new page",
+                body="Adds the approved page and its sitemap entry.",
+                files=files,
+                base_branch="main",
+                expected_base_sha="base-sha",
+                run_id=RUN_ID,
+                blocking_paths=frozenset({"content/blog/new-page.md"}),
+            )
+        with pytest.raises(IntegrationError, match="Blocking paths"):
+            await service.github_create_pull_request(
+                project_id=PROJECT_ID,
+                execution_key="run-13:github-pr",
+                title="Add the new page",
+                body="A blocking path outside the PR is a caller error.",
+                files=files,
+                blocking_paths=frozenset({"content/blog/other.md"}),
+            )
 
 
 @pytest.mark.asyncio
@@ -2632,13 +2880,105 @@ async def test_github_commit_adapter_writes_the_default_branch_and_replays(tmp_p
     assert receipt.response_summary["commit"] == sha
 
 
+@pytest.mark.asyncio
+async def test_github_commit_adapter_writes_several_files_as_one_commit(tmp_path) -> None:
+    configured, _private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    now = datetime.now(UTC)
+    database.connections[(PROJECT_ID, GITHUB_PROVIDER)] = IntegrationConnection(
+        id=uuid4(),
+        project_id=PROJECT_ID,
+        provider_key=GITHUB_PROVIDER,
+        status="connected",
+        external_account_id="42",
+        external_account_label="example-org/site",
+        configuration={
+            "selected_repository": "example-org/site",
+            "write_opted_in": True,
+            "permissions": {"contents": "write", "pull_requests": "write"},
+        },
+        credential_ciphertext=None,
+        credential_key_version=None,
+        connected_by_clerk_user_id=USER_ID,
+        last_checked_at=now,
+        last_error_code=None,
+        created_at=now,
+        updated_at=now,
+    )
+    head, sha = "b" * 40, "a" * 40
+    current = {"app/page.tsx": "old page\n", "app/layout.tsx": "old layout\n"}
+    requests: list[tuple[str, str]] = []
+    payloads: dict[str, dict] = {}
+
+    async def github(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path))
+        path = request.url.path
+        root = "/repos/example-org/site"
+        if request.method == "POST" and path.endswith("/access_tokens"):
+            return httpx.Response(201, json={"token": "installation-token"})
+        if request.method == "GET" and path == root:
+            return httpx.Response(200, json={"default_branch": "main"})
+        if request.method == "GET" and path.startswith(f"{root}/contents/"):
+            name = path.removeprefix(f"{root}/contents/")
+            encoded = base64.b64encode(current[name].encode()).decode()
+            return httpx.Response(200, json={"sha": f"sha-{name}", "content": encoded})
+        if request.method == "GET" and path == f"{root}/git/ref/heads/main":
+            return httpx.Response(200, json={"object": {"sha": head}})
+        if request.method == "GET" and path == f"{root}/git/commits/{head}":
+            return httpx.Response(200, json={"tree": {"sha": "base-tree"}})
+        if request.method == "POST" and path == f"{root}/git/trees":
+            payloads["tree"] = json.loads(request.content)
+            return httpx.Response(201, json={"sha": "new-tree"})
+        if request.method == "POST" and path == f"{root}/git/commits":
+            payloads["commit"] = json.loads(request.content)
+            return httpx.Response(
+                201,
+                json={"sha": sha, "html_url": f"https://github.com/example-org/site/commit/{sha}"},
+            )
+        if request.method == "PATCH" and path == f"{root}/git/refs/heads/main":
+            payloads["ref"] = json.loads(request.content)
+            return httpx.Response(
+                200, json={"object": {"sha": sha}}, headers={"X-GitHub-Request-Id": "request-ref"}
+            )
+        raise AssertionError(f"unexpected GitHub request {request.method} {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        result = await service.github_commit_files(
+            project_id=PROJECT_ID,
+            execution_key="run-10:github-commit",
+            message="Refresh: /",
+            files=(
+                GitHubFileChange(path="app/page.tsx", content="new page\n"),
+                GitHubFileChange(path="app/layout.tsx", content="new layout\n"),
+            ),
+        )
+
+    assert result.commit == sha and result.branch == "main"
+    # One tree on top of the current head, one commit, one fast-forward; no per-file writes.
+    assert payloads["tree"]["base_tree"] == "base-tree"
+    assert [(item["path"], item["content"]) for item in payloads["tree"]["tree"]] == [
+        ("app/page.tsx", "new page\n"),
+        ("app/layout.tsx", "new layout\n"),
+    ]
+    assert payloads["commit"] == {"message": "Refresh: /", "tree": "new-tree", "parents": [head]}
+    assert payloads["ref"] == {"sha": sha, "force": False}
+    assert not any(method == "PUT" for method, _ in requests)
+    receipt = database.call_receipts["run-10:github-commit"]
+    assert receipt.status == "completed" and receipt.response_summary["commit"] == sha
+
+
 @pytest.mark.parametrize(
     ("file_count", "file_bytes", "accepted"),
     [
         (50, 1, True),  # At the (lowered) file cap.
         (51, 0, False),
         (40, 2_000_000, True),  # 80 MB of eligible files.
-        (51, 2_000_000, False),  # Over the 100 MB byte cap.
+        (45, 2_400_000, False),  # Over the (lowered) 100 MB byte cap.
     ],
 )
 async def test_repository_bundle_bounds_apply_to_every_workspace(
@@ -2647,10 +2987,11 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
     from tin_lite import integrations
 
     assert (integrations.REPOSITORY_MAX_FILES, integrations.REPOSITORY_MAX_BYTES) == (
-        20_000,
-        100_000_000,
+        100_000,
+        250_000_000,
     )
     monkeypatch.setattr(integrations, "REPOSITORY_MAX_FILES", 50)
+    monkeypatch.setattr(integrations, "REPOSITORY_MAX_BYTES", 100_000_000)
     content = b"x" * file_bytes
     files = {f"src/file-{index}.txt": content for index in range(file_count)}
     tree = [tree_entry(path, content) for path in files]
@@ -2660,7 +3001,7 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
             bundle = await service.github_repository_bundle(**bundle_args())
             assert bundle.file_count == file_count and bundle.complete
             assert not github.paths("/git/blobs/")
-            with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+            with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
                 members = archive.getmembers()
                 assert len(members) == file_count
                 assert sum(member.size for member in members) == file_count * file_bytes
@@ -2681,7 +3022,7 @@ async def test_repository_bundle_reads_export_ignored_and_rewritten_files_by_blo
     github = RepositoryGitHub(tree, tarball, blobs=blobs)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert {name: archive.extractfile(name).read() for name in archive.getnames()} == files
     assert len(github.paths("/git/blobs/")) == 2
 
@@ -2745,8 +3086,137 @@ async def test_repository_bundle_ignores_members_outside_the_pinned_tree(monkeyp
     github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], tarball)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == ["README.md"]
+
+
+def large(path: str, size: int) -> dict:
+    """A tree entry for a file too big for the snapshot; its bytes are never downloaded."""
+    return {**tree_entry(path, path.encode()), "size": size}
+
+
+# tin-web's three files over the old 2 MB limit stopped technical fix runs 43b99efd and
+# 721f6a8d and refresh aaffdb5a; none of them can hold what a fix edits. Sizes are raised
+# past today's 10 MB limit so the snapshot still leaves them out.
+SITE_MEDIA = [
+    large("public/euphony/assets/main-LKI_ICf3.js", 12_678_607),
+    large("public/scan-mocks/seaweedindex.com.png", 13_787_015),
+    large("public/opensource/hero.mp4", 13_378_075),
+]
+
+
+@pytest.mark.parametrize(
+    ("path", "kind"),
+    [
+        ("public/opensource/hero.mp4", "video"),
+        ("public/scan-mocks/seaweedindex.com.png", "image"),
+        ("public/euphony/assets/main-LKI_ICf3.js", "built_asset"),
+        ("apps/web/public/_next/static/chunks/app.css", "built_asset"),
+        ("dist/bundle.mjs", "built_asset"),
+        ("vendor/chart.min.js", "minified"),
+        ("app/main.js.map", "source_map"),
+        ("fonts/Inter.woff2", "font"),
+        ("docs/brochure.PDF", "pdf"),
+        ("downloads/press-kit.zip", "archive"),
+        ("public/podcast.mp3", "audio"),
+        ("public/ffmpeg-core.wasm", "compiled"),
+        # Anything that could hold page copy, metadata or code stays a missing file.
+        ("src/data/posts.json", None),
+        ("src/content/catalog.js", None),
+        ("public/data.json", None),
+        ("public/index.html", None),
+        ("public/logo.svg", None),
+        ("deploy/redirects.map", None),
+    ],
+)
+def test_which_large_files_a_snapshot_may_leave_out(path, kind):
+    from tin_lite.repository_limits import skippable_large_file
+
+    assert skippable_large_file(path) == kind
+
+
+async def test_repository_bundle_leaves_out_large_media_and_stays_complete(monkeypatch):
+    files = {"app/page.tsx": b"export default 1;\n", "public/robots.txt": b"User-agent: *\n"}
+    tree = [tree_entry(path, content) for path, content in files.items()] + SITE_MEDIA
+    github = RepositoryGitHub(tree, github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        bundle = await service.github_repository_bundle(**bundle_args())
+        receipt = service._database.call_receipts["run-9:procedure-repository"]
+    assert bundle.complete is True and bundle.missing == ()
+    assert bundle.file_count == 2
+    assert {item["path"]: item["reason"] for item in bundle.skipped} == {
+        "public/euphony/assets/main-LKI_ICf3.js": "built_asset",
+        "public/scan-mocks/seaweedindex.com.png": "image",
+        "public/opensource/hero.mp4": "video",
+    }
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
+        assert archive.getnames() == ["app/page.tsx", "public/robots.txt"]
+    # The read's own receipt says exactly what was left out, and why.
+    summary = receipt.response_summary
+    assert receipt.status == "completed" and summary["head_sha"] == "a" * 40
+    assert summary["skipped"] == [dict(item) for item in bundle.skipped]
+    assert summary["skipped_count"] == 3
+    assert summary["missing"] == [] and summary["missing_count"] == 0
+    # A second read of the same pinned tree doesn't rewrite the receipt.
+    async with repository_service(monkeypatch, github) as again:
+        again._database.call_receipts = service._database.call_receipts
+        writes = len(again._database.calls)
+        await again.github_repository_bundle(**bundle_args())
+        assert len(again._database.calls) == writes
+
+
+async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypatch):
+    files = {"app/page.tsx": b"export default 1;\n"}
+    tree = [
+        tree_entry("app/page.tsx", files["app/page.tsx"]),
+        *SITE_MEDIA,
+        large("src/data/posts.json", 12_400_000),
+        {"type": "commit", "mode": "160000", "path": "content", "sha": "c" * 40},
+    ]
+    github = RepositoryGitHub(tree, github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        bundle = await service.github_repository_bundle(**bundle_args())
+        summary = service._database.call_receipts["run-9:procedure-repository"].response_summary
+    assert bundle.complete is False
+    assert bundle.missing == (
+        {"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},
+        {"path": "content", "size": None, "reason": "submodule"},
+    )
+    assert len(bundle.skipped) == 3
+    assert summary["missing"] == [dict(item) for item in bundle.missing]
+    assert summary["missing_count"] == 2
+
+    from tin_lite.repository_limits import describe_omissions
+
+    assert describe_omissions(bundle.missing) == (
+        "src/data/posts.json (12.4 MB, over the 10 MB limit for files Tin reads); "
+        "content (a Git submodule)"
+    )
+
+
+async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
+    from tin_lite.integrations import GitHubRepositoryBinding
+
+    tree = [
+        tree_entry("app/page.tsx", b"export default 1;\n"),
+        *SITE_MEDIA,
+        large("src/data/posts.json", 12_400_000),
+    ]
+    github = RepositoryGitHub(tree, b"")
+    async with repository_service(monkeypatch, github) as service:
+        connection = await service._connection(PROJECT_ID, GITHUB_PROVIDER)
+        binding = GitHubRepositoryBinding(
+            connection.id, 42, 7, "example-org/site", "main", "a" * 40
+        )
+        missing = await service.github_repository_missing_files(
+            project_id=PROJECT_ID, binding=binding
+        )
+        stale = GitHubRepositoryBinding(uuid4(), 42, 7, "example-org/site", "main", "a" * 40)
+        with pytest.raises(IntegrationAuthorizationError, match="connection changed"):
+            await service.github_repository_missing_files(project_id=PROJECT_ID, binding=stale)
+    assert missing == ({"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},)
+    # One tree read: nothing is downloaded and nothing is receipted.
+    assert not github.paths("/tarball/") and not service._database.call_receipts
 
 
 async def test_github_repositories_follow_every_installation_page(monkeypatch):
@@ -2774,11 +3244,93 @@ async def test_github_repositories_follow_every_installation_page(monkeypatch):
         )
 
     async with repository_service(monkeypatch, github) as service:
+        service._connection.return_value.configuration["user_repositories"] = names
         options = await service.github_repositories(project_id=PROJECT_ID)
         receipt = service._database.calls[-1]
     assert [option.id for option in options] == names
     assert len(requests) == 2
     assert receipt["response_summary"] == {"count": 150, "truncated": False}
+
+
+def _installation_repositories(names):
+    async def github(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/installation/repositories"
+        return httpx.Response(
+            200,
+            json={
+                "total_count": len(names),
+                "repositories": [{"full_name": name, "private": True} for name in names],
+            },
+        )
+
+    return github
+
+
+async def test_github_repositories_offer_only_what_the_person_can_push_to(monkeypatch):
+    github = _installation_repositories(
+        ["example-org/site", "example-org/billing", "Example-Org/Docs"]
+    )
+    async with repository_service(monkeypatch, github) as service:
+        configuration = service._connection.return_value.configuration
+        configuration["user_repositories"] = ["example-org/docs", "example-org/site"]
+        options = await service.github_repositories(project_id=PROJECT_ID)
+    assert [option.id for option in options] == ["Example-Org/Docs", "example-org/site"]
+
+
+async def test_a_github_connection_from_before_access_was_recorded_keeps_only_its_choice(
+    monkeypatch,
+):
+    github = _installation_repositories(["example-org/site", "example-org/billing"])
+    async with repository_service(monkeypatch, github) as service:
+        options = await service.github_repositories(project_id=PROJECT_ID)
+        assert [option.id for option in options] == ["example-org/site"]
+        service._connection.return_value.configuration["selected_repository"] = None
+        with pytest.raises(IntegrationAuthorizationError, match="Reconnect GitHub"):
+            await service.github_repositories(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_connecting_github_records_the_repositories_the_person_can_push_to(tmp_path):
+    configured, private_key_path = _github_settings(tmp_path)
+    database = FakeIntegrationDatabase()
+    github, _ = _github_write_app(private_key_path)
+    pages = [
+        [
+            {"full_name": "example-org/site", "permissions": {"pull": True, "push": True}},
+            {"full_name": "example-org/billing", "permissions": {"pull": True, "push": False}},
+        ],
+        [
+            {"full_name": "example-org/docs", "permissions": {"pull": True, "maintain": True}},
+            {"full_name": "example-org/secret", "permissions": {"pull": False}},
+        ],
+    ]
+
+    async def user_access(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and request.url.path == "/user/installations/42/repositories":
+            assert request.headers["authorization"] == "Bearer user-token"
+            page = int(request.url.params["page"])
+            headers = {"link": '<https://api.github.com/x?page=2>; rel="next"'} if page == 1 else {}
+            return httpx.Response(200, headers=headers, json={"repositories": pages[page - 1]})
+        return await github(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(user_access)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=configured,  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GITHUB_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        connection = await service.complete_github(
+            state=state,
+            code="one-time-code",
+            installation_id=42,
+            setup_action="install",
+            clerk_user_id=USER_ID,
+        )
+    assert connection.configuration["user_repositories"] == ["example-org/docs", "example-org/site"]
 
 
 # ---------------------------------------------------------------- Google Ads (ads.google)
@@ -3024,23 +3576,104 @@ async def test_connect_google_ads_sends_the_manager_invitation_and_records_it() 
     assert "Accept it in Google Ads" in database.activities[-1]["summary"]
 
 
+OTHER_ADS_PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000ad")
+
+
+def link_row(link_id: str, status: str) -> dict:
+    return {
+        "customerClientLink": {
+            "resourceName": f"customers/{ADS_MCC}/customerClientLinks/{ADS_CID}~{link_id}",
+            "clientCustomer": f"customers/{ADS_CID}",
+            "managerLinkId": link_id,
+            "status": status,
+        }
+    }
+
+
 @pytest.mark.asyncio
-async def test_connect_google_ads_already_invited_falls_back_to_the_link_status() -> None:
+async def test_connect_google_ads_refuses_a_link_this_project_did_not_invite() -> None:
+    # Another project's accepted link: Google says the account is already managed by Tin.
     backend = AdsBackend()
     backend.link_error = ("managerLinkError", "ALREADY_MANAGED_BY_THIS_MANAGER")
     backend.link_status = "ACTIVE"
     service, database = ads_service(backend)
+    with pytest.raises(IntegrationAuthorizationError, match="didn't send"):
+        await service.connect_google_ads(
+            project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+        )
+    assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+    assert database.calls[-1]["status"] == "failed"
+    assert database.calls[-1]["error_code"] == "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
+    assert not any(
+        "FROM customer_client_link" in body.get("query", "") for _, body, _ in backend.requests
+    )
+
+
+@pytest.mark.asyncio
+async def test_connect_google_ads_readopts_its_own_invitation() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    backend.link_error = ("managerLinkError", "ALREADY_INVITED_BY_THIS_MANAGER")
+    backend.link_status = "ACTIVE"
     connection = await service.connect_google_ads(
         project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
     )
     assert connection.configuration["link_status"] == "active"
+    assert connection.configuration["manager_link_id"] == "555"
     assert connection.status == "connected"
-    statuses = [call["status"] for call in database.calls]
-    assert statuses == ["completed", "completed"]
-    assert database.calls[0]["response_summary"] == {
-        "code": "ManagerLinkError.ALREADY_MANAGED_BY_THIS_MANAGER"
-    }
-    assert backend.requests[-1][1]["query"].startswith("SELECT customer_client_link")
+    assert [call["status"] for call in database.calls][-2:] == ["completed", "completed"]
+
+
+@pytest.mark.asyncio
+async def test_google_ads_link_status_ignores_another_projects_link() -> None:
+    backend = AdsBackend()
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    # This project's invitation (555) was declined; someone else's link (999) is active.
+    backend.link_rows = [link_row("999", "ACTIVE"), link_row("555", "REFUSED")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "refused"
+    assert connection.configuration["manager_link_id"] == "555"
+    backend.link_rows = [link_row("999", "ACTIVE")]
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert connection.configuration["link_status"] == "missing"
+    assert connection.status == "needs_attention"
+    with pytest.raises(IntegrationAuthorizationError):
+        await service.google_ads_account(project_id=PROJECT_ID)
+
+
+@pytest.mark.asyncio
+async def test_a_link_recorded_by_two_projects_fails_closed_and_survives_disconnect() -> None:
+    backend = AdsBackend()
+    backend.link_status = "ACTIVE"
+    service, database = ads_service(backend)
+    await service.connect_google_ads(
+        project_id=PROJECT_ID, customer_id=ADS_CID, clerk_user_id=USER_ID
+    )
+    connection = await service.google_ads_link_status(project_id=PROJECT_ID)
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
+    # A connection made before links were bound to the inviting project shares the link.
+    database.connections[(OTHER_ADS_PROJECT_ID, ADS_PROVIDER)] = IntegrationConnection(
+        **{**connection.__dict__, "id": uuid4(), "project_id": OTHER_ADS_PROJECT_ID}
+    )
+    for project_id in (PROJECT_ID, OTHER_ADS_PROJECT_ID):
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_account(project_id=project_id)
+        with pytest.raises(IntegrationAuthorizationError, match="another Tin project"):
+            await service.google_ads_health(project_id=project_id)
+    before = len(backend.requests)
+    assert (
+        await service.disconnect(project_id=OTHER_ADS_PROJECT_ID, provider_key=ADS_PROVIDER) is True
+    )
+    assert not any(
+        path.endswith("customerClientLinks:mutate") for path, _, _ in backend.requests[before:]
+    )
+    assert await service.google_ads_account(project_id=PROJECT_ID) == ADS_CID
 
 
 @pytest.mark.asyncio
@@ -3377,3 +4010,98 @@ async def test_disconnect_google_ads_is_authoritative_when_google_is_down() -> N
     service.google_ads._sleep = no_sleep
     assert await service.disconnect(project_id=PROJECT_ID, provider_key=ADS_PROVIDER) is True
     assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+
+
+@pytest.mark.parametrize(
+    ("provider", "configuration", "site_url", "ready", "reason"),
+    [
+        ("analytics.gsc", {"selected_site_url": None}, None, False, "selection_required"),
+        ("analytics.gsc", {"selected_site_url": "sc-domain:acme.example"}, None, True, None),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:acme.example"},
+            "https://www.acme.example/",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "https://acme.example/"},
+            "https://acme.example",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:other.example"},
+            "https://acme.example",
+            False,
+            "property_mismatch",
+        ),
+        ("infra.github", {}, None, False, "selection_required"),
+        ("infra.github", {"selected_repository": "acme/site"}, None, True, None),
+        ("analytics.posthog", {}, None, False, "selection_required"),
+        ("workspace.google", {}, "https://acme.example", True, None),
+    ],
+)
+def test_connection_readiness_needs_the_chosen_resource(
+    provider, configuration, site_url, ready, reason
+) -> None:
+    from tin_lite.integrations import connection_readiness
+
+    connection = SimpleNamespace(
+        provider_key=provider, status="connected", configuration=configuration
+    )
+    result = connection_readiness(connection, site_url=site_url)
+    assert (result["ready"], result["reason"]) == (ready, reason)
+    assert (result["next_action"] is None) is ready
+
+
+def test_connection_readiness_of_a_missing_or_broken_connection() -> None:
+    from tin_lite.integrations import connection_readiness
+
+    assert connection_readiness(None)["reason"] == "not_connected"
+    broken = SimpleNamespace(
+        provider_key="analytics.gsc",
+        status="needs_attention",
+        configuration={"selected_site_url": "sc-domain:acme.example"},
+    )
+    assert connection_readiness(broken)["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_disconnecting_google_deletes_the_credential_without_revoking_the_shared_grant() -> (
+    None
+):
+    database = FakeIntegrationDatabase()
+    seen: list[str] = []
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/token":
+            return httpx.Response(
+                200,
+                json={
+                    "refresh_token": "refresh-secret",
+                    "scope": "https://www.googleapis.com/auth/webmasters.readonly",
+                },
+            )
+        raise AssertionError(f"unexpected provider request {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GSC_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        await service.complete_google(state=state, code="one-time-code", clerk_user_id=USER_ID)
+        seen.clear()
+        assert await service.disconnect(project_id=PROJECT_ID, provider_key=GSC_PROVIDER)
+
+    # Revoking any token would end the founder's grant for every project on that account.
+    assert seen == []
+    assert (PROJECT_ID, GSC_PROVIDER) not in database.connections

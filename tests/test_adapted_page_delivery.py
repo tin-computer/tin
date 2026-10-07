@@ -7,6 +7,7 @@ GitHub calls it clean; anything else stays an open PR that says why.
 
 import hashlib
 import json
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,6 +34,7 @@ from tin_lite.content_delivery import (
 from tin_lite.content_delivery_api import publish_preview, retry_delivery
 from tin_lite.integrations import GitHubPullRequestResult, GitHubRepositoryBinding
 from tin_lite.organic_audit import canonical_json
+from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.page_urls import PageUrls, present
 from tin_lite.procedures import procedure_checkpoint_path
 from tin_lite.workflow_reviews import WorkflowReviews
@@ -179,7 +181,7 @@ async def approve_answer_page(f, run):
     return await f.db.get_run(run.id)
 
 
-async def public_article(f, *, body=ARTICLE_BODY):
+async def public_article(f, *, body=ARTICLE_BODY, listing=LISTING):
     run, _ = await f.db.create_run(
         project_id=f.project.id,
         workflow_id=PUBLIC_ARTICLE_WORKFLOW_ID,
@@ -189,7 +191,7 @@ async def public_article(f, *, body=ARTICLE_BODY):
         input_payload={"brief": "Explain a practical buyer problem."},
     )
     path = f"content/articles/{run.id}.md"
-    raw = (LISTING + body).encode()
+    raw = (listing + body).encode()
     revision = f.storage.repo.edit({path: raw})
     key = f"{run.id}:procedure_canonical_commit"
     async with f.db.effect_lock(key, "procedure_canonical_commit") as (conn, _):
@@ -408,6 +410,45 @@ async def test_without_api_execution_publish_keeps_the_markdown_publisher(
     assert not await children(f, run)
 
 
+@pytest.mark.parametrize("surface", ["http", "mcp"])
+async def test_a_one_off_page_approved_with_no_delivery_stays_in_tin(
+    publication_db, monkeypatch, surface
+):
+    # Sheepdogs, content.public_article b9bf3237: approving with delivery "none" failed with
+    # "Save this workflow to the project before choosing where it publishes."
+    f = await fixture(publication_db, monkeypatch)
+    run = await public_article(f)
+    assert run.project_workflow_id is None
+    token = (await WorkflowReviews(runtime=f.runtime, settings=f.settings).view(run.id, ACTOR))[
+        "review_token"
+    ]
+    if surface == "http":
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
+        ) as client:
+            response = await client.post(
+                f"/api/workflows/runs/{run.id}/approve",
+                json={"delivery": "none", "review_token": token},
+            )
+        assert response.status_code == 202, response.text
+    else:
+        result = structured(
+            await mcp(f, monkeypatch).call_tool(
+                "approve_workflow_run",
+                {"run_id": str(run.id), "delivery": "none", "review_token": token},
+            )
+        )
+        assert result["review_decision"] == "approved"
+    choice = (await f.db.get_effect(choice_key(run.id))).result
+    assert choice["settings"]["mode"] == "draft_only" and choice["path"] is None
+    await f.db.pool.execute("UPDATE workflow_runs SET status='succeeded' WHERE id=$1", run.id)
+    await f.activities.deliver_content_draft(str(run.id))
+    # Nothing left Tin: no adaptation run, no commit, no pull request.
+    assert not await children(f, run)
+    f.runtime.integrations.github_commit_files.assert_not_called()
+    f.runtime.integrations.github_create_pull_request.assert_not_called()
+
+
 async def test_prepare_pr_is_refused_for_a_page_already_committed_as_markdown(
     publication_db, monkeypatch
 ):
@@ -459,7 +500,6 @@ async def billed(f, balance):
         ProjectSpendingPolicy(
             per_run_nanos=10_000_000_000,
             monthly_nanos=20_000_000_000,
-            concurrency=2,
             expected_revision=0,
         ),
     )
@@ -479,8 +519,8 @@ async def test_adaptation_is_one_metered_session_with_a_cost_preview(publication
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
     assert preview["adapt"] is True and preview["mode"] == "github_pr"
-    assert preview["cost"]["estimated_usd"] == "5.00"
-    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · up to $5"
+    assert preview["cost"]["estimated_usd"] == "10.00"
+    assert preview["footer"] == "Tin adapts it to your site and opens a pull request · up to $10"
     await f.delivery.choose(run=run, mode="github_pr", actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
@@ -528,7 +568,14 @@ async def test_insufficient_credits_record_a_failed_delivery_to_retry(publicatio
 # After the PR: merge only a page-only PR that GitHub calls clean.
 
 
-async def adapted_pull_request(f, *, mode="github_commit", extra_files=(), route=None):
+async def adapted_pull_request(
+    f, *, mode="github_commit", extra_files=(), route=None, chosen_route=None
+):
+    if chosen_route:
+        # The founder's saved choice, as save_page_route writes it.
+        from tin_lite.page_routes import PATH
+
+        f.storage.repo.edit({PATH: canonical_json({"routes": {"answer_page": chosen_route}})})
     run = await answer_page(f)
     await f.delivery.choose(run=run, mode=mode, actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
@@ -614,6 +661,7 @@ async def test_commit_setting_merges_a_clean_page_only_pull_request(publication_
     assert call["number"] == 42 and call["expected_head_sha"] == "a" * 40
     assert call["execution_key"] == f"{child.id}:procedure_pull_request_merge"
     assert [item.path for item in call["files"]] == ["content/answers/reliable-ai-work.md"]
+    assert call["new_paths"] == ("content/answers/reliable-ai-work.md",)
     assert naps == [delivery.MERGE_POLL_SECONDS]
     merge = (await f.db.get_effect(delivery.merge_key(child.id))).result
     assert merge["status"] == "merged" and merge["commit"] == "b" * 40
@@ -747,6 +795,43 @@ async def test_page_url_uses_the_adaptation_route_and_says_what_approval_does(
     assert after["note"].startswith("Pull request #42 is open.")
 
 
+async def test_a_proposed_url_follows_the_saved_route(publication_db, monkeypatch):
+    # Sheepdogs, content.public_article b9bf3237: page_url kept proposing the title slug at the
+    # site root after the founder chose /blog/{slug}; the first guess was saved for good.
+    f = await fixture(publication_db, monkeypatch)
+    run = await public_article(f)
+    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
+    pages._site = AsyncMock(return_value="example.com")  # the site the audit read
+    now = datetime.now(UTC)
+    first = await pages.view(run, None, now=now)
+    assert first["url"] == "https://example.com/a-useful-public-article"
+    assert first["source"] == "title_slug" and first["final"] is False
+    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
+    # Read again at most every ten minutes, like the delivery preview.
+    assert (await pages.view(run, None, now=now + timedelta(minutes=1)))["url"] == first["url"]
+    later = await pages.view(run, None, now=now + timedelta(minutes=11))
+    assert later["url"] == "https://example.com/blog/a-useful-public-article"
+    assert later["source"] == "saved_route" and later["final"] is False
+
+
+async def test_the_approved_address_is_the_drafts_own_slug(publication_db, monkeypatch):
+    # Sheepdogs: Tin proposed /blog/how-i-filmed-the-sheepdogs-trailers-inside-the-game and
+    # content.deliver d93bbfd0 published /blog/filming-sheepdogs-trailers.
+    f = await fixture(publication_db, monkeypatch)
+    f.storage.repo.edit({ROUTES_PATH: canonical_json({"routes": {"article": "/blog/{slug}"}})})
+    listing = LISTING.replace("---\n\n", 'slug: "keep-ai-work-reliable"\n---\n\n', 1)
+    run = await public_article(f, listing=listing)
+    pages = PageUrls(database=f.db, storage=f.storage, settings=f.settings)
+    pages._site = AsyncMock(return_value="example.com")
+    view = await pages.view(run, None)
+    assert view["url"] == "https://example.com/blog/keep-ai-work-reliable"
+    run = await approve_article(f, run)
+    source = await approved_document.select(
+        database=f.db, storage=f.storage, project_id=f.project.id, source_run_id=run.id
+    )
+    assert source["page_metadata"]["slug"] == "keep-ai-work-reliable"
+
+
 def test_card_cost_is_rounded_to_a_dollar_or_cents():
     assert about_usd("5.00") == "$5" and about_usd("1.50") == "$2"
     assert about_usd("0.45") == "$0.45" and about_usd("0") is None and about_usd(None) is None
@@ -756,11 +841,14 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
     f = await fixture(publication_db, monkeypatch)
     run = await answer_page(f)
     preview = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
+    ask = preview.pop("ask_the_founder")
+    assert ask["question"] == "Where on your site should pages that answer buyer questions go?"
     assert preview == {
         "adapt": True,
         "label": "Publish",
         "mode": "github_pr",
         "repository": "owner/site",
+        "route": None,
         "sentence": "Tin adapts it to your site and opens a pull request",
         "cost": None,
         "footer": "Tin adapts it to your site and opens a pull request",
@@ -771,7 +859,11 @@ async def test_publish_preview_follows_the_saved_delivery_setting(publication_db
         AsyncMock(return_value="github_commit"),
     )
     committed = await publish_preview(runtime=f.runtime, settings=f.settings, run=run, actor=ACTOR)
-    assert committed["footer"] == "Tin adapts it to your site and commits it to main"
+    # With no chosen route, a commit-to-main setting still leaves the first pull request open.
+    assert committed["footer"] == (
+        "Tin adapts it to your site and opens a pull request, "
+        "since you have not chosen where these pages live yet"
+    )
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
     ) as client:
@@ -803,16 +895,14 @@ async def test_discovery_lists_approved_pages_by_title(publication_db, monkeypat
     assert json.dumps(found)  # Plain data for MCP preparation.
 
 
-def test_publish_says_pull_request_when_the_site_has_no_route_for_the_page():
+def test_publish_says_pull_request_until_the_founder_chooses_a_route():
     from tin_lite.content_delivery import publish_sentence
 
-    # Tin merges only a page-only pull request, so the first page on a site without a route
-    # stays a pull request even when the saved setting is commit to main.
+    # Until the founder chooses where these pages live, a commit-to-main setting still leaves
+    # the first pull request open; a pull-request setting reads the same either way.
     assert publish_sentence("github_commit") == "Tin adapts it to your site and commits it to main"
     assert publish_sentence("github_commit", route_missing=True) == (
         "Tin adapts it to your site and opens a pull request, "
-        "since your site first needs a route for these pages"
+        "since you have not chosen where these pages live yet"
     )
-    assert publish_sentence("github_pr", route_missing=True) == publish_sentence(
-        "github_commit", route_missing=True
-    )
+    assert publish_sentence("github_pr", route_missing=True) == publish_sentence("github_pr")

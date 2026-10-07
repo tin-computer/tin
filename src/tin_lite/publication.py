@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlencode
 
+from tin_lite import page_assets
 from tin_lite.domain import WorkflowRun
 
 if TYPE_CHECKING:
@@ -18,18 +19,26 @@ if TYPE_CHECKING:
 
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
 _DIGEST = re.compile(r"[0-9a-f]{64}\Z")
+# not_published: a finished result Tin kept as a readable diagnostic and will not publish.
 OUTPUT_REASONS = frozenset(
-    {"publication_pending", "reconciliation_pending", "output_conflict", "execution_interrupted"}
+    {
+        "publication_pending",
+        "reconciliation_pending",
+        "output_conflict",
+        "execution_interrupted",
+        "not_published",
+    }
 )
-RETAINED_OUTPUT_EXECUTORS = frozenset({"codex.procedure", "style.capture", "workflow.code"})
+RETAINED_OUTPUT_EXECUTORS = frozenset(
+    {"codex.procedure", "style.capture", "social.x_style", "workflow.code"}
+)
 
 
 def output_checkpoint_key(run: WorkflowRun) -> str:
-    suffix = (
-        "style_artifact_persist"
-        if run.executor == "style.capture"
-        else "procedure_artifact_persist"
-    )
+    suffix = {
+        "style.capture": "style_artifact_persist",
+        "social.x_style": "x_style_artifact_persist",
+    }.get(run.executor, "procedure_artifact_persist")
     return f"{run.id}:{suffix}"
 
 
@@ -65,17 +74,22 @@ class OutputCheckpoint:
     byte_count: int
     version: int = 1
     companions: tuple[OutputCheckpoint, ...] = ()
+    # An article's figures and embeds (page_assets): only the files the article refers to.
+    assets: tuple[OutputCheckpoint, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         value = asdict(self)
         value.pop("companions")
+        value.pop("assets")
         if self.companions:
             value["companions"] = [item.to_dict() for item in self.companions]
+        if self.assets:
+            value["assets"] = [item.to_dict() for item in self.assets]
         return value
 
     @property
     def files(self) -> tuple[OutputCheckpoint, ...]:
-        return (self, *self.companions)
+        return (self, *self.companions, *self.assets)
 
     @classmethod
     def create(
@@ -87,6 +101,7 @@ class OutputCheckpoint:
         media_type: str,
         content: bytes,
         companions: tuple[OutputCheckpoint, ...] = (),
+        assets: tuple[OutputCheckpoint, ...] = (),
     ) -> OutputCheckpoint:
         result = cls(
             run_id=str(run.id),
@@ -101,6 +116,7 @@ class OutputCheckpoint:
             byte_count=len(content),
             version=2 if companions else 1,
             companions=companions,
+            assets=assets,
         )
         return cls.load(result.to_dict(), run=run)
 
@@ -114,9 +130,24 @@ class OutputCheckpoint:
                 or any(not isinstance(item, dict) or item.get("companions") for item in children)
             ):
                 raise ValueError("saved output has invalid companions")
+            assets = value.get("assets", [])
+            if (
+                not isinstance(assets, list)
+                or len(assets) > page_assets.MAX_FILES_CEILING
+                or any(
+                    not isinstance(item, dict) or item.get("companions") or item.get("assets")
+                    for item in assets
+                )
+            ):
+                raise ValueError("saved output has invalid assets")
             result = cls(
-                **{key: value[key] for key in cls.__dataclass_fields__ if key != "companions"},
+                **{
+                    key: value[key]
+                    for key in cls.__dataclass_fields__
+                    if key not in {"companions", "assets"}
+                },
                 companions=tuple(cls.load(item, run=run) for item in children),
+                assets=tuple(cls.load(item, run=run) for item in assets),
             )
         except (KeyError, TypeError) as exc:
             raise ValueError("saved output has no validated checkpoint identity") from exc
@@ -147,6 +178,7 @@ class OutputCheckpoint:
                 "text/plain",
                 "application/json",
                 "image/svg+xml",
+                "text/html",
                 "video/mp4",
             }
             or not isinstance(result.sha256, str)
@@ -162,6 +194,22 @@ class OutputCheckpoint:
             for item in result.companions
         ):
             raise ValueError("saved companion does not belong to the same output revision")
+        if result.assets:
+            folder = page_assets.folder(result.artifact_path) + "/"
+            paths = [item.artifact_path for item in result.assets]
+            if (
+                len(set(paths)) != len(paths)
+                or sum(item.byte_count for item in result.assets) > page_assets.MAX_BYTES_CEILING
+                or any(
+                    item.ephemeral_commit_sha != result.ephemeral_commit_sha
+                    or not item.artifact_path.startswith(folder)
+                    or not page_assets.NAME.fullmatch(item.artifact_path[len(folder) :])
+                    or item.media_type != page_assets.media_type(item.artifact_path)
+                    or item.byte_count > page_assets.FILE_MAX_BYTES
+                    for item in result.assets
+                )
+            ):
+                raise ValueError("saved assets do not belong to the same article revision")
         return result
 
     @property

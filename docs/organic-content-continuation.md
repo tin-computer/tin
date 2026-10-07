@@ -37,8 +37,10 @@ Once the content plan exists, and beside the first draft, it also saves one week
   nothing and leaves drafting on demand.
 - The timezone is the one Start here recorded for the founder, then the newest saved
   schedule's, then the project's (UTC by default).
-- The first occurrence comes at least seven days after the parent saves it, so it never
-  doubles the parent's own first article.
+- The first occurrence is on or after the start of the founder's day one week after the
+  parent saves it, so a Tuesday system run first drafts again the following Tuesday, never on
+  top of the system's own first article. (Counting seven days from the moment of saving skipped
+  a week when the run finished after the drafting time.)
 - Each occurrence selects the next eligible plan article exactly as a manual start does and
   waits for review. It holds, without a run, while any article from the program waits for
   review or is drafting, or while a plan revision holds the next batch. When nothing is left
@@ -49,9 +51,9 @@ Once the content plan exists, and beside the first draft, it also saves one week
   not reuse the parent's `content.deliver` adaptation, which belongs to the parent run.
 - The configuration is not a child run and adds nothing to the parent's spending bound.
   Each occurrence is an ordinary scheduled run with its own funding: the content.generate
-  ceiling ($5), project limits and standing schedule authority apply. Under the hosted
-  default $10 monthly limit, later occurrences in a month may not start; the Start here
-  handoff says so (see [workflow billing coverage](workflow-billing-coverage.md#weekly-articles-and-the-default-limits--september-29-2026)).
+  ceiling ($5), project limits and standing schedule authority apply. Under the earlier
+  hosted default $10 monthly limit, which projects created before October 2, 2026 keep,
+  later occurrences in a month may not start; the Start here handoff says so (see [workflow billing coverage](workflow-billing-coverage.md#weekly-articles-and-the-default-limits--september-29-2026)).
 - Saving the schedule never fails the recipe. `RESULT.md` and the system facts record it
   as succeeded, skipped (`weekly_articles_off`, `content_plan_unavailable`), blocked
   (`weekly_schedule_unsupported`, `scheduling_unavailable`) or failed
@@ -122,3 +124,24 @@ older recipes keep their behaviour.
 Reusing a program also preserves its existing article schedule and any pause or timing edits.
 Tin creates a schedule only when that program has none; concurrent system runs share this
 short save. A paused schedule stays paused and the result says `existing_schedule_paused`.
+
+## Refresh existing pages first (0.5.0)
+
+`organic.traffic_system` 0.5.0 pins policy `organic-traffic-v5`, which adds a weekly page
+refresh (`content.refresh`, see [refreshing existing pages](content-refresh.md)). At the start
+of the draft step, before drafting a new article, the system:
+
+- saves the "Weekly page refresh" workflow on today's weekday at the drafting time, in the
+  founder's time zone, with its first scheduled run a week from today;
+- prepares the first refresh as a child run and runs it as a Temporal child beside the draft.
+
+That child run is the schedule's first run, so nothing else runs at the first slot and the next
+refresh comes a week later. The refresh child draws on the system's budget under the start key
+`system:{run}:refresh`, admitted only when the run pinned v5 and the exact `content.refresh`
+definition. The system waits for the refresh child before it finishes, so its budget never
+settles while the refresh is still spending. If the
+project already has an active or paused weekly refresh, the system keeps it and starts nothing
+new. A refresh that cannot start (no Temporal, billing refused, a missing prerequisite) never
+blocks the article; `RESULT.md` gains a "Page refresh" section that says what happened. v4 and
+older recipes keep their behaviour, and in-flight runs keep the recipe they pinned. The parent's
+registry revision now carries the exact `content.refresh` definition beside its steps.

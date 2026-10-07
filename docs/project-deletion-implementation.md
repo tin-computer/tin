@@ -44,7 +44,8 @@ Under `effect_lock("project-delete:{project_id}:{request_id}", "project_delete")
 2. External, each call bounded to 15 seconds: terminate each stopped run's execution and each
    schedule's `tin-scheduled-dispatch:` execution (terminate, not cancel, so no failure activity
    writes into a project being purged; NOT_FOUND is tolerated), delete the schedules, kill
-   sandboxes, `IntegrationService.disconnect` per provider (revokes Google tokens),
+   sandboxes, `IntegrationService.disconnect` per provider (deletes stored credentials; Google
+   is not revoked upstream because one revocation ends the grant every project shares),
    `BillingService.settle` per root so reservations return (errors are logged; the
    reconciliation loop retries), `CodeStorage.delete_repo`. A failure marks the receipt failed
    and raises `ProjectDeletionPending`; the same `request_id` retries every later phase.

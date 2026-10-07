@@ -39,7 +39,7 @@ def track(provider, *, delays=None, serp_delay=0.02):
             await asyncio.sleep(serp_delay if kind == "serp" else (delays or {}).get(stage, 0.01))
         finally:
             state["in_flight"] -= 1
-        if kind == "competitors":
+        if kind in {"competitors", "competitors_wide"}:
             items = [{"domain": "one.example"}, {"domain": "two.example"}]
         elif kind == "serp":
             items = [
@@ -221,7 +221,10 @@ async def test_seed_proposal_overlaps_lookups_that_do_not_need_seeds():
     # that needs seeds was.
     assert set(at_finish) == {"target", "competitors"}
     ledger = list(db.effects[activities.key(str(RUN_ID), "budget")].result)
-    assert ledger[:5] == ["review", "triage", "seeds", "target", "competitors"]
+    # v7 holds back one reservation per screening batch, then buys seeds and lookups. v9
+    # screens up to 600 candidates, so twelve batches.
+    screening = [f"triage:{index}" for index in range(12)]
+    assert ledger[:16] == ["review", *screening, "seeds", "target", "competitors"]
 
 
 @pytest.mark.asyncio

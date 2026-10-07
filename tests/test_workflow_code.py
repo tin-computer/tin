@@ -67,17 +67,62 @@ async def test_tin_owned_and_private_code_share_one_package_contract():
     assert results[0] == results[1]
 
 
+def test_code_contract_admits_the_raised_runaway_guards():
+    body = definition()
+    body["code"]["timeout_seconds"] = 900
+    body["code"]["output"]["max_bytes"] = 1_000_000
+    body["code"]["model_routes"] = {
+        name: {
+            "provider": "openai",
+            "model": "gpt-6-luna",
+            "max_calls": 16,
+            "max_input_bytes": 256_000,
+            "max_output_tokens": 32_000,
+        }
+        for name in ("first", "second")
+    }
+    spec = validate_code_definition(body)
+    assert spec.timeout_seconds == 900 and spec.max_bytes == 1_000_000
+    assert sum(route.max_calls for route in spec.model_routes) == 32
+    body["code"]["model_routes"]["third"] = body["code"]["model_routes"]["first"]
+    with pytest.raises(ValueError, match="at most 32 managed model calls"):
+        validate_code_definition(body)
+
+
+def test_larger_code_limits_fit_through_the_sandbox_bridge():
+    import re
+    from importlib.util import find_spec
+    from pathlib import Path
+
+    from tin_lite import code_models, code_project_files, workflow_code
+    from tin_lite.e2b_runtime import CODE_BRIDGE_MAX_BYTES
+
+    # code_runner imports Unix-only modules, so read its constants without importing it.
+    source = Path(find_spec("tin_lite.code_runner").origin).read_text(encoding="utf-8")
+    rpc = int(re.search(r"\nMAX_RPC = ([\d_]+)\n", source)[1])
+    result = re.search(r"\nMAX_RESULT = ([\d_]+) \* 6 \+ 2048\n", source)
+    assert rpc == CODE_BRIDGE_MAX_BYTES
+    # validate_code_result's envelope bound for the largest declared output.
+    assert int(result[1]) == workflow_code.MAX_OUTPUT_BYTES
+    # A whole-limit file read crosses as base64, a model response as JSON of its own size.
+    assert -(-code_project_files.MAX_FILE_BYTES // 3) * 4 + 64 < rpc
+    assert code_models.MAX_RESPONSE_BYTES + 64 < rpc
+    # The worker's 256 MiB address space comfortably holds a whole message and result.
+    assert rpc + int(result[1]) * 6 + 2048 < 64 * 1024 * 1024
+    assert "\nFILE_CALLS = 256\n" in source and "\nSERVICE_CALLS = 128\n" in source
+
+
 @pytest.mark.parametrize(
     "change",
     [
-        lambda d: d["code"].update(timeout_seconds=61),
+        lambda d: d["code"].update(timeout_seconds=901),
         lambda d: d["code"].update(runtime="arbitrary-python"),
         lambda d: d["code"].update(entrypoint="../main.py"),
         lambda d: d["code"].update(files=["main.py", "main.py"]),
         lambda d: d["code"].update(model_routes=["free-looking-route"]),
         lambda d: d["code"]["output"].update(path="wiki/INDEX.md"),
         lambda d: d["code"]["output"].update(path="workflow_packages/custom.other/workflow.json"),
-        lambda d: d["code"]["output"].update(max_bytes=64001),
+        lambda d: d["code"]["output"].update(max_bytes=1_000_001),
         lambda d: d.update(schedule_modes=["daily"]),
         lambda d: d.update(integration_requirements=[{"provider_key": "undeclared"}]),
         lambda d: d.update(procedure={}),

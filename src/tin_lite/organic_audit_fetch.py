@@ -23,7 +23,10 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 
 from tin_lite.organic_audit_site import (
+    BROWSER_AGENT,
+    CRAWLER_AGENTS,
     FETCH_AGENT,
+    V11_PAGE_FACTS,
     html_facts,
     parse_robots,
     parse_sitemap,
@@ -55,6 +58,16 @@ def refused(response: dict) -> bool:
 MAX_PAGESPEED_BYTES = 12_000_000
 
 
+def body_text(response: dict, *, charset: str | None = None) -> str:
+    """An observed body as text without NUL, which Postgres text and jsonb refuse."""
+    body = response["body"]
+    try:
+        text = body.decode(charset or response.get("charset") or "utf-8", "replace")
+    except LookupError:  # an unknown charset label from the server
+        text = body.decode("utf-8", "replace")
+    return text.replace("\x00", "")
+
+
 class SiteReader:
     """One bounded read session: shared client, one DNS answer per host."""
 
@@ -79,9 +92,20 @@ class SiteReader:
         if self._own_client:
             await self._client.aclose()
 
-    def in_scope(self, url: str) -> bool:
+    def in_scope(self, url: str, *, plain_root: bool = False) -> bool:
         try:
             parts = urlsplit(url)
+            if plain_root:
+                # Only the plain-HTTP homepage, to see whether it redirects to HTTPS.
+                return (
+                    parts.scheme == "http"
+                    and parts.hostname in self.hosts
+                    and parts.port in {None, 80}
+                    and (parts.path or "/") == "/"
+                    and not parts.query
+                    and not parts.username
+                    and not parts.password
+                )
             return (
                 parts.scheme == "https"
                 and parts.hostname in self.hosts
@@ -94,9 +118,9 @@ class SiteReader:
         except ValueError:
             return False
 
-    async def _address(self, host: str) -> str:
+    async def _address(self, host: str, port: int = 443) -> str:
         if host not in self._addresses:
-            rows = await self._resolver(host, 443, type=socket.SOCK_STREAM)
+            rows = await self._resolver(host, port, type=socket.SOCK_STREAM)
             # Keep the resolver's route preference; lexical sorting can pick unreachable IPv6.
             ips = list(dict.fromkeys(row[4][0] for row in rows))
             if not ips or any(not ipaddress.ip_address(ip).is_global for ip in ips):
@@ -104,9 +128,14 @@ class SiteReader:
             self._addresses[host] = ips[0]
         return self._addresses[host]
 
-    async def get(self, url: str, *, max_bytes: int) -> dict:
-        """One GET. Returns status, selected headers and at most `max_bytes` of the body."""
-        if not self.in_scope(url):
+    async def get(
+        self, url: str, *, max_bytes: int, agent: str | None = None, plain_root: bool = False
+    ) -> dict:
+        """One GET. Returns status, selected headers and at most `max_bytes` of the body.
+
+        `agent` replaces Tin's user agent for one request (the crawler access comparison).
+        """
+        if not self.in_scope(url, plain_root=plain_root):
             return {"status": "out_of_scope"}
         host = urlsplit(url).hostname
         try:
@@ -115,8 +144,12 @@ class SiteReader:
                 request = self._client.build_request(
                     "GET",
                     httpx.URL(url).copy_with(host=address),
-                    headers={"Host": host, "Accept-Encoding": "identity"},
-                    extensions={"sni_hostname": host},
+                    headers={
+                        "Host": host,
+                        "User-Agent": agent or USER_AGENT,
+                        "Accept-Encoding": "identity",
+                    },
+                    extensions={} if plain_root else {"sni_hostname": host},
                 )
                 response = await self._client.send(request, stream=True)
                 try:
@@ -193,7 +226,7 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
     if response["status"] != "observed":
         robots["status"] = "unreachable"
     elif response["status_code"] == 200:
-        text = response["body"].decode("utf-8", "replace")
+        text = body_text(response, charset="utf-8")
         robots.update(status="observed", **parse_robots(text))
         robots["truncated"] = response["truncated"]
     elif refused(response):
@@ -235,7 +268,7 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
                 entry["status"] = "too_large_or_invalid"
             else:
                 parsed = parse_sitemap(
-                    body.decode("utf-8", "replace"),
+                    body.decode("utf-8", "replace").replace("\x00", ""),
                     max_urls=max(0, policy["max_sitemap_urls"] - len(urls)),
                 )
                 entry.update(status="observed", kind=parsed["kind"], entries=parsed["total"])
@@ -250,6 +283,12 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
                     total += parsed["total"]
                     urls.extend(parsed["entries"])
         files.append(entry)
+    if policy.get("site_angles"):  # v11: three more reads of the audited site.
+        result["llms_txt"], result["http_home"], result["missing_page"] = await asyncio.gather(
+            _read_llms_txt(reader, origin),
+            _read_http_home(reader, origin),
+            _read_missing_page(reader, origin, policy),
+        )
     result["sitemaps"] = {
         "referenced_in_robots": bool(robots.get("sitemaps")),
         "files": files[: policy["max_sitemap_files"] + 1],
@@ -261,7 +300,52 @@ async def read_site_files(reader: SiteReader, origin: str, policy: dict) -> dict
     return result
 
 
-def _page_record(url: str, response: dict, reader: SiteReader) -> dict:
+async def _read_llms_txt(reader: SiteReader, origin: str) -> dict:
+    url = urljoin(origin, "/llms.txt")
+    response = await reader.get_following(url, max_bytes=200_000)
+    if response["status"] != "observed":
+        return {"url": url, "status": response["status"]}
+    code = response["status_code"]
+    kind = (response.get("content_type") or "").lower()
+    if code == 200 and "html" not in kind:
+        return {"url": url, "status": "observed", "bytes": len(response["body"])}
+    if refused(response):
+        return {"url": url, "status": "refused", "status_code": code}
+    return {"url": url, "status": "missing", "status_code": code}
+
+
+async def _read_http_home(reader: SiteReader, origin: str) -> dict:
+    """Whether the plain-HTTP homepage sends visitors to HTTPS."""
+    url = "http://" + (urlsplit(origin).hostname or "") + "/"
+    response = await reader.get(url, max_bytes=20_000, plain_root=True)
+    if response["status"] != "observed":
+        return {"url": url, "status": response["status"]}
+    location = response.get("location") or ""
+    target = urljoin(url, location) if location else None
+    return {
+        "url": url,
+        "status": "observed",
+        "status_code": response["status_code"],
+        "location": target[:2000] if target else None,
+        "to_https": bool(target and urlsplit(target).scheme == "https"),
+    }
+
+
+async def _read_missing_page(reader: SiteReader, origin: str, policy: dict) -> dict:
+    """A made-up URL should answer 404 or 410; a 200 means missing pages look like pages."""
+    url = urljoin(origin, policy.get("missing_page_path", "/tin-audit-check-missing-page"))
+    response = await reader.get(url, max_bytes=200_000)
+    if response["status"] != "observed":
+        return {"url": url, "status": response["status"]}
+    return {
+        "url": url,
+        "status": "refused" if refused(response) else "observed",
+        "status_code": response["status_code"],
+        "location": response.get("location"),
+    }
+
+
+def _page_record(url: str, response: dict, reader: SiteReader, *, max_links: int = 0) -> dict:
     if response["status"] != "observed":
         return {"url": url, "fetch": "unavailable", "reason": response["status"]}
     record = {
@@ -290,6 +374,7 @@ def _page_record(url: str, response: dict, reader: SiteReader) -> dict:
                 url=url,
                 charset=response.get("charset"),
                 truncated=response["truncated"],
+                max_links=max_links,
             ),
         )
     return record
@@ -322,10 +407,80 @@ async def read_pages(
                 results[url] = {"url": url, "fetch": "blocked_by_robots"}
                 return
             response = await reader.get(url, max_bytes=policy["max_page_bytes"])
-            results[url] = _page_record(url, response, reader)
+            # v12 keeps each page's links to the audited site; earlier pins never read them.
+            record = _page_record(
+                url, response, reader, max_links=policy.get("max_internal_links", 0)
+            )
+            if not policy.get("site_angles"):
+                # v10 saves the page facts it saved before v11 widened the reader.
+                record = {k: v for k, v in record.items() if k not in V11_PAGE_FACTS}
+            if record.get("fetch") == "redirect" and policy.get("max_redirect_hops"):
+                record["redirect"] = await follow_redirects(
+                    reader, url, record, hops=policy["max_redirect_hops"]
+                )
+            results[url] = record
 
     await asyncio.gather(*(one(url) for url in urls))
     return results
+
+
+async def follow_redirects(reader: SiteReader, url: str, record: dict, *, hops: int) -> dict:
+    """The redirect path from a page, within the audited site: its hops, a loop, the end."""
+    chain = [url]
+    seen = {url}
+    location = record.get("location")
+    while location and reader.in_scope(location) and len(chain) <= hops:
+        if location in seen:
+            return {"chain": [*chain, location][: hops + 2], "loop": True, "final_status": None}
+        chain.append(location)
+        seen.add(location)
+        response = await reader.get(location, max_bytes=20_000)
+        if response["status"] != "observed":
+            return {"chain": chain, "loop": False, "final_status": None}
+        code = response["status_code"]
+        if code not in {301, 302, 303, 307, 308}:
+            return {"chain": chain, "loop": False, "final_status": code}
+        location = urljoin(location, response.get("location") or "") or None
+    return {
+        "chain": chain,
+        "loop": False,
+        "final_status": None,
+        "left_site": bool(location and not reader.in_scope(location)),
+    }
+
+
+async def read_crawler_access(reader: SiteReader, urls: list[str], *, seconds: float) -> dict:
+    """Each page read as a browser and as each AI crawler, to compare what the site returns.
+
+    A CDN can verify crawlers by IP, so a refusal here means "likely blocked", not proof.
+    """
+    deadline = time.monotonic() + seconds
+    limit = asyncio.Semaphore(4)
+    rows: list[dict] = []
+
+    async def one(url: str, name: str, agent: str) -> None:
+        async with limit:
+            if time.monotonic() > deadline:
+                rows.append({"url": url, "agent": name, "status": "not_read_time_limit"})
+                return
+            response = await reader.get(url, max_bytes=100_000, agent=agent)
+            if response["status"] != "observed":
+                rows.append({"url": url, "agent": name, "status": response["status"]})
+                return
+            rows.append(
+                {
+                    "url": url,
+                    "agent": name,
+                    "status": "refused" if refused(response) else "observed",
+                    "status_code": response["status_code"],
+                }
+            )
+
+    agents = {"browser": BROWSER_AGENT, **CRAWLER_AGENTS}
+    await asyncio.gather(*(one(url, name, agent) for url in urls for name, agent in agents.items()))
+    order = list(agents)
+    rows.sort(key=lambda row: (urls.index(row["url"]), order.index(row["agent"])))
+    return {"status": "observed", "pages": urls, "rows": rows}
 
 
 def _number(value, *, scale: float = 1.0) -> float | None:
@@ -334,8 +489,52 @@ def _number(value, *, scale: float = 1.0) -> float | None:
     return round(float(value) * scale, 3)
 
 
+LIGHTHOUSE_CATEGORIES = ("performance", "seo", "accessibility", "best-practices")
+
+
+def _failed_audits(categories: dict, audits: dict, name: str) -> list[dict]:
+    """Audits in one Lighthouse category that scored below 0.9, lowest first."""
+    rows = []
+    for ref in (categories.get(name) or {}).get("auditRefs") or []:
+        audit = audits.get(ref.get("id")) if isinstance(ref, dict) else None
+        if not isinstance(audit, dict):
+            continue
+        score = audit.get("score")
+        if audit.get("scoreDisplayMode") in {"manual", "notApplicable", "informative"}:
+            continue
+        if isinstance(score, bool) or not isinstance(score, (int, float)) or score >= 0.9:
+            continue
+        rows.append(
+            {
+                "id": str(ref["id"])[:80],
+                "title": " ".join(str(audit.get("title", ref["id"])).split())[:160],
+                "score": round(float(score), 2),
+            }
+        )
+    rows.sort(key=lambda row: (row["score"], row["id"]))
+    return rows[:10]
+
+
+def lighthouse_summary(payload: dict) -> dict:
+    result = payload.get("lighthouseResult") or {}
+    categories = result.get("categories") or {}
+    audits = result.get("audits") or {}
+    scores = {}
+    for name in LIGHTHOUSE_CATEGORIES[1:]:
+        score = (categories.get(name) or {}).get("score")
+        scores[name] = _number(score)
+    return {
+        "scores": scores,
+        "failed": {name: _failed_audits(categories, audits, name) for name in scores},
+    }
+
+
 def pagespeed_summary(payload: dict) -> dict:
-    """Core Web Vitals from field data when Google has it, otherwise lab values only."""
+    """Core Web Vitals from field data when Google has it, otherwise lab values only.
+
+    Field data for the page itself and for the whole site (origin_fallback) are labelled
+    apart; site-wide numbers are not the page's own.
+    """
     metrics = (payload.get("loadingExperience") or {}).get("metrics") or {}
     audits = (payload.get("lighthouseResult") or {}).get("audits") or {}
     categories = (payload.get("lighthouseResult") or {}).get("categories") or {}
@@ -364,8 +563,13 @@ def pagespeed_summary(payload: dict) -> dict:
     }
 
 
-async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
-    """One PageSpeed Insights run (mobile). Google fetches the page; Tin sends only the URL."""
+async def read_pagespeed(url: str, api_key: str, *, client=None, lighthouse: bool = True) -> dict:
+    """One PageSpeed Insights run (mobile). Google fetches the page; Tin sends only the URL.
+
+    `lighthouse` also asks for the SEO, accessibility and best-practice categories (v11); v10
+    asks for performance only.
+    """
+    categories = LIGHTHOUSE_CATEGORIES if lighthouse else LIGHTHOUSE_CATEGORIES[:1]
     own = client is None
     client = client or httpx.AsyncClient(trust_env=False, timeout=60, follow_redirects=False)
     try:
@@ -373,11 +577,11 @@ async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
             async with client.stream(
                 "GET",
                 PAGESPEED_ENDPOINT,
-                params={
-                    "url": url,
-                    "strategy": "mobile",
-                    "category": "performance",
-                },
+                params=[
+                    ("url", url),
+                    ("strategy", "mobile"),
+                    *(("category", name) for name in categories),
+                ],
                 headers={"X-Goog-Api-Key": api_key},
             ) as response:
                 if response.status_code != 200:
@@ -387,7 +591,10 @@ async def read_pagespeed(url: str, api_key: str, *, client=None) -> dict:
                     body.extend(chunk)
                     if len(body) > MAX_PAGESPEED_BYTES:
                         return {"status": "unavailable", "reason": "response_too_large"}
-        return {"status": "observed", **pagespeed_summary(json.loads(body))}
+        summary = pagespeed_summary(json.loads(body))
+        if lighthouse:
+            summary["lighthouse"] = lighthouse_summary(json.loads(body))
+        return {"status": "observed", **summary}
     except (httpx.HTTPError, OSError, TimeoutError, ValueError, TypeError, AttributeError):
         return {"status": "unavailable", "reason": "provider_request_failed"}
     finally:

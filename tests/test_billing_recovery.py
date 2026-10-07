@@ -263,16 +263,16 @@ async def test_parked_or_failing_checkouts_do_not_starve_lost_webhook_recovery(b
     # Session-less requests past Stripe's retry window await operator reconciliation.
     await f.db.pool.execute(
         """INSERT INTO billing_payments(id,workspace_id,actor_clerk_user_id,request_id,
-           amount_cents,created_at)
-           SELECT gen_random_uuid(),$1,$2,gen_random_uuid(),2500,now()-interval '25 hours'
+           amount_cents,created_at,mode)
+           SELECT gen_random_uuid(),$1,$2,gen_random_uuid(),2500,now()-interval '25 hours','test'
            FROM generate_series(1,20)""",
         f.project.workspace_id,
         ACTOR,
     )
     failing = await f.db.pool.fetchval(
         """INSERT INTO billing_payments(id,workspace_id,actor_clerk_user_id,request_id,
-           amount_cents,created_at)
-           VALUES(gen_random_uuid(),$1,$2,gen_random_uuid(),2500,now()-interval '1 hour')
+           amount_cents,created_at,mode)
+           VALUES(gen_random_uuid(),$1,$2,gen_random_uuid(),2500,now()-interval '1 hour','test')
            RETURNING id""",
         f.project.workspace_id,
         ACTOR,

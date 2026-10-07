@@ -1,0 +1,111 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "content.blog_index",
+    "title": "Plan the blog index",
+    "description": "Plan a blog index that makes every published article reachable within two clicks: trace where your connected repository keeps its posts, read it without changing it, and write a plan with the exact files for an index that lists them from that source, with dates, summaries, categories when there are enough posts, an RSS feed and sitemap dates taken from each post. Uses the route you chose for articles; if none is chosen yet, it asks you once instead. Reports each post's search clicks and impressions. Opens no pull request: website.change builds the index from the plan once you approve it.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "organic-traffic",
+    "schedule_modes": ["on_demand"],
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Code map",
+        "producer": "product.code_map",
+        "reason": "The Code map points at the post route and where it reads posts."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "analytics/traffic-snapshot.json",
+        "producer": "organic.traffic_snapshot",
+        "reason": "The snapshot adds 28-day visits and first-touch signups per post to the numbers."
+      }
+    ],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "mode": {
+          "type": "string",
+          "enum": ["auto", "build", "improve", "check"],
+          "default": "auto",
+          "title": "Mode",
+          "description": "Auto builds an index when there is none and improves the one there is; check reports only."
+        },
+        "page_size": {
+          "type": "integer",
+          "minimum": 10,
+          "maximum": 50,
+          "default": 24,
+          "title": "Posts per page above 100 posts"
+        },
+        "featured": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {"type": "string", "minLength": 1, "maxLength": 500},
+          "title": "Posts to feature (optional)",
+          "description": "Leave empty to feature the three with the most search clicks in 90 days."
+        }
+      },
+      "required": ["project_id"]
+    },
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"],
+        "required": true
+      },
+      {"provider_key": "analytics.gsc", "capabilities": ["search_analytics.read"], "required": true}
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/blog-index/SKILL.md",
+        "skills/blog-index/MEASUREMENT.md",
+        "skills/blog-index/PLAN.md"
+      ],
+      "entry_skill": "blog-index",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"],
+        "limits": {"max_files": 1000, "max_bytes": 100000000}
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1800},
+      "services": {
+        "gsc": {"provider_key": "analytics.gsc", "max_calls": 4, "max_response_bytes": 32000}
+      },
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/blog-index/{run_id}/PLAN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 200000,
+        "validator": "blog-index-plan.v1"
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "read only, post route and its source"},
+          {"id": "gsc", "kind": "surface", "label": "Search Console", "fact": "at most 4 calls, 28 and 90 day windows"},
+          {"id": "plan", "kind": "step", "label": "Plan the index files", "fact": "Codex, at most 5 files, tried in a copy"},
+          {"id": "ask", "kind": "ghost", "label": "No route for articles yet", "fact": "no files, your agent asks you once"},
+          {"id": "receipt", "kind": "receipt", "label": "Plan in project Files", "fact": "website.change applies it after approval"}
+        ],
+        "edges": [
+          {"from": "repo", "to": "plan", "kind": "call"},
+          {"from": "gsc", "to": "plan", "kind": "call"},
+          {"from": "plan", "to": "receipt", "kind": "call"},
+          {"from": "plan", "to": "ask", "kind": "call", "label": "no article route"}
+        ]
+      }
+    }
+  }
+}

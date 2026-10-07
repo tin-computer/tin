@@ -22,7 +22,9 @@ WORKER = "tin-work"
 CONTROLLER = "user"
 ROOTS = (Path("/home/user/project"), Path("/home/user/state"))
 EXEC_URL = "ws://127.0.0.1:8788"
-MAX_ENTRIES = 100_000
+# Per workspace root, counting directories and the .git objects of the pinned commit:
+# a repository snapshot of 100,000 files (repository_limits) needs about 2.2x that.
+MAX_ENTRIES = 400_000
 STUDIO_CONFIG = Path("/home/user/.tin-lite/studio-worker.json")
 
 

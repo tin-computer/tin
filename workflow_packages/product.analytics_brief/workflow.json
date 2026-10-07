@@ -4,7 +4,7 @@
     "key": "product.analytics_brief",
     "title": "Product analytics brief",
     "description": "A recurring PostHog brief: ordered activation, event trends, traffic, error signals and a supported breakdown, with reproducible evidence.",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "executor": "codex.procedure",
     "schedule_modes": [
       "on_demand",
@@ -54,6 +54,23 @@
           "uniqueItems": true,
           "default": [],
           "title": "Optional website hosts for pageview scope"
+        },
+        "exclude_email_domains": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 63
+          },
+          "maxItems": 10,
+          "uniqueItems": true,
+          "default": [],
+          "title": "Optional team email domains to exclude"
+        },
+        "internal_flag_property": {
+          "type": "string",
+          "maxLength": 71,
+          "default": "",
+          "title": "Optional internal-user flag property"
         }
       },
       "required": [
@@ -99,9 +116,32 @@
         "kind": "project.artifact",
         "media_type": "text/markdown",
         "max_bytes": 192000,
-        "path_template": "reports/analytics/{run_id}.md"
+        "path_template": "reports/analytics/{run_id}.md",
+        "validator": "analytics-brief.v1"
       }
     },
-    "system": "product-qa"
+    "system": "product-qa",
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "posthog", "kind": "surface", "label": "PostHog project", "fact": "at most 8 read-only queries"},
+          {"id": "context", "kind": "store", "label": "Event docs and the last brief", "fact": "reuses a complete brief's mapping"},
+          {"id": "inventory", "kind": "step", "label": "Discover events and exclusions", "fact": "up to 200 event types by volume"},
+          {"id": "plan", "kind": "step", "label": "Choose the funnel and keys", "fact": "2 to 6 steps, up to 4 key events"},
+          {"id": "nothing", "kind": "ghost", "label": "Brief measured nothing", "fact": "run fails, the diagnostic stays readable"},
+          {"id": "calculate", "kind": "step", "label": "Calculate with fixed code", "fact": "Fisher exact and Holm, 20 actors per arm"},
+          {"id": "receipt", "kind": "receipt", "label": "Analytics brief", "fact": "five sections and JSON evidence"}
+        ],
+        "edges": [
+          {"from": "posthog", "to": "inventory", "kind": "call"},
+          {"from": "context", "to": "inventory", "kind": "call"},
+          {"from": "inventory", "to": "plan", "kind": "call", "label": "events found"},
+          {"from": "inventory", "to": "nothing", "kind": "call", "label": "no events"},
+          {"from": "plan", "to": "calculate", "kind": "call"},
+          {"from": "calculate", "to": "receipt", "kind": "call"}
+        ]
+      }
+    }
   }
 }

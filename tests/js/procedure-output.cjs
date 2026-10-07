@@ -35,7 +35,7 @@ const context = vm.createContext({
 });
 vm.runInContext([
   "workflowForRun", "availableRunOutput", "outputReadUrl", "retainedOutputMessage", "isMarkdownPath",
-  "openRunOutputFile", "openRunArtifact", "hasOutputConflict", "runFingerprint", "renderDocument",
+  "openRunOutputFile", "openRunArtifact", "hasOutputConflict", "runFingerprint", "renderDocument", "bundleAssetLoader",
 ].map(extract).join("\n"), context);
 assert.equal(context.availableRunOutput(run).source, "retained");
 context.openRunArtifact("run");
@@ -46,13 +46,13 @@ assert.notEqual(context.runFingerprint(run), before);
 context.openRunArtifact("run");
 assert.deepEqual(calls.pop(), ["run", "workflows", "retained"]);
 context.state.documentRoute = { runId: "run", source: "retained" };
-context.state.documentCache.set("run:run:retained", { markdown: "saved" });
+context.state.documentCache.set("run:run:retained:", { markdown: "saved" });
 run.status = "needs_input"; // Even a stale status must not attach approval to saved output.
 context.renderDocument();
 assert.equal(actions.primaryAction, null);
 assert.equal(actions.secondaryAction, null);
 context.state.documentRoute.source = "canonical";
-context.state.documentCache.set("run:run:canonical", { markdown: "canonical" });
+context.state.documentCache.set("run:run:canonical:", { markdown: "canonical" });
 context.renderDocument();
 assert.equal(actions.primaryAction.label, "Approve draft");
 run.workflow_id = "pair-template";

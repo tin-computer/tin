@@ -209,6 +209,27 @@ def test_registry_contracts_and_bindings_are_read_only_and_explicit() -> None:
     ]
 
 
+def test_only_code_workflows_may_bind_an_optional_connection() -> None:
+    binding = {"ph": {"provider_key": POSTHOG_PROVIDER, "max_calls": 4, "max_response_bytes": 4000}}
+    optional = [
+        {"provider_key": POSTHOG_PROVIDER, "capabilities": ["query.read"], "required": False}
+    ]
+    with pytest.raises(ValueError, match="required integration"):
+        service_bindings(binding, optional)  # procedures keep every binding required
+    assert service_bindings(binding, optional, allow_optional=True)[0].name == "ph"
+    # Tin-held and custom API services have no founder choice to skip; they stay required.
+    for provider, capability in (
+        ("managed.pagespeed", "pagespeed.read"),
+        ("custom.api.crm", "http.read"),
+    ):
+        with pytest.raises(ValueError, match="required integration"):
+            service_bindings(
+                {"x": {"provider_key": provider, "max_calls": 1, "max_response_bytes": 4000}},
+                [{"provider_key": provider, "capabilities": [capability], "required": False}],
+                allow_optional=True,
+            )
+
+
 def test_client_metadata_document_derives_from_the_public_url_only() -> None:
     config = posthog_settings(posthog_oauth_verification_token="phvt_" + "v" * 20)
     document = ph.client_metadata(config)
@@ -632,8 +653,11 @@ async def test_query_refusals_are_named_and_bounded() -> None:
                 "query.hogql", {"query": SIGNUPS}, execution_key="k:400", **common
             )
         assert rejected.value.code == "query_error"
-        assert str(rejected.value).startswith("PostHog rejected the query: Unable to resolve")
-        assert "\n" not in str(rejected.value) and len(str(rejected.value)) < 340
+        assert str(rejected.value) == "PostHog rejected the query (HTTP 400)."
+        said = rejected.value.provider_error
+        assert (said.provider, said.status) == ("PostHog", 400)
+        assert said.message.startswith("Unable to resolve field xxx")
+        assert "\n" not in said.message and len(said.message) <= 1500
         api.api_status["/api/projects/101/insights/"] = 403
         with pytest.raises(ph.PostHogPermissionDenied):
             await service.posthog.call("insights.list", {}, execution_key="k:403", **common)
@@ -826,6 +850,98 @@ async def test_api_serves_the_client_document_and_completes_the_callback() -> No
 
 
 # ---------------------------------------------------------------- gateway with Postgres
+
+
+@pytest.mark.parametrize("connected_first", [False, True])
+async def test_an_optional_connection_is_pinned_for_the_run(billed, monkeypatch, connected_first):
+    """Real Postgres: the first execution pins the state; a later connection waits for a new run."""
+    from dataclasses import replace
+
+    from temporalio.testing import ActivityEnvironment
+    from test_private_workflows import ACTOR
+    from test_project_connections import definition, prepared, public_dns
+
+    from tin_lite.workflow_code import validate_code_definition
+
+    f = billed
+    service, _, code, run_id = await prepared(f, monkeypatch)
+    # Start the run as the gateway test does, so it holds service permission.
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, stream=httpx.ByteStream(b'{"accounts":[]}'))
+        )
+    ) as crm:
+        code.services.client, code.services.resolver = crm, public_dns
+        with pytest.raises(RuntimeError, match="worker loss"):
+            await ActivityEnvironment().run(code.execute, run_id)
+    run, workflow, _, _, _ = await code.selected(run_id)
+    body = definition()
+    body["integration_requirements"] = [
+        {"provider_key": POSTHOG_PROVIDER, "capabilities": ["query.read"], "required": False}
+    ]
+    body["code"]["services"] = {
+        "ph": {"provider_key": POSTHOG_PROVIDER, "max_calls": 4, "max_response_bytes": 4000}
+    }
+    changed, spec = replace(workflow, definition=body), validate_code_definition(body)
+    payload = {
+        "service": "ph",
+        "step": "signups",
+        "operation": "query.hogql",
+        "arguments": {"name": "signups_by_day", "query": SIGNUPS},
+    }
+    service._settings.posthog_oauth_enabled = True
+    service._settings.switchboard_public_url = "https://lite.tin.test"
+    api = PostHog(region="us")
+    original = service._client
+    service._client = httpx.AsyncClient(transport=httpx.MockTransport(api))
+
+    async def connect():
+        started = await service.start_connect(
+            project_id=f.project.id, provider_key=POSTHOG_PROVIDER, clerk_user_id=ACTOR
+        )
+        query = parse_qs(urlsplit(started.authorization_url).query)
+        api.challenge = query["code_challenge"][0]
+        await service.posthog.complete(
+            state=query["state"][0], code="good-code", clerk_user_id=ACTOR
+        )
+        api.requests.clear()
+
+    try:
+        async with f.db.pool.acquire() as conn:
+
+            async def pinned():
+                return await code.services.connections(
+                    conn=conn, run=run, workflow=changed, spec=spec
+                )
+
+            def call():
+                return code.services.call(
+                    conn=conn, run=run, workflow=changed, spec=spec, payload=payload
+                )
+
+            if connected_first:
+                await connect()
+                assert await pinned() == {"ph": "connected"}
+                assert len((await call())["rows"]) == 7 and len(api.requests) == 1
+                return
+            assert await pinned() == {"ph": "not_connected"}
+            with pytest.raises(CodeServiceError, match="not available to this run") as refused:
+                await call()
+            assert refused.value.code == "not_connected"
+            # Connected mid-run: this run keeps its pinned answer and reads nothing.
+            await connect()
+            assert await pinned() == {"ph": "not_connected"}
+            with pytest.raises(CodeServiceError, match="not available to this run"):
+                await call()
+            assert not api.requests
+        assert not await f.db.pool.fetchval(
+            "SELECT count(*) FROM effect_receipts "
+            "WHERE operation = 'code_service_call_v1' AND result->>'service' = 'ph'"
+        )
+    finally:
+        await service._client.aclose()
+        service._client = original
+        await service.close()
 
 
 async def test_gateway_replays_posthog_steps_and_settles_refusals(billed, monkeypatch):

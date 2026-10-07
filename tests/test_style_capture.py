@@ -20,6 +20,7 @@ from test_procedure_publication import publication_db as publication_db
 from test_project_codex_execution import temporal_env as temporal_env
 
 from tin_lite.billing_contracts import test_terms as billing_test_terms
+from tin_lite.capture_revisions import StyleProposalReview
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.code_storage import CodeStorage
 from tin_lite.model_providers import ModelResult, ModelUsage, ProviderName
@@ -208,7 +209,7 @@ def test_document_conversion_is_bounded_and_text_only():
             extract_sample(filename, content)
 
 
-async def capture_fixture(db, *, reviewed=True):
+async def capture_fixture(db, *, reviewed=True, revisable=True, policy=None):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
@@ -217,6 +218,11 @@ async def capture_fixture(db, *, reviewed=True):
     definition = builtin.definition
     if not reviewed:  # A run pinned to the definition from before review.
         definition = {k: v for k, v in definition.items() if k != "human_review"}
+    if not revisable:  # A run pinned to 1.1.0, before agent revisions and bound approval.
+        definition = {k: v for k, v in definition.items() if k != "proposal_revision"}
+        definition["version"] = "1.1.0"
+    if policy is not None:  # A run pinned to an earlier style policy.
+        definition = {**definition, "style_policy": policy}
     revision = "d" * 40
     await db.upsert_registry_workflow(
         workflow_id=builtin.id,
@@ -266,8 +272,16 @@ async def capture_fixture(db, *, reviewed=True):
     return f
 
 
+async def accept(f, run):
+    """Approve the version the founder read, as Decisions does (1.2.0)."""
+    reviews = StyleProposalReview(database=f.db, storage=f.storage)
+    view = await reviews.view(run.id, ACTOR)
+    await reviews.approve(run_id=run.id, actor=ACTOR, token=view["review_token"])
+
+
 async def approve(f, run):
     assert await f.activities.propose(str(run.id))
+    await accept(f, run)
     await f.activities.record_approval(str(run.id))
 
 
@@ -307,6 +321,7 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     assert head[STYLE_PATH][1] == b"My current guide\n" and b"provisional" in head[proposal][1]
     decisions = await f.db.list_pending_decisions(project_id=f.project.id)
     assert [d["run_id"] for d in decisions] == [run.id]
+    await accept(f, run)
     for _ in range(2):
         await f.activities.record_approval(str(run.id))
     for _ in range(2):
@@ -330,8 +345,42 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
     )
 
 
-async def test_guide_waits_for_approval_and_saves_the_approved_edit(publication_db):
-    f = await capture_fixture(publication_db)
+@pytest.mark.parametrize(
+    "pinned, cap",
+    [(None, 32_000), ("v1", 6000), ("edited", None)],
+)
+async def test_a_run_sends_the_output_cap_of_the_policy_it_was_pinned_to(
+    publication_db, pinned, cap
+):
+    from tin_lite import style_capture
+
+    policy = {
+        None: None,
+        "v1": style_capture.POLICY_V1,
+        "edited": {**style_capture.POLICY, "max_output_tokens": 128_000},
+    }[pinned]
+    assert style_capture.POLICY["version"] == 2 and style_capture.POLICY_V1["version"] == 1
+    assert style_capture.POLICY == {
+        **style_capture.POLICY_V1,
+        "max_output_tokens": 32_000,
+        "version": 2,
+    }
+    f = await capture_fixture(publication_db, policy=policy)
+    run = await start(f)
+    if cap is None:  # A policy no version defines is refused before any model call.
+        with pytest.raises(ApplicationError):
+            await f.activities.prepare(str(run.id))
+        assert f.router.generate.await_count == 0
+        return
+    await f.activities.prepare(str(run.id))
+    await f.activities.extract(str(run.id))
+    assert f.router.generate.await_args.args[1].max_output_tokens == cap
+
+
+async def test_guide_pinned_to_1_1_waits_for_approval_and_saves_the_approved_edit(
+    publication_db,
+):
+    f = await capture_fixture(publication_db, revisable=False)
     run = await start(f)
     await f.activities.prepare(str(run.id))
     await f.activities.extract(str(run.id))
@@ -347,8 +396,8 @@ async def test_guide_waits_for_approval_and_saves_the_approved_edit(publication_
     assert head[STYLE_PATH][1] == b"# Writing style\n\nMy corrected guide.\n"
 
 
-async def test_removed_proposal_leaves_the_current_guide(publication_db):
-    f = await capture_fixture(publication_db)
+async def test_removed_proposal_pinned_to_1_1_leaves_the_current_guide(publication_db):
+    f = await capture_fixture(publication_db, revisable=False)
     f.storage.repo.edit({STYLE_PATH: b"My current guide\n"})
     run = await start(f)
     await f.activities.prepare(str(run.id))
@@ -444,7 +493,7 @@ async def test_http_mcp_preflight_and_upload_authorization(publication_db, monke
             },
         )
     )
-    assert contract["system"]["id"] == "organic-traffic" and contract["runtime_available"]
+    assert contract["system"] is None and contract["runtime_available"]
     assert contract["preparation"] == style_capture_preparation(f.project.id, include_guide=True)
     f.storage.repo.edit({SOURCE: b"not useful"})
     with pytest.raises(WorkflowInputError):
@@ -624,6 +673,7 @@ async def test_capture_waits_in_temporal_for_approval_and_replays(publication_db
                 break
             await asyncio.sleep(0.05)
         assert STYLE_PATH not in f.storage.repo.trees[f.storage.repo.head]
+        await accept(f, run)  # The review dispatcher then signals the waiting run.
         await handle.signal("approve")
         await asyncio.wait_for(handle.result(), 30)
         history = await handle.fetch_history()
@@ -675,3 +725,15 @@ class CaptureBeforeReview:
                 start_to_close_timeout=timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
+
+
+def test_model_steps_wait_long_enough_for_their_output_cap():
+    # A 32,000-token answer can take minutes. Each step waits the provider's default, its own
+    # budget adds a margin, and the Temporal step outlasts both (X style also reads its timeline).
+    from tin_lite import style_capture_activities, x_feedback_activities, x_style_activities
+    from tin_lite.model_providers import DEFAULT_TIMEOUT_SECONDS
+    from tin_lite.workflows import MODEL_STEP_TIMEOUT
+
+    for module in (style_capture_activities, x_style_activities, x_feedback_activities):
+        assert module.MODEL_TIMEOUT_SECONDS == DEFAULT_TIMEOUT_SECONDS
+        assert MODEL_STEP_TIMEOUT.total_seconds() >= module.MODEL_TIMEOUT_SECONDS + 15 + 120

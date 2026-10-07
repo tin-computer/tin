@@ -9,13 +9,21 @@ import re
 from functools import lru_cache
 from uuid import UUID
 
-from tin_lite.domain import RunStatus
+from tin_lite.domain import MEMORY_INDEX_PATH, RunStatus
+from tin_lite.memory import MAX_MEMORY_BYTES
+from tin_lite.procedures import CODE_MAP_SECTION, memory_section_text
 from tin_lite.project_files import safe_project_file_path
 
 OPERATION = "code_project_files_v1"
-MAX_FILE_BYTES = 64_000
+MAX_FILE_BYTES = 1_000_000
 MAX_GLOB_RESULTS = 100
 _SHA = re.compile(r"[0-9a-f]{40}\Z")
+# Project memory keeps each workflow-owned map as a section of wiki/INDEX.md (product.code_map
+# writes `### Code map`). Some packages were written to read it from a file of its own; when
+# no such file exists, a read of that path returns the section, so they find what the writer
+# wrote. A real file at the path still wins. New code calls ctx.files.read_section.
+SECTION_PATHS = {"product/code-map.md": CODE_MAP_SECTION}
+_REQUEST_KEYS = ({"kind", "operation", "path"}, {"kind", "operation", "path", "section"})
 
 
 def source_key(run_id):
@@ -115,9 +123,11 @@ class CodeProjectFiles:
 
     async def call(self, *, conn, run, project, source, payload):
         """Authorize one read under the current run lease; return JSON-safe content."""
-        if not isinstance(payload, dict) or set(payload) != {"kind", "operation", "path"}:
+        if not isinstance(payload, dict) or set(payload) not in _REQUEST_KEYS:
             raise CodeProjectFileError("invalid_file_request")
-        if payload["kind"] != "file":
+        if payload["kind"] != "file" or ("section" in payload) != (
+            payload["operation"] == "read_section"
+        ):
             raise CodeProjectFileError("invalid_file_request")
         fresh = await self.db.get_run(run.id, conn=conn)
         if (
@@ -156,6 +166,20 @@ class CodeProjectFiles:
             if len(json.dumps(matched, ensure_ascii=False).encode()) > 120_000:
                 raise CodeProjectFileError("file_glob_too_broad")
             return matched
+        if operation == "read_section":
+            heading = payload["section"]
+            if (
+                path != MEMORY_INDEX_PATH
+                or not isinstance(heading, str)
+                or not heading.startswith("### ")
+                or len(heading) > 80
+                or not heading.isprintable()
+            ):
+                raise CodeProjectFileError("invalid_file_request")
+            raw = await self._memory_section(project, source, heading)
+            if raw is None:
+                raise CodeProjectFileError("file_not_found")
+            return base64.b64encode(raw).decode("ascii")
         if operation not in {"read_text", "read_bytes"}:
             raise CodeProjectFileError("invalid_file_request")
         try:
@@ -167,6 +191,8 @@ class CodeProjectFiles:
             )
         except ValueError as exc:
             raise CodeProjectFileError("file_too_large_or_not_regular") from exc
+        if raw is None and path in SECTION_PATHS:
+            raw = await self._memory_section(project, source, SECTION_PATHS[path])
         if raw is None:
             raise CodeProjectFileError("file_not_found")
         if operation == "read_text":
@@ -174,5 +200,33 @@ class CodeProjectFiles:
                 raw.decode("utf-8")
             except UnicodeError as exc:
                 raise CodeProjectFileError("file_not_utf8") from exc
-        # Base64 keeps even quote/control-heavy UTF-8 below the 128 KiB IPC frame.
+        # Base64 keeps even quote/control-heavy UTF-8 within the code bridge's message bound.
         return base64.b64encode(raw).decode("ascii")
+
+    async def _memory_section(self, project, source, heading):
+        """One owned section of the memory index at the pinned revision, or None.
+
+        The index may hold up to MAX_MEMORY_BYTES, more than one file read allows; the section
+        returned stays within the same MAX_FILE_BYTES as any other read.
+        """
+        try:
+            raw = await self.storage.read_bounded_project_file(
+                repo_id=project.state_repo_id,
+                commit_sha=source["revision"],
+                path=MEMORY_INDEX_PATH,
+                max_bytes=MAX_MEMORY_BYTES,
+            )
+        except ValueError as exc:
+            raise CodeProjectFileError("file_too_large_or_not_regular") from exc
+        if raw is None:
+            return None
+        try:
+            section = memory_section_text(raw.decode("utf-8"), heading)
+        except UnicodeError as exc:
+            raise CodeProjectFileError("file_not_utf8") from exc
+        if section is None:
+            return None
+        content = section.encode("utf-8")
+        if len(content) > MAX_FILE_BYTES:
+            raise CodeProjectFileError("file_too_large_or_not_regular")
+        return content

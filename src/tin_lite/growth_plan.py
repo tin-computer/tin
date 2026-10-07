@@ -89,6 +89,10 @@ DRAFTING_ROUTE = ModelRoute(
 )
 ROUTES = (JUDGMENT_ROUTE, DRAFTING_ROUTE)
 JUDGMENT_STEPS = frozenset({"facts", "scope", "view"})
+# Every step's output cap. A runaway guard, not an expected length: reasoning counts against
+# it, and billing charges the tokens a step actually used. GPT-6 Sol and Luna both allow
+# 128,000 output tokens per response. Changing it changes `contract_digest()`.
+MAX_OUTPUT_TOKENS = 32_000
 POLICY = {
     "version": 1,
     "reasoning_effort": "medium",
@@ -299,6 +303,17 @@ TABLE_SCHEMA = obj(
         },
     }
 )
+# Social platforms the plan may name as a likely fit for the founder's buyers. A suggestion
+# only: onboarding sets nothing up for them (no program offers a social workflow).
+CHANNELS = {
+    "x": "X",
+    "linkedin": "LinkedIn",
+    "reddit": "Reddit",
+    "hacker_news": "Hacker News",
+    "instagram": "Instagram",
+    "tiktok": "TikTok",
+    "youtube": "YouTube",
+}
 VIEW_SCHEMA = obj(
     {
         "picture": STR,
@@ -311,6 +326,10 @@ VIEW_SCHEMA = obj(
         "missing_pieces": {"type": "array", "items": STR},
         "left_out_notes": {"type": "array", "items": STR},
         "requests": {"type": "array", "items": obj({"index": {"type": "integer"}, "answer": STR})},
+        "channels": {
+            "type": "array",
+            "items": obj({"platform": {"type": "string", "enum": list(CHANNELS)}, "why": STR}),
+        },
     }
 )
 
@@ -870,7 +889,11 @@ def view_prompt(context, chosen, flags, scope):
         'not act on the break yet"); those never go under additional roles. `additional_roles` and `own_workflows` follow the patterns above and may be empty; each one must be carried by a workflow '
         "listed under DECIDED ROLES or already running, because nothing else gets set up: never promise a brief, a post, a report or "
         "a review that no listed workflow produces, `missing_pieces` lists only key absent "
-        "infrastructure and may be empty. `first_deliverable` is two to four sentences on the first useful deliverable, by the rule "
+        "infrastructure and may be empty. `channels` names at most three social platforms where this business's "
+        "buyers likely spend time, most likely first, each with a `why` of one clause drawn from what was "
+        "established about the buyer and the product; a platform the founder named or already has an audience on "
+        "comes first. Leave it empty when the founder will not post or no platform fits. It is a suggestion only: "
+        "never promise posts, drafts or a posting schedule anywhere because of it. `first_deliverable` is two to four sentences on the first useful deliverable, by the rule "
         "above: what it contains, the question it answers, roughly when it arrives, the founder's next decision, and that it lands "
         "in Tin's Files or waits in Decisions. It comes from a `once` workflow under DECIDED ROLES, or the earliest scheduled one. "
         f'When "{PROGRAMS["workflow_titles"][DEFAULT_RUN]}" is under DECIDED ROLES, the first deliverable is its result: the site audit, the '
@@ -928,6 +951,8 @@ def lint(table, systems, view, scope=None, understanding=None):
         for i, x in enumerate(view.get(key, [])):
             slots[f"view.{key}.{i}"] = x
     slots["view.picture"] = view["picture"]
+    for i, x in enumerate(view.get("channels", [])):
+        slots[f"view.channels.{i}"] = x["why"]
     for i, x in enumerate(view.get("requests", [])):
         slots[f"requests.{i}"] = x["answer"]
     problems = []
@@ -1003,6 +1028,8 @@ def put_back(fixes, table, systems, view, scope=None, understanding=None):
                     item[parts[2]] = fix["text"]
             elif parts[1] == "picture":
                 view["picture"] = fix["text"]
+            elif parts[1] == "channels":
+                view["channels"][int(parts[2])]["why"] = fix["text"]
             else:
                 view[parts[1]][int(parts[2])] = fix["text"]
         except (StopIteration, IndexError, KeyError, ValueError):
@@ -1012,6 +1039,27 @@ def put_back(fixes, table, systems, view, scope=None, understanding=None):
 REPAIR_SCHEMA = obj({"fixes": {"type": "array", "items": obj({"slot": STR, "text": STR})}})
 
 # ---------------------------------------------------------------- render
+
+
+def likely_channels(view):
+    """The plan's suggested social platforms: known ones, each once, at most three."""
+    seen, out = set(), []
+    for item in view.get("channels") or []:
+        if item.get("platform") in CHANNELS and item["platform"] not in seen and item.get("why"):
+            seen.add(item["platform"])
+            out.append(item)
+    return out[:3]
+
+
+def channel_support(platform):
+    """What Tin does on a platform today, said by code so the plan never promises a post."""
+    titles = PROGRAMS["workflow_titles"]
+    return {
+        "x": f"Tin can draft and publish X posts with you today; ask your agent to run "
+        f"{titles['social.x_draft']} when you're ready.",
+        "linkedin": "Tin can draft LinkedIn posts from an article or a weekly social plan today; "
+        "you publish them.",
+    }.get(platform)
 
 
 def render(
@@ -1095,6 +1143,17 @@ def render(
             f"| {rank} | {avail[sid]['name']} | {clean(status.get(sid, 'nothing'))} | {clean(cell['availability'])} | {clean(cell['job'])} | "
             f"{avail[sid]['integrations_cell'] if has_job else ''} |"
         )
+    channels = likely_channels(view)
+    if channels:
+        out += [
+            "",
+            "Social channels that likely fit your buyers: "
+            + "; ".join(
+                f"{CHANNELS[c['platform']]} ({c['why'].strip().rstrip('.')})" for c in channels
+            )
+            + ".",
+            *[channel_support(c["platform"]) for c in channels if channel_support(c["platform"])],
+        ]
     out += [
         "",
         "## Proposed scope",
@@ -1125,8 +1184,15 @@ def render(
     ]
     if answers:
         out += ["What you asked for", *[f"- {q.rstrip('.')}: {a}" for q, a in answers]]
-    if view["missing_pieces"]:
-        out += ["", "## Missing pieces", *[f"- {x.lstrip('- ')}" for x in view["missing_pieces"]]]
+    pieces = [*view["missing_pieces"]]
+    unsupported = [CHANNELS[c["platform"]] for c in channels if not channel_support(c["platform"])]
+    if unsupported:
+        names = " or ".join(
+            [", ".join(unsupported[:-1]), unsupported[-1]] if len(unsupported) > 1 else unsupported
+        )
+        pieces.append(f"Tin doesn't prepare {names} posts yet.")
+    if pieces:
+        out += ["", "## Missing pieces", *[f"- {x.lstrip('- ')}" for x in pieces]]
     out += [
         "",
         "## What Tin would run",
@@ -1261,8 +1327,8 @@ async def build_plan(inputs, site, site_text, today, generate):
 
     (fs, fu), (ps, pu) = understand_prompts(inputs, site_text, today)
     facts, scoring = await asyncio.gather(
-        call("facts", fs, fu, understand_schema("facts"), 16000),
-        call("profile", ps, pu, understand_schema("profile"), 16000),
+        call("facts", fs, fu, understand_schema("facts"), MAX_OUTPUT_TOKENS),
+        call("profile", ps, pu, understand_schema("profile"), MAX_OUTPUT_TOKENS),
     )
     understanding = {**facts, **scoring}
     flags = {
@@ -1329,7 +1395,7 @@ async def build_plan(inputs, site, site_text, today, generate):
         "scope",
         *scope_prompt(context, candidates, weight, budget, hours, lead),
         scope_schema(candidates),
-        12000,
+        MAX_OUTPUT_TOKENS,
     )
     notes = []
     if lead:  # the default leads whatever the scope step returned
@@ -1383,7 +1449,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                 systems_schema(
                     candidates, [w["key"] for w in avail[sid]["workflows"] if w["includable"]]
                 ),
-                16000,
+                MAX_OUTPUT_TOKENS,
             )
             for sid in candidates
         )
@@ -1503,7 +1569,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                     "outlook": obj({"week": STR, "month": STR, "quarter": STR}),
                 }
             ),
-            6000,
+            MAX_OUTPUT_TOKENS,
         )
         item.update(fixed)
 
@@ -1513,8 +1579,8 @@ async def build_plan(inputs, site, site_text, today, generate):
         for w in x["workflows"]:
             w.pop("_shared_with", None)
     table, view = await asyncio.gather(
-        call("table", *table_prompt(context, roles), TABLE_SCHEMA, 16000),
-        call("view", *view_prompt(context, roles, flags, scope), VIEW_SCHEMA, 16000),
+        call("table", *table_prompt(context, roles), TABLE_SCHEMA, MAX_OUTPUT_TOKENS),
+        call("view", *view_prompt(context, roles, flags, scope), VIEW_SCHEMA, MAX_OUTPUT_TOKENS),
     )
     asked_n = len(understanding["founder_requests"])
     if {r["index"] for r in view["requests"]} != set(range(asked_n)):
@@ -1528,7 +1594,12 @@ async def build_plan(inputs, site, site_text, today, generate):
         # bought once: an unusable re-ask keeps the valid first view instead of failing the run.
         try:
             view = await generate(
-                "view:requests", system, user, VIEW_SCHEMA, 16000, POLICY["reasoning_effort"]
+                "view:requests",
+                system,
+                user,
+                VIEW_SCHEMA,
+                MAX_OUTPUT_TOKENS,
+                POLICY["reasoning_effort"],
             )
         except UnusableModelResult:
             pass
@@ -1549,7 +1620,7 @@ async def build_plan(inputs, site, site_text, today, generate):
                 rules,
                 json.dumps(problems, indent=1, ensure_ascii=False),
                 REPAIR_SCHEMA,
-                12000,
+                MAX_OUTPUT_TOKENS,
                 POLICY["repair_reasoning_effort"],
             )
             put_back(fixes["fixes"], table, systems, view, scope, understanding)

@@ -122,11 +122,11 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "resolve_content_plan_revision",
     } <= {tool.name for tool in tools}
     assert "stop_content_plan" in {tool.name for tool in tools}
-    assert {
+    assert not {
         "list_technical_fix_sources",
         "get_technical_fix_source",
         "preflight_technical_fix",
-    } <= {tool.name for tool in tools}
+    } & {tool.name for tool in tools}
     assert {"stop_organic_system", "stop_technical_fix"} <= {tool.name for tool in tools}
     assert "stop_procedure" in {tool.name for tool in tools}
     assert "delete_project" in {tool.name for tool in tools}
@@ -150,6 +150,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert {
         "get_content_delivery_settings",
         "save_content_delivery_settings",
+        "save_page_route",
         "retry_content_delivery",
     } <= {tool.name for tool in tools}
     assert {"get_workflow_review", "request_workflow_changes"} <= {tool.name for tool in tools}
@@ -163,16 +164,30 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
         "evaluate_workflow_case",
     } <= {tool.name for tool in tools}
     assert {"get_brand_guide", "get_brand"} <= {tool.name for tool in tools}
-    assert len(tools) == 88
+    assert {
+        "read_x_drafts",
+        "save_x_draft",
+        "preview_x_post",
+        "publish_x_post",
+        "prepare_x_media_upload",
+    } <= {tool.name for tool in tools}
+    assert {
+        "list_website_changes",
+        "approve_website_change",
+        "decline_website_change",
+        "get_protected_paths",
+        "set_protected_paths",
+        "preflight_website_change",
+    } <= {tool.name for tool in tools}
+    assert "revise_capture_proposal" in {tool.name for tool in tools}
+    assert "discard_workflow_review" in {tool.name for tool in tools}
+    assert len(tools) == 99
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description
     assert "request_id" in start.description
     for tool in tools:
         if tool.name in {
-            "list_technical_fix_sources",
-            "get_technical_fix_source",
-            "preflight_technical_fix",
             "get_run_usage",
             "inspect_workflow_candidate",
             "qualify_workflow_package",

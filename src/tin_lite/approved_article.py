@@ -10,7 +10,7 @@ import json
 import re
 from uuid import UUID
 
-from tin_lite import content_draft, content_editorial_judgment
+from tin_lite import content_draft, content_editorial_judgment, page_assets
 from tin_lite.content_delivery import DRAFT_WORKFLOW_ID, article_body
 from tin_lite.domain import RunStatus
 from tin_lite.workflow_review_store import digest
@@ -28,6 +28,8 @@ async def discover(database, project_id):
         "ON p.execution_key='content-draft:' || r.id::text || ':prepare' AND p.status='completed' "
         "WHERE r.project_id=$1 AND r.workflow_id=$2 "
         "AND r.status='succeeded' AND r.review_decision='approved' "
+        # A page refresh changes lines in place; Tin applies it itself, so it is not a page.
+        "AND COALESCE(p.result->>'kind', 'article') <> 'refresh' "
         "ORDER BY r.created_at DESC, r.id DESC LIMIT 100",
         project_id,
         DRAFT_WORKFLOW_ID,
@@ -42,12 +44,14 @@ def _review_artifact(run, publication):
         not isinstance(sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", sha256)
     ):
         raise ValueError("The approved article's publication digest is invalid.")
+    assets = page_assets.review_binding(checkpoint)
     return {
         "run_id": str(run.id),
         "path": run.artifact_path,
         "revision": run.canonical_commit_sha,
         "sha256": sha256,
         "assessment": content_editorial_judgment.no_draft(publication),
+        **({"assets": assets} if assets else {}),
     }
 
 
@@ -109,7 +113,18 @@ async def select(*, database, storage, project_id, source_run_id, include_style=
     source_sha256 = hashlib.sha256(raw).hexdigest()
     if artifact["sha256"] is not None and source_sha256 != artifact["sha256"]:
         raise ValueError("The approved article differs from its publication digest.")
+    kind = content_draft.context_kind(prepared.result)
+    if kind == content_draft.REFRESH:
+        raise ValueError(
+            "This run proposed a page refresh. Tin applies its approved lines in your site's "
+            "source itself; it is not a page to adapt."
+        )
     article, title = article_body(raw, prepared.result)
+    metadata = {}
+    if kind == content_draft.ANSWER:
+        # The search listing travels beside the page, never inside its reviewed copy.
+        metadata, page = content_draft.answer_metadata(article)
+        article = page.strip() + "\n"
     source = {
         "source_run_id": str(run.id),
         "source_revision": run.canonical_commit_sha,
@@ -122,6 +137,20 @@ async def select(*, database, storage, project_id, source_run_id, include_style=
         "item": prepared.result["item"],
         "program_id": prepared.result["program_id"],
         "due_date": prepared.result["due_date"],
+        # A content.generate answer page is adapted like content.answer_page's pages.
+        **({"source_kind": "answer_page", "page_metadata": metadata} if metadata else {}),
+        **(
+            {
+                "assets": await page_assets.verified(
+                    storage,
+                    repo_id=project.state_repo_id,
+                    revision=run.canonical_commit_sha,
+                    binding=artifact["assets"],
+                )
+            }
+            if artifact.get("assets")
+            else {}
+        ),
     }
     style = prepared.result.get("style")
     if include_style and style is not None and not isinstance(style, dict):
@@ -183,6 +212,7 @@ async def guard(conn, *, project_id, source):
             "revision": source["source_revision"],
             "sha256": source["publication_sha256"],
             "assessment": False,
+            **page_assets.source_binding(source),
         }
         token = digest(
             {

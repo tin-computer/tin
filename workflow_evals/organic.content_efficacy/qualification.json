@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "assumptions": [
+    "Cases use a synthetic tallyfox.example traffic snapshot, brand file and judgment, served by tests/test_content_efficacy.py; they are not live evidence.",
+    "The ordinary case has a fresh snapshot with measured PostHog channels and no audit or links export; every page except /blog/new-post was first seen before the eight-week hold."
+  ],
+  "cost_drivers": [
+    "One gpt-6-luna judgment call, retried once only when its answer does not match the schema; input is capped at 30000 bytes and output at 2048 tokens.",
+    "A fresh snapshot makes no Search Console calls; a missing or stale one makes up to three 64000-byte reads."
+  ],
+  "effects": [
+    "Replaces content/efficacy.md. It edits no page and opens nothing. website.change (source planned) reads its URL changes and asks the founder before it changes the site."
+  ],
+  "cases": [
+    {
+      "id": "ordinary",
+      "description": "A fresh snapshot: a utility page and an ad page in search, a duplicate template pair, a decline, a low click-through page, a new page and an earning page.",
+      "inputs": {},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "Fresh snapshot available; 0 direct Search Console calls.",
+          "\"url\":\"/sign-in\",\"decision\":\"retire\",\"action\":\"noindex\"",
+          "\"url\":\"/compare/quickbooks-alternatives\",\"decision\":\"merge\",\"action\":\"301\",\"target\":\"/alternatives/quickbooks\"",
+          "\"url\":\"/blog/mileage-log-template\",\"decision\":\"refresh\",\"action\":\"title_description\"",
+          "\"url\":\"/blog/new-post\",\"decision\":\"keep\",\"action\":\"wait\"",
+          "asks you before it makes one"
+        ],
+        "excludes": ["\"confirmed\":true", "\"kind\":\"gone\""]
+      }
+    },
+    {
+      "id": "no_snapshot",
+      "description": "No snapshot: Search Console is read directly and, with visits unknown, no merge or retirement is written.",
+      "inputs": {},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "No fresh snapshot; 3 direct Search Console calls.",
+          "\"url_changes\":[]",
+          "no merge or retirement was written"
+        ],
+        "excludes": ["\"decision\":\"retire\"", "\"decision\":\"merge\""]
+      }
+    },
+    {
+      "id": "unusable_judgment",
+      "description": "The judgment returns a wrong shape twice; code rules still decide and nothing depends on the model.",
+      "inputs": {},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": ["Model: skipped.", "\"url\":\"/sign-in\",\"decision\":\"retire\""],
+        "excludes": ["\"decision\":\"rewrite\""]
+      }
+    },
+    {
+      "id": "brand_searches",
+      "description": "Two pages show only for the brand, one spelled with a space and a domain; neither is queued for a title refresh, paired as duplicates or sent to the intent judgment.",
+      "inputs": {},
+      "expected_status": "succeeded",
+      "expect": {
+        "contains": [
+          "\"url\":\"/about\",\"decision\":\"keep\",\"action\":\"none\"",
+          "\"rule\":\"brand_search\"",
+          "Shows mainly for brand searches"
+        ],
+        "excludes": ["\"url\":\"/about\",\"decision\":\"refresh\"", "impressions for tallyfox"]
+      }
+    }
+  ],
+  "rubric": [
+    {
+      "id": "coverage",
+      "question": "Do the decisions cover every page in the snapshot, audit and previous file, with truncation and unknown visits stated?"
+    },
+    {
+      "id": "cut_guards",
+      "question": "Does each merge or retirement respect paid visits, protected pages, known links and a safe redirect target, without inventing any status?"
+    },
+    {
+      "id": "handoff",
+      "question": "Does the report say which workflow acts on each change, without asking the founder to edit this file?"
+    }
+  ]
+}

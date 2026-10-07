@@ -37,14 +37,15 @@ These methods are synchronous, like ordinary Python file reads:
 | `ctx.files.read_text("BRAND.md")` | The complete UTF-8 text, or `FileNotFoundError` if absent. |
 | `ctx.files.read_bytes("data/sample.bin")` | The complete bytes, with the same path and size checks. |
 | `ctx.files.glob("reports/*.md")` | Matching project-relative paths in stable order. |
+| `ctx.files.read_section("### Code map")` | One section of project memory (`wiki/INDEX.md`), or `FileNotFoundError` if it has none. |
 
 Paths are relative to the owning project's code.storage repository. These methods do not
 read the connected GitHub repository or another project's files. Package resources remain
 available through ordinary Python reads in the package directory; `code.files` still lists
 the executable package's own resources, not its project data dependencies.
 
-Each read is limited to 64,000 bytes. Globbing returns at most 100 matches and refuses a
-larger result rather than silently dropping paths. A code execution permits at most 64 file
+Each read is limited to 1,000,000 bytes. Globbing returns at most 100 matches and refuses a
+larger result rather than silently dropping paths. A code execution permits at most 256 file
 requests, separately from its model and service limits. Paths must be safe regular files;
 symlinks, parent traversal and protected credential paths are rejected. Binary reads are
 supported within the same bound; they do not increase the workflow's text-output or model
@@ -54,6 +55,22 @@ Read and validate inputs before making a paid model request. A known required pa
 the existing artifact prerequisite to explain missing setup before launch. File reads are
 lazy, so a missing path found during execution can still consume sandbox time. There is no
 extra manifest or approval step for an ordinary file.
+
+## Project memory sections
+
+Workflows that map the product keep their results in project memory, not in files of their
+own: `product.code_map` writes the `### Code map` section and `product.deep_dive` the
+`### Feature map` section of `wiki/INDEX.md`, under `## Product`. Read one with
+`ctx.files.read_section(heading)`. It returns the section from its heading line (which may
+carry the writer's parenthetical, such as `### Code map (verified 2026-09-04, ...)`) up to the
+next heading, exactly as the writer bounds it. It reads the index at its own size bound
+(the index may hold up to 700,000 bytes) and returns only the section, which must fit the
+1,000,000-byte read limit.
+
+Some packages were written to read the Code map from `product/code-map.md`. When the project
+has no such file, that read returns the `### Code map` section, so they find what
+`product.code_map` wrote. A real file at that path still wins. New packages should call
+`read_section`.
 
 ## Latest files for new runs, stable files for retries
 

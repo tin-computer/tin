@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import calendar
+import re
 from copy import deepcopy
 from datetime import date, timedelta
 from typing import Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from tin_lite.organic_audit import canonical_json, digest
 
@@ -49,6 +51,34 @@ class Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+# What content.generate writes for an item. An item without a kind is an article, as every
+# plan before kinds existed was. Tin sets the field; the v1 model schema never offered it.
+ARTICLE, ANSWER, REFRESH = "article", "answer", "refresh"
+KINDS = (ARTICLE, ANSWER, REFRESH)
+Kind = Literal["article", "answer", "refresh"]
+
+
+def item_kind(item: dict) -> str:
+    """The item's kind: an article unless the plan says answer or refresh."""
+    return item.get("kind") or ARTICLE
+
+
+# How PLAN.md names a typed item. Articles keep the plan's older rendering exactly.
+KIND_LABELS = {ANSWER: "answer page", REFRESH: "page refresh"}
+# How PLAN.md names the sources of the site's page list (v7).
+SITE_SOURCE_LABELS = {
+    "sitemap": "sitemap",
+    "search_console": "Search Console",
+    "crawl": "crawl",
+    "tin_published": "published by Tin",
+    "keywords": "keyword research",
+}
+# A workflow whose report Tin turned into this item itself, with the page that backs it.
+COMPETITOR_WATCH = "competitor.watch"
+CONTENT_EFFICACY = "organic.content_efficacy"
+OPTIONAL_FIELDS = ("kind", "source", "evidence")
+
+
 class ContentItem(Strict):
     id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,64}$")
     title: str = Field(min_length=1, max_length=180)
@@ -59,6 +89,22 @@ class ContentItem(Strict):
     source_ids: list[str] = Field(max_length=12)
     verification: list[str] = Field(min_length=1, max_length=8)
     readiness: Literal["needs_verification", "ready", "deferred"]
+    # Hidden from the JSON schema, so the pinned v1 model contract stays byte for byte, and
+    # left out of the file when absent, so older plans and their brief digests are unchanged.
+    kind: SkipJsonSchema[Kind | None] = None
+    # Set only on items Tin adds from another workflow's report (competitor.watch, or Page
+    # decisions from organic.content_efficacy), with the public page that backs the item.
+    # Hidden and left out when absent, like kind.
+    source: SkipJsonSchema[Literal["competitor.watch", "organic.content_efficacy"] | None] = None
+    evidence: SkipJsonSchema[str | None] = Field(default=None, max_length=500)
+
+    @model_serializer(mode="wrap")
+    def _without_absent_fields(self, handler):
+        data = handler(self)
+        for name in OPTIONAL_FIELDS:
+            if data.get(name) is None:
+                data.pop(name, None)
+        return data
 
 
 class ContentBatch(Strict):
@@ -101,6 +147,21 @@ class ContentPlan(Strict):
                     raise ValueError("Source and verification fields must be bounded text.")
                 if item.action == "update_page" and not item.destination:
                     raise ValueError("An existing-page update needs its destination URL.")
+                if item.kind == ANSWER and (item.action != "new_page" or item.destination):
+                    raise ValueError(
+                        "An answer page is a new page; it lands at the route the founder "
+                        "chose for answer pages, so it has no destination."
+                    )
+                if item.kind == REFRESH and item.action != "update_page":
+                    raise ValueError("A page refresh updates an existing page at its URL.")
+                if (item.source is None) != (item.evidence is None) or (
+                    item.evidence is not None
+                    and not re.fullmatch(r"https://[^\s]{4,490}", item.evidence)
+                ):
+                    raise ValueError(
+                        "An item from another workflow's report names that report and the "
+                        "public HTTPS page that backs it."
+                    )
                 if item.destination:
                     url = urlsplit(item.destination)
                     if (
@@ -170,6 +231,15 @@ def paths(run_id: str) -> dict[str, str]:
         name: f"reports/content-plan/{UUID(run_id)}/{name}"
         for name in ("PLAN.md", "plan.json", "evidence.json")
     }
+
+
+# A typed (v7) plan also saves the whole site's page list beside its evidence.
+SITE_PAGES_FILE = "pages.json"
+SITE_PAGES_FILE_BYTES = 250_000
+
+
+def site_pages_path(run_id: str) -> str:
+    return f"reports/content-plan/{UUID(run_id)}/{SITE_PAGES_FILE}"
 
 
 def empty_plan(program_id, inputs, scope) -> dict:
@@ -269,7 +339,7 @@ def render_plan(
     plan: dict, *, label: str, batch_id: str | None = None, editorial=None, pages=None
 ) -> str:
     # Escape data used as Markdown headings/labels; never inject arbitrary HTML.
-    from tin_lite.keyword_plan import markdown_text
+    from tin_lite.keyword_plan import markdown_text, markdown_url
 
     lines = [
         f"# {label}",
@@ -301,6 +371,43 @@ def render_plan(
             "This is not proof that other pages do not exist or that product claims are true.",
             "",
         ]
+        inventory = editorial.get("site_inventory")
+        if inventory:
+            counted = ", ".join(
+                f"{label} {inventory['by_source'][key]}"
+                for key, label in SITE_SOURCE_LABELS.items()
+                if inventory["by_source"].get(key)
+            )
+            lines += [
+                f"The site's page list holds {inventory['pages']} pages ({counted}), saved in "
+                f"{markdown_text(inventory['path'])}"
+                + (
+                    f"; {inventory['omitted']} more were over its bound."
+                    if inventory["omitted"]
+                    else "."
+                ),
+                "",
+            ]
+        signals = editorial.get("site_signals")
+        if signals:
+            shaped = []
+            if signals.get("page_decisions"):
+                shaped.append(
+                    f"Page decisions of {signals['page_decisions']} "
+                    f"(refresh items added: {len(signals.get('added') or [])}; "
+                    f"proposals left out: {len(signals.get('left_out') or [])})"
+                )
+            if signals.get("traffic"):
+                shaped.append(
+                    f"the traffic snapshot of {signals['traffic']} "
+                    f"(topics moved up next to converting pages: "
+                    f"{len(signals.get('moved_up') or [])}; weakly converting pages offered "
+                    f"for a refresh: {len(signals.get('refresh_candidates') or [])})"
+                )
+            if shaped:
+                lines += ["Shaped by " + "; ".join(shaped) + ".", ""]
+            if signals.get("note"):
+                lines += [markdown_text(signals["note"]), ""]
         for heading, key in (
             ("Evidence needed for more work", "gaps"),
             ("Excluded opportunities", "excluded"),
@@ -308,6 +415,19 @@ def render_plan(
             if editorial[key]:
                 lines += [f"### {heading}", ""]
                 lines += [f"- {markdown_text(value)}" for value in editorial[key]] + [""]
+        if (signals or {}).get("left_out"):
+            lines += ["### Left out by Page decisions", ""]
+            lines += [
+                f"- {markdown_text(entry['title'])}: {markdown_text(entry['reason'])}."
+                for entry in signals["left_out"]
+            ] + [""]
+        if editorial.get("already_on_site"):
+            lines += ["### Already on the site", ""]
+            lines += [
+                f"- {markdown_text(entry['title'])}: left out, the site has "
+                f"{markdown_url(entry['page'])} ({entry['match']} match)."
+                for entry in editorial["already_on_site"]
+            ] + [""]
         decisions = {d["item_id"]: d for d in editorial["decisions"]}
         if editorial.get("consolidations"):
             lines += [
@@ -331,6 +451,16 @@ def render_plan(
                 "",
                 f"Action: {item['action']} · {item['readiness']}",
                 "",
+                *(
+                    [f"Kind: {KIND_LABELS[item['kind']]}", ""]
+                    if item.get("kind") in KIND_LABELS
+                    else []
+                ),
+                *(
+                    [f"From: {item['source']} · {markdown_text(item['evidence'])}", ""]
+                    if item.get("source")
+                    else []
+                ),
                 f"Destination: {markdown_text(item['destination']) or 'To be decided'}",
                 "",
                 "Verify: " + "; ".join(markdown_text(v) for v in item["verification"]),

@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 from copy import deepcopy
 from uuid import uuid4
@@ -105,7 +106,7 @@ async def test_existing_approved_article_atomic_binding_and_duplicate_starts(
     assert "Verification notes" not in saved["article"]
     assert saved["binding"]["repository"] == "owner/site"
     assert (await deliver_start(f, key=key)).id == run.id
-    with pytest.raises(WorkflowInputError, match="already has a delivery attempt"):
+    with pytest.raises(WorkflowInputError, match="still working"):
         await deliver_start(f, key=str(uuid4()))
     assert (await f.db.get_run(f.source.id)).status == f.source.status
     assert (await f.db.get_run(f.source.id)).canonical_commit_sha == f.source.canonical_commit_sha
@@ -160,7 +161,9 @@ async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypat
     assert sum(isinstance(r, WorkflowInputError) for r in results) == 1
 
 
-async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db, monkeypatch):
+async def test_the_page_takes_any_form_and_its_wording_decides_the_merge(
+    publication_db, monkeypatch
+):
     f = await prepared(publication_db, monkeypatch)
     run = await deliver_start(f)
     source = await delivery.saved_source(f.db, run.id)
@@ -177,14 +180,27 @@ async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db,
     )
     manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": component}]
     assert delivery.validate_copy(manifest, source)["copy_check"] == "exact_source_preserved"
+    # Prose transcribed into JSX or HTML keeps the approved wording too.
+    paragraphs = [block for block in source["article"].split("\n\n") if block.strip()]
+    markup = "".join(f"<p className='lede'>{html.escape(p.lstrip('# '))}</p>" for p in paragraphs)
+    manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": markup}]
+    assert delivery.validate_copy(manifest, source) == {
+        **delivery.validate_copy(manifest, source),
+        "article_path": "web/src/app/blog/article/page.tsx",
+        "copy_check": "wording_preserved",
+    }
+    # Changed wording or a dependency change opens the PR all the same: nothing is refused,
+    # and merge_rule keeps an unconfirmed page for the founder.
     altered = deepcopy(manifest)
-    altered["files"][0]["content"] = component.replace("mechanism", "trick")
-    with pytest.raises(ValueError, match="unchanged"):
-        delivery.validate_copy(altered, source)
+    altered["files"][0]["content"] = markup.replace("mechanism", "trick")
+    proof = delivery.validate_copy(altered, source)
+    assert proof["copy_check"] == "not_confirmed"
+    assert proof["article_path"] == "web/src/app/blog/article/page.tsx"
+    assert delivery.merge_rule(altered, proof, "/blog/{slug}") is None
     altered = deepcopy(manifest)
     altered["files"].append({"path": "package.json", "content": "{}"})
-    with pytest.raises(ValueError, match="dependencies"):
-        delivery.validate_copy(altered, source)
+    assert delivery.validate_copy(altered, source)["copy_check"] == "wording_preserved"
+    # Only the pinned source and repository are refused.
     with pytest.raises(ValueError, match="pinned"):
         delivery.validate_copy({**manifest, "repository": "other/site"}, source)
 
@@ -242,7 +258,7 @@ async def test_mcp_start_reuses_the_same_run_and_discovery_has_titles(publicatio
     ]
 
 
-async def checkpoint(f, run):
+async def checkpoint(f, run, *, extra_files=()):
     await f.activities.prepare_codex_procedure(str(run.id))
     await f.activities.create_codex_procedure_sandbox(str(run.id))
     run = await f.db.get_run(run.id)
@@ -253,7 +269,7 @@ async def checkpoint(f, run):
         "head_sha": f.binding.head_sha,
         "title": "Content: reviewed article",
         "body": "Unmerged article. Build not run.",
-        "files": [{"path": "posts/article.md", "content": source["article"]}],
+        "files": [{"path": "posts/article.md", "content": source["article"]}, *extra_files],
         "verification": [delivery.CHECK_COMMAND],
     }
     path = procedure_checkpoint_path(run.id)
@@ -354,7 +370,7 @@ async def test_worker_recovery_keeps_immutable_checkpoint_before_delivery(
 async def test_explicit_failed_adaptation_retry_is_not_delivery_retry(publication_db, monkeypatch):
     f = await prepared(publication_db, monkeypatch)
     original = await deliver_start(f)
-    with pytest.raises(WorkflowInputError, match="Reconcile"):
+    with pytest.raises(WorkflowInputError, match="still working"):
         await deliver_start(f, inputs={**f.delivery_inputs, "retry_run_id": str(original.id)})
     await f.db.project_failure(run_id=original.id, error_message="Failed before producing a patch")
     with pytest.raises(ValueError, match="no saved repository patch"):
@@ -392,7 +408,6 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
         ProjectSpendingPolicy(
             per_run_nanos=10_000_000_000,
             monthly_nanos=20_000_000_000,
-            concurrency=2,
             expected_revision=0,
         ),
     )
@@ -413,6 +428,112 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
         await f.db.pool.fetchval("SELECT terms FROM billing_run_budgets WHERE run_id=$1", run.id)
     )
     assert terms["kind"] == "codex_api" and terms["funding"] == "procedure_session_v1"
-    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v4"
-    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 5_000_000_000
+    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v5"
+    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 10_000_000_000
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
+
+
+SITEMAP = {"path": "src/app/sitemap.ts", "content": "export default [];\n"}
+
+
+def refuse_shared_files(**call):
+    """GitHub as it was: any file another open PR edits blocks, unless the caller names its
+    blocking paths. Another open PR edits the sitemap here."""
+    from tin_lite.integrations import GitHubPullRequestResult, IntegrationAuthorizationError
+
+    blocking = call.get("blocking_paths") or {item.path for item in call["files"]}
+    if SITEMAP["path"] in blocking:
+        raise IntegrationAuthorizationError(
+            "An open GitHub pull request already changes src/app/sitemap.ts; "
+            "resolve it or choose a non-overlapping improvement"
+        )
+    return GitHubPullRequestResult(
+        "owner/site", "tin/test", 42, "https://github.com/owner/site/pull/42"
+    )
+
+
+async def test_a_sitemap_another_open_pr_edits_does_not_block_the_article(
+    publication_db, monkeypatch
+):
+    f = await prepared(publication_db, monkeypatch)
+    run = await checkpoint(f, await deliver_start(f), extra_files=(SITEMAP,))
+    f.runtime.integrations.github_create_pull_request.side_effect = refuse_shared_files
+    await f.activities.commit_codex_procedure_artifact(str(run.id))
+    call = f.runtime.integrations.github_create_pull_request.call_args.kwargs
+    assert call["blocking_paths"] == frozenset({"posts/article.md"})
+    proof = await f.db.get_effect(f"{run.id}:procedure_canonical_commit")
+    assert proof.result["external_url"] == "https://github.com/owner/site/pull/42"
+
+
+async def refused_attempt(f):
+    """An adaptation whose PR GitHub refused before writing anything, as recorded before."""
+    from tin_lite.integrations import IntegrationAuthorizationError
+
+    run = await checkpoint(f, await deliver_start(f), extra_files=(SITEMAP,))
+    f.runtime.integrations.github_create_pull_request.side_effect = IntegrationAuthorizationError(
+        "An open GitHub pull request already changes src/app/sitemap.ts"
+    )
+    with pytest.raises(IntegrationAuthorizationError):
+        await f.activities.commit_codex_procedure_artifact(str(run.id))
+    await f.db.record_integration_call(
+        execution_key=f"{run.id}:procedure_pull_request",
+        project_id=f.project.id,
+        run_id=run.id,
+        connection_id=None,
+        provider_key="infra.github",
+        capability="pull_requests.write",
+        request_fingerprint="0" * 64,
+        status="failed",
+        error_code="provider_request_failed",
+    )
+    await f.db.project_failure(run_id=run.id, error_message="The PR was refused.")
+    return await f.db.get_run(run.id)
+
+
+async def test_retry_after_the_other_pr_merged_runs_again(publication_db, monkeypatch):
+    from tin_lite.content_delivery_api import retry_delivery
+
+    f = await prepared(publication_db, monkeypatch)
+    run = await refused_attempt(f)
+    # The other PR merged; the retry sends the saved patch again instead of replaying the
+    # refusal, and only the page counts against open work.
+    f.runtime.integrations.github_create_pull_request.side_effect = refuse_shared_files
+    result = await retry_delivery(
+        runtime=f.runtime, settings=f.settings, project_id=f.project.id, run_id=run.id
+    )
+    assert result["status"] == "pending"
+    recovered = await delivery.recover_delivery(
+        database=f.db, storage=f.storage, integrations=f.runtime.integrations, run=run
+    )
+    assert recovered["url"] == "https://github.com/owner/site/pull/42"
+    assert f.runtime.integrations.github_create_pull_request.await_count == 2
+    call = f.runtime.integrations.github_create_pull_request.call_args.kwargs
+    assert call["blocking_paths"] == frozenset({"posts/article.md"})
+
+
+async def test_prepare_pr_after_a_refusal_starts_a_fresh_adaptation(publication_db, monkeypatch):
+    f = await prepared(publication_db, monkeypatch)
+    refused = await refused_attempt(f)
+    fresh = await deliver_start(f)  # Prepare article PR, with no retry context.
+    assert fresh.id != refused.id
+    assert (await delivery.saved_source(f.db, fresh.id))["source_run_id"] == str(f.source.id)
+    # Once a PR has opened, Prepare PR points to it instead of paying again.
+    await f.db.project_failure(run_id=fresh.id, error_message="Synthetic outage")
+    await f.db.record_integration_call(
+        execution_key=f"{fresh.id}:procedure_pull_request",
+        project_id=f.project.id,
+        run_id=fresh.id,
+        connection_id=None,
+        provider_key="infra.github",
+        capability="pull_requests.write",
+        request_fingerprint="1" * 64,
+        status="completed",
+        response_summary={
+            "repository": "owner/site",
+            "branch": "tin/x",
+            "number": 43,
+            "url": "https://github.com/owner/site/pull/43",
+        },
+    )
+    with pytest.raises(WorkflowInputError, match="already has a delivery"):
+        await deliver_start(f)

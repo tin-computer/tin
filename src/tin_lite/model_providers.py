@@ -56,6 +56,16 @@ class ModelProviderError(RuntimeError):
         self.observation = observation
 
 
+class ModelOutputTruncated(ModelProviderError):
+    """The response stopped at its output-token cap, so its structured output is incomplete.
+
+    Raised when the provider says so (an OpenAI response `incomplete` for
+    `max_output_tokens`), when a response with no text used its whole output allowance
+    (reasoning counts against it), or when structured output does not parse and the response
+    used its whole output allowance (or did not report its usage).
+    """
+
+
 class ModelCapabilityError(ValueError):
     """A route cannot satisfy the workflow's declared model contract."""
 
@@ -70,7 +80,9 @@ class ModelMessage:
 class ModelRequest:
     messages: tuple[ModelMessage, ...]
     system: str | None = None
-    max_output_tokens: int = 4096
+    # A runaway guard, not an expected length: billing charges the tokens a call actually
+    # used, and reasoning models spend part of this allowance before writing any answer.
+    max_output_tokens: int = 32_000
     temperature: float | None = None
     reasoning_effort: ReasoningEffort | None = None
     output_schema: dict[str, Any] | None = None
@@ -104,6 +116,12 @@ class ModelObservation:
     request_id: str | None
     usage: ModelUsage
     service_tier: str | None = None
+    # Why the response stopped, in the provider's own words: OpenAI's status (or its
+    # incomplete reason, such as `max_output_tokens`), Anthropic's stop_reason, Gemini's
+    # finish_reason or OpenRouter's finish_reason. None when the provider did not say.
+    stop_reason: str | None = None
+    # Whether the provider said the response stopped at its output-token cap.
+    output_truncated: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -115,6 +133,8 @@ class ModelResult:
     request_id: str | None
     usage: ModelUsage
     service_tier: str | None = None
+    stop_reason: str | None = None
+    output_truncated: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -205,6 +225,11 @@ class ModelRouter:
             await provider.close()
 
 
+# How long a provider client waits for one response unless the caller passes its own wait.
+# A 32,000-token answer from a reasoning model can take several minutes; this only bounds a
+# call that never returns, so it is set well above what any completed call has needed.
+DEFAULT_TIMEOUT_SECONDS = 600.0
+
 _COMMON_CAPABILITIES = frozenset(
     {
         ModelCapability.TEXT,
@@ -223,7 +248,7 @@ class OpenAIModelProvider:
         *,
         api_key: str,
         base_url: str = "https://api.openai.com/v1",
-        timeout_seconds: float = 90,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: Any | None = None,
     ) -> None:
         self._client = client or AsyncOpenAI(
@@ -275,6 +300,8 @@ class OpenAIModelProvider:
         usage = getattr(response, "usage", None)
         output_details = getattr(usage, "output_tokens_details", None)
         input_details = getattr(usage, "input_tokens_details", None)
+        status = getattr(response, "status", None)
+        incomplete = getattr(getattr(response, "incomplete_details", None), "reason", None)
         return _result(
             provider=self.name,
             model=str(getattr(response, "model", model)),
@@ -282,6 +309,8 @@ class OpenAIModelProvider:
             request_id=_optional_string(getattr(response, "id", None)),
             service_tier=_optional_string(getattr(response, "service_tier", None)),
             request=request,
+            truncated=status == "incomplete" and incomplete == "max_output_tokens",
+            stop_reason=_stop_label(incomplete if status == "incomplete" else status),
             usage=ModelUsage(
                 input_tokens=_optional_int(getattr(usage, "input_tokens", None)),
                 output_tokens=_optional_int(getattr(usage, "output_tokens", None)),
@@ -307,7 +336,7 @@ class AnthropicModelProvider:
         *,
         api_key: str,
         workspace_id: str | None = None,
-        timeout_seconds: float = 90,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         client: Any | None = None,
     ) -> None:
         client_options: dict[str, Any] = {
@@ -371,6 +400,8 @@ class AnthropicModelProvider:
             text=text,
             request_id=_optional_string(getattr(response, "_request_id", None)),
             request=request,
+            stop_reason=_stop_label(getattr(response, "stop_reason", None)),
+            capped=getattr(response, "stop_reason", None) == "max_tokens",
             usage=ModelUsage(
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -433,12 +464,17 @@ class GeminiModelProvider:
             raise ModelProviderError("Gemini model request failed") from exc
         text = str(response.text or "").strip()
         usage = getattr(response, "usage_metadata", None)
+        candidates = getattr(response, "candidates", None) or []
+        finish = getattr(candidates[0], "finish_reason", None) if candidates else None
+        finish = getattr(finish, "name", finish)
         return _result(
             provider=self.name,
             model=str(getattr(response, "model_version", None) or model),
             text=text,
             request_id=_optional_string(getattr(response, "response_id", None)),
             request=request,
+            stop_reason=_stop_label(finish),
+            capped=finish == "MAX_TOKENS",
             usage=ModelUsage(
                 input_tokens=_optional_int(getattr(usage, "prompt_token_count", None)),
                 output_tokens=_optional_int(getattr(usage, "candidates_token_count", None)),
@@ -461,7 +497,11 @@ class OpenRouterModelProvider:
     capabilities = _COMMON_CAPABILITIES
 
     def __init__(
-        self, *, api_key: str, timeout_seconds: float = 90, client: Any | None = None
+        self,
+        *,
+        api_key: str,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        client: Any | None = None,
     ) -> None:
         self._client = client or AsyncOpenAI(
             api_key=api_key,
@@ -509,6 +549,7 @@ class OpenRouterModelProvider:
             raise ModelProviderError("OpenRouter model request failed") from exc
         choices = getattr(response, "choices", None) or []
         content = getattr(choices[0].message, "content", None) if choices else None
+        finish = getattr(choices[0], "finish_reason", None) if choices else None
         usage = getattr(response, "usage", None)
         input_details = getattr(usage, "prompt_tokens_details", None)
         output_details = getattr(usage, "completion_tokens_details", None)
@@ -518,6 +559,8 @@ class OpenRouterModelProvider:
             text=content.strip() if isinstance(content, str) else "",
             request_id=_optional_string(getattr(response, "id", None)),
             request=request,
+            stop_reason=_stop_label(finish),
+            capped=finish == "length",
             usage=ModelUsage(
                 input_tokens=_optional_int(getattr(usage, "prompt_tokens", None)),
                 output_tokens=_optional_int(getattr(usage, "completion_tokens", None)),
@@ -596,6 +639,8 @@ def model_failure_reason(exc: BaseException) -> str:
             return "provider_connection"
         if isinstance(seen, LookupError | ModelCapabilityError):
             return "route_unavailable"
+        if isinstance(seen, ModelOutputTruncated):
+            return "output_truncated"
         if isinstance(seen, ModelProviderError) and seen.observation is not None:
             return "invalid_result"
         if isinstance(seen, ValueError):
@@ -624,14 +669,34 @@ def _result(
     request: ModelRequest,
     usage: ModelUsage,
     service_tier: str | None = None,
+    truncated: bool = False,
+    capped: bool = False,
+    stop_reason: str | None = None,
 ) -> ModelResult:
+    """`truncated`: the provider said the response stopped at its cap, and that always fails.
+    `capped`: the provider said so too, but its partial text may still be usable (it is
+    recorded, and an empty or unparseable answer then counts as cut off)."""
+    # Unknown, not False, when the provider gave no stop signal at all.
+    stopped_at_cap = True if truncated or capped else False if stop_reason is not None else None
     observation = ModelObservation(
         provider=provider,
         model=model,
         request_id=request_id,
         usage=usage,
         service_tier=service_tier,
+        stop_reason=stop_reason,
+        output_truncated=stopped_at_cap,
     )
+    at_cap = (
+        truncated
+        or capped
+        or (usage.output_tokens is not None and usage.output_tokens >= request.max_output_tokens)
+    )
+    # Reasoning counts against the cap, so a response can spend all of it before any text.
+    if truncated or (not text and at_cap):
+        raise ModelOutputTruncated(
+            f"{provider.value} model stopped at its output-token cap", observation=observation
+        )
     if not text:
         raise ModelProviderError(
             f"{provider.value} model returned no text", observation=observation
@@ -640,8 +705,20 @@ def _result(
     if request.output_schema is not None:
         try:
             parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            # Strict structured output only fails to parse when it was cut off.
+            if at_cap or usage.output_tokens is None:
+                raise ModelOutputTruncated(
+                    f"{provider.value} model output stopped before its JSON was complete",
+                    observation=observation,
+                ) from exc
+            raise ModelProviderError(
+                f"{provider.value} model returned invalid structured output",
+                observation=observation,
+            ) from exc
+        try:
             jsonschema.validate(parsed, request.output_schema)
-        except (json.JSONDecodeError, jsonschema.ValidationError) as exc:
+        except jsonschema.ValidationError as exc:
             raise ModelProviderError(
                 f"{provider.value} model returned invalid structured output",
                 observation=observation,
@@ -654,7 +731,16 @@ def _result(
         request_id=request_id,
         usage=usage,
         service_tier=service_tier,
+        stop_reason=stop_reason,
+        output_truncated=stopped_at_cap,
     )
+
+
+def _stop_label(value: object) -> str | None:
+    """A provider's stop or finish reason, kept only when it is a short plain label."""
+    if isinstance(value, str) and 0 < len(value) <= 64 and value.isprintable():
+        return value
+    return None
 
 
 def _optional_int(value: object) -> int | None:

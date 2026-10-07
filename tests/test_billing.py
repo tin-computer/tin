@@ -23,8 +23,10 @@ from tin_lite.billing_contracts import (
     final_charge,
     token_charge,
 )
-from tin_lite.billing_payments import PRODUCT_ID, StripePayments
+from tin_lite.billing_payments import PRODUCTS, StripePayments
 from tin_lite.run_service import start_workflow_run
+
+PRODUCT_ID = PRODUCTS["test"][0]
 
 
 @pytest.fixture
@@ -61,7 +63,6 @@ async def billed(publication_db):
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=500 * NANOS_PER_DOLLAR,
-            concurrency=5,
             expected_revision=0,
         ),
     )
@@ -516,7 +517,7 @@ async def test_legacy_native_usage_and_receipt_recovery_are_charged_once(
     from tin_lite.billing_contracts import test_terms
 
     monkeypatch.setattr(
-        f.billing, "terms", lambda definition, project_id, inputs=None: test_terms(definition)
+        f.billing, "terms", lambda definition, project_id, inputs=None, **_: test_terms(definition)
     )
     run = await native_run(f)
     calls = []
@@ -661,7 +662,6 @@ async def test_revoked_membership_and_lowered_limits_stop_new_paid_units(billed)
         ProjectSpendingPolicy(
             per_run_nanos=50 * NANOS_PER_DOLLAR,
             monthly_nanos=NANOS_PER_DOLLAR,
-            concurrency=5,
             expected_revision=1,
         ),
     )
@@ -798,3 +798,63 @@ async def test_ads_launch_budget_stays_open_while_awaiting_approval(billed):
             kind="isolated_codex",
             maximum=0,
         )
+
+
+async def test_roots_waiting_on_unknown_usage_do_not_hold_up_settlement(billed, monkeypatch):
+    f = billed
+    await fund(f)
+    waiting = await start(f, await quote(f))
+    async with f.db.pool.acquire() as conn:
+        await f.billing.begin_operation(
+            conn,
+            run_id=waiting.id,
+            operation_id="unconfirmed",
+            kind="isolated_codex",
+            maximum=NANOS_PER_DOLLAR,
+        )
+    await finish(f, waiting)
+    assert await f.billing.settle(waiting.id) is None  # unknown usage: waits for reconcile_by
+    done = await start(f, await quote(f))
+    async with f.db.pool.acquire() as conn:
+        await f.billing.begin_operation(
+            conn,
+            run_id=done.id,
+            operation_id="observed",
+            kind="isolated_codex",
+            maximum=9 * NANOS_PER_DOLLAR,
+        )
+        await f.billing.observe_operation(
+            conn, operation_id="observed", nanos=480_000_000, observation={"outcome": "observed"}
+        )
+    await finish(f, done)
+    # The waiting root has the earlier deadline, and one slot stands in for a full batch.
+    await f.db.pool.execute(
+        "UPDATE billing_run_budgets SET reconcile_by = now() + interval '1 hour' WHERE run_id=$1",
+        waiting.id,
+    )
+    await f.db.pool.execute(
+        "UPDATE billing_run_budgets SET reconcile_by = now() + interval '2 hours' WHERE run_id=$1",
+        done.id,
+    )
+    monkeypatch.setattr(f.billing, "RECONCILE_BATCH", 1)
+    await f.billing.reconcile()
+    status = "SELECT status FROM billing_run_budgets WHERE run_id=$1"
+    assert await f.db.pool.fetchval(status, done.id) == "settled"
+    assert await f.db.pool.fetchval(status, waiting.id) == "pending"
+
+
+async def test_run_admission_does_not_block_the_ledgers_reference_to_the_project(billed):
+    from tin_lite.db import PROJECT_ADMISSION_LOCK
+
+    f = billed
+    async with f.db.pool.acquire() as admission, f.db.pool.acquire() as settlement:
+        async with admission.transaction():
+            # Admission holds the project row, as create_run does before locking the account.
+            assert await admission.fetchval(PROJECT_ADMISSION_LOCK, f.project.id)
+            async with settlement.transaction():
+                await settlement.execute("SET LOCAL lock_timeout = '2s'")
+                # Settlement, holding the account, inserts ledger rows that reference the
+                # project; their foreign-key check takes this lock on the project row.
+                assert await settlement.fetchval(
+                    "SELECT true FROM projects WHERE id = $1 FOR KEY SHARE", f.project.id
+                )

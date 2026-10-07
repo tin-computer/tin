@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from tin_lite import brand_diagrams
-from tin_lite.codex_api import DIAGRAM_CONTRACT, procedure_contract
+from tin_lite.codex_api import PROCEDURE_CONTRACT_V5, procedure_contract
 from tin_lite.procedures import PinnedCodexProcedure, validate_procedure_artifact
 
 REVISION = "a" * 40
@@ -59,7 +59,7 @@ async def test_active_guidance_is_pinned_and_output_cannot_change_or_drop_palett
             validate_procedure_artifact(
                 source.encode(), spec=replace(spec, output_validator=legacy)
             )
-    assert procedure_contract(brand_diagrams.VALIDATOR) == DIAGRAM_CONTRACT
+    assert procedure_contract(brand_diagrams.VALIDATOR) == PROCEDURE_CONTRACT_V5
 
 
 @pytest.mark.asyncio
@@ -101,7 +101,7 @@ async def test_shape_is_approved_and_pinned_without_changing_legacy_run_snapshot
             diagram_brand_context=context,
         )
         validate_procedure_artifact(source.encode(), spec=spec)
-        assert procedure_contract(validator) == DIAGRAM_CONTRACT
+        assert procedure_contract(validator) == PROCEDURE_CONTRACT_V5
         tampered = dict(context["brand"])
         tampered["shape"] = "sharp" if shape != "sharp" else "round"
         changed = SOURCE.replace(

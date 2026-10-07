@@ -13,15 +13,28 @@ from test_billing import finish, fund, quote, start
 from test_codex_api import BODY, post
 from test_codex_api_billing import facts, paid_relay
 from test_codex_isolation import load_sandbox_module, observation
+from test_private_workflows import ACTOR
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite.billing_contracts import BillingError, final_charge
-from tin_lite.codex_api import CONTRACT, PROCEDURE_CONTRACT, SESSION_CONTRACT
+from tin_lite.billing_contracts import (
+    NANOS_PER_DOLLAR,
+    BillingError,
+    ProjectSpendingPolicy,
+    final_charge,
+)
+from tin_lite.codex_api import (
+    CONTRACT,
+    PROCEDURE_CONTRACT,
+    PROCEDURE_CONTRACT_V5,
+    SESSION_CONTRACT,
+    SESSION_CONTRACT_V4,
+)
 from tin_lite.codex_api_pricing import RATE_CARD, api_terms, isolated_v1_terms, price_response
 from tin_lite.codex_api_relay import request_body
 from tin_lite.workflow_costs import configured_terms, session_funded
 
-MAXIMUM = 5_000_000_000
+MAXIMUM = 10_000_000_000
+BEFORE_V5_MAXIMUM = 5_000_000_000
 
 
 def test_session_contract_and_model_capacity(tmp_path):
@@ -36,20 +49,27 @@ def test_session_contract_and_model_capacity(tmp_path):
         )["max_output_tokens"]
         == 12345
     )
-    config = tmp_path / "config.toml"
-    config.write_text('model="gpt-6-sol"\n')
-    load_sandbox_module("codex_api_config").configure(
-        config,
-        {
-            "TIN_PROCEDURE_ISOLATED": "1",
-            "TIN_CODEX_API_URL": "https://tin.test/internal/codex-api/run/v1",
-            "TIN_CODEX_API_GRANT": "synthetic",
-            "TIN_CODEX_API_CONTRACT": json.dumps(SESSION_CONTRACT),
-        },
-    )
-    parsed = tomllib.loads(config.read_text())
-    assert parsed["model_context_window"] == 1_050_000
-    assert parsed["model_auto_compact_token_limit"] == 922_000
+    # v5 bounds the context; admitted v4 sessions keep their 1.05M window.
+    for contract, window, compact in (
+        (SESSION_CONTRACT, 256_000, 200_000),
+        (PROCEDURE_CONTRACT_V5, 256_000, 200_000),
+        (SESSION_CONTRACT_V4, 1_050_000, 922_000),
+    ):
+        config = tmp_path / f"{contract['protocol']}-{len(contract)}.toml"
+        config.write_text('model="gpt-6-sol"\n')
+        load_sandbox_module("codex_api_config").configure(
+            config,
+            {
+                "TIN_PROCEDURE_ISOLATED": "1",
+                "TIN_CODEX_API_URL": "https://tin.test/internal/codex-api/run/v1",
+                "TIN_CODEX_API_GRANT": "synthetic",
+                "TIN_CODEX_API_CONTRACT": json.dumps(contract),
+            },
+        )
+        parsed = tomllib.loads(config.read_text())
+        assert parsed["model_context_window"] == window
+        assert parsed["model_auto_compact_token_limit"] == compact
+    assert request_body(raw, "responses", PROCEDURE_CONTRACT_V5)["max_output_tokens"] == 128_000
     usage = load_sandbox_module("codex_usage").CodexUsage("thread", "turn", limit=None)
     assert usage.observe(observation(3_000_000))
     assert not usage.limit_reached
@@ -133,17 +153,18 @@ async def test_long_session_uses_returned_usage_without_wallet_lock_or_history_r
 async def test_final_response_overage_never_increases_customer_ceiling(billed):
     f = billed
     run, relay, client, sent = await paid_relay(
-        # Long context at gpt-6-sol: 1M x $4/M + 128,000 x $15/M = $5.92, over the $5 ceiling.
+        # Long context at gpt-6-sol: 2.2M x $4/M + 128,000 x $15/M = $10.72, over the $10
+        # ceiling. v5 compacts at 200,000 tokens, but one request may still carry more.
         f,
         contract=SESSION_CONTRACT,
-        provider_usage=(1_000_000, 128_000, 0, 0),
+        provider_usage=(2_200_000, 128_000, 0, 0),
     )
     try:
         assert (await post(client, run)).status_code == 200
         assert (await post(client, run, {**BODY, "input": "another step"})).status_code == 402
         operation = await f.db.pool.fetchrow("SELECT * FROM billing_operations")
         assert operation["observed_nanos"] == MAXIMUM
-        assert json.loads(operation["observation"])["overage_absorbed_nanos"] == 920_000_000
+        assert json.loads(operation["observation"])["overage_absorbed_nanos"] == 720_000_000
         await finish(f, run)
         assert await f.billing.settle(run.id) == MAXIMUM
         assert len(sent) == 1
@@ -239,7 +260,7 @@ async def test_session_preserves_current_authorization_boundaries(billed, revoke
 async def test_concurrent_admission_cannot_reuse_the_same_session_funds(billed):
     f = billed
     f.settings.codex_api_projects = {f.project.id}
-    await fund(f, cents=1000)
+    await fund(f, cents=2000)
     q1, q2, q3 = await quote(f), await quote(f), await quote(f)
     outcomes = await asyncio.gather(
         start(f, q1), start(f, q2), start(f, q3), return_exceptions=True
@@ -249,6 +270,74 @@ async def test_concurrent_admission_cannot_reuse_the_same_session_funds(billed):
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_run_budgets") == 2
 
 
+async def limits(f, *, per_run_usd, monthly_usd):
+    await f.billing.update_policy(
+        f.project.id,
+        ACTOR,
+        ProjectSpendingPolicy(
+            per_run_nanos=per_run_usd * NANOS_PER_DOLLAR,
+            monthly_nanos=monthly_usd * NANOS_PER_DOLLAR,
+            expected_revision=1,
+        ),
+    )
+
+
+def spend(f, monkeypatch, *, month=0, wallet=0):
+    """Model earlier spending: this month's exposure and credits already used."""
+    usage, credits = f.billing.month_usage, f.billing.wallet_credits
+
+    async def month_usage(conn, project_id):
+        return {"exposure": (await usage(conn, project_id))["exposure"] + month}
+
+    async def wallet_credits(conn, account):
+        held = await credits(conn, account)
+        return {**held, "available": held["available"] - wallet}
+
+    monkeypatch.setattr(f.billing, "month_usage", month_usage)
+    monkeypatch.setattr(f.billing, "wallet_credits", wallet_credits)
+
+
+@pytest.mark.parametrize(
+    ("per_run", "monthly", "cents", "month", "wallet", "ceiling"),
+    [
+        # The old hosted defaults after any spend this month: the earlier $5, not a refusal.
+        (10, 10, 10000, 400_000_000, 0, BEFORE_V5_MAXIMUM),
+        # The new defaults with ample credit: the $10 runaway guard.
+        (25, 100, 10000, 0, 0, MAXIMUM),
+        # A $10 welcome credit after its first $0.40 charge.
+        (50, 500, 1000, 0, 400_000_000, BEFORE_V5_MAXIMUM),
+    ],
+)
+async def test_a_session_ceiling_is_ten_dollars_only_where_the_project_can_cover_it(
+    billed, monkeypatch, per_run, monthly, cents, month, wallet, ceiling
+):
+    f = billed
+    f.settings.codex_api_projects = {f.project.id}
+    await limits(f, per_run_usd=per_run, monthly_usd=monthly)
+    await fund(f, cents=cents)
+    spend(f, monkeypatch, month=month, wallet=wallet)
+    q = await quote(f)
+    # The preview shows what admission pins.
+    assert q["terms"]["maximum_nanos"] == ceiling
+    assert q["terms"]["estimate"]["amount_nanos"] == ceiling
+    run = await start(f, q)
+    budget = await f.db.pool.fetchrow(
+        "SELECT maximum_nanos FROM billing_run_budgets WHERE run_id=$1", run.id
+    )
+    assert budget["maximum_nanos"] == ceiling
+
+
+async def test_a_project_that_cannot_cover_five_dollars_is_refused_as_before(billed, monkeypatch):
+    f = billed
+    f.settings.codex_api_projects = {f.project.id}
+    await fund(f, cents=1000)
+    spend(f, monkeypatch, wallet=7 * NANOS_PER_DOLLAR)
+    q = await quote(f)
+    assert q["terms"]["maximum_nanos"] == BEFORE_V5_MAXIMUM
+    with pytest.raises(BillingError, match=r"estimated at up to \$5\.00"):
+        await start(f, q)
+
+
 @pytest.mark.parametrize("whole_run", [False, True])
 async def test_issued_private_v1_quotes_keep_their_limits_and_funding(billed, whole_run):
     f = billed
@@ -256,7 +345,8 @@ async def test_issued_private_v1_quotes_keep_their_limits_and_funding(billed, wh
     f.settings.codex_api_projects = {f.project.id}
     q = await quote(f)
     terms = configured_terms(
-        isolated_v1_terms(api_terms(f.workflow.definition)),
+        # Quotes issued before Stripe live mode carried their mode inside the price list.
+        {**isolated_v1_terms(api_terms(f.workflow.definition, before_v5=True)), "mode": "test"},
         f.workflow.definition,
         {"brief": "Explain the public docs"},
     )
@@ -273,5 +363,73 @@ async def test_issued_private_v1_quotes_keep_their_limits_and_funding(billed, wh
     assert pinned == terms
     assert "codex_contract" not in pinned
     assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == (
-        MAXIMUM if whole_run else 0
+        BEFORE_V5_MAXIMUM if whole_run else 0
     )
+
+
+async def test_quote_issued_before_v5_keeps_its_v4_session_and_ceiling(billed):
+    f = billed
+    await fund(f)
+    f.settings.codex_api_projects = {f.project.id}
+    q = await quote(f)
+    assert q["terms"]["codex_contract"] == SESSION_CONTRACT
+    assert q["terms"]["maximum_nanos"] == MAXIMUM
+    issued = configured_terms(
+        {**api_terms(f.workflow.definition, session_budget=True, before_v5=True), "mode": "test"},
+        f.workflow.definition,
+        {"brief": "Explain the public docs"},
+    )
+    assert issued["codex_contract"] == SESSION_CONTRACT_V4
+    await f.db.pool.execute(
+        "UPDATE billing_quotes SET terms=$2::jsonb, maximum_nanos=$3 WHERE id=$1",
+        UUID(q["id"]),
+        json.dumps(issued),
+        BEFORE_V5_MAXIMUM,
+    )
+    run = await start(f, q)
+    pinned = json.loads(
+        await f.db.pool.fetchval("SELECT terms FROM billing_run_budgets WHERE run_id=$1", run.id)
+    )
+    assert pinned == issued
+    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == (
+        BEFORE_V5_MAXIMUM
+    )
+    # Any other change to an issued quote is still refused.
+    q = await quote(f)
+    await f.db.pool.execute(
+        "UPDATE billing_quotes SET terms=$2::jsonb WHERE id=$1",
+        UUID(q["id"]),
+        json.dumps({**issued, "maximum_nanos": 1}),
+    )
+    with pytest.raises(BillingError, match="quote changed"):
+        await start(f, q)
+
+
+async def test_admitted_v4_session_keeps_its_pins_on_the_relay(billed):
+    f = billed
+    run, relay, client, sent = await paid_relay(f, contract=SESSION_CONTRACT_V4)
+    try:
+        # v4 keeps its 8 MiB request bound, 128,000-token output and session funding.
+        response = await post(client, run, {**BODY, "input": "x" * 1_100_000})
+        assert response.status_code == 200, response.text
+        assert json.loads(sent[0].content)["max_output_tokens"] == 128_000
+        assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == (
+            BEFORE_V5_MAXIMUM
+        )
+        await finish(f, run)
+        assert await f.billing.settle(run.id) == final_charge(
+            price_response(RATE_CARD, facts())[0], BEFORE_V5_MAXIMUM
+        )
+    finally:
+        await client.aclose()
+        await relay.close()
+
+
+def test_procedure_controller_stops_at_the_pinned_v5_token_guard():
+    usage = load_sandbox_module("codex_usage").CodexUsage(
+        "thread", "turn", limit=PROCEDURE_CONTRACT_V5["max_observed_tokens"]
+    )
+    assert usage.observe(observation(PROCEDURE_CONTRACT_V5["max_observed_tokens"]))
+    assert usage.limit_reached
+    assert "max_requests" not in SESSION_CONTRACT
+    assert SESSION_CONTRACT["context_window"] < RATE_CARD["long_context_above_input_tokens"]

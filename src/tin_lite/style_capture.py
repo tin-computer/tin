@@ -20,7 +20,13 @@ ROUTE = ModelRoute(
     model="gpt-6-sol",
     capabilities=frozenset({ModelCapability.TEXT, ModelCapability.JSON_SCHEMA}),
 )
-POLICY = {"version": 1, "max_source_bytes": MAX_SOURCE_BYTES, "max_output_tokens": 6000}
+POLICY_V1 = {"version": 1, "max_source_bytes": MAX_SOURCE_BYTES, "max_output_tokens": 6000}
+# Version 2 (style.capture 1.3.0) only raises the output cap from 6,000 to 32,000 tokens.
+# A runaway guard, not an expected length: reasoning counts against the cap, and billing
+# charges the tokens a call actually used. GPT-6 Sol allows 128,000 output tokens.
+POLICY = {**POLICY_V1, "version": 2, "max_output_tokens": 32_000}
+# Every policy a pinned definition may carry; runs keep the cap they were admitted with.
+POLICIES = {policy["version"]: policy for policy in (POLICY_V1, POLICY)}
 PROPOSAL_DIR = "style/proposals"
 
 
@@ -252,6 +258,46 @@ def render_guide(
     if len(result) > MAX_GUIDE_BYTES:
         raise ValueError("The style guide exceeds its bounded output contract.")
     return result
+
+
+# The sections render_guide always writes, in order. A revised proposal keeps the same shape.
+GUIDE_SECTIONS = (
+    "Intended use",
+    "Basis and confidence",
+    "Explicit preferences",
+    "Voice and rhythm",
+    "Structure",
+    "Vocabulary",
+    "Avoid",
+    "Demonstration",
+    "Boundaries",
+)
+
+
+def validate_guide(content: bytes) -> None:
+    """Check a revised guide against the contract a captured guide meets; say what is wrong."""
+    if not 0 < len(content) <= MAX_GUIDE_BYTES:
+        raise ValueError(f"The guide must contain 1 to {MAX_GUIDE_BYTES:,} bytes.")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ValueError("The guide must be UTF-8 text.") from None
+    if "\x00" in text:
+        raise ValueError("The guide must be plain text.")
+    if found := credential_findings(text):
+        raise ValueError(f"The guide appears to contain {found[0]}; remove it.")
+    if not re.match(r"---\nname: writing-style\ndescription: [^\n]+\n---\n", text):
+        raise ValueError(
+            "Keep the front matter: name: writing-style and a description line between --- lines."
+        )
+    if not re.search(r"^# Writing style\s*$", text, re.M):
+        raise ValueError("Keep the '# Writing style' title.")
+    position = 0
+    for title in GUIDE_SECTIONS:
+        match = re.compile(rf"^## {re.escape(title)}\s*$", re.M).search(text, position)
+        if match is None:
+            raise ValueError(f"Keep the '## {title}' section, in the captured order.")
+        position = match.end()
 
 
 def explicit_preferences(guide: str) -> str:

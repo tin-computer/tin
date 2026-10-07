@@ -28,9 +28,15 @@ from tin_lite.domain import (
     WorkflowRun,
     WorkflowStatus,
 )
+from tin_lite.growth_onboarding import runs_per_month
 from tin_lite.project_workflow_operations import set_schedule_paused, sync_project_workflow
 from tin_lite.run_service import start_workflow_run
-from tin_lite.schedules import TemporalScheduleService, WorkflowSchedule, next_run_after
+from tin_lite.schedules import (
+    TemporalScheduleService,
+    WorkflowSchedule,
+    monthly_words,
+    next_run_after,
+)
 from tin_lite.weekly_brief import WeeklyBriefReporter, WeeklyBriefSource
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
@@ -94,6 +100,102 @@ def test_temporal_schedule_uses_skip_overlap_and_one_dispatcher() -> None:
     assert definition.policy.overlap == ScheduleOverlapPolicy.SKIP
     assert definition.policy.catchup_window.total_seconds() == 24 * 60 * 60
     assert definition.action.execution_timeout is None
+
+
+def test_monthly_schedule_shape_and_calendar() -> None:
+    quarterly = WorkflowSchedule(
+        cadence="monthly",
+        day_of_month=15,
+        months=[10, 1, 7, 4, 4],
+        local_time="09:00",
+        timezone="Europe/Berlin",
+    )
+    assert quarterly.months == [1, 4, 7, 10]
+    assert next_run_after(quarterly, datetime(2027, 1, 16, tzinfo=UTC)) == datetime(
+        2027, 4, 15, 7, 0, tzinfo=UTC
+    )
+    every = WorkflowSchedule(cadence="monthly", day_of_month=28, local_time="09:00", timezone="UTC")
+    # February has a 28th, so a monthly schedule never skips a short month.
+    assert next_run_after(every, datetime(2027, 1, 29, tzinfo=UTC)) == datetime(
+        2027, 2, 28, 9, 0, tzinfo=UTC
+    )
+
+    service = TemporalScheduleService(
+        client=SimpleNamespace(),  # type: ignore[arg-type]
+        settings=SimpleNamespace(task_queue="tin-lite"),  # type: ignore[arg-type]
+    )
+    calendar = service._definition(  # noqa: SLF001
+        project_workflow_id="configured-1", schedule=quarterly, paused=False
+    ).spec.calendars[0]
+    assert [r.start for r in calendar.day_of_month] == [15]
+    assert [r.start for r in calendar.month] == [1, 4, 7, 10]
+    assert [(r.start, r.end) for r in calendar.day_of_week] == [(0, 6)]
+    monthly_calendar = service._definition(  # noqa: SLF001
+        project_workflow_id="configured-2", schedule=every, paused=False
+    ).spec.calendars[0]
+    assert [(r.start, r.end) for r in monthly_calendar.month] == [(1, 12)]
+
+    for shape, message in [
+        ({"cadence": "monthly"}, "monthly schedules require a day_of_month"),
+        ({"cadence": "monthly", "day_of_month": 29}, "less than or equal to 28"),
+        ({"cadence": "monthly", "day_of_month": 1, "months": [13]}, "months must be"),
+        ({"cadence": "monthly", "day_of_month": 1, "weekdays": ["monday"]}, "do not accept"),
+        ({"cadence": "weekly", "weekdays": ["monday"], "day_of_month": 1}, "do not accept"),
+        ({"cadence": "daily", "months": [1]}, "do not accept"),
+    ]:
+        with pytest.raises(ValidationError, match=message):
+            WorkflowSchedule(**shape, local_time="09:00", timezone="UTC")
+
+
+def test_daily_and_weekly_schedules_keep_their_stored_shape() -> None:
+    # Saved rows, receipts and the previous release read the same keys as before monthly.
+    weekly = WorkflowSchedule(
+        cadence="weekly", weekdays=["monday"], local_time="09:00", timezone="UTC"
+    ).model_dump(mode="json")
+    assert set(weekly) == {"cadence", "weekdays", "local_time", "timezone", "start_at", "end_at"}
+    monthly = WorkflowSchedule(
+        cadence="monthly", day_of_month=1, local_time="09:00", timezone="UTC"
+    ).model_dump(mode="json")
+    assert monthly["day_of_month"] == 1 and monthly["months"] == []
+    assert WorkflowSchedule.model_validate(monthly).day_of_month == 1
+
+
+def test_monthly_runs_only_where_the_workflow_declares_it() -> None:
+    from tin_lite.workflow_definitions import WorkflowInputError, ensure_schedule_allowed
+
+    monthly = WorkflowSchedule(
+        cadence="monthly", day_of_month=1, local_time="09:00", timezone="UTC"
+    )
+    ensure_schedule_allowed({"schedule_modes": ["on_demand", "monthly"]}, monthly)
+    # The default modes leave monthly out; a workflow opts in by naming it.
+    with pytest.raises(WorkflowInputError, match="does not support monthly"):
+        ensure_schedule_allowed({}, monthly)
+    assert {
+        w.key for w in BUILTIN_WORKFLOWS if "monthly" in w.definition.get("schedule_modes", [])
+    } == {"organic.keyword_plan", "organic.audit", "revenue.payment_recovery"}
+    quarterly = WorkflowSchedule(
+        cadence="monthly", day_of_month=1, months=[1, 4, 7, 10], local_time="09:00", timezone="UTC"
+    )
+    for key in ("organic.keyword_plan", "organic.audit"):
+        definition = next(w for w in BUILTIN_WORKFLOWS if w.key == key).definition
+        ensure_schedule_allowed(definition, quarterly)
+        with pytest.raises(WorkflowInputError, match="does not support weekly"):
+            ensure_schedule_allowed(
+                definition,
+                WorkflowSchedule(
+                    cadence="weekly", weekdays=["monday"], local_time="09:00", timezone="UTC"
+                ),
+            )
+
+
+def test_monthly_words() -> None:
+    assert monthly_words({"day_of_month": 1}) == "the 1st of every month"
+    assert monthly_words({"day_of_month": 22, "months": [3]}) == "the 22nd of March"
+    assert (
+        monthly_words({"day_of_month": 12, "months": [1, 4, 7, 10]})
+        == "the 12th of January, April, July and October"
+    )
+    assert runs_per_month({"cadence": "monthly", "day_of_month": 3}) == 1
 
 
 def test_workflow_inputs_bind_project_and_apply_defaults() -> None:

@@ -52,8 +52,12 @@ RESOURCE_PATHS = [
 ]
 
 
-def stripe_api(status: dict[str, int] | None = None, headers: dict[str, dict] | None = None):
-    """A Stripe stand-in: fixture lists per path, with per-path status overrides."""
+def stripe_api(
+    status: dict[str, int] | None = None,
+    headers: dict[str, dict] | None = None,
+    messages: dict[str, str] | None = None,
+):
+    """A Stripe stand-in: fixture lists per path, with per-path status and message overrides."""
     seen: list[httpx.Request] = []
 
     def respond(code, body, extra):
@@ -66,7 +70,8 @@ def stripe_api(status: dict[str, int] | None = None, headers: dict[str, dict] | 
         code = (status or {}).get(path, 200)
         extra = (headers or {}).get(path, {})
         if code != 200:
-            body = {"error": {"type": "invalid_request_error", "message": f"key {LIVE_KEY}"}}
+            message = (messages or {}).get(path, f"key {LIVE_KEY}")
+            body = {"error": {"type": "invalid_request_error", "message": message}}
             return respond(code, body, extra)
         if path == "/v1/account":
             return respond(200, OBJECTS["account"], {"request-id": "req_1"})
@@ -215,11 +220,49 @@ async def test_partial_permissions_grant_only_complete_reads() -> None:
     )
 
 
+# Stripe's wording for a restricted key that lacks the permission an endpoint needs.
+ACCOUNT_REFUSAL = (
+    f"The provided key '{LIVE_KEY[:8]}****{LIVE_KEY[-4:]}' does not have the required "
+    "permissions for this endpoint on account 'acct_RefusalAccount7'. Having the "
+    "'rak_connected_account_read' permission would allow this request to continue."
+)
+
+
+@pytest.mark.parametrize(
+    ("message", "account_id", "label"),
+    [
+        (ACCOUNT_REFUSAL, "acct_RefusalAccount7", "acct_RefusalAccount7"),
+        ("Forbidden", None, "Stripe"),
+    ],
+)
+async def test_a_key_without_account_read_still_connects(message, account_id, label) -> None:
+    # A restricted key needs a Connect permission for GET /v1/account; Tin's link never asks
+    # for it, so the account id comes from Stripe's refusal, or from the key when that is silent.
+    handler, _ = stripe_api(status={"/v1/account": 403}, messages={"/v1/account": message})
+    service, _, client = await service_for(handler)
+    async with client:
+        connection = await service.stripe.connect(
+            project_id=PROJECT_ID,
+            clerk_user_id=USER_ID,
+            restricted_key=LIVE_KEY,
+            expected_revision=None,
+        )
+        refreshed = await service.stripe.refresh(project_id=PROJECT_ID)
+    if account_id:
+        assert connection.external_account_id == account_id
+    else:
+        assert connection.external_account_id.startswith("stripe_key_")
+        assert LIVE_KEY not in connection.external_account_id
+    assert connection.external_account_label == label
+    assert connection.configuration["account_name"] is None
+    assert len(connection.configuration["granted_capabilities"]) == 5
+    assert refreshed.external_account_id == connection.external_account_id
+
+
 @pytest.mark.parametrize(
     ("status", "error", "message"),
     [
         ({"/v1/account": 401}, IntegrationInputError, "rejected this key"),
-        ({"/v1/account": 403}, IntegrationInputError, "account details"),
         ({"/v1/account": 429}, IntegrationUpstreamError, "rate-limiting"),
         (dict.fromkeys(RESOURCE_PATHS, 403), IntegrationInputError, "cannot read"),
         ({"/v1/invoices": 500}, IntegrationUpstreamError, "finish checking"),
@@ -369,7 +412,7 @@ async def test_unknown_rate_limit_reasons_are_not_echoed() -> None:
         ("invoices.list", {"status": "paid,open"}, "status must be one of"),
         ("prices.list", {"active": "true"}, "true or false"),
         ("prices.list", {"created_gte": 0}, "unsupported argument"),
-        ("charges.list", {"customer": "cus_Abc"}, "unsupported argument"),
+        ("charges.list", {"customer": "sub_Abc"}, "customer must start with cus_"),
         ("refunds.list", {}, "unknown Stripe operation"),
     ],
 )
@@ -391,6 +434,13 @@ def test_arguments_map_to_stripe_list_parameters() -> None:
         "created[gte]": 1788220800,
         "created[lte]": 1788307199,
         "status": "all",
+    }
+    _, params = request_for("subscriptions.list", {"customer": "cus_X1", "status": "all"})
+    assert params == {
+        "limit": 100,
+        "expand[]": "data.customer",
+        "status": "all",
+        "customer": "cus_X1",
     }
     _, params = request_for("prices.list", {"active": False, "limit": 5})
     assert params == {"limit": 5, "expand[]": "data.product", "active": "false"}

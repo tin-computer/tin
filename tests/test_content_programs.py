@@ -11,6 +11,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_plan as legacy
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.code_storage import ProjectStateChangedError
 from tin_lite.content_plan import KEY, plan_path
 from tin_lite.content_plan_activities import ContentPlanActivities
 from tin_lite.content_programs import ContentPrograms
@@ -32,7 +33,7 @@ class Storage(HistoryStorage):
         self, *, repo_id, branch, expected_head_sha, request_id, message, changes
     ):
         if self.repo.head != expected_head_sha:
-            raise RuntimeError("canonical project state changed before file commit")
+            raise ProjectStateChangedError("canonical project state changed before file commit")
         sha = self.repo.edit({change.path: change.content.encode() for change in changes}, message)
         return sha, tuple(change.path for change in changes)
 
@@ -113,8 +114,11 @@ async def setup(database, monkeypatch, *, editorial=False):
                 from test_content_plan_editorial import portfolio
 
                 result = portfolio(min(30, data["capacity"]))
+                typed = "TypedOpportunity" in request.output_schema["$defs"]
                 for opportunity in result["opportunities"]:
                     opportunity["source_ids"] = [data["sources"][0]["source_id"]]
+                    if typed:
+                        opportunity["kind"] = "article"
                 existing = [i for b in data["selected_batches"] for i in b["items"]]
                 if existing:
                     for index, opportunity in enumerate(result["opportunities"]):

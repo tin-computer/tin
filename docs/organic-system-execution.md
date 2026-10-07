@@ -40,6 +40,31 @@ recipe. Old revisions retain their original children and resources.
 
 ### `organic.traffic_system`
 
+**v7 (0.7.0): the system measures the site each week.** After the audit, the parent runs
+`organic.traffic_snapshot` and then `organic.content_efficacy` (Page decisions) as child runs,
+and waits for both before the content plan, which reads `analytics/traffic-snapshot.json` and
+`content/efficacy.md`. Each is saved as a weekly configuration on the weekly page refresh's
+day: the snapshot two hours before the refresh, Page decisions one hour before, so the
+refresh reads this week's decisions and the decisions this week's snapshot. An earlier
+saved schedule of either is kept, with its inputs, and still runs once now. Both need Search
+Console; without it nothing is saved and the report names the reason. A measurement that
+cannot start never fails the recipe. `content.refresh` now picks the first page Page decisions
+marks for a refresh that is not waiting, in its order, never a page it keeps, merges or
+retires, and falls back to the audit's pick when the file is missing or older than its window.
+Onboarding no longer installs the two workflows on their own; the system sets them up. Runs
+pinned to `organic-traffic-v6` keep their steps; a test pins v6's policy digest. The parent's
+spending pool grows by $1 for Page decisions' bounded model call; the snapshot makes none.
+
+**v6 (0.6.0): both writer steps go through website.change** (Emre, 10/1). The technical step
+starts website.change `source: audit` instead of organic.technical_fix, and the delivery step
+starts website.change for the approved draft (its page source) instead of content.deliver:
+Tin merges the PR once the required checks pass (every check when none are required) when
+the approval picked commit to main, and a pull request pick or a protected page leaves the
+PR for the founder. `content_delivery: draft_only` still keeps the Markdown in Tin. Runs pinned
+to `organic-traffic-v5` keep their children, receipts and report word for word; a test pins
+v5's policy digest. The spending ceiling is v5's: both website.change children have the same
+$5 procedure ceiling as the workflows they replace.
+
 Manual-only. Inputs: HTTPS site origin, English-language buyer market, explicit buyer
 context, content start date, duration (default six months), and keyword spending ceiling
 (default $9). Optional technical repair requires both an exact `owner/repository` and
@@ -52,7 +77,12 @@ children. It pins all child definitions from the parent's atomic registry revisi
 Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
-2. After the audit, inspect at most one eligible technical finding if requested.
+2. After the audit, if requested, propose one technical fix. Under `organic-traffic-v6`
+   (0.6.0, the default for new runs) the step starts website.change with the latest audit's
+   fixes (`source: audit`) and the system's repository; it passes no judgment-call answers,
+   so the rows wait for the founder and the run opens a pull request. A recipe pinned to v5
+   or earlier still starts `organic.technical_fix` (under `site-fix-v5` one PR for every
+   fixable finding; earlier policies take one finding).
 3. After both research runs succeed, create one manual `content.plan` configuration in
    My system, using these exact research run IDs, then run it.
 4. Publish `reports/organic-system/{run_id}/RESULT.md`, linking the exact child artifacts
@@ -71,9 +101,18 @@ an explicit skipped step, without allocating repair compute or manufacturing a d
 
 Manual-only Tin-owned template on the existing `codex.procedure` executor. Inputs:
 
-- `audit_run_id`, `audit_revision`, and `finding_id` from the verified source picker/API.
+- `audit_run_id` and `audit_revision` from the verified source picker/API.
+- `finding_ids` (optional, empty means every fixable finding) and `decisions`
+  (`finding_id=choice` answers to the judgment calls `preflight_technical_fix` returns).
 - `expected_repository` and `repository_serves_site=true`.
 - Optional bounded `context`; project identity remains bound outside editable inputs.
+
+New runs pin `site-fix-v5`: one PR fixes every fixable finding of the audit, grouped by
+kind of change, and the live check reports each finding after the merge; see
+[Technical repair](technical-fix.md#site-fix-v5-everything-the-audit-found). The parent
+passes the whole audit with no decisions, so judgment calls are listed for a later run.
+The rest of this section describes the metadata policies that older pinned runs keep; they
+take one finding (`finding_id`).
 
 The first supported finding is `metadata.title_missing`, with a completed technical
 crawl and at most five affected URLs. Partial AI observations do not invalidate a
@@ -117,9 +156,10 @@ bound repository and the exact proposed branch contents.
 Use normal `get_workflow` / `start_workflow` for either registry key. Standalone
 `organic.audit`, `organic.keyword_plan`, and saved `content.plan` remain unchanged.
 
-Existing source discovery tools are `list_technical_fix_sources`,
-`get_technical_fix_source`, and `preflight_technical_fix`. The preview itself is read-only;
-execution independently resolves and pins its own trusted binding.
+The technical fix's discovery tools (`list_technical_fix_sources`,
+`get_technical_fix_source`, `preflight_technical_fix`) are retired; `preflight_website_change`
+previews the audit's repairs for the v6 recipe. Execution independently resolves and pins its
+own trusted binding.
 
 `get_run` now includes the parent's `system.steps` facts, read only from Postgres.
 The equivalent read is:

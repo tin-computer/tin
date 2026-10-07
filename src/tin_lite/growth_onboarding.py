@@ -112,6 +112,12 @@ SYSTEM_FIELDS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+TIMEZONE_PATTERN = (
+    r"^(?:|(?!(?:posix|right)/|(?:localtime|posixrules|Factory)$)"
+    r"[A-Za-z][A-Za-z0-9_+-]*(?:/[A-Za-z0-9_+-]+)*)$"
+)
+
+
 def _input_schema() -> dict[str, Any]:
     properties: dict[str, Any] = {
         "project_id": {"type": "string", "format": "uuid"},
@@ -167,6 +173,8 @@ def _input_schema() -> dict[str, Any]:
         "type": "string",
         "default": "UTC",
         "maxLength": 64,
+        # An IANA name schedules can use: not the host's `localtime` or a posix/ or right/ copy.
+        "pattern": TIMEZONE_PATTERN,
         "title": "Timezone",
         "description": (
             "IANA timezone for schedules, from the founder's machine (America/New_York)."
@@ -472,11 +480,6 @@ async def system_facts(*, database: Any, project_id: UUID, run_id: UUID) -> dict
 
 
 WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
-    "visibility.audit": {
-        "first": "about ten minutes",
-        "lands": "Files, reports/AI_VISIBILITY.md",
-        "watch": "whether AI answers start naming the product; expect movement in weeks, not days",
-    },
     "organic.audit": {
         "first": "about fifteen minutes",
         "lands": "Files, the audit report and its findings",
@@ -528,13 +531,26 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
             "repository delivery follows approval and opens an unmerged PR"
         ),
     },
+    "content.refresh": {
+        "first": "about fifteen minutes after an organic audit",
+        "lands": "Decisions, as the page's current and proposed text",
+        "watch": (
+            "approval changes exactly those lines in your site, as a PR or a commit; "
+            "a refreshed page waits six weeks before its next refresh"
+        ),
+    },
     "content.deliver": {
         "first": "after an approved source article and repository are selected",
         "lands": "your GitHub repository, as an unmerged pull request",
         "watch": "review and merge the PR; publication depends on your site",
     },
+    "website.change": {
+        "first": "after an approved page, or the latest audit's fixes, and the repository",
+        "lands": "your GitHub repository: merged when you approved the change, else a PR",
+        "watch": "approve or decline each audit fix once; protected pages wait for your merge",
+    },
     "content.answer_page": {
-        "first": "about ten minutes after a visibility audit",
+        "first": "about ten minutes after an organic audit",
         "lands": "Decisions, as a draft to review",
         "watch": "publish what you approve; search impressions follow in weeks",
     },
@@ -547,11 +563,6 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "first": "about an hour",
         "lands": "Files, plus an unmerged GitHub PR when a safe change is found",
         "watch": "review the PR or the no-change report; nothing deploys on its own",
-    },
-    "organic.technical_fix": {
-        "first": "a pull request within the hour, after an audit",
-        "lands": "your GitHub repository, unmerged",
-        "watch": "one finding per run",
     },
     "outreach.email_shortlist": {
         "first": "about ten minutes",
@@ -617,16 +628,6 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "first": "about fifteen minutes",
         "lands": "Files, reports/BUYER_TRUST.md",
         "watch": "the verdict and fixes; code fixes go to Improve site health",
-    },
-    "organic.error_surface": {
-        "first": "about thirty minutes",
-        "lands": "Files, reports/error-surface/<run>.md",
-        "watch": "add it to the content plan as a context file",
-    },
-    "organic.mention_backlinks": {
-        "first": "about fifteen minutes",
-        "lands": "Files, reports/backlink-asks/<run>.md",
-        "watch": "send the asks you like yourself; later weeks recheck for the link",
     },
     "outreach.paying_segment": {
         "first": "a few minutes",
@@ -938,9 +939,11 @@ RAISE_LIMITS = "set_project_spending_limits or on the Billing page"
 
 
 def runs_per_month(schedule: dict[str, Any]) -> int:
-    """The most runs one calendar month can hold: five of any weekday, or 31 days."""
+    """The most runs one calendar month can hold: five of any weekday, 31 days, or one."""
     if schedule.get("cadence") == "daily":
         return 31
+    if schedule.get("cadence") == "monthly":
+        return 1
     return 5 * len(schedule.get("weekdays") or [])
 
 

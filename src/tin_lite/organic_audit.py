@@ -70,7 +70,7 @@ V9_AUDIT_POLICY = {
     "check_applicability": True,
     "respect_sitemap": True,
 }
-AUDIT_POLICY = {
+V10_AUDIT_POLICY = {
     **V9_AUDIT_POLICY,
     "version": "organic-audit-v10",
     # The ceiling for an operator-configured page cap; each run pins its own cap in scope.
@@ -104,6 +104,123 @@ AUDIT_POLICY = {
     # eight. The cost ceiling is computed from this bound: 8 x 3 answers, like 12 x 2 before.
     "max_questions": 8,
 }
+# v11 keeps v10 and adds the audit angles. v10 is deployed, so none of this may change a run
+# pinned to it: every addition below is read from the pinned policy, never assumed.
+V11_AUDIT_POLICY = {
+    **V10_AUDIT_POLICY,
+    "version": "organic-audit-v11",
+    # New site reads and checks: llms.txt, the plain-HTTP homepage, a made-up URL, redirect
+    # hops, crawler access, page basics, structured data, answer-engine and trust signals,
+    # accessibility and Lighthouse categories.
+    "site_angles": True,
+    # A validated panel keeps its accepted questions when the validator rejects a few, as
+    # long as this many remain; fewer means a new draft.
+    "min_panel_questions": 3,
+    # Site and search evidence beyond the page facts. Translations of one page do not
+    # compete, and a search needs this many impressions before two pages count as competing.
+    "cannibalization_min_impressions": 10,
+    # A page that had at least this many clicks in the previous 28 days and lost this share.
+    "decay_min_previous_clicks": 10,
+    "decay_drop_share": 0.4,
+    "max_redirect_hops": 5,
+    # Google's URL Inspection allows 2,000 inspections a day per property.
+    "url_inspection_max_urls": 10,
+    "access_check_pages": 2,
+    # One text-model review of the top content pages' structure, within the ceiling.
+    "content_review_pages": 5,
+    # AI grading follows the visibility audit's ladder: found, mentioned, evaluated,
+    # shortlisted, picked first. Each question also gets one answer without web search.
+    "answer_ladder": True,
+    "unsearched_answers": True,
+    # Each finding's next_action says where the technical fix's repair plan puts it, so the
+    # report and the fix never disagree about who handles a finding.
+    "next_action_from_repair_plan": True,
+}
+# v12 keeps v11 and adds SUMMARY.json. Code workflows read project files of at most 64,000
+# bytes, and a real crawl's findings.json and evidence.json are larger (tin.computer's
+# evidence.json was 188 KB). v11 can deploy any time, so a run pinned to it writes exactly
+# v11's files: nothing below is read unless the pinned policy carries it.
+V12_AUDIT_POLICY = {
+    **V11_AUDIT_POLICY,
+    "version": "organic-audit-v12",
+    # One compact row per crawled page, finding counts by check and the AI headline, cut to
+    # fit this many bytes and copied to reports/organic-audit/LATEST.json.
+    "summary_max_bytes": 60_000,
+    # Tin's page reader keeps up to this many distinct links to the audited site per page, so
+    # the summary can count inbound internal links and click depth from the homepage.
+    "max_internal_links": 250,
+}
+# v13 keeps v12, asks the buyer prompt panel and measures its questions on six AI engines.
+# v11 and v12 may be deployed, so a run pinned to either never reads these keys.
+V13_AUDIT_POLICY = {
+    **V12_AUDIT_POLICY,
+    "version": "organic-audit-v13",
+    # The newest succeeded buyer prompt panel for this site (organic.prompt_panel) replaces
+    # the drafted questions, allocated to its families by weight within max_questions. The
+    # founder decided the panel needs no review.
+    "prompt_panel": True,
+    # The same questions on each answer engine through DataForSEO (tin_lite.ai_answers):
+    # ChatGPT and Gemini as their apps answer, Google AI Mode and AI Overviews, and the
+    # Claude and Perplexity API models on the live endpoint. Answers from the apps and from
+    # the API models are labelled apart. ChatGPT answers as the app does, without a forced
+    # web search (the founder's decision).
+    "ai_engines": [
+        "chatgpt",
+        "gemini",
+        "google_ai_mode",
+        "google_ai_overview",
+        "claude",
+        "perplexity",
+    ],
+    "ai_engines_priority": "standard",
+    # The LLM Scraper's standard queue can take 45 minutes.
+    "ai_engines_deadline_seconds": 2700,
+    # The ceiling passed to the measurement: at most this, and never more than the audit's
+    # own spending limit has left. Questions that don't fit are not asked. At the pinned
+    # per-request prices one question on the six engines costs at most $0.0776, so eight
+    # cost at most $0.63.
+    "ai_engines_max_cost_usd": "1.00",
+}
+# v14 keeps v13 and asks the provider to follow links when the site has no sitemap. With
+# respect_sitemap on and no sitemap (or an empty or unreadable one) the provider crawls only
+# the homepage, so the whole audit covers one page. v13 may be deployed, so a run pinned to it
+# or earlier always sends respect_sitemap as its policy says.
+V14_AUDIT_POLICY = {
+    **V13_AUDIT_POLICY,
+    "version": "organic-audit-v14",
+    # respect_sitemap is sent only when the run's saved site files list at least one HTTPS
+    # sitemap URL on the audited site; otherwise the provider follows links from the homepage
+    # up to the run's page cap. Decided from saved receipts only, so a retry sends the same.
+    "follow_links_without_sitemap": True,
+    # A finding Tin can fix says next_action "website_change": website.change (source audit)
+    # is the one workflow that fixes audit findings now. Earlier policies keep "technical_fix".
+    "next_action_fix": "website_change",
+}
+# v15 drafts its own buyer questions again, now from the site's Search Console searches as well
+# as its public pages, and asks up to sixteen. The questions are frozen on the first run and
+# reused by later runs, so organic.prompt_panel is no longer read. v14 may be deployed, so a run
+# pinned to it or earlier still reads the newest panel and asks at most eight questions.
+AUDIT_POLICY = {
+    **V14_AUDIT_POLICY,
+    "version": "organic-audit-v15",
+    "prompt_panel": False,
+    # Four buyer jobs of four questions. A panel with fewer supported jobs asks fewer.
+    "max_panel_jobs": 4,
+    "max_questions": 16,
+    # Each question is read blind; eight at a time keeps two waves, as eight questions at four
+    # did, so the preparation activity's 85-minute bound still holds.
+    "question_interpretation_concurrency": 8,
+    # The draft names up to sixteen questions with their fit reasons; 6,000 output tokens
+    # left too little room after reasoning. Only the panel draft gets the larger bound.
+    "panel_max_output_tokens": 12_000,
+    # The draft reads the site's most-searched queries (summed over pages) from this run's
+    # Search Console read, without queries that name the site, to choose and word the jobs.
+    "search_console_questions": 40,
+    # Sixteen questions on six engines cost at most $1.24 at the pinned request prices.
+    "ai_engines_max_cost_usd": "2.00",
+    # The billed ceiling for the audit's own calls; see service_pricing.AUDIT_MAXIMUM_USD.
+    "billing_maximum_usd": "4.00",
+}
 
 # Crawl, site-file and Search Console settings. They never change how an AI answer is
 # requested or graded, so an explicit answer completion may ignore them.
@@ -127,13 +244,48 @@ SITE_EVIDENCE_POLICY_KEYS = frozenset(
         "low_ctr_min_impressions",
         "pagespeed_max_urls",
         "finding_format",
+        "site_angles",
+        "cannibalization_min_impressions",
+        "decay_min_previous_clicks",
+        "decay_drop_share",
+        "max_redirect_hops",
+        "url_inspection_max_urls",
+        "access_check_pages",
+        "content_review_pages",
+        "summary_max_bytes",
+        "max_internal_links",
+        "next_action_from_repair_plan",
+        "follow_links_without_sitemap",
+        "next_action_fix",
     }
 )
 
 # How a NEW question panel is drafted. An existing panel records its own answer count, so an
 # explicit answer completion of an older run may ignore these too.
 PANEL_PREPARATION_POLICY_KEYS = frozenset(
-    {"reuse_questions", "repetitions", "max_panel_jobs", "max_questions"}
+    {
+        "reuse_questions",
+        "repetitions",
+        "max_panel_jobs",
+        "max_questions",
+        "answer_ladder",
+        "unsearched_answers",
+        "min_panel_questions",
+        "prompt_panel",
+        "question_interpretation_concurrency",
+        "panel_max_output_tokens",
+        "search_console_questions",
+    }
+)
+# The engine measurement runs after the audit's own answers and never changes how they are
+# requested or graded, so an explicit answer completion may ignore these too.
+AI_ENGINE_POLICY_KEYS = frozenset(
+    {
+        "ai_engines",
+        "ai_engines_priority",
+        "ai_engines_deadline_seconds",
+        "ai_engines_max_cost_usd",
+    }
 )
 AI_RESULT_KEYS = ("mentioned", "owned_domain_cited", "shortlisted", "selected_first")
 
@@ -150,7 +302,9 @@ def question_results(panel: dict, observations: list[dict]) -> list[dict]:
         scored = [
             row
             for row in observations
-            if row.get("question_index") == index and row.get("status") == "completed"
+            if row.get("question_index") == index
+            and row.get("status") == "completed"
+            and row.get("mode") != "memory"
         ]
         rows.append(
             {
@@ -175,6 +329,11 @@ def audit_policy(version: str = AUDIT_POLICY["version"]) -> dict:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
+        V11_AUDIT_POLICY,
+        V12_AUDIT_POLICY,
+        V13_AUDIT_POLICY,
+        V14_AUDIT_POLICY,
         AUDIT_POLICY,
     ):
         if version == policy["version"]:
@@ -191,6 +350,11 @@ def grounded_preparation(policy_version: str) -> bool:
         V7_AUDIT_POLICY,
         V8_AUDIT_POLICY,
         V9_AUDIT_POLICY,
+        V10_AUDIT_POLICY,
+        V11_AUDIT_POLICY,
+        V12_AUDIT_POLICY,
+        V13_AUDIT_POLICY,
+        V14_AUDIT_POLICY,
         AUDIT_POLICY,
     )
 
@@ -221,12 +385,17 @@ AUDIT_GAP_REASONS = {
     "panel_review_rejected": (
         "The proposed buyer questions were not supported by the saved product research."
     ),
+    "panel_review_invalid": "The question review named a question the panel does not have.",
+    "panel_questions_too_few": (
+        "Too few proposed buyer questions passed review to measure AI visibility."
+    ),
     "evidence_too_large": "The answer and its sources exceeded the saved-evidence size limit.",
     "response_invalid": "The response did not match the expected structure.",
     "judgment_invalid": "The grading response did not match the required structure.",
     "mention_quote_invalid": "The mention grade lacked an exact quote naming the target.",
     "shortlist_quote_invalid": "The recommendation grade lacked an exact quote naming the target.",
     "first_choice_quote_invalid": "The first-choice grade lacked an exact quote naming the target.",
+    "evaluation_quote_invalid": "The evaluation grade lacked an exact quote naming the target.",
     "judgment_inconsistent": "The mention and recommendation grades contradicted each other.",
     "invalid_answer_judgment": "The AI grade could not be verified against the saved answer.",
     "provider_result_unavailable": "The provider request outcome could not be confirmed.",
@@ -257,6 +426,52 @@ def digest(value: Any) -> str:
 def audit_paths(run_id: str) -> dict[str, str]:
     run_id = str(UUID(run_id))
     return {name: f"reports/organic-audit/{run_id}/{name}" for name in ARTIFACT_LIMITS}
+
+
+# Audit policy v12's summary, for code workflows. They read project files of at most 64,000
+# bytes (code_project_files.MAX_FILE_BYTES); the pinned budget keeps each copy below that.
+# LATEST.json is the latest-started published audit's SUMMARY.json, byte for byte, at a path a
+# reader can find without listing runs. It is the one path a v12 publication may replace; every
+# other path is new.
+SUMMARY_READ_LIMIT = 64_000
+LATEST_SUMMARY_PATH = "reports/organic-audit/LATEST.json"
+
+
+def summary_paths(run_id: str) -> dict[str, str]:
+    run_id = str(UUID(run_id))
+    return {
+        "SUMMARY.json": f"reports/organic-audit/{run_id}/SUMMARY.json",
+        "LATEST.json": LATEST_SUMMARY_PATH,
+    }
+
+
+def bundle_sha256(run_id: str, documents: dict[str, str]) -> str:
+    """The publish receipt's `documents_sha256`: AUDIT.md, findings.json and evidence.json.
+
+    Downstream workflows verify an audit by reading exactly those three files back, so the
+    v12 summary files stay outside it; LATEST.json also changes with every later audit.
+    """
+    return digest({path: documents[path] for path in audit_paths(run_id).values()})
+
+
+def publication_contract(
+    run_id: str, policy: dict, *, completion: bool = False
+) -> tuple[dict, dict, frozenset[str]]:
+    """The run's paths, their byte limits and the paths it may replace, per its pinned policy.
+
+    An answer completion re-reports an earlier audit without reading its pages, so it writes its
+    own SUMMARY.json but never LATEST.json.
+    """
+    paths, limits = audit_paths(run_id), dict(ARTIFACT_LIMITS)
+    if not policy.get("summary_max_bytes"):
+        return paths, limits, frozenset()
+    paths["SUMMARY.json"] = summary_paths(run_id)["SUMMARY.json"]
+    limits["SUMMARY.json"] = SUMMARY_READ_LIMIT
+    if completion:
+        return paths, limits, frozenset()
+    paths["LATEST.json"] = LATEST_SUMMARY_PATH
+    limits["LATEST.json"] = SUMMARY_READ_LIMIT
+    return paths, limits, frozenset({LATEST_SUMMARY_PATH})
 
 
 def public_site(value: str) -> tuple[str, str]:
@@ -342,6 +557,32 @@ def audit_hosts(scope: dict) -> tuple[str, ...]:
         observed.add(parsed.hostname)
         current = target
     return (host, *sorted(observed - {host}))
+
+
+def sitemap_page_urls(files: dict | None, scope: dict) -> list[str]:
+    """HTTPS sitemap URLs on the audited site, from the run's saved site files."""
+    hosts = audit_hosts(scope)
+    return [
+        row["loc"]
+        for row in ((files or {}).get("sitemaps") or {}).get("urls", [])
+        if urlsplit(row["loc"]).scheme == "https"
+        and in_scope_url(row["loc"], scope["host"], aliases=hosts)
+    ]
+
+
+def crawl_respects_sitemap(scope: dict, files: dict | None) -> bool:
+    """Whether the provider crawl follows the sitemap rather than links from the homepage.
+
+    Runs pinned before v14 send the policy's respect_sitemap whatever the site files hold. A
+    v14 run sends it only when its saved site files found an in-scope sitemap URL. An answer
+    completion reuses its source crawl and reads no site files, so it keeps the policy.
+    """
+    policy = audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]))
+    if not policy.get("respect_sitemap"):
+        return False
+    if not policy.get("follow_links_without_sitemap") or scope.get("completion"):
+        return True
+    return bool(sitemap_page_urls(files, scope))
 
 
 # Flag, check ID, status, severity, observation, remedy. Deliberate exclusions
@@ -452,8 +693,12 @@ def normalize_pages(
     *,
     aliases: tuple[str, ...] = (),
     policy_version: str = LEGACY_AUDIT_POLICY["version"],
+    respect_sitemap: bool | None = None,
 ) -> list[dict]:
+    """`respect_sitemap` is what the crawl request sent; None reads the pinned policy."""
     policy = audit_policy(policy_version)
+    if respect_sitemap is None:
+        respect_sitemap = bool(policy.get("respect_sitemap"))
     applicability = policy.get("check_applicability", False)
     if len(items) > policy["max_pages"]:
         raise ValueError("Provider page collection exceeded its pinned limit.")
@@ -487,9 +732,7 @@ def normalize_pages(
                             "canonical": checks.get("canonical")
                             if type(checks.get("canonical")) is bool
                             else None,
-                            "respect_sitemap": bool(
-                                audit_policy(policy_version).get("respect_sitemap")
-                            ),
+                            "respect_sitemap": respect_sitemap,
                         }
                     }
                     if applicability
@@ -588,7 +831,8 @@ def technical_findings(
                     "kind": "recrawl_and_inspect",
                     "check_id": check_id,
                 },
-                "next_action": "technical_fix",
+                # v14 names website.change; a pinned earlier policy keeps technical_fix.
+                "next_action": audit_policy(policy_version).get("next_action_fix", "technical_fix"),
                 "evidence_refs": ["crawl.pages"],
             }
         )
@@ -634,7 +878,11 @@ def content_review_findings(
         return []
     groups: dict[str, list[dict]] = {}
     for index, question in enumerate(ai["panel"]["questions"]):
-        answers = [row for row in ai["observations"] if row.get("question_index") == index]
+        answers = [
+            row
+            for row in ai["observations"]
+            if row.get("question_index") == index and row.get("mode") != "memory"
+        ]
         if len(answers) != panel_repetitions(ai["panel"]) or any(
             row.get("status") != "completed" for row in answers
         ):
@@ -716,7 +964,53 @@ def content_review_findings(
                 fix=findings[-1]["suggested_remedy"],
                 priority="long_term",
             )
+    findings.extend(_cited_instead_findings(ai, host, policy_version=policy_version))
     return findings
+
+
+def _cited_instead_findings(ai: dict, host: str, *, policy_version: str) -> list[dict]:
+    """The sites AI answers cite when they do not cite yours: where to earn a mention."""
+    domains = ai.get("cited_domains") or []
+    ladder = ai.get("ladder") or {}
+    if not domains or not audit_policy(policy_version).get("finding_format"):
+        return []
+    from tin_lite.organic_audit_format import count, site_finding
+
+    scored = ladder.get("scored", 0)
+    cited = sum(
+        bool(row["classification"].get("owned_domain_cited"))
+        for row in ai.get("observations", [])
+        if row.get("status") == "completed"
+    )
+    if not scored or cited * 2 >= scored:
+        return []
+    return [
+        site_finding(
+            host=host,
+            check_id="ai.cited_instead",
+            category="content",
+            area="authority",
+            issue="AI answers to your buyer questions cite other sites",
+            impact="medium",
+            evidence=[
+                f"Your website was cited in {cited} of {count(scored, 'searched answer')}.",
+                *(
+                    f"{row['domain']}: cited in {count(row['answers'], 'answer')}"
+                    for row in domains[:8]
+                ),
+            ],
+            fix=(
+                "Earn a place on the sources assistants cite for these questions (directories, "
+                "comparison articles, community threads) and publish pages that answer the same "
+                "questions directly."
+            ),
+            priority="high_impact",
+            evidence_kind="sampled_ai_answers",
+            next_action="content_plan",
+            ownership="content_owner",
+            evidence_refs=["ai_visibility.cited_domains"],
+        )
+    ]
 
 
 def ai_report_details(ai: dict) -> list[str]:
@@ -792,6 +1086,75 @@ def ai_report_details(ai: dict) -> list[str]:
         )
     if gaps:
         lines.extend(["### Missing evidence", "", *gaps, ""])
+    dropped = (panel or {}).get("dropped_questions") or []
+    if dropped:
+        lines.extend(
+            [
+                "### Questions dropped in review",
+                "",
+                "The reviewer rejected these before any answer was requested; the rest were asked.",
+                "",
+                *(
+                    "- " + " ".join(re.sub(r"([\\`*_{}\[\]()<>#+.!|~-])", r"\\\1", text).split())
+                    for text in (f"{row['question']} ({row['reason']})" for row in dropped)
+                ),
+                "",
+            ]
+        )
+    lines.extend(ladder_report_lines(ai))
+    return lines
+
+
+def ladder_report_lines(ai: dict) -> list[str]:
+    """The recommendation ladder, answers without web search, and the sites answers cite."""
+    ladder = ai.get("ladder")
+    if not ladder:
+        return []
+    labels = {
+        "found": "Found (named, or its site read or cited)",
+        "mentioned": "Mentioned in the answer",
+        "evaluated": "Evaluated against the buyer's needs",
+        "shortlisted": "Recommended",
+        "selected_first": "Picked first",
+    }
+    lines = [
+        "### Recommendation ladder",
+        "",
+        f"Out of {ladder['scored']} scored answers with web search, the same ladder as the AI "
+        "visibility audit:",
+        "",
+        "| Stage | Answers |",
+        "| --- | ---: |",
+        *(f"| {labels[key]} | {ladder['counts'][key]} |" for key in labels),
+        "",
+        f"Main break: {ladder['bottleneck']['label']}. {ladder['bottleneck']['why']}",
+        "",
+    ]
+    memory = ai.get("memory") or {}
+    if memory.get("planned"):
+        lines.extend(
+            [
+                "### Answers without web search",
+                "",
+                f"One answer per question from the model's own knowledge: {memory['completed']} "
+                f"of {memory['planned']} scored; the target was mentioned in "
+                f"{memory['mentioned']} and recommended in {memory['shortlisted']}. This shows "
+                "what the model knows before it searches.",
+                "",
+            ]
+        )
+    domains = ai.get("cited_domains") or []
+    if domains:
+        lines.extend(
+            [
+                "### Sites AI answers cite",
+                "",
+                "The sites cited most often in the searched answers, other than yours:",
+                "",
+                *(f"- {row['domain']}: {row['answers']} answers" for row in domains),
+                "",
+            ]
+        )
     return lines
 
 
@@ -845,6 +1208,7 @@ def build_documents(
     search_console: dict | None = None,
     search_queries: dict | None = None,
     site: dict | None = None,
+    search_previous: dict | None = None,
 ) -> dict[str, bytes]:
     policy = audit_policy(policy_version)
     if policy.get("site_checks"):
@@ -860,6 +1224,7 @@ def build_documents(
             search_console=search_console,
             search_queries=search_queries,
             site=site or {},
+            search_previous=search_previous,
         )
     modern = policy != LEGACY_AUDIT_POLICY
     hosts = audit_hosts(scope)
@@ -1105,6 +1470,7 @@ def _fit_evidence(evidence: dict, limit: int) -> dict:
     Findings are computed before this step; dropped rows are counted, never silently lost.
     """
     steps = (
+        ("internal_links", None),
         ("search_console_queries", 1000),
         ("site_pages", None),
         ("sitemap_urls", 1000),
@@ -1113,6 +1479,18 @@ def _fit_evidence(evidence: dict, limit: int) -> dict:
     for step, keep in steps:
         if len(canonical_json(evidence)) <= limit:
             break
+        if step == "internal_links":
+            # v12 page links; SUMMARY.json already holds the inbound counts and click depth
+            # computed from them. Pages before v12 carry none, and this step records nothing.
+            pages = evidence["site"].get("pages", [])
+            listed = sum("internal_links" in row for row in pages)
+            if listed:
+                evidence.setdefault("trimmed_for_size", {})[step] = listed
+                evidence["site"]["pages"] = [
+                    {key: value for key, value in row.items() if key != "internal_links"}
+                    for row in pages
+                ]
+            continue
         trimmed = evidence.setdefault("trimmed_for_size", {})
         if step == "search_console_queries":
             value = (evidence.get("search_console_queries") or {}).get("value")
@@ -1145,6 +1523,7 @@ def site_check_documents(
     search_console: dict | None,
     search_queries: dict | None,
     site: dict,
+    search_previous: dict | None = None,
 ) -> dict[str, bytes]:
     """organic-audit-v10: coverage-honest report with site, search and crawl findings."""
     import copy
@@ -1166,8 +1545,22 @@ def site_check_documents(
         search_console=search_console,
         search_queries=search_queries,
         site=site,
+        search_previous=search_previous,
     )
     findings = sorted([*technical, *content, *analysis["findings"]], key=order_key)
+    if policy.get("next_action_from_repair_plan"):
+        from tin_lite.technical_repair_plan import next_action
+
+        fix_action = policy.get("next_action_fix", "technical_fix")
+        findings = [
+            {
+                **f,
+                "next_action": fix_action
+                if next_action(f["check_id"]) == "technical_fix"
+                else next_action(f["check_id"]),
+            }
+            for f in findings
+        ]
     evidence = {
         "schema_version": 1,
         "run_id": run_id,
@@ -1180,6 +1573,14 @@ def site_check_documents(
         "spending": spending,
         "search_console": search_console or {"status": "not_available"},
         "search_console_queries": copy.deepcopy(search_queries) or {"status": "not_available"},
+        **(
+            {
+                "search_console_previous": copy.deepcopy(search_previous)
+                or {"status": "not_available"}
+            }
+            if policy.get("decay_min_previous_clicks")
+            else {}
+        ),
         "site": {
             "status": "observed" if site else "not_collected",
             "files": copy.deepcopy(site.get("files")),
@@ -1187,6 +1588,16 @@ def site_check_documents(
             "pages": sorted(site.get("pages", []), key=lambda row: row["url"]),
             "pages_status": site.get("pages_status", "not_collected"),
             "pagespeed": analysis["pagespeed"],
+            # v11's added evidence; a v10 evidence file keeps v10's shape.
+            **(
+                {
+                    "access": site.get("access") or {"status": "not_collected"},
+                    "url_inspection": site.get("url_inspection") or {"status": "not_collected"},
+                    "content_review": site.get("content_review") or {"status": "not_collected"},
+                }
+                if policy.get("site_angles")
+                else {}
+            ),
         },
         "coverage": analysis["coverage"],
     }
@@ -1237,7 +1648,33 @@ def site_check_documents(
         and technical_status == "complete"
         and cover["status"] == "complete"
     )
-    paths = audit_paths(run_id)
+    paths, limits, _ = publication_contract(
+        run_id, policy, completion=bool(scope.get("completion"))
+    )
+    summary = None
+    if policy.get("summary_max_bytes"):
+        from tin_lite.organic_audit_summary import summary_document
+
+        summary = summary_document(
+            run_id=run_id,
+            scope=scope,
+            hosts=hosts,
+            policy=policy,
+            view=analysis["view"],
+            crawl_pages=pages,
+            cover=cover,
+            findings=findings,
+            top_issue_ids=inventory["summary"]["top_issue_ids"],
+            ai=ai,
+            paths=paths,
+            findings_sha256=digest(inventory),
+            evidence_sha256=inventory["evidence_sha256"],
+        )
+    engine_lines = []
+    if policy.get("ai_engines"):
+        from tin_lite.organic_audit_engines import report_lines as engine_report_lines
+
+        engine_lines = engine_report_lines(ai.get("engines"))
     for evidence_limit in (8, 3, 1):
         lines = report_lines(
             scope=scope,
@@ -1250,7 +1687,7 @@ def site_check_documents(
             search_queries=search_queries,
             site=site,
             complete=complete,
-            ai_details=ai_report_details(ai),
+            ai_details=ai_report_details(ai) + engine_lines,
             evidence_limit=evidence_limit,
         )
         lines.extend(
@@ -1266,6 +1703,18 @@ def site_check_documents(
                 "",
                 "The adjacent `findings.json` and `evidence.json` contain bounded, "
                 "machine-readable evidence.",
+                *(
+                    [
+                        "",
+                        "Code workflows read files of at most 64,000 bytes. The adjacent "
+                        "`SUMMARY.json` fits: one row per crawled page with its status, "
+                        "indexability, inbound links and click depth, finding counts by "
+                        "check and the AI visibility headline. The latest audit's summary "
+                        "is also at `reports/organic-audit/LATEST.json`.",
+                    ]
+                    if summary is not None
+                    else []
+                ),
             ]
         )
         report = ("\n".join(lines) + "\n").encode()
@@ -1276,7 +1725,11 @@ def site_check_documents(
         paths["findings.json"]: canonical_json(inventory),
         paths["evidence.json"]: canonical_json(evidence),
     }
-    for name, limit in ARTIFACT_LIMITS.items():
+    if summary is not None:
+        documents[paths["SUMMARY.json"]] = summary
+        if "LATEST.json" in paths:
+            documents[paths["LATEST.json"]] = summary
+    for name, limit in limits.items():
         if name == "evidence.json":
             limit = policy["max_evidence_bytes"]
         if not 0 < len(documents[paths[name]]) <= limit:

@@ -80,8 +80,23 @@ documents. The run saves the extracted guide to a run-owned file,
 `style/proposals/<date>-writing-style-<run>.md`, and waits in Decisions. The active guide stays
 unchanged until a member approves. Approval binds the proposal as it stands at that moment,
 including edits made to it in Files, and only then is it saved as the guide. A proposal removed or
-emptied before approval fails the run and leaves the current guide alone. Runs pinned to 1.0.0
-save the guide directly, as before.
+emptied before approval fails the run and leaves the current guide alone. "Discard" on the
+Decisions card turns the proposal down instead: the run ends as declined, the proposal file stays
+readable in Files, and the current guide is unchanged. Runs pinned to 1.0.0 save the guide
+directly, as before.
+
+Capture 1.2.0 drops edits in Files as the way to correct a waiting proposal (Emre, 10/1:
+Decisions keeps Approve and Discard; the coding agent revises the material). The agent calls
+`get_workflow_review` for the `review_token`, then MCP `revise_capture_proposal` (or
+`POST /api/workflows/runs/{id}/proposal-revisions`) with the complete revised guide. Tin
+accepts it only while the run waits, only for that run's proposal file, and only if it keeps
+the captured guide's shape: the `writing-style` front matter, the title and every section in
+order, at most 24,000 bytes, with no credentials. It commits the text over the proposal and
+records who sent it. Decisions shows how many times, by whom and when the guide was revised.
+Approval stores the SHA-256 of the exact version the founder read and saves that version; a
+revision after they opened the card refuses the approval and shows the new version. Direct
+edits to a waiting proposal are refused with a pointer to the tool. Runs pinned to 1.1.0 keep
+approving the proposal as it stands, edits in Files included.
 
 The result is `.agents/skills/writing-style/SKILL.md`. The same canonical publication mechanism
 used for saved procedure outputs checks whether that destination changed since capture began.

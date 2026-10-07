@@ -67,7 +67,7 @@ async def test_creator_and_examples_are_valid_without_registry_registration():
     report = await check_package(files, path, contract)
     assert report["cost"]["basis"] == "unmeasured"
     assert report["cost"]["expected_range_usd"] is None
-    assert report["cost"]["configured_ceiling_usd"] == "5"
+    assert report["cost"]["configured_ceiling_usd"] == "10"
     assert report["safety"]["status"] == "review_required"
     assert all(not w.key.startswith(("example.", "custom.")) for w in PUBLIC_WORKFLOWS)
 
@@ -483,10 +483,10 @@ async def test_paid_case_checks_caller_limit_and_requires_enforced_billing(publi
     )
     with pytest.raises(
         QualificationError,
-        match=r"needs maximum_usd of at least \$5\.00 \(you authorized \$4\.00\)",
+        match=r"needs maximum_usd of at least \$10\.00 \(you authorized \$4\.00\)",
     ):
         await start_case(f, selection)
-    selection.maximum_usd = "5"
+    selection.maximum_usd = "10"
     with pytest.raises(QualificationError, match="enforced run budgets"):
         await start_case(f, selection)
     assert await f.db.list_runs(project_id=f.project.id) == []

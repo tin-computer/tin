@@ -40,7 +40,7 @@ workflow_packages/custom.research_digest/
 4. Refresh `list_workflows`, inspect using `get_workflow` (UUID or unambiguous key), then use normal
    `start_workflow`. Supply `project_id` outside inputs. Optionally save a configuration
    with `create_project_workflow` for My system, using only the definition's supported schedule
-   modes; no user-facing version selection is needed.
+   modes; a saved schedule also runs once right away. No user-facing version selection is needed.
 5. `archive_private_workflow(project_id, workflow_id, request_id, expected_revision)` removes the
    recipe from discovery and prevents new starts. It preserves source files, saved configurations,
    running work and historical results. Explicit activation restores the same UUID.
@@ -67,12 +67,14 @@ See [code workflows](code-workflows.md) and the linked extension contracts.
 
 - Explicit `codex.procedure`, `custom.<lowercase_name>` key and `on_demand` scheduling only.
 - Required `isolated` / `fenced` profile; existing controller/worker separation, trusted usage
-  observations and retry checkpoint rules apply. Timeout is bounded at 3,600 seconds.
+  observations and retry checkpoint rules apply. Timeout is bounded at 7,200 seconds.
 - One bounded UTF-8 project artifact, or a bounded unmerged GitHub PR with repository verification.
   GitHub capabilities must match the declared workspace/result and use the connected-project
   gateway. Existing PR overlap checks and result validation remain in force.
-- Repository workspaces are snapshots of up to 20,000 eligible files / 100 MB, each file at
-  most 2 MB. The bound belongs to the gateway; a `limits` key in older definitions is ignored.
+- Repository workspaces are snapshots of up to 100,000 eligible files / 250 MB, each file at
+  most 10 MB (larger media and built files are left out; see
+  [repository-aware delivery](repository-aware-content-delivery.md)). The bound belongs to
+  the gateway; a `limits` key in older definitions is ignored.
 - Optional connected Workspace read capabilities: Gmail messages and calendar events. No email
   sending, test identities, browser/Studio, uploaded native executors or recursive starts.
 - Optional existing project skills and normal review eligibility. Managed `wiki/INDEX.md`

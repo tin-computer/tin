@@ -5,6 +5,7 @@
     "title": "Get listed where your integrations' users already shop",
     "description": "Reads the integrations in your Code map, checks each partner's app marketplace for you and your competitors, tests its listing rules against your site, and names the one to three listings to submit this week with the form filled in, in your voice. Never repeats a listing an earlier run prepared, and never submits anything.",
     "executor": "codex.procedure",
+    "system": "cold-outreach",
     "version": "1.1.0",
     "schedule_modes": ["on_demand", "weekly"],
     "input_schema": {
@@ -88,6 +89,30 @@
         "path_template": "reports/outreach/marketplaces/{run_id}.md",
         "media_type": "text/markdown",
         "max_bytes": 96000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Code map and growth plan", "fact": "integrations, Feature map, voice guide"},
+          {"id": "shelf", "kind": "surface", "label": "Partner app marketplaces", "fact": "11 in a fixed list, at most 40 lookups"},
+          {"id": "gates", "kind": "step", "label": "Test each listing's rules", "fact": "your site's pages and the Code map"},
+          {"id": "pick", "kind": "step", "label": "Score and pick this week's", "fact": "fixed scorer, up to 3, no repeats"},
+          {"id": "forms", "kind": "step", "label": "Fill in each form", "fact": "your voice, every field within its limit"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "reports/outreach/marketplaces"},
+          {"id": "receipt", "kind": "receipt", "label": "Listings to submit this week", "fact": "you submit each one, Tin submits nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "shelf", "kind": "call"},
+          {"from": "shelf", "to": "gates", "kind": "call"},
+          {"from": "gates", "to": "pick", "kind": "call"},
+          {"from": "pick", "to": "forms", "kind": "call"},
+          {"from": "pick", "to": "report", "kind": "call", "label": "nothing new"},
+          {"from": "forms", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"},
+          {"from": "report", "to": "pick", "kind": "signal", "label": "next run skips these"}
+        ]
       }
     }
   }

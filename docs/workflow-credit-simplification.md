@@ -17,7 +17,7 @@ balance and project limits. It charges verified usage, not the estimate.
    estimate through a read-only HTTP/MCP preview and the configuration surface.
 2. **One admission path.** Dashboard, MCP, direct/saved starts, revisions and scheduled
    occurrences share the existing admission service. A normal start needs no quote
-   ID. Check the estimate, available credits, project limits and concurrency before
+   ID. Check the estimate, available credits and project limits before
    dispatch. Preserve explicit scheduled spending authority. Free onboarding and
    approved setup children remain free. No enrollment, limit or Stripe-mode changes.
 3. **Managed-operation funding.** Reuse `billing_operations` and `committed_nanos`. Managed model and service budgets
@@ -26,13 +26,21 @@ balance and project limits. It charges verified usage, not the estimate.
    observation replace it with actual cost and immediately free the difference.
    Unsettled actual usage stays unavailable so another run cannot spend it. Round
    the internal root liability upward to cents, then round the final charge once.
+   Admission of a new run counts every unsettled per-call run that can buy work now
+   (a pending or running run in its tree) at the larger of its estimate and its
+   committed liability, against both the monthly limit and the credits, so parallel
+   starts cannot all pass before their first paid call. A run that has ended, or that
+   waits on its founder, counts at its committed liability alone. Nothing extra is
+   reserved and no hold line is shown; the Billing page's available credits are the
+   start check's own figure. Paid calls of runs already admitted are checked against
+   actual commitments only.
 4. **Limits and recovery.** Check available funds and current run/month/schedule limits
    at every call, including parent children and parallel projects sharing a wallet.
    Decline before buying a call if funding is insufficient; retain existing receipts
    and durable files. Do not invent automatic resume support or blindly repurchase
    uncertain calls. Existing bounded unknown-cost reconciliation still applies.
-   A terminal run's unresolved bill retains monetary liability but no execution slot;
-   active children and leases still count toward the project's concurrency limit.
+   A terminal run's unresolved bill retains monetary liability. Projects have no limit on
+   how many runs are active at once; the money limits bound spending.
    Parent steps aggregate once, and terminal settlement creates one ledger charge.
 5. **Quiet UI.** Remove the per-run approval dialog and the reserved-balance line.
    Preserve stable request IDs through ambiguous responses. Show configured estimated

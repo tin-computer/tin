@@ -82,9 +82,60 @@ The [package guide](../workflow_packages/README.md#codex-procedure-example) has 
 example. Procedure packages can produce a project artifact or an unmerged GitHub PR.
 They don't acquire the interactive conversation and controls of a one-off `project.task`.
 
+A procedure knows its own run, as code does through `ctx["run_id"]`. Tin adds a `RUN CONTEXT`
+line naming the run ID to the end of the brief, and sets `TIN_RUN_ID` for the procedure's
+commands. Ask for it wherever the output names its run, such as a report heading, a receipt
+or a file name; don't let the model invent one.
+
 Public procedures can also [propose and adopt a reviewed document pair](reviewed-project-documents.md)
 and optionally inspect a read-only connected repository. These are explicit output/workspace
 contracts; ordinary reviewable artifacts keep their existing behavior.
+
+## Draw how it runs
+
+Every workflow shows how it runs in a panel beside My system and the Add workflows list. The
+drawing lives in the definition as `presentation.flow`; it describes the run and never changes
+it. A package puts it in `workflow.json`; a built-in passes `presentation=WorkflowDiagram(...)`
+in `catalog.py`.
+
+```json
+"presentation": {
+  "flow": {
+    "direction": "TD",
+    "nodes": [
+      {"id": "read", "kind": "step", "label": "Read the CSV", "fact": "unique columns, including amount_cents"},
+      {"id": "check", "kind": "step", "label": "Check every row", "fact": "whole cents, at most 10 digits"},
+      {"id": "report", "kind": "receipt", "label": "Summary in Files", "fact": "reports/CSV_SUMMARY.md, rows and total"}
+    ],
+    "edges": [
+      {"from": "read", "to": "check", "kind": "call"},
+      {"from": "check", "to": "report", "kind": "call"}
+    ]
+  }
+}
+```
+
+Draw what the code or prompt does, in the order it does it, from top to bottom:
+
+- 2–8 nodes and 1–12 edges in one connected graph. A label has at most 32 characters, a fact
+  48 and an edge label 40.
+- Each node has a kind:
+  - `step`: work the run does.
+  - `surface`: an outside service it reads or writes.
+  - `store`: something Tin keeps, such as a file in project Files.
+  - `wait`: a timer or poll.
+  - `gate`: where it waits for someone's approval.
+  - `receipt`: the record it leaves, usually last.
+  - `ghost`: an ending where nothing happens.
+- An edge is `call` when the run moves on by itself, and `signal` when a schedule, an approval
+  or a timer moves it on. Edges leaving a gate are signals.
+- Two nodes in one row run side by side, or are the two ways a run can go. An edge back to an
+  earlier node is drawn as a loop up the side; label it with what sends the run back.
+- Steps start with a verb. A fact is one plain line a reader can check against the code,
+  such as a limit, a provider or where the result lands.
+
+`validate-community` rejects a package without a valid drawing. When you change the steps,
+change the drawing in the same pull request.
 
 ## Test it as a private workflow
 
@@ -186,8 +237,9 @@ also isn't an archival command for an already-published workflow.
 
 ## Know the current boundary
 
-The code package runtime is Python 3.12.8 with the standard library, up to 60 seconds and
-one declared text artifact. It supports up to eight managed model calls across four routes;
+The code package runtime is Python 3.12.8 with the standard library, up to 900 seconds and
+one declared text artifact of up to 1,000,000 bytes. It supports up to 32 managed model calls
+across four routes; keep a run's model input under 700,000 bytes (about 200k tokens);
 only the registered OpenAI Luna and Astra routes are currently admitted. There is no `pip`
 installation, raw credential injection or direct network access. Use declared
 [project service bindings](project-api-connections.md) for supported external requests; for

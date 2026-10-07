@@ -24,11 +24,13 @@ from tin_lite.organic_audit import (
     canonical_json,
     normalize_pages,
     public_site,
+    summary_paths,
     technical_findings,
 )
 from tin_lite.organic_audit_activities import OrganicAuditActivities
 from tin_lite.organic_audit_ai import (
-    AI_CONTRACT,
+    ai_contract,
+    ai_schemas,
     classify,
     payload,
     read_response,
@@ -122,7 +124,8 @@ def test_three_bounded_artifacts_and_stable_downstream_inventory():
     run_id = str(uuid4())
     docs = document_fixture(run_id)
     paths = audit_paths(run_id)
-    assert set(docs) == set(paths.values())
+    # The bundle downstream workflows verify, plus v12's summary for code workflows.
+    assert set(docs) == {*paths.values(), *summary_paths(run_id).values()}
     assert all(
         len(docs[paths[name]]) <= limit <= 3_000_000 for name, limit in ARTIFACT_LIMITS.items()
     )
@@ -469,9 +472,16 @@ class MemoryDB:
         )
 
 
-async def activities_fixture(*, budget="8"):
+async def activities_fixture(*, budget="8", policy=None):
     db, storage = MemoryDB(), HistoryStorage()
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
+    if policy is not None:  # A run pinned to an earlier policy, with its own instructions.
+        definition = {
+            **definition,
+            "audit_policy": policy,
+            "audit_instructions": ai_contract(policy["version"]),
+            "audit_schemas": ai_schemas(policy["version"]),
+        }
     storage.read_canonical_artifact = AsyncMock(return_value=canonical_json(definition))
     provider = SimpleNamespace(
         validate_target=AsyncMock(return_value=("https://example.com/", "example.com")),
@@ -542,6 +552,6 @@ async def test_crash_after_crawl_acceptance_recovers_without_second_submit():
 def test_registry_pins_policy_and_instructions_without_github_or_review():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == "organic.audit")
     assert definition["audit_policy"] == AUDIT_POLICY
-    assert definition["audit_instructions"] == AI_CONTRACT
-    assert definition["schedule_modes"] == ["on_demand"]
+    assert definition["audit_instructions"] == ai_contract(AUDIT_POLICY["version"])
+    assert definition["schedule_modes"] == ["on_demand", "monthly"]
     assert not definition.get("human_review") and not definition.get("integration_requirements")

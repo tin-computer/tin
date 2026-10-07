@@ -6,7 +6,7 @@
     "description": "Draft reviewable X and LinkedIn posts from an editable weekly plan and current source notes, or repurpose an article. Nothing is posted or scheduled.",
     "version": "3.0.0",
     "executor": "workflow.code",
-    "system": "organic-traffic",
+    "system": "x",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,
@@ -56,6 +56,29 @@
         "path": "social/posts/{date}-{slug}.md",
         "media_type": "text/markdown",
         "max_bytes": 24000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "weekly", "kind": "store", "label": "Weekly plan and new notes", "fact": "1 to 6 slots, notes unused in 12 batches"},
+          {"id": "article", "kind": "store", "label": "Article to repurpose", "fact": "the one article found, or text you paste"},
+          {"id": "draft", "kind": "step", "label": "Draft the posts", "fact": "one model call, 4 posts or one per slot"},
+          {"id": "check", "kind": "step", "label": "Check each draft", "fact": "cited excerpt, no links, no new numbers"},
+          {"id": "batch", "kind": "store", "label": "Batch in project Files", "fact": "social/posts, dated, one file per run"},
+          {"id": "review", "kind": "gate", "label": "Review the drafts", "fact": "the run waits for you, no timer"},
+          {"id": "receipt", "kind": "receipt", "label": "Drafts to post yourself", "fact": "Tin posts and schedules nothing"}
+        ],
+        "edges": [
+          {"from": "weekly", "to": "draft", "kind": "call", "label": "weekly mode"},
+          {"from": "article", "to": "draft", "kind": "call", "label": "repurpose mode"},
+          {"from": "weekly", "to": "batch", "kind": "call", "label": "no new notes"},
+          {"from": "draft", "to": "check", "kind": "call"},
+          {"from": "check", "to": "batch", "kind": "call"},
+          {"from": "batch", "to": "review", "kind": "call"},
+          {"from": "review", "to": "receipt", "kind": "signal", "label": "approved"}
+        ]
       }
     }
   }

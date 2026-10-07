@@ -887,8 +887,8 @@ async def test_write_only_api_never_echoes_values_in_validation_or_metadata(bill
     [
         lambda d: d["integration_requirements"][0].update(required=False),
         lambda d: d["integration_requirements"][0].update(capabilities=["gmail.messages.send"]),
-        lambda d: d["code"]["services"]["crm"].update(max_calls=9),
-        lambda d: d["code"]["services"]["crm"].update(max_response_bytes=64001),
+        lambda d: d["code"]["services"]["crm"].update(max_calls=33),
+        lambda d: d["code"]["services"]["crm"].update(max_response_bytes=1_000_001),
         lambda d: d["code"]["services"]["crm"].update(provider_key="custom.api.other"),
         lambda d: d["code"]["services"]["crm"].update(secret=SECRET),
     ],
@@ -1158,8 +1158,12 @@ async def test_code_services_reuse_activity_connection_when_pool_is_full(
                         },
                     )
                     if refresh_status == 401:
-                        with pytest.raises(CodeServiceError, match="not be repeated"):
+                        # Google answered the refresh: a known refusal with its status, not
+                        # an uncertain result.
+                        with pytest.raises(CodeServiceError, match=r"request \(401\)") as refused:
                             await call
+                        assert refused.value.code == "provider_error"
+                        assert refused.value.provider_error == {"provider": "Google", "status": 401}
                     else:
                         assert (await call)["sites"][0]["id"] == "https://fixture.example"
             assert requests.count("oauth2.googleapis.com") == 1

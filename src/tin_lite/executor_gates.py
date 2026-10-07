@@ -8,10 +8,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from tin_lite.keyword_plan_v6 import POLICY as KEYWORD_POLICY
+from tin_lite.keyword_plan_v9 import POLICY as KEYWORD_POLICY
 from tin_lite.organic_system import INPUT_SCHEMA as ORGANIC_SYSTEM_INPUTS
 
-# The current keyword policy's floor: it reserves $1.65 at most, so $2 never refuses a call.
+# The current keyword policy's floor: it reserves $2.00 at most, so $2 never refuses a call.
 KEYWORD_MINIMUM_USD = float(KEYWORD_POLICY["minimum_ceiling_usd"])
 KEYWORD_DEFAULT_USD = ORGANIC_SYSTEM_INPUTS["properties"]["keyword_max_cost_usd"]["default"]
 

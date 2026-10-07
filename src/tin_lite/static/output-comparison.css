@@ -15,7 +15,7 @@
 .compare-legend > span { display: flex; align-items: center; gap: 7px; }
 .compare-navigation { margin-left: auto; }
 .compare-navigation button { border: 1px solid rgb(var(--ink-rgb) / 25%); border-radius: 4px; width: 24px; height: 24px; color: var(--ink); background: var(--paper-card); }
-.compare-diff { overflow-x: auto; overscroll-behavior-x: contain; padding: 8px 0; scrollbar-width: thin; font: 12.5px/20px var(--font-mono); }
+.compare-diff { overflow-x: auto; overscroll-behavior-x: contain; padding: 8px 0; scrollbar-color: var(--scrollbar-thumb) transparent; scrollbar-width: thin; font: 12.5px/20px var(--font-mono); }
 .compare-line { display: flex; align-items: flex-start; min-height: 20px; padding: 0 12px; }
 .compare-line.is-current { color: var(--ink-secondary); background: var(--diff-removed-bg); }
 .compare-line.is-saved { background: var(--diff-added-bg); }

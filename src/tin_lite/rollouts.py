@@ -17,42 +17,12 @@ from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
 
-REDACTED = "[redacted]"
+from tin_lite.redaction import redact_text, redact_token_shapes
 
 ROLLOUT_FILENAME_RE = re.compile(
     r"^rollout-(?P<timestamp>\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2})-"
     r"(?P<thread>[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})"
     r"\.jsonl$"
-)
-
-_TOKEN_SHAPES: tuple[tuple[re.Pattern[str], str], ...] = (
-    # JSON Web Tokens (ChatGPT access/id tokens, Clerk, code.storage).
-    (re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}"), REDACTED),
-    # HTTP authorization values; keep the scheme so the transcript stays readable.
-    (re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}"), rf"\1 {REDACTED}"),
-    (re.compile(r"(?i)\b(Basic)\s+[A-Za-z0-9+/=]{16,}"), rf"\1 {REDACTED}"),
-    # Provider key shapes.
-    (re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"), REDACTED),
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), REDACTED),
-    (re.compile(r"\bya29\.[0-9A-Za-z_-]{20,}"), REDACTED),
-    (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), REDACTED),
-    # Key-named JSON values, including the escaped form seen inside tool output strings
-    # (for example an echoed ``auth.json``).
-    (
-        re.compile(
-            r'(\\?")(access_token|refresh_token|id_token|api_key|password|'
-            r'OPENAI_API_KEY|CODEX_API_KEY)(\\?"\s*:\s*\\?")[^"\\]{8,}'
-        ),
-        rf"\1\2\3{REDACTED}",
-    ),
-    # Environment dumps.
-    (
-        re.compile(
-            r"\b(TIN_BROKER_GRANT|TIN_RUN_TOOLS_GRANT|TIN_CANONICAL_AUTH_HEADER|"
-            r"TIN_EPHEMERAL_AUTH_HEADER|HTTPS?_PROXY|https?_proxy)=\S+"
-        ),
-        rf"\1={REDACTED}",
-    ),
 )
 
 
@@ -115,25 +85,12 @@ def sandbox_secrets(
     return tuple(sorted((value for value in values if len(value) >= 4), key=len, reverse=True))
 
 
-def redact_text(value: str, secrets: Sequence[str]) -> tuple[str, int]:
-    """Replace every exact secret (and its JSON-escaped form) with ``[redacted]``."""
-    count = 0
-    for secret in sorted((s for s in secrets if s), key=len, reverse=True):
-        for needle in {secret, json.dumps(secret, ensure_ascii=False)[1:-1]}:
-            if needle and needle in value:
-                count += value.count(needle)
-                value = value.replace(needle, REDACTED)
-    return value, count
-
-
 def redact_rollout(content: bytes, secrets: Sequence[str]) -> tuple[bytes, int]:
     """Redact a rollout: exact secrets first, then token shapes. Always returns UTF-8."""
     text = content.decode("utf-8", errors="replace")
     text, count = redact_text(text, secrets)
-    for pattern, replacement in _TOKEN_SHAPES:
-        text, replaced = pattern.subn(replacement, text)
-        count += replaced
-    return text.encode("utf-8"), count
+    text, shapes = redact_token_shapes(text)
+    return text.encode("utf-8"), count + shapes
 
 
 def render_rollout_trace(content: bytes, *, max_output_chars: int = 2000) -> Iterator[str]:

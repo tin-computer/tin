@@ -20,7 +20,7 @@ sandbox results return to the trusted server for validation and storage.
 - **Postgres** holds what the product shows. No screen queries the workflow engine.
 - **Integrations** are typed adapters with capability lists. Tokens stay on the switchboard and never enter a sandbox. A procedure that needs your data gets a short-lived grant bound to one run through a separate internal MCP server, for the reads its workflow declared. Every provider call writes a receipt.
 
-Codex execution uses brokered ChatGPT sessions or an API relay according to the execution configuration. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is selected before execution and retained through retries. `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
+New Codex execution runs only through the protected API relay. The relay uses the switchboard-held `TIN_LITE_LUNA_API_KEY`; that key never enters the sandbox. Authentication is pinned before execution and retained through retries. The pooled ChatGPT login broker is removed: historical runs pinned to it keep their artifacts and billing records but cannot start new compute ([API-only Codex execution](oauth-credential-security.md)). `OPENAI_API_KEY` and `CODEX_API_KEY` are not accepted service settings.
 
 ## One run
 
@@ -66,9 +66,13 @@ Managed dependencies today: Temporal Cloud, E2B, PlanetScale Postgres, code.stor
 
 You start `visibility.audit` for a project, optionally naming a target. Tin resolves the target's name, domain, and aliases, writes five buyer questions that do not name the target, asks each one to a model twice (web search on, then no tools), and scores every answer: found, mentioned, evaluated, shortlisted, picked first. One commit publishes `reports/AI_VISIBILITY.md` and the raw evidence. No review.
 
-Next Monday you run `content.answer_page`. It reads that audit, picks the strongest question you were absent from, and drafts one page that answers it with sources. The draft lands in Files and shows up in Decisions. Approval completes this draft workflow. Planned articles have a separate path: `content.generate` supports feedback and revisions, and approved articles can be delivered to GitHub through configured delivery or `content.deliver`. Neither path merges the resulting pull request.
+Next, `content.plan` schedules an answer page for a question you were absent from, beside planned articles and refreshes of existing pages, and `content.generate` drafts it when it comes up: a direct answer, cited sources and a search listing. The draft lands in Files and shows up in Decisions, where feedback revises it. When you approve it with a repository delivery, `website.change` adapts it into your site at the route you chose for answer pages, as a pull request, merged only when your setting commits to main. (`content.answer_page`, which picked its own question, is retired from discovery; saved schedules keep running.)
 
 ### Site health as a pull request
+
+`site.health_improve` is folded into `organic.technical_fix`, which fixes everything an
+organic audit finds in one pull request (see [technical repair](technical-fix.md)). Saved
+site-health schedules keep running as described here.
 
 You connect GitHub, select the repository, and opt in to write access. You start `site.health_improve` with your site URL, a focus such as accessibility, and a change budget of one to three files. In a sandbox, the agent reads the live page and the repository, reads the open pull requests so it does not duplicate work, picks one evidenced defect, fixes it, and writes a PR description with the evidence, the change, and the verification. The switchboard opens the pull request with a short-lived installation token the sandbox never saw. The pull request stays unmerged. Your repository's own deployment process determines when an accepted change goes live.
 
@@ -76,7 +80,7 @@ You connect GitHub, select the repository, and opt in to write access. You start
 
 You connect Google Workspace and start `outreach.email_shortlist` with an objective, say "people I met at events in the last ninety days who asked about pricing". The sandbox gets a run-bound grant to read Gmail and Calendar and writes `outreach/email/SHORTLIST.csv` with a reason and evidence per row. You edit the CSV in Files or from your coding agent and mark rows as selected.
 
-Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP.
+Then `outreach.email_campaign`: subject, body, optional follow-up and delay, daily cap, send window in your timezone. Tin snapshots the selected rows and the copy and shows you the send plan. You approve. Sends pace out inside the window, each recorded with the provider's message ID. A reply drops that person from the follow-up. A recipient Gmail refuses is marked failed and counted in the campaign's result; everyone else keeps sending. You can revise copy for recipients not yet sent, or stop the campaign, from the browser or over MCP; after a stop nothing more is started and each recipient keeps the state it had reached.
 
 ## Example workflows
 
@@ -85,9 +89,10 @@ This is a selection, not a complete catalog. The live Registry lists current inp
 | Workflow | What it does | Needs | Your call? |
 |---|---|---|---|
 | `organic.audit` | Reads robots.txt, sitemaps and Search Console, inspects up to 100 chosen public pages by default for crawl, indexation, on-page and search issues, asks a fixed panel of buyer questions to an AI adviser, and reports whether the answers mention, cite, or recommend you | nothing | no |
-| `visibility.audit` | Asks five buyer questions to a model with and without web search and scores where you appear | nothing | no |
+| `visibility.audit` | Retired from discovery; saved schedules still ask five buyer questions to a model with and without web search and score where you appear | nothing | no |
 | `content.answer_page` | Drafts one researched page for the strongest unanswered buyer question | nothing | yes |
-| `site.health_improve` | One small evidenced fix on one public page, as a pull request | GitHub | the PR is yours to merge |
+| `organic.technical_fix` | Every fixable finding from an organic audit, in one pull request grouped by kind of change | GitHub | the PR is yours to merge |
+| `site.health_improve` | Retired from discovery; saved schedules still make one small evidenced fix per run | GitHub | the PR is yours to merge |
 | `outreach.email_shortlist` | Evidence-backed shortlist from your Gmail and Calendar history, as a CSV | Google Workspace | no |
 | `outreach.email_campaign` | Paced sends with reply-aware follow-ups, from selected rows and approved copy | Google Workspace | yes, before anything is sent |
 | `qa.signup_walkthrough` | Signs up for your product as a stranger with a Tin-owned identity and reports the issues it encounters | Google Workspace | no |

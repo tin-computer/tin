@@ -314,7 +314,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'data-workflow-section="registry"' in script
     assert 'placeholder="Search…"' in script
     assert 'data-workflow-section="yours">My system' in script
-    assert 'data-workflow-section="registry">Add workflows' in script
+    assert 'data-workflow-section="registry">Workflows' in script
     assert "function systemMySystemHtml()" in script
     # The week ahead (Paper SYS-V3) sits above the Scheduled cards.
     assert "function systemWeekAheadHtml()" in script
@@ -365,13 +365,14 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'new Set(["analytics.gsc", "infra.github", "analytics.posthog"])' in script
     assert 'id="integration-project-dialog"' in index
     assert 'role="radiogroup"' in index
-    assert "function chooseIntegrationProject(providerKey, capabilities)" in script
-    assert "Connections are project-owned. Choose the Tin project" in script
+    # Connect links the service to the project you are in; no project question.
+    assert "function chooseIntegrationProject(" not in script
+    assert "Connections are project-owned. Choose the Tin project" not in script
     assert "integrationProjectDialog.showModal()" in script
-    assert "targetProjectId || context.projectId" in script
+    assert "`/api/projects/${encodeURIComponent(context.projectId)}/integrations/" in script
     assert "function promptForIntegrationResource(providerKey)" in script
     assert "OAuth is connected, but workflows cannot use" in script
-    assert 'needsResource ? "Finish setup" : "Configure"' in script
+    assert 'needsResource ? "Set up" : "Configure"' in script
     assert (
         "if (connectedProvider) await promptForIntegrationResource(connectedProvider)" not in script
     )
@@ -398,15 +399,16 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
         in script
     )
     assert "project_id: stateToken ? null : callbackProjectId()" in script
-    # Repository picker as a dialog right after the connect (Search Console keeps the scroll).
-    assert "async function chooseGitHubRepository()" in script
-    assert "Choose the repository for ${state.project?.name" in script
-    assert "/integrations/infra.github/options`" in script
-    assert 'if (providerKey === "infra.github") {\n    await chooseGitHubRepository();' in script
+    # One resource dialog right after the connect, and from Set up or Configure, for
+    # GitHub, Search Console and PostHog alike.
+    assert "async function chooseIntegrationResource(providerKey)" in script
+    assert "`Choose the ${copy.noun} for ${state.project?.name" in script
+    assert "/integrations/${encodeURIComponent(providerKey)}/options`" in script
+    assert "  await chooseIntegrationResource(providerKey);\n}" in script
     assert "Only repositories the Tin app is installed on appear here." in script
     assert 'href="${GITHUB_INSTALLATIONS_URL}"' in script
     assert 'GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations"' in script
-    assert "if (state.repositoryChoice) {\n    await confirmGitHubRepository();" in script
+    assert "if (state.resourceChoice) {\n    await confirmIntegrationResource();" in script
     assert "body: JSON.stringify({ option_id: choice.selected })" in script
     assert ".integration-project-empty" in stylesheet
     assert ".integration-setup-prompt" in stylesheet
@@ -414,8 +416,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "Enable sending" in script
     assert "incremental send permission" not in script
     assert ">Connect</button>" in script
-    assert 'selection?.addEventListener("change"' in script
-    assert "Choose a ${optionLabel.toLowerCase()}" in script
+    # The row's details show the chosen resource; picking it happens only in the dialog.
+    assert 'selection?.addEventListener("change"' not in script
+    assert "data-integration-form" not in script
     assert 'connected ? "Configure" : "Details"' not in script
     assert '"analytics.gsc": "/assets/integrations/google-search-console.svg"' in script
     assert '"infra.github": "/assets/integrations/github.svg"' in script
@@ -443,8 +446,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert ".workflow-config-row" in stylesheet
     assert 'script.src = "/assets/diagram-renderer.js"' in diagram_loader
     assert "window.TinDiagramLoader.load()" in script
-    assert "derived from the pinned definition" in script
-    assert "data-workflow-diagram" in script
+    assert "data-show-workflow-diagram" in script
+    assert "/diagram`" in script
+    assert "has-diagram-panel" in script
     assert "data-project-diagram" in script
     assert "TinDiagramRenderer" in diagram_script
     assert "var(--diagram-edge)" in diagram_script
@@ -557,16 +561,20 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "function renderDecisions()" in script
     assert "function decisionsPace()" in script
     assert "nearest deadline ${systemDateTime(nearestDeadline)}" in script
-    assert "${escapeHtml(item.title)}</strong></span>" in script
+    assert "${escapeHtml(decisionListTitle(item))}</strong></span>" in script
     assert "${escapeHtml(item.workflow_title)}</strong><small>" not in script
     assert "${escapeHtml(decision.title)}</h2>" not in script
-    # One Open link and prose only: no file rows or diffs on the card.
-    assert 'data-decision-read="${escapeHtml(decision.id)}">${runActionLabel} →' in script
-    assert '? "Open draft" : "Open run";' in script
+    # One Open button and prose only: no file rows or diffs on the card.
+    assert (
+        'class="open-button" type="button" '
+        'data-decision-read="${escapeHtml(decision.id)}">Open</button>'
+    ) in script
+    assert "runActionLabel" not in script
     assert "decision-output" not in script
     assert 'const consequence = String(decision.consequence || "").trim();' in script
-    assert 'class="is-actions-only"' in script
-    assert ".decision-detail-card > footer.is-actions-only" in stylesheet
+    # The footer holds controls only; nothing explains itself inside the button row.
+    assert "is-actions-only" not in script
+    assert "data-decision-not-now" not in script
     assert "function systemAddWorkflowsHtml(" in script
     template_card_source = script[
         script.index("function systemTemplateCard(") : script.index(
@@ -605,10 +613,10 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
         in api_source
     )
     assert (
-        "state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !runs.length"
+        "state.projectAccess = BROWSER_LOCK_ENABLED && !projectWorkflows.length && !allRuns.length"
         in script
     )
-    assert '!runs.length ? "locked" : "ready"' in script
+    assert '!allRuns.length ? "locked" : "ready"' in script
     # Lock routing, including the agent connection exception, is exercised in Chromium
     # by web/lock-page.browser.test.js rather than matching one rendering branch here.
     assert "function renderLockPage()" in script
@@ -645,7 +653,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "queue.length - 4" in script
     assert "/approve`" in script
     assert 'isCampaignRevisionReview(run) ? "Approve revision" : "Approve draft"' in script
-    assert 'label: "Discard revision"' in script
+    assert 'label: "Discard",' in script
     assert ".needs-you-primary" in stylesheet
     assert "background: var(--hot-wash)" in stylesheet
     assert "grid-template-columns: 7px 210px" in stylesheet
@@ -846,19 +854,22 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
     assert api_source.count("remember: bool = False") == 2
     assert "await _choose_content_delivery(run, payload, request, user)" in api_source
     assert "delivery=payload.delivery,\n                remember=payload.remember," in api_source
-    # Decisions card: two choices plus Not now and the remember checkbox when GitHub is connected.
+    # Decisions card: two choices plus Discard and the remember checkbox when GitHub is connected.
     assert (
-        'new Set(["content.generate", "content.public_article", "content.answer_page"])' in script
+        'new Set(["content.generate", "content.public_article", "content.answer_page", '
+        '"content.refresh"])' in script
     )
     assert "function connectedRepository()" in script
     assert "function repositoryDeliveryAvailable(run)" in script
     assert 'data-delivery="github_commit"${blocked}>Publish now</button>' in script
     assert 'data-delivery="github_pr"${blocked}>Open a pull request</button>' in script
+    # A blocked approval hides the checkbox rather than offering a choice it cannot use.
     assert (
-        '<label class="decision-remember"><input type="checkbox" '
-        "data-decision-remember${blocked}> Do this for future drafts</label>" in script
+        '${blocked ? "" : \'<label class="decision-remember"><input type="checkbox" '
+        "data-decision-remember> Do this for future drafts</label>'}" in script
     )
-    assert "data-decision-not-now>Not now</button>" in script
+    # Discard, not "Not now": anything waiting can be turned down; leaving it is just not choosing.
+    assert "data-decision-discard>Discard</button>" in script
     assert "Approved drafts stay in Tin until GitHub is connected." in script
     assert 'href="/integrations" data-decision-connect-github>Connect GitHub</a>' in script
     assert "const label = run?.content_delivery?.approval_label ||" in script
@@ -882,11 +893,12 @@ def test_approval_offers_pull_request_or_publish_now_when_github_is_connected() 
         "deliveryOptions: reader && repositoryDelivery && !adapted "
         '? [{ label: "Open a pull request"' in script
     )
-    # A page Tin adapts to the site: one Publish button, footer from the server's preview.
+    # A page Tin adapts to the site: one Publish button. The server's preview sentence goes to
+    # coding agents over MCP; the card's button row carries no text.
     assert "function publishPreview(run)" in script
     assert "/publish-preview`" in script
     assert 'data-adapted="true"${waiting}>Publish</button>' in script
-    assert 'escapeHtml(adapted.footer || "")' in script
+    assert "adapted.footer" not in script
     assert '[{ label: "Open a pull request", delivery: "github_pr" }] : []' in script
     assert "context.deliveryOptions || []" in review_script
     assert "is-delivery-option" in review_script

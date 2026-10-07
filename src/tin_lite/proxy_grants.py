@@ -19,7 +19,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-MAX_TTL_SECONDS = 3660
+# The longest procedure sandbox (procedures.MAX_SANDBOX_TIMEOUT_SECONDS, 7,200 s) plus 60 s.
+# The forward proxy host runs this file as its auth helper; reinstall it there too.
+MAX_TTL_SECONDS = 7260
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 
 
@@ -45,7 +47,7 @@ def proxy_grant(
 ) -> Iterator[str]:
     validate_proxy_url(proxy_url)
     if not 0 < ttl_seconds <= MAX_TTL_SECONDS:
-        raise ValueError("proxy grant lifetime must be between 1 and 3660 seconds")
+        raise ValueError(f"proxy grant lifetime must be between 1 and {MAX_TTL_SECONDS} seconds")
     token = secrets.token_urlsafe(32)
     digest = hashlib.sha256(token.encode()).hexdigest()
     path = directory / digest

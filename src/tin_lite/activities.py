@@ -16,6 +16,7 @@ from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from tin_lite import analytics_brief
 from tin_lite.answer_page import (
     AnswerPageDrafter,
     AnswerPageSource,
@@ -87,6 +88,7 @@ from tin_lite.memory import (
     MemoryGardener,
     MemorySource,
     extract_owned_section,
+    newest_sources,
     validate_memory_index,
 )
 from tin_lite.model_usage import model_usage_scope
@@ -103,10 +105,12 @@ from tin_lite.procedures import (
     load_pinned_codex_procedure,
     procedure_checkpoint_path,
     procedure_receipt_path,
+    settle_procedure_artifact,
     validate_procedure_artifact,
     validate_procedure_pull_request,
 )
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
+from tin_lite.redaction import scrub_secrets
 from tin_lite.rollouts import RolloutCapture
 from tin_lite.scan import ScanReporter, ScanSource, validate_scan_report
 from tin_lite.schedules import ScheduledWorkflowSkip, WorkflowSchedule, next_run_after
@@ -224,6 +228,18 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
     return _TRANSIENT_FAILURE_PATTERN.search(message) is not None
 
 
+def procedure_project_revision(run, procedure, content_source):
+    """The project revision a procedure's checkout pins, or None for the canonical head."""
+    if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS or (
+        procedure.review_revision_context or {}
+    ).get("project_revision"):
+        return run.expected_head_sha
+    if content_source is not None and content_source.get("assets"):
+        # A page's figures and embeds are read where they were approved.
+        return content_source["source_revision"]
+    return None
+
+
 class TinActivities:
     async def _run_accounted_procedure(self, *, conn, run, sandbox_id, run_input):
         if (
@@ -307,8 +323,9 @@ class TinActivities:
                 from tin_lite.code_schedules import pause_for_issue
 
                 await pause_for_issue(self, configured, configured.last_error)
-                return {}
-            raise RuntimeError("scheduled workflow is not active")
+            # Postgres decides what runs. A paused, mid-save or failed configuration can still
+            # receive an occurrence from the calendar Temporal holds; it starts nothing.
+            return {}
         workflow_definition = await self._db.get_workflow(configured.workflow_id)
         if workflow_definition is None:
             raise RuntimeError("scheduled workflow definition is unavailable")
@@ -352,6 +369,7 @@ class TinActivities:
                 start_idempotency_key=f"schedule:{payload['occurrence_id']}",
             )
         ):
+            from tin_lite import content_draft
             from tin_lite.code_schedules import pause_for_issue
             from tin_lite.content_draft_sources import (
                 ScheduledDraftHold,
@@ -366,6 +384,7 @@ class TinActivities:
                     integrations=self._integrations,
                     project_id=configured.project_id,
                     inputs=configured.inputs,
+                    kinds=content_draft.supported_kinds(workflow_definition.definition),
                 )
             except ScheduledDraftHold:
                 await self._db.advance_project_workflow_schedule(
@@ -603,7 +622,7 @@ class TinActivities:
                     design = design_api.procedure(creation["timeout_seconds"])
                     creation["context"] = (
                         (existing.result or {}).get("context") if existing else None
-                    ) or design.sandbox_context(inputs=run.input or {})
+                    ) or design.sandbox_context(inputs=run.input or {}, run_id=run.id)
                 await self._db.save_effect_progress(
                     conn, execution_key=execution_key, result=creation
                 )
@@ -1267,11 +1286,14 @@ class TinActivities:
                     await _refuse_repeated_model_request(
                         self._db, conn, run_id=run_id, step="memory", label="project memory"
                     )
+                    # The newest sources that fit one gardener call; the activity records how
+                    # many older ones were left for a later index.
+                    kept = newest_sources(sources) if sources else []
                     with external_usage_scope(self._db, conn, run_id, "memory"):
                         memory_index = await self._await_with_heartbeats(
                             reporter.garden(
                                 project_name=project.name,
-                                sources=sources,
+                                sources=kept,
                                 owned_section=owned_section,
                             ),
                             details={"stage": "memory_gardener"},
@@ -1288,7 +1310,11 @@ class TinActivities:
                 await self._db.add_activity(
                     run_id=run_id,
                     event_type="memory_gardened",
-                    details={"source_count": len(sources), "changed": changed},
+                    details={
+                        "source_count": len(kept),
+                        "dropped_source_count": len(sources) - len(kept),
+                        "changed": changed,
+                    },
                     dedupe_key=f"{execution_key}:memory_gardened",
                 )
                 await self._db.complete_effect(
@@ -1298,7 +1324,7 @@ class TinActivities:
                         "canonical_commit_sha": canonical_sha,
                         "artifact_path": MEMORY_INDEX_PATH,
                         "changed": changed,
-                        "source_run_ids": [str(source.run_id) for source in sources],
+                        "source_run_ids": [str(source.run_id) for source in kept],
                     },
                 )
             except BaseException as exc:
@@ -2062,7 +2088,11 @@ class TinActivities:
         )
         project = await self._require_project(run.project_id)
         await self._db.mark_run_running(run_id)
-        sources = await self._answer_page_sources(run_id=run_id, project=project)
+        sources = await self._answer_page_sources(
+            run_id=run_id,
+            project=project,
+            positioning=getattr(reporter, "reads_positioning", False),
+        )
         day = (run.created_at or datetime.now(UTC)).date().isoformat()
         draft = await self._await_with_heartbeats(
             self._answer_page_effect(
@@ -2244,12 +2274,16 @@ class TinActivities:
             evidence_path=evidence_path,
         )
         artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
+        from tin_lite.content_delivery import review_line
+
         return await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=committed.result.get("title") or page_title(content.decode("utf-8")),
+            # The decision card says what the page answers; Activity keeps the review notice.
+            explanation=review_line(content) or "",
         )
 
     @activity.defn(name="record_answer_page_approval")
@@ -2603,6 +2637,14 @@ class TinActivities:
         recipient = await self._db.get_email_campaign_recipient(recipient_id)
         if recipient is None:
             raise RuntimeError("email campaign recipient is unavailable")
+        if recipient["campaign_status"] == "stopped":
+            # The founder stopped the campaign: nothing more is started, and the recipient
+            # ends as it stands instead of failing.
+            await self._db.skip_outreach_delivery(
+                execution_key=f"{recipient['campaign_run_id']}:email:{recipient_id}:{stage}",
+                reason="campaign_stopped",
+            )
+            return
         if recipient["campaign_status"] not in {"approved", "running", "completed"}:
             raise RuntimeError("email campaign is not approved")
         campaign_input = recipient["campaign_input"]
@@ -2709,6 +2751,8 @@ class TinActivities:
         recipient = await self._db.get_email_campaign_recipient(UUID(recipient_id_text))
         if recipient is None:
             raise RuntimeError("email campaign recipient is unavailable")
+        if recipient["campaign_status"] == "stopped":
+            return 0
         campaign_input = recipient["campaign_input"]
         if not str(campaign_input.get("follow_up_body", "")).strip():
             return 0
@@ -2729,6 +2773,8 @@ class TinActivities:
     async def complete_email_campaign(self, run_id_text: str) -> None:
         run_id = UUID(run_id_text)
         campaign = await self._db.complete_email_campaign(run_id=run_id)
+        if campaign is None:
+            return  # Stopped: the run already says so, and nothing is projected as success.
         project = await self._require_project(campaign["project_id"])
         artifact_ref = (
             f"code.storage://{project.state_repo_id}@{campaign['review_commit_sha']}"
@@ -2778,10 +2824,14 @@ class TinActivities:
             return False
         from tin_lite import content_repository_delivery
 
-        if _definition.id == content_repository_delivery.WORKFLOW_ID:
+        if _definition.id in content_repository_delivery.ADAPTER_WORKFLOW_IDS:
             run = await self._require_run(run_id)
             if run.status not in {RunStatus.PENDING, RunStatus.RUNNING}:
                 return False
+            if content_repository_delivery.repairs_site(run):
+                return await self._prepare_website_repairs(run)
+            if content_repository_delivery.applies_plan(run):
+                return await self._apply_blog_index(run)
             await content_repository_delivery.saved_source(self._db, run_id)
             await self._db.mark_run_running(run_id)
             await self._db.project_run_progress(
@@ -2793,13 +2843,22 @@ class TinActivities:
                 summary="Approved article pinned. Waiting to adapt it to the website repository.",
             )
             return False
+        if procedure.output_validator == "content-refresh.v1":
+            return await self._prepare_content_refresh(run_id)
         if procedure.output_validator in content_draft.VALIDATORS:
             run = await self._require_run(run_id)
             if run.status.value not in {"pending", "running"}:
                 raise StaleGenerationError("The draft is no longer active")
+            from tin_lite.content_draft_sources import pinned_kinds
+
             context = await self._await_with_heartbeats(
-                ContentDraftSources(database=self._db, storage=self._storage).prepare(
-                    run, output_validator=procedure.output_validator
+                ContentDraftSources(
+                    database=self._db, storage=self._storage, integrations=self._integrations
+                ).prepare(
+                    run,
+                    output_validator=procedure.output_validator,
+                    positioning=content_draft.POSITIONING_MARKER in procedure.prompt,
+                    kinds=await pinned_kinds(self._storage, _definition, run),
                 ),
                 details={"stage": "content_draft_preparation"},
             )
@@ -2844,6 +2903,116 @@ class TinActivities:
                 summary="Preparing a bounded metadata-only change.",
             )
         return handled
+
+    async def _prepare_website_repairs(self, run) -> bool:
+        """A website.change run with the audit's changes: site-fix-v5's preparation of the
+        rows it pinned. True when nothing is left to change; it then reports and ends."""
+        from tin_lite import website_change_audit
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=0,
+            total=3,
+            step="verify_source",
+            summary="Checking the audit's changes on the live site and the repository.",
+        )
+        handled = await self._await_with_heartbeats(
+            website_change_audit.prepare(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "technical_verification"},
+        )
+        if not handled:
+            await self._db.project_run_progress(
+                run_id=run.id,
+                mode="steps",
+                current=1,
+                total=3,
+                step="prepare_patch",
+                summary="Preparing one pull request for the audit's changes.",
+            )
+        return handled
+
+    async def _apply_blog_index(self, run) -> bool:
+        """A website.change run with the blog index plan: no Codex session. Tin opens the pull
+        request with the plan's files, merges it under the mode rules, and reports."""
+        from tin_lite import website_change_blog_index
+
+        await self._db.mark_run_running(run.id)
+        await self._db.project_run_progress(
+            run_id=run.id,
+            mode="steps",
+            current=1,
+            total=2,
+            step="apply_blog_index",
+            summary="Opening a pull request with the blog index plan's files.",
+        )
+        return await self._await_with_heartbeats(
+            website_change_blog_index.apply(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+            ),
+            details={"stage": "website_change_blog_index"},
+        )
+
+    async def _prepare_content_refresh(self, run_id: UUID) -> bool:
+        """Pin the refresh's page and sources; with nothing due, report it and stop here."""
+        from tin_lite import content_refresh
+        from tin_lite.content_refresh_sources import ContentRefreshSources
+        from tin_lite.run_reports import publish_run_report
+
+        run = await self._require_run(run_id)
+        if run.status.value not in {"pending", "running"}:
+            raise StaleGenerationError("The refresh is no longer active")
+        context = await self._await_with_heartbeats(
+            ContentRefreshSources(
+                database=self._db, storage=self._storage, integrations=self._integrations
+            ).prepare(run),
+            details={"stage": "content_refresh_preparation"},
+        )
+        await self._db.mark_run_running(run_id)
+        if not context.get("page"):
+            report = "\n".join(
+                [
+                    "# No page refresh this week",
+                    "",
+                    context.get("nothing_due") or "No page is due for a refresh.",
+                    "",
+                    "## Results of earlier refreshes",
+                    "",
+                    context["results_markdown"],
+                    "",
+                ]
+            )
+            await publish_run_report(
+                database=self._db,
+                storage=self._storage,
+                run_id=run_id,
+                workflow_key=content_refresh.KEY,
+                prefix="content-refresh",
+                path=f"reports/content-refresh/{run_id}.md",
+                content=report.encode(),
+                summary="No page is due for a refresh.",
+            )
+            return True
+        await self._db.project_run_progress(
+            run_id=run_id,
+            mode="steps",
+            current=1,
+            total=3,
+            step="waiting_to_refresh",
+            summary=(
+                f"Ready to refresh {context['page']['path']}. Waiting for the writing worker."
+            )[:240],
+        )
+        return False
 
     @activity.defn(name="create_codex_procedure_sandbox")
     async def create_codex_procedure_sandbox(self, run_id_text: str) -> None:
@@ -2919,6 +3088,11 @@ class TinActivities:
                     expected_head_sha = procedure.brand_capture_context["project_revision"]
                 elif procedure.output_validator == "brand-design-capture.v1":
                     raise ValueError("Brand capture must pin its sources before compute")
+                if procedure.output_validator == "content-refresh.v1":
+                    if not (procedure.refresh_context or {}).get("page"):
+                        raise ValueError("Prepare the refresh's page before compute.")
+                    # The positioning and style files the refresh names, at that revision.
+                    expected_head_sha = procedure.refresh_context["project_revision"]
                 # New revision packets pin current reference files separately from
                 # the original article's brief/style/evidence. Legacy packets keep
                 # their existing checkout semantics.
@@ -3043,10 +3217,14 @@ class TinActivities:
 
             api_attempt = await self._db.get_effect(attempt_key(run_id), conn=conn)
 
-            repository_delivery = run.workflow_id == content_repository_delivery.WORKFLOW_ID
+            repository_delivery = content_repository_delivery.adapts(run)
+            # A website.change run with the audit's changes is a repair, not a page delivery.
+            technical_run = bool(procedure.repair_policy) or (
+                content_repository_delivery.repairs_site(run)
+            )
             if (
                 procedure.result_kind == PROJECT_ARTIFACT_RESULT
-                or procedure.repair_policy
+                or technical_run
                 or repository_delivery
             ):
                 if run.ephemeral_branch != f"procedures/{run.id}/{run.generation}":
@@ -3083,10 +3261,12 @@ class TinActivities:
             if recovered is not None:
                 diagram_validation = {}
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        recovered,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    recovered, recovered_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=recovered,
+                        revision=recovered_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3104,12 +3284,20 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(recovered, spec=procedure)
                     if repository_delivery:
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        content_repository_delivery.validate_copy(manifest, source)
+                        content_repository_delivery.validate_patch(manifest, source)
                 if procedure.identity.enabled:
                     await self._reject_identity_leak(run_id=run_id, content=recovered)
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=recovered
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, recovered_revision, recovered
+                    )
+                    if recovered_revision is not None
+                    and procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3117,6 +3305,7 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=None,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "summary": f"{workflow_definition.title} produced its result.",
                         "message": "The procedure result is ready.",
@@ -3125,7 +3314,7 @@ class TinActivities:
                         "sandbox_killed": False,
                         **(
                             {"ephemeral_commit_sha": recovered_revision}
-                            if procedure.repair_policy or repository_delivery
+                            if technical_run or repository_delivery
                             else {}
                         ),
                         **(
@@ -3139,6 +3328,7 @@ class TinActivities:
                                     companions=await self._procedure_companions(
                                         run, project, procedure, recovered_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if recovered_revision is not None
@@ -3215,7 +3405,7 @@ class TinActivities:
                 )
                 if public_host not in {"127.0.0.1", "localhost"} and proxy_url is None:
                     raise RuntimeError("TIN_LITE_PROXY_URL is required outside local development")
-                workspace_archive: bytes | None = None
+                workspace_archive: Any = None
                 workspace_evidence: bytes | None = None
                 workspace_context: dict[str, str | int] | None = None
                 run_tools_url: str | None = None
@@ -3326,18 +3516,19 @@ class TinActivities:
                         f"{self._settings.switchboard_public_url.rstrip('/')}"
                         "/internal/run-tools/mcp"
                     )
+                content_source = None
                 if procedure.result_kind == GITHUB_PULL_REQUEST_RESULT:
                     technical = None
                     expected_binding = None
                     from tin_lite import content_repository_delivery
 
-                    content_source = None
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         content_source = await content_repository_delivery.saved_source(
                             self._db, run_id
                         )
                         expected_binding = content_repository_delivery.binding_from(content_source)
-                    if procedure.repair_policy:
+                    website_repairs = content_repository_delivery.repairs_site(run)
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite.technical_fix_execution import binding_from, prepared_result
 
                         technical = await prepared_result(self._db, run_id)
@@ -3362,8 +3553,20 @@ class TinActivities:
                     }
                     if technical is not None:
                         workspace_context["technical_fix"] = technical
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        # The rows, publish mode and protected paths beside the plan.
+                        workspace_context["website_change"] = website_change_audit.workspace(
+                            await content_repository_delivery.saved_source(self._db, run_id)
+                        )
                     if content_source is not None:
-                        workspace_context["content_delivery"] = content_source
+                        # website.change reads its change row, route and protected paths too.
+                        workspace_context[
+                            "website_change"
+                            if run.workflow_id == content_repository_delivery.WEBSITE_CHANGE_ID
+                            else "content_delivery"
+                        ] = content_source
                 elif procedure.workspace_kind == GITHUB_REPOSITORY_WORKSPACE:
                     from tin_lite.procedure_repository import select_repository
 
@@ -3425,6 +3628,7 @@ class TinActivities:
                                 workspace=workspace_context,
                                 identity=identity_context,
                                 payment_card=payment_card,
+                                run_id=run.id,
                             ),
                             output_path=checkpoint_path,
                             output_max_bytes=procedure.output_max_bytes,
@@ -3435,15 +3639,8 @@ class TinActivities:
                             ),
                             # Card runs keep no agent narration, as they keep no rollouts.
                             progress_sink=None if payment_card else self._progress_sink(run_id),
-                            project_revision=(
-                                run.expected_head_sha
-                                if (
-                                    procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS
-                                    or (procedure.review_revision_context or {}).get(
-                                        "project_revision"
-                                    )
-                                )
-                                else None
+                            project_revision=procedure_project_revision(
+                                run, procedure, content_source
                             ),
                             result_kind=procedure.result_kind,
                             run_tools_url=run_tools_url,
@@ -3490,11 +3687,14 @@ class TinActivities:
                     )
                 )
                 diagram_validation = {}
+                checkpoint_revision = result.ephemeral_commit_sha
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        checkpoint,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    checkpoint, checkpoint_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=checkpoint,
+                        revision=checkpoint_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3519,14 +3719,21 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(checkpoint, spec=procedure)
                     from tin_lite import content_repository_delivery
 
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        content_repository_delivery.validate_copy(manifest, source)
+                        content_repository_delivery.validate_patch(manifest, source)
                 if procedure.identity.enabled:
                     await self._reject_identity_leak(run_id=run_id, content=checkpoint)
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=checkpoint
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, checkpoint_revision, checkpoint
+                    )
+                    if procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3534,21 +3741,23 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=sandbox_id,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "result_kind": procedure.result_kind,
-                        "ephemeral_commit_sha": result.ephemeral_commit_sha,
+                        "ephemeral_commit_sha": checkpoint_revision,
                         **diagram_validation,
                         **(
                             {
                                 "checkpoint": OutputCheckpoint.create(
                                     run=run,
-                                    revision=result.ephemeral_commit_sha,
+                                    revision=checkpoint_revision,
                                     path=checkpoint_path,
                                     media_type=procedure.output_media_type or "text/markdown",
                                     content=checkpoint,
                                     companions=await self._procedure_companions(
-                                        run, project, procedure, result.ephemeral_commit_sha
+                                        run, project, procedure, checkpoint_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if procedure.result_kind == PROJECT_ARTIFACT_RESULT
@@ -3694,8 +3903,11 @@ class TinActivities:
                     raise RuntimeError("procedure result has no checkpoint path")
                 from tin_lite import content_repository_delivery
 
-                immutable_checkpoint = bool(procedure.repair_policy) or (
-                    run.workflow_id == content_repository_delivery.WORKFLOW_ID
+                website_repairs = content_repository_delivery.repairs_site(run)
+                immutable_checkpoint = (
+                    bool(procedure.repair_policy)
+                    or website_repairs
+                    or content_repository_delivery.adapts(run)
                 )
                 checkpoint = (
                     b""
@@ -3725,11 +3937,11 @@ class TinActivities:
                     manifest = validate_procedure_pull_request(checkpoint, spec=procedure)
                     technical, expected_binding = None, None
                     copy_proof = None
-                    if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+                    if content_repository_delivery.adapts(run):
                         source = await content_repository_delivery.saved_source(self._db, run_id)
-                        copy_proof = content_repository_delivery.validate_copy(manifest, source)
+                        copy_proof = content_repository_delivery.validate_patch(manifest, source)
                         expected_binding = content_repository_delivery.binding_from(source)
-                    if procedure.repair_policy:
+                    if procedure.repair_policy or website_repairs:
                         from tin_lite import technical_fix
                         from tin_lite.technical_fix_execution import (
                             TechnicalFixExecution,
@@ -3770,10 +3982,30 @@ class TinActivities:
                             expected_base_sha=str(manifest["head_sha"]),
                             run_id=run_id,
                             **({"expected_binding": expected_binding} if expected_binding else {}),
-                            **({"allow_unrelated_base_advance": True} if copy_proof else {}),
+                            **(
+                                {
+                                    "allow_unrelated_base_advance": True,
+                                    # Only the page itself blocks: a sitemap or index that
+                                    # another open PR also edits is not the same change.
+                                    "blocking_paths": content_repository_delivery.blocking_paths(
+                                        copy_proof
+                                    ),
+                                }
+                                if copy_proof
+                                else {}
+                            ),
                         )
                     artifact_path = procedure_receipt_path(spec=procedure, run_id=run_id)
-                    if technical is not None:
+                    if website_repairs:
+                        from tin_lite import website_change_audit
+
+                        receipt = website_change_audit.report(
+                            technical,
+                            await content_repository_delivery.saved_source(self._db, run_id),
+                            reason="no_safe_patch" if no_change else None,
+                            pull_request=pull_request,
+                        )
+                    elif technical is not None:
                         receipt = technical_fix.report(
                             technical,
                             reason="no_safe_patch" if no_change else None,
@@ -3835,6 +4067,8 @@ class TinActivities:
                                 "outcome": "no_change" if no_change else "pull_request",
                                 "summary": "No safe patch proposed; finding remains unresolved."
                                 if no_change
+                                else "The pull request for the audit's changes is open."
+                                if website_repairs
                                 else "Verified title-only PR ready for review.",
                                 "message": receipt.decode(),
                             }
@@ -3874,7 +4108,11 @@ class TinActivities:
                     conn,
                     execution_key=execution_key,
                     error_message=(
-                        str(exc)
+                        # A brief that measured nothing fails with its own plain reason.
+                        exc.message
+                        if isinstance(exc, ApplicationError)
+                        and exc.type == analytics_brief.MEASURED_NOTHING
+                        else str(exc)
                         if isinstance(exc, ApplicationError)
                         and exc.type in {"OutputConflictError", "PublicationPendingError"}
                         else _safe_failure(exc)
@@ -3895,6 +4133,50 @@ class TinActivities:
             sandbox_id=run.sandbox_id,
         ):
             raise StaleGenerationError("procedure lease no longer owns the session")
+
+    async def _procedure_assets(self, run, project, procedure, revision, content):
+        """The article's figures and embeds: the files it refers to that Tin can keep.
+
+        A missing, oversized or unsafe file is left out with its reason; it never fails a run.
+        """
+        from tin_lite import page_assets
+
+        policy = procedure.output_assets
+        if policy is None or procedure.assets_folder is None:
+            return (), []
+        try:
+            article = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return (), []
+        kept, dropped, total = [], [], 0
+        for path in page_assets.referenced(article, procedure.output_path):
+            if len(kept) == policy.max_files:
+                dropped.append({"path": path, "reason": "the article refers to too many files"})
+                continue
+            try:
+                raw = await self._storage.read_procedure_checkpoint(
+                    repo_id=project.state_repo_id, revision=revision, path=path
+                )
+            except (ValueError, OutputConflictError):
+                dropped.append({"path": path, "reason": "the file is missing"})
+                continue
+            reason = page_assets.problem(path, raw)
+            if reason is None and total + len(raw) > policy.max_bytes:
+                reason = "the files together are larger than their limit"
+            if reason is not None:
+                dropped.append({"path": path, "reason": reason})
+                continue
+            total += len(raw)
+            kept.append(
+                OutputCheckpoint.create(
+                    run=run,
+                    revision=revision,
+                    path=path,
+                    media_type=page_assets.media_type(path),
+                    content=raw,
+                )
+            )
+        return tuple(kept), dropped
 
     async def _procedure_companions(self, run, project, procedure, revision):
         from tin_lite import content_draft
@@ -3931,8 +4213,6 @@ class TinActivities:
             )
         else:
             content_draft.validate_notes(raw, procedure.content_draft_context)
-        if procedure.review_revision_context is not None:
-            article_review.validate_changes(raw)
         return (
             OutputCheckpoint.create(
                 run=run,
@@ -4007,8 +4287,18 @@ class TinActivities:
             run, project, procedure, revision
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
+        if (
+            checkpoint.assets
+            != (await self._procedure_assets(run, project, procedure, revision, content))[0]
+        ):
+            raise ValueError("Saved assets differ from the article they belong to.")
         from tin_lite import content_draft
-        from tin_lite.content_editorial_judgment import LABELS, NO_DRAFT, validate_pair
+        from tin_lite.content_editorial_judgment import (
+            LABELS,
+            NO_DRAFT,
+            covering_page,
+            validate_pair,
+        )
 
         editorial = None
         if procedure.output_validator == content_draft.EDITORIAL_VALIDATOR:
@@ -4025,6 +4315,23 @@ class TinActivities:
                 or proof.get("themes") != ["light", "dark"]
             ):
                 raise ValueError("Diagram publication has no matching trusted visual check")
+        analytics = None
+        if procedure.output_validator == analytics_brief.VALIDATOR:
+            analytics = analytics_brief.read(content)
+            if analytics.measured_nothing:
+                # Keep the diagnostic readable on the run; a brief with no measurement is
+                # never published to Files and never reported as a success.
+                await self._db.retain_procedure_output(
+                    conn,
+                    run_id=run.id,
+                    checkpoint=checkpoint.to_dict(),
+                    reason="not_published",
+                )
+                raise ApplicationError(
+                    analytics_brief.failure(analytics),
+                    type=analytics_brief.MEASURED_NOTHING,
+                    non_retryable=True,
+                )
         await self._db.retain_procedure_output(
             conn,
             run_id=run.id,
@@ -4064,11 +4371,21 @@ class TinActivities:
                 if editorial:
                     result["content_editorial"] = editorial
                     if editorial["outcome"] in NO_DRAFT:
+                        # The page that already covers the brief, so the plan item and the
+                        # run both say where its reader is served today.
+                        covered = covering_page(
+                            editorial, procedure.content_draft_context.get("host")
+                        )
+                        if covered:
+                            result["covered_by"] = covered
                         result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}: "
-                            f"{procedure.content_draft_context['item']['title']}. "
+                            f"{LABELS[editorial['outcome']]}"
+                            + (f" by {covered}" if covered else "")
+                            + f": {procedure.content_draft_context['item']['title']}. "
                             "No article drafted."
                         )
+                if analytics is not None and analytics_brief.summary(analytics):
+                    result["summary"] = analytics_brief.summary(analytics)
                 if procedure.review_revision_context is not None:
                     from tin_lite.article_review import change_summary
 
@@ -4129,26 +4446,42 @@ class TinActivities:
         if path.casefold().endswith((".md", ".markdown")):
             # A document's own heading names it better than its file name, and its first
             # paragraph says what the reviewer is about to read.
-            from tin_lite.content_delivery import display_title, summary_line
+            from tin_lite.content_delivery import display_title, review_line
 
             raw = await self._storage.read_canonical_artifact(
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
-            artifact_title, lede = display_title(raw), summary_line(raw)
+            artifact_title, lede = display_title(raw), review_line(raw)
+            from tin_lite.page_assets import attachments_line
+
+            attachments = attachments_line(
+                canonical.result.get("checkpoint"), raw.decode("utf-8", errors="replace")
+            )
+        else:
+            attachments = None
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
             if delivery and delivery.get("approval_label")
             else ""
         )
+        summary = f"{workflow_definition.title} is ready for your review. {destination}".strip()
+        if str(run.workflow_id) == "00000000-0000-4000-8000-000000000031":
+            # An answer page or a page refresh says what its approval does.
+            from tin_lite import content_draft
+
+            prepared = await self._db.get_effect(content_draft.receipt_key(run_id))
+            kind = content_draft.context_kind(prepared.result if prepared else None)
+            if kind != content_draft.ARTICLE:
+                summary = content_draft.KIND_REVIEW[kind]
         required = await self._db.request_human_review(
             run_id=run_id,
             canonical_commit_sha=sha,
             artifact_ref=artifact_ref,
             artifact_path=path,
             artifact_title=artifact_title,
-            summary=f"{workflow_definition.title} is ready for your review. {destination}".strip(),
-            explanation=" ".join(part for part in (lede, destination) if part),
+            summary=summary,
+            explanation=" ".join(part for part in (lede, attachments, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress
@@ -4228,6 +4561,11 @@ class TinActivities:
                     applied = await self._db.get_effect(f"{run.id}:procedure_document_apply")
                     if not applied or applied.status != "completed":
                         raise RuntimeError("The approved project documents have not been applied")
+                    from tin_lite.capture_revisions import latest_revision
+
+                    # A pair the founder's agent revised finishes on the revision approved.
+                    if revised := await latest_revision(self._db, run.id):
+                        sha = revised["revision"]
                 artifact_ref = f"code.storage://{project.state_repo_id}@{sha}/{path}"
                 if path == MEMORY_INDEX_PATH:
                     # A section-owning procedure rewrote project memory; Luna and the memory
@@ -4313,10 +4651,30 @@ class TinActivities:
         from tin_lite.content_delivery import AdaptationRefused, ContentDelivery
 
         run = await self._require_run(UUID(run_id_text))
-        if run.workflow_id == content_repository_delivery.WORKFLOW_ID:
+        if content_repository_delivery.applies_plan(run):
+            # The blog index run merged or left its pull request while it applied the plan.
+            return
+        if content_repository_delivery.repairs_site(run):
+            if run.status == RunStatus.SUCCEEDED:
+                from tin_lite import website_change_audit
+
+                # Tin merges the audit's approved changes once the required checks pass,
+                # then checks the live site; anything else stays open for the founder.
+                await self._await_with_heartbeats(
+                    website_change_audit.publish(
+                        database=self._db,
+                        storage=self._storage,
+                        integrations=self._integrations,
+                        run=run,
+                    ),
+                    details={"stage": "website_change_merge"},
+                )
+            return
+        if content_repository_delivery.adapts(run):
             if run.status == RunStatus.SUCCEEDED:
                 # The procedure already opened its PR. When the page's approval asked to
-                # commit to main, Tin merges a page-only PR once GitHub calls it clean.
+                # commit to main, Tin merges a page-only PR once GitHub calls it clean; a
+                # website.change run merges a pre-approved change the same way.
                 await self._await_with_heartbeats(
                     content_repository_delivery.publish_after_pull_request(
                         database=self._db,
@@ -4959,7 +5317,9 @@ class TinActivities:
                     raise _interrupted_model_request(label) from exc
                 raise
 
-    async def _answer_page_sources(self, *, run_id: UUID, project) -> list[AnswerPageSource]:
+    async def _answer_page_sources(
+        self, *, run_id: UUID, project, positioning: bool = False
+    ) -> list[AnswerPageSource]:
         sources: list[AnswerPageSource] = []
         if project.memory_commit_sha is not None and project.memory_index_path is not None:
             content = await self._storage.read_canonical_artifact(
@@ -4982,10 +5342,12 @@ class TinActivities:
             project_id=project.id,
             exclude_run_id=run_id,
         )
+        # The organic audit asks the same kind of buyer questions, graded the same way, so
+        # the newest of either audit supplies the questions the page answers.
         visibility_runs = [
             source_run
             for source_run in source_runs
-            if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+            if source_run.executor in {VISIBILITY_AUDIT_WORKFLOW_NAME, "organic.audit"}
         ]
         selected_runs = (
             visibility_runs[-1:] if visibility_runs else ([] if sources else source_runs[-5:])
@@ -5016,13 +5378,40 @@ class TinActivities:
                     label=(
                         "latest AI visibility audit"
                         if source_run.executor == VISIBILITY_AUDIT_WORKFLOW_NAME
+                        else "latest organic audit, with its AI buyer questions"
+                        if source_run.executor == "organic.audit"
                         else source_run.executor
                     ),
                     artifact_ref=source_run.artifact_ref,
                     content=content.decode("utf-8"),
                 )
             )
+        if positioning:
+            sources.extend(await self._positioning_sources(project))
         return sources
+
+    async def _positioning_sources(self, project) -> list[AnswerPageSource]:
+        """The brand guide, founder notes and Start here plan at the project's head."""
+        from tin_lite.content_plan_sources import positioning_files
+
+        repo = await self._storage.get_repo(project.state_repo_id)
+        head = await self._storage.head_sha(repo, project.canonical_branch)
+        if head is None:
+            return []
+        files = await positioning_files(
+            storage=self._storage,
+            project=project,
+            revision=head,
+            include_memory=project.memory_index_path is None,
+        )
+        return [
+            AnswerPageSource(
+                label=f"project positioning: {item['path']}",
+                artifact_ref=f"code.storage://{project.state_repo_id}@{head}/{item['path']}",
+                content=item["content"],
+            )
+            for item in files
+        ]
 
     async def _visibility_effect(
         self,
@@ -5260,6 +5649,31 @@ class TinActivities:
             phone_number=getattr(self._settings, "test_phone_number", None),
         )
 
+    async def _settled_procedure_checkpoint(self, *, run, project, procedure, content, revision):
+        """The validated output Tin keeps, and the revision that holds it.
+
+        A section-owning procedure contributes only its own section; the rest of the index comes
+        from the pinned base. The sandbox's checkpoint holds Codex's whole file, so a changed
+        index is staged as its own ephemeral commit and the checkpoint, its hash, recovery and
+        publication all refer to the same bytes. Re-assembly is deterministic, so a recovery
+        stages nothing new.
+        """
+        base = await self._procedure_artifact_base(run=run, procedure=procedure)
+        settled = settle_procedure_artifact(content, spec=procedure, base=base)
+        validate_procedure_artifact(settled, spec=procedure, base=base)
+        if settled == content:
+            return content, revision
+        staged = await self._storage.stage_native_output(
+            repo_id=project.state_repo_id,
+            branch=project.canonical_branch,
+            run_id=str(run.id),
+            generation=run.generation,
+            path=procedure.output_path,
+            content=settled,
+            executor=CODEX_PROCEDURE_EXECUTOR,
+        )
+        return settled, staged
+
     async def _procedure_artifact_base(
         self, *, run: WorkflowRun, procedure: PinnedCodexProcedure
     ) -> bytes | None:
@@ -5364,6 +5778,13 @@ class TinActivities:
                 run.id
             )
             procedure = replace(procedure, brand_capture_context=prepared)
+        if procedure.output_validator == "content-refresh.v1":
+            from tin_lite.content_refresh_sources import ContentRefreshSources
+
+            prepared = await ContentRefreshSources(database=self._db, storage=self._storage).saved(
+                run.id
+            )
+            procedure = replace(procedure, refresh_context=prepared)
         if procedure.output_validator in BRANDED_DIAGRAM_VALIDATORS and run.expected_head_sha:
             from tin_lite.brand_diagrams import prepare
 
@@ -5422,23 +5843,6 @@ class TinActivities:
     def _require_active_lease(run) -> None:
         if not run.lease_active:
             raise StaleGenerationError("run generation does not own the active lease")
-
-
-_SECRET_IN_TEXT = re.compile(
-    r"(?i)(bearer\s+|(?:api[_-]?key|token|secret|password|authorization)=)[^\s&\"']+"
-    r"|\b(?:sk|rk|re|ghp|gho|ghu|pat|xoxb|xoxp)_[A-Za-z0-9_-]{8,}\b"
-    r"|eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"
-)
-
-
-def scrub_secrets(text: str) -> str:
-    """Mask credentials an exception text may carry (headers, query strings, key prefixes, JWTs)."""
-
-    def mask(match: re.Match[str]) -> str:
-        lead = match.group(1) or ""
-        return f"{lead}[redacted]"
-
-    return _SECRET_IN_TEXT.sub(mask, text)
 
 
 def _safe_failure(exc: BaseException) -> str:
