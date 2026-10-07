@@ -2471,6 +2471,10 @@ def create_mcp_app(
             normalized_name = _mcp_project_workflow_name(name)
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
             require_saveable_schedule(parsed_schedule)
+            if workflow.executor == "connections.collect":
+                from tin_lite.connection_collection_connection import default_inputs
+
+                inputs = await default_inputs(services.database, parsed_project_id, inputs or {})
             normalized_inputs = normalize_workflow_inputs(
                 schema=schema,
                 project_id=parsed_project_id,

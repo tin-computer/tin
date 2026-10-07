@@ -27,6 +27,7 @@ POLICY = {
     "max_page_records": 50,
     "max_batch_bytes": 200_000,
 }
+POLICY_V2 = {**POLICY, "version": 2, "waiting_seconds": 86400}
 MODES = ("local_only", "cloud_only", "cloud_preferred")
 TERMINAL = frozenset({"completed", "partial", "failed", "stopped"})
 LOCAL_BACKUP_REASONS = frozenset({"cloud_unavailable", "session_expired", "cloud_failed"})

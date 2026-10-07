@@ -9584,3 +9584,13 @@ html[data-theme="dark"] .tin-diagram svg[data-tin-brand] {
   --hot: var(--diagram-brand-dark-ink);
   --accent-deep: var(--diagram-brand-dark-accent);
 }
+
+/* LinkedIn setup uses the existing integration dialog. */
+.linkedin-setup { min-width: 0; }
+.linkedin-install-steps { padding-left: 1.4rem; line-height: 1.6; }
+.linkedin-install-steps li + li { margin-top: .75rem; }
+.linkedin-modes { border: 0; padding: 0; margin-top: 1.25rem; min-width: 0; }
+.linkedin-modes legend { font-weight: 600; margin-bottom: .75rem; }
+.linkedin-modes label { display: flex; gap: .65rem; align-items: center; padding: .55rem 0; }
+.linkedin-modes input { accent-color: var(--accent); }
+.linkedin-setup p { overflow-wrap: anywhere; }

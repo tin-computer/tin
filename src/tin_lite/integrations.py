@@ -395,6 +395,7 @@ def registered_integrations() -> tuple[IntegrationDefinition, ...]:
     return (
         IntegrationDefinition(
             key=LINKEDIN_PROVIDER,
+            setup_url="https://chromewebstore.google.com/detail/tin-computer-for-linkedin/eanmnipacaadfahphbcijncgpfkdcbec",
             name="LinkedIn",
             badge="in",
             description="Collect visible connections with the Tin extension.",

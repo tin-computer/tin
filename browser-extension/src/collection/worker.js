@@ -14,7 +14,8 @@ importScripts("collection/core.js");
   const actor = value => ({ key: value.key, name: value.name || "", profile_url: value.profile_url || null });
   const publicState = state => ({ connected: Boolean(state.bearer), project_id: state.project_id,
     status: state.status || "not_connected", reason: state.reason || "", run_id: state.job?.run_id,
-    friend_index: state.job?.friend_index, page: state.job?.next_page, actor: state.actor?.name || "" });
+    friend_index: state.job?.friend_index, page: state.job?.next_page, actor: state.actor?.name || "",
+    permission: state.connection?.permission || null, session_available: state.connection?.session_available === true });
   async function api(state, path, payload) {
     if (!origins.has(state.base)) throw Error("untrusted_origin");
     const response = await fetch(state.base + path, {
@@ -82,7 +83,82 @@ importScripts("collection/core.js");
     try { await globalThis.TinLinkedInRetireLegacy(); } catch { throw Error("legacy_retirement_pending"); }
     state.status="ready";delete state.pairing;await save(state);
     await chrome.alarms.create(ALARM, { periodInMinutes: 0.5 });
+    schedule();
     return publicState(state);
+  }
+  async function discover() {
+    let account = null, reason = "";
+    try { const tab = await linkedInTab(); account = actor(await pageCall(tab.id, "account")); }
+    catch (error) { reason = error.message; }
+    const state = await load();
+    let projectId = null;
+    if (state.bearer) {
+      try { await connection(state); projectId = state.project_id; } catch { /* Re-pair an expired device. */ }
+    }
+    return { version: chrome.runtime.getManifest().version, protocol: 4, account, reason, project_id:projectId,
+      cloud_available: state.connection?.cloud_available === true, session_available:state.connection?.session_available === true };
+  }
+  async function connection(state) {
+    state.connection = await api(state, `${route(state)}/status`);
+    await save(state);
+    return state.connection;
+  }
+  async function capture(state, accountTab) {
+    const contextKey = "tin.linkedin.collection.context.v3";
+    let observed = (await chrome.storage.local.get(contextKey))[contextKey];
+    if (!observed || observed.tab_id !== accountTab.id || Date.now() - observed.at > 120000) {
+      const after = Date.now();
+      await chrome.tabs.reload(accountTab.id);
+      const until = Date.now() + 12000;
+      do {
+        await new Promise(resolve => setTimeout(resolve, 300));
+        observed = (await chrome.storage.local.get(contextKey))[contextKey];
+        if (observed?.tab_id === accountTab.id && observed.at >= after) break;
+      } while (Date.now() < until);
+      if (!observed || observed.tab_id !== accountTab.id || observed.at < after) throw Error("refresh_linkedin_context");
+    }
+    const allow = new Set(["li_at", "JSESSIONID", "bcookie", "bscookie", "lidc", "lang"]);
+    const cookies = async () => (await chrome.cookies.getAll({domain:"linkedin.com"}))
+      .filter(c => allow.has(c.name)).map(c => ({name:c.name,value:c.value,domain:c.domain,path:c.path,
+        secure:c.secure,http_only:c.httpOnly,same_site:c.sameSite,...(c.expirationDate?{expiration_date:c.expirationDate}:{})}))
+      .sort((a,b) => `${a.name}:${a.domain}:${a.path}`.localeCompare(`${b.name}:${b.domain}:${b.path}`));
+    const first = await cookies();
+    if ((await pageCall(accountTab.id, "account")).key !== state.actor.key) throw Error("account_changed");
+    if (JSON.stringify(first) !== JSON.stringify(await cookies())) throw Error("session_changed_during_capture");
+    return {cookies:first,user_agent:navigator.userAgent,browser_context:observed.context};
+  }
+  async function refreshSession(state) {
+    const current = state.connection || await connection(state);
+    if (!current.permission?.version || current.permission.mode === "local_only" || !current.cloud_available) return;
+    if (state.refresh_after && Date.now() < state.refresh_after) return;
+    const untilExpiry = Date.parse(current.session_expires_at || "") - Date.now();
+    if (current.session_available && untilExpiry > 86400000) return;
+    const accountTab = await linkedInTab();
+    if ((await pageCall(accountTab.id, "account")).key !== state.actor.key) throw Error("account_changed");
+    let query = (await chrome.storage.local.get("tin.linkedin.collection.search"))["tin.linkedin.collection.search"];
+    const context = (await chrome.storage.local.get("tin.linkedin.collection.context.v3"))["tin.linkedin.collection.context.v3"];
+    let preparedTab;
+    try {
+      // Setup prepares the supported search contract once, with no friend hardcoded.
+      if (!query?.client_version || query.client_version !== context?.context?.li_track?.clientVersion || Date.now() - query.at > 86400000) {
+        preparedTab = await chrome.tabs.create({url:'https://www.linkedin.com/search/results/people/?network=%5B%22S%22%5D',active:false});
+        const deadline = Date.now() + 15000;
+        do {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          query = (await chrome.storage.local.get("tin.linkedin.collection.search"))["tin.linkedin.collection.search"];
+          if (query?.tab_id === preparedTab.id) break;
+        } while (Date.now() < deadline);
+        if (query?.tab_id !== preparedTab.id) throw Error("refresh_linkedin_context");
+      }
+      const session = await capture(state, preparedTab || accountTab);
+      if (query.client_version !== session.browser_context.li_track.clientVersion) throw Error("refresh_linkedin_context");
+      state.connection = await api(state, `${route(state)}/session`, {actor_key:state.actor.key,
+        session, query_id:query.id, expected_generation:current.session_generation || null});
+      state.reason = "";
+      await save(state);
+    } finally {
+      if (preparedTab) await chrome.tabs.remove(preparedTab.id).catch(() => {});
+    }
   }
   async function begin(consent = false) {
     let state = await load();
@@ -90,40 +166,23 @@ importScripts("collection/core.js");
     const pending = await api(state, `${route(state)}/pending`);
     if (!pending) { state.status = "ready"; state.reason = "no_pending_collection"; await save(state); return publicState(state); }
 
+    if (pending.state === "cloud_ready" || (pending.execution_mode === "cloud" && pending.state === "collecting")) {
+      state.job = pending; state.status = "cloud_running"; await save(state); return publicState(state);
+    }
     const accountTab = await linkedInTab();
     const identity = actor(await pageCall(accountTab.id, "account"));
     if (identity.key !== state.actor.key || identity.key !== pending.actor.key) throw Error("account_changed");
     state.job = pending;
-    if (pending.state === "paused") await command(state, "resume", { actor_key: identity.key });
-    if (pending.cloud_transport === "http_v1" && pending.execution_mode !== "cloud" && pending.state !== "handoff_pending" && !consent) throw Error("cloud_transfer_consent_required");
+    if (pending.state === "paused") { await command(state, "resume", { actor_key: identity.key }); return begin(consent); }
+    if (["http_v1","http_v2"].includes(pending.cloud_transport) && pending.execution_mode !== "cloud" && pending.state !== "handoff_pending" && !consent && !state.connection?.permission?.version) throw Error("cloud_transfer_consent_required");
     const claim = await command(state, "claim", { actor_key: identity.key });
-    const tab = await chrome.tabs.create({ url: "about:blank", active: true });
+    const tab = await chrome.tabs.create({ url: "about:blank", active: false });
     state = { ...state, job: claim, lease: claim.lease, tab_id: tab.id, status: "collecting", phase: "opening_profile", reason: "" };
     delete state.job.lease;
     await save(state);
     if (claim.cloud_transport === "http_v1") {
-      // Use a fresh observation from the same source tab, then verify a coherent capture.
-      const contextKey="tin.linkedin.collection.context.v3";
-      let observed=(await chrome.storage.local.get(contextKey))[contextKey];
-      if (!observed || observed.tab_id!==accountTab.id || Date.now()-observed.at>120000) {
-        const after=Date.now();
-        await chrome.tabs.reload(accountTab.id);
-        const until=Date.now()+12000;
-        do {
-          await new Promise(resolve=>setTimeout(resolve,300));
-          observed=(await chrome.storage.local.get(contextKey))[contextKey];
-          if(observed?.tab_id===accountTab.id && observed.at>=after) break;
-        } while(Date.now()<until);
-        if(!observed || observed.tab_id!==accountTab.id || observed.at<after) throw Error("refresh_linkedin_context");
-      }
-      const allow=new Set(["li_at","JSESSIONID","bcookie","bscookie","lidc","lang"]);
-      const capture=async()=>(await chrome.cookies.getAll({domain:"linkedin.com"})).filter(c=>allow.has(c.name)).map(c=>({name:c.name,value:c.value,domain:c.domain,path:c.path,secure:c.secure,http_only:c.httpOnly,same_site:c.sameSite,...(c.expirationDate?{expiration_date:c.expirationDate}:{})})).sort((a,b)=>`${a.name}:${a.domain}:${a.path}`.localeCompare(`${b.name}:${b.domain}:${b.path}`));
-      const cookies=await capture();
-      const current=await pageCall(accountTab.id,"account");
-      if(current.key!==identity.key) throw Error("account_changed");
-      if(JSON.stringify(cookies)!==JSON.stringify(await capture())) throw Error("session_changed_during_capture");
-      const browser_context=observed.context;
-      await command(state,"session",{ ...fence(state),session:{ cookies,user_agent:navigator.userAgent,browser_context } });
+      const session = await capture(state, accountTab);
+      await command(state,"session",{ ...fence(state),session });
     }
     schedule(); return publicState(state);
   }
@@ -144,6 +203,9 @@ importScripts("collection/core.js");
       if (state.status === "cloud_running") {
         const pending = await api(state, `${route(state)}/pending`);
         if (pending?.state === "handoff_pending") { await begin(); return; }
+        if (pending?.state === "waiting_browser") {
+          state.status = "ready";state.job = pending;await save(state);schedule();return;
+        }
         if (!pending) state.status = "finished";
         else {
           state.job = pending;
@@ -152,7 +214,38 @@ importScripts("collection/core.js");
         await save(state);
         return;
       }
-      if (state.status !== "collecting") return;
+      if (state.status !== "collecting") {
+        if (!state.bearer || state.status === "migration_pending") return;
+        await connection(state);
+        if (!state.connection.permission?.version) return;
+        const pending = await api(state, `${route(state)}/pending`);
+        if (pending?.state === "paused") {
+          state.job = pending; state.status = "paused"; state.reason = pending.reason;
+          if (state.refresh_requested) {
+            delete state.refresh_requested; await save(state);
+            await refreshSession(state);
+            if (["session_expired","cloud_permission_required"].includes(pending.reason) && state.connection.session_available) {
+              await command(state,"resume",{actor_key:state.actor.key});state.status="ready";schedule();
+            }
+          }
+          await save(state); return;
+        }
+        if (pending?.state === "cloud_ready" || (pending?.execution_mode === "cloud" && pending.state === "collecting")) {
+          state.job = pending; state.status = "cloud_running"; await save(state); return;
+        }
+        delete state.refresh_requested;
+        // Never refresh a session while this worker owns a collection attempt.
+        try { await refreshSession(state); }
+        catch (error) {
+          if (error.message === "account_changed") throw error;
+          state.reason = error.message; state.refresh_after = Date.now() + 300000; await save(state);
+        }
+        if (pending && pending.run_id !== state.stopped_run_id) {
+          if (pending.cloud_transport === "http_v2" && state.connection.session_available && pending.reason !== "browser_preparation_required" && pending.state === "waiting_browser") { schedule(); return; }
+          await begin();
+        }
+        return;
+      }
       if (state.pendingSource) {
         state.job = await command(state,"source",state.pendingSource);
         delete state.pendingSource;
@@ -209,7 +302,7 @@ importScripts("collection/core.js");
       if (snapshot.page !== state.job.next_page) throw Error("page_changed");
       if (!["next", "end"].includes(snapshot.next)) throw Error("unsupported_pagination");
       if (snapshot.records.some(p => p.degree !== "2nd")) throw Error("filters_changed");
-      if (state.job.cloud_transport === "http_v1") {
+      if (["http_v1", "http_v2"].includes(state.job.cloud_transport)) {
         // Only the observed query identifier is retained, never the request headers/URL.
         const queryKey = `tin.linkedin.collection.query.${state.tab_id}`;
         const queryId = (await chrome.storage.local.get(queryKey))[queryKey];
@@ -236,9 +329,11 @@ importScripts("collection/core.js");
   }
   async function handle(message, sender) {
     await ready;
-    if (message.type === "PAIR") {
+    if (["PAIR", "DISCOVER", "WAKE"].includes(message.type)) {
       const origin = sender.url ? new URL(sender.url).origin : "";
       if (!sender.tab || !origins.has(origin) || message.base !== origin) throw Error("untrusted_origin");
+      if (message.type === "DISCOVER") return discover();
+      if (message.type === "WAKE") { const state = await load();delete state.refresh_after;state.refresh_requested=true;await save(state);schedule();return publicState(state); }
       return pair(origin, message.grant);
     }
     if (sender.url !== chrome.runtime.getURL("popup/collection.html")) throw Error("untrusted_sender");
@@ -248,7 +343,7 @@ importScripts("collection/core.js");
     if (message.type === "STOP") {
       const state = await load();
       if (state.job) await command(state, "stop", {});
-      state.status = "stopped"; await save(state); return publicState(state);
+      state.status = "stopped"; state.stopped_run_id = state.job?.run_id; await save(state); return publicState(state);
     }
     throw Error("invalid_operation");
   }
@@ -269,7 +364,8 @@ importScripts("collection/core.js");
     let query;
     try { const url = new URL(details.url); query = url.searchParams.get("queryId"); } catch { return; }
     if (!/^voyagerSearchDashClusters\.[a-f0-9]{20,64}$/.test(query || "")) return;
-    void chrome.storage.local.set({ [`tin.linkedin.collection.query.${details.tabId}`]: query });
+    void chrome.storage.local.set({ [`tin.linkedin.collection.query.${details.tabId}`]: query,
+      ...(context ? {"tin.linkedin.collection.search": {id:query,at:Date.now(),tab_id:details.tabId,client_version:context.li_track.clientVersion}} : {}) });
   }, { urls:["https://www.linkedin.com/voyager/api/*"] }, ["requestHeaders","extraHeaders"]);
   chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === ALARM) void serialize(tick); });
   chrome.runtime.onStartup.addListener(() => void serialize(tick));

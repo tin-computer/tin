@@ -10,7 +10,7 @@ import base64
 import json
 import re
 import secrets
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 import httpx
 
@@ -298,6 +298,73 @@ def search_page(payload, page):
         raise CollectionError("unsupported_search_contract") from None
 
 
+def resolved_source(payload, source, keywords):
+    """Use only the selected profile and its explicitly linked relationship evidence."""
+    from urllib.parse import urlencode
+
+    expected = profile_url(source["friend_url"])
+    rows, stack = [], [(payload, 0)]
+    while stack:
+        value, depth = stack.pop()
+        if depth > 12 or len(rows) > 2000:
+            raise CollectionError("browser_preparation_required")
+        if isinstance(value, dict):
+            rows.append(value)
+            stack.extend(
+                (item, depth + 1) for item in value.values() if isinstance(item, (dict, list))
+            )
+        elif isinstance(value, list):
+            stack.extend((item, depth + 1) for item in value if isinstance(item, (dict, list)))
+    profiles = {}
+    for row in rows:
+        identifier, urn = row.get("publicIdentifier"), row.get("entityUrn", "")
+        if (
+            isinstance(identifier, str)
+            and isinstance(urn, str)
+            and re.fullmatch(r"urn:li:fsd_profile:[A-Za-z0-9_-]{1,256}", urn)
+        ):
+            if (
+                profile_url("https://www.linkedin.com/in/" + quote(identifier, safe="-._~"))
+                == expected
+            ):
+                profiles[urn] = row
+    if len(profiles) != 1:
+        raise CollectionError("browser_preparation_required")
+    urn, profile = next(iter(profiles.items()))
+    relationship = profile.get("memberRelationship")
+    if not isinstance(relationship, dict):
+        ref = profile.get("*memberRelationship")
+        matches = [row for row in rows if ref and row.get("entityUrn") == ref]
+        relationship = matches[0] if len(matches) == 1 else {}
+    distance = relationship.get("distance", relationship.get("memberDistance"))
+    if distance not in {"DISTANCE_1", "DISTANCE_2", "DISTANCE_3", "OUT_OF_NETWORK"}:
+        raise CollectionError("browser_preparation_required")
+    if distance != "DISTANCE_1":
+        raise CollectionError("friend_not_connected")
+    name = " ".join(
+        value
+        for value in (profile.get("firstName", ""), profile.get("lastName", ""))
+        if isinstance(value, str)
+    ).strip()
+    result = CollectionSource(
+        friend_url=expected,
+        friend_name=name[:200],
+        actor=source["actor"],
+        first_degree=True,
+        collection_url="https://www.linkedin.com/search/results/people/?"
+        + urlencode(
+            {
+                "connectionOf": json.dumps([urn.rsplit(":", 1)[1]]),
+                "network": '["S"]',
+                "keywords": keywords,
+            }
+        ),
+        query_id=source["query_id"],
+    )
+    result.scope(keywords=keywords)
+    return result.model_dump()
+
+
 async def read_page(session, source, keywords, page, *, client=None):
     own = client is None
     client = client or httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False)
@@ -340,9 +407,27 @@ async def read_page(session, source, keywords, page, *, client=None):
     try:
         if not identity_matches(await get("/voyager/api/me"), source["actor"]):
             raise CollectionError("account_changed")
-        return search_page(
+        resolved = None
+        if "collection_url" not in source:
+            if not source.get("query_id"):
+                raise CollectionError("browser_preparation_required")
+            friend = profile_url(source["friend_url"])
+            identifier = unquote(friend.rsplit("/", 1)[1])
+            resolved = resolved_source(
+                await get(
+                    "/voyager/api/identity/dash/profiles",
+                    {"q": "memberIdentity", "memberIdentity": identifier},
+                ),
+                source,
+                keywords,
+            )
+            source = resolved
+        result = search_page(
             await get("/voyager/api/graphql", search_request(source, keywords, page)), page
         )
+        if resolved is not None:
+            result["source"] = resolved
+        return result
     finally:
         if own:
             await client.aclose()

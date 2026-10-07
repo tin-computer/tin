@@ -36,16 +36,19 @@ async def setup_user(request: Request):
 USER = Depends(setup_user)
 
 
-async def body(request):
+async def body(request, *, optional=False):
     # FastAPI's ordinary validation details echo bad inputs. This write-only endpoint
     # parses explicitly and emits fixed diagnostics, never a secret-bearing input.
-    if request.headers.get("content-type", "").split(";")[0] != "application/json":
+    content_type = request.headers.get("content-type", "").split(";")[0]
+    if content_type != "application/json" and not (optional and not content_type):
         raise HTTPException(status_code=415, detail="JSON required")
     raw = bytearray()
     async for chunk in request.stream():
         raw.extend(chunk)
         if len(raw) > 300_000:
             raise HTTPException(status_code=413, detail="selected import is too large")
+    if not raw and optional:
+        return None
     try:
         value = json.loads(raw)
         if not isinstance(value, dict):

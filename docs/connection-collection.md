@@ -15,27 +15,40 @@ These lists default to empty. An integration appears only on an enabled project.
 Membership and the allowlist are checked again on every device operation and publication.
 The account owner who paired the extension must start the collection.
 
-Load `browser-extension/` in development, then connect LinkedIn from the project's
-Integrations page with LinkedIn open in that Chrome profile. The page grants a five-minute,
-one-use pairing token. The worker creates its device bearer and sends only its hash during
-pairing. Bearers expire after 30 days and require current project membership. Reconnecting
-invalidates the older device. Migration confirms retirement of this browser’s legacy Tin
-device through its existing endpoint before allowing collection. An uncertain response keeps
-the legacy credential for reconciliation. It does not sign out of LinkedIn or change browser cookies.
+## Connect once, then run from Tin
 
-Start the workflow through the existing dashboard or MCP run API.
-Enter full LinkedIn profile URLs for the friends, separated by commas in the dashboard.
-Names alone are not supported. Cloud choices remain visible; the form reports whether
-cloud execution is available on the deployment. When it is unavailable, `cloud_preferred`
-starts with the local extension and explains that choice in run progress; `cloud_only`
-cannot start. The saved policy stays unchanged.
-Click **Continue collection** in the extension. It opens a collection tab, validates the
-selected account and friend, applies the second-degree and keyword filters, and collects
-one page at a time. Chrome must remain open and awake. The popup can close.
+On an enabled project, choose **Integrations → LinkedIn → Connect**. The setup screen gives
+three steps: install Tin for Chrome, sign in to LinkedIn in the same Chrome profile, and
+return to Tin. It detects the extension version and account before enabling confirmation.
+Users choose **Cloud with browser backup**, **Cloud only**, or **This browser only** once.
+New workflow setup uses that choice as its default; existing saved workflows keep their mode.
 
-![Extension collection controls with a synthetic account](images/connection-extension.png)
+![First-time installation with synthetic content](images/linkedin-install.png)
 
-The preview uses synthetic account and run state.
+![Confirm the account and collection choice](images/linkedin-setup.png)
+
+The published extension must be updated to 0.4.0 for this screen. See the extension's
+[installation guide](../browser-extension/README.md) and [store release](../browser-extension/STORE_RELEASE.md).
+The setup page gives its five-minute, one-use pairing token an expected account and the
+user's selected mode. The extension creates a device bearer locally and sends its hash.
+The service records continuing permission only from this authenticated confirmation.
+Earlier single-run transfers do not imply continuing permission.
+
+Device bearers expire after 30 days and require current project membership. Reconnecting
+invalidates the older device. Migration confirms retirement of this browser's legacy Tin
+device through its existing endpoint before allowing collection. It does not sign out of
+LinkedIn or change browser cookies. Settings can change collection permission for the same
+account; selecting another account requires explicit pairing again.
+
+Start the workflow through the dashboard or MCP run API. Enter full LinkedIn profile URLs,
+separated by commas in the dashboard; names alone are not supported. Click **Manual run**.
+The extension automatically claims queued work and refreshes cloud access as needed. The
+popup can close; routine runs do not require a second click or a repeated permission prompt.
+Local collection opens an inactive collection tab and needs Chrome open and awake.
+
+Cloud choices remain visible when compute is unavailable. A cloud-preferred run can use
+Chrome if the connection permits browser backup. A cloud-only connection pauses instead of
+silently widening that permission. Pauses name the action needed in run progress.
 
 Keywords narrow LinkedIn's search within each selected friend's connections. For example,
 enter `founder` to target that term, or leave the field blank for no keyword filter.
@@ -45,9 +58,11 @@ The second-degree filter applies either way.
 
 ## Resume and limits
 
-Each run pins its inputs and policy. Version 1 allows three friends, 20 pages and 200 people
-per friend, 15 minutes per friend and 45 minutes overall. A closed browser does not reset
-these limits. An account lease prevents two active runs by the same Tin account owner from
+Each run pins its inputs and policy. Version 2 allows up to 24 hours waiting for Chrome
+before the first collection attempt. The active budget starts once: three friends, 20 pages
+and 200 people per friend, 15 minutes per friend and 45 minutes overall. Closing Chrome or
+resuming does not reset these limits. Earlier version-1 definitions keep their original
+45-minute deadline including waiting. An account lease prevents two active runs by the same Tin account owner from
 collecting that observed account across projects. This is an observed account binding,
 not proof of ownership of another person's LinkedIn account.
 
@@ -70,10 +85,27 @@ project lock, expected HEAD and the shared lost-response reconciliation helper.
 The source includes a dedicated read-only HTTP adapter. It reproduces the published
 extension's cookie allowlist, user agent, language and LinkedIn request context. It does not
 launch a browser, run website JavaScript, follow authentication redirects, write cookies back,
-or call a logout endpoint. The extension uploads this material only after the account owner
-checks the cloud-transfer option for a cloud run. Tin encrypts it using the existing
-integration cipher, binds it to that run and deletes the encrypted material after finalization.
-It never enters chat, MCP, Temporal history or project files.
+or call a logout endpoint. The extension uploads this material after the user enables cloud collection during setup.
+Tin encrypts it with the existing integration cipher and binds it to the project, account,
+permission and paired device. Retention is at most seven days, capped by the login-cookie
+and device expiry; a session cookie without a declared expiry is kept for at most one day.
+The extension refreshes access within a day of expiry while Chrome is open. Raw credentials
+never enter chat, MCP, Temporal history or project files.
+
+A run pins the credential generation it uses. Disposable compute cleanup does not delete
+continuing permission or a reusable session. Expired sessions, revoked devices and lost
+membership are purged independently of workflow runs. Switching to browser-only clears the
+session immediately and fences active cloud uploads; disconnecting uses the existing
+integration revocation path. Old single-run transfers remain run-bound and are deleted on
+finalization. An account change or LinkedIn challenge requires attention, not an automatic
+cloud/local retry.
+
+During setup the extension observes a supported search query and matching client context.
+With a valid session, cloud execution resolves each newly selected friend using a fixed
+read-only request, requiring exact profile identity and linked first-degree evidence.
+Unsupported evidence waits for Chrome to prepare that friend, preserving the same checkpoint.
+This provider response shape is fixture-tested; live qualification is still required. No
+cloud browser login screen is part of setup.
 
 Cloud execution uses the existing `E2B_API_KEY` with a dedicated
 `TIN_LITE_LINKEDIN_TEMPLATE`, `TIN_LITE_LINKEDIN_CLOUD_ENABLED=true` and the integration
@@ -86,7 +118,7 @@ that live acceptance has passed.
 Build only the collection image from the repository root:
 
 ```sh
-python sandbox/linkedin/template.py --alias tin-linkedin-http-v1
+python sandbox/linkedin/template.py --alias tin-linkedin-http-v2
 ```
 
 The script accepts the existing E2B key and refuses ordinary Tin image aliases. Its
@@ -105,16 +137,13 @@ selected browser view, never from an arbitrary user-supplied request URL.
 
 Execution policies are pinned for the run:
 
-- `local_only`: Chrome performs the collection.
-- `cloud_only`: the extension resolves the selected friends and transfers context; cloud
-  failures stop or pause the run.
-- `cloud_preferred`: if cloud is unavailable when the job is prepared, start in Chrome
-  without transferring session data or creating cloud compute. This route stays pinned
-  across preparation retries, even if cloud becomes available later. When cloud is
-  available, after the same preparation, a recoverable cloud failure can continue
-  in Chrome with the accepted pages, filters and cumulative limits intact. Cleanup must
-  be confirmed first. The extension resumes automatically if it is awake with the correct
-  account; otherwise it waits for **Continue collection**.
+- `local_only`: Chrome performs the collection automatically when available.
+- `cloud_only`: use the saved session; wait for Chrome if session refresh or friend
+  preparation is needed. Results are collected in cloud compute; cloud failures pause.
+- `cloud_preferred`: use the saved session. When the runtime is unavailable or a recoverable
+  cloud failure occurs, continue in Chrome if the saved permission allows browser backup.
+  Accepted pages, filters and cumulative limits are preserved. Cleanup must be confirmed
+  first. The extension resumes automatically when awake with the correct account.
 
 Challenges, rate limits, account changes and access denials pause rather than trigger a
 handoff. Uncertain cleanup also pauses. No cloud retry silently creates another paid attempt.
@@ -132,8 +161,9 @@ installing this source.
 Use a disposable database for SQL contracts, never a configured customer database:
 
 ```sh
-TIN_LITE_TEST_DATABASE_DSN=postgresql://... uv run pytest tests/test_connection_collection.py
+TIN_LITE_TEST_DATABASE_DSN=postgresql://... uv run pytest tests/test_connection_collection.py tests/test_connection_collection_setup.py tests/test_connection_collection_lifecycle.py
 npm ci
+node --test web/linkedin-setup.browser.test.js
 npm test --prefix browser-extension
 npm run test:collection --prefix browser-extension
 ```

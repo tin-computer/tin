@@ -151,6 +151,7 @@ class CollectionActivities:
     @activity.defn(name="collection_poll")
     async def poll(self, run_id: str) -> bool:
         run = await self.run(run_id)
+        await self.store.activate_cloud(run.id)
         pending = await self.db.pool.fetchrow(
             "SELECT * FROM connection_collection_jobs WHERE run_id=$1", run.id
         )
@@ -165,7 +166,9 @@ class CollectionActivities:
             if job["deadline"] <= datetime.now(UTC) and job["state"] not in TERMINAL:
                 row = await conn.fetchrow(
                     """UPDATE connection_collection_jobs SET state='partial',
-                    reason='time_limit',generation=generation+1,lease_hash=NULL,lease_expires_at=NULL
+                    reason=CASE WHEN waiting_deadline IS NOT NULL AND collection_started_at IS NULL
+                    THEN 'browser_wait_expired' ELSE 'time_limit' END,
+                    generation=generation+1,lease_hash=NULL,lease_expires_at=NULL
                     WHERE run_id=$1 RETURNING *""",
                     run.id,
                 )
@@ -176,15 +179,26 @@ class CollectionActivities:
                 "SELECT count(*) FROM connection_collection_pages WHERE run_id=$1", run.id
             )
         summary = {
-            "waiting_browser": "Open the Tin extension to begin collection.",
-            "paused": "Collection paused. Check the extension before continuing.",
-            "handoff_pending": "Cloud collection stopped. Continue in the Tin extension.",
+            "waiting_browser": "Waiting for your browser. Open Chrome with LinkedIn signed in.",
+            "paused": "Collection paused. Check LinkedIn in Integrations.",
+            "handoff_pending": "Waiting to continue in Chrome. Your saved pages are kept.",
         }.get(job["state"], f"Collecting connections. {count} pages saved.")
         if job["state"] == "waiting_browser" and job["reason"] == "cloud_unavailable":
             summary = (
-                "Cloud collection is unavailable. Open the Tin extension to collect in Chrome; "
+                "Cloud collection is unavailable. Tin will collect in Chrome; "
                 "keep Chrome open and awake."
             )
+        reasons = {
+            "local_permission_required": "Allow browser backup in LinkedIn settings to continue.",
+            "cloud_permission_required": "Allow cloud collection in LinkedIn settings.",
+            "browser_preparation_required": "Open Chrome so Tin can prepare this LinkedIn search.",
+            "session_expired": "Reconnect LinkedIn in Integrations to continue.",
+            "account_changed": "The LinkedIn account changed. Check the account in Integrations.",
+            "challenge": "LinkedIn needs your attention. Open LinkedIn in Chrome.",
+            "rate_limited": "LinkedIn asked us to wait. Saved pages are kept.",
+            "access_denied": "LinkedIn did not allow this collection. Saved pages are kept.",
+        }
+        summary = reasons.get(job["reason"], summary)
         await self.db.project_run_progress(
             run_id=run.id, mode="indeterminate", step="collect", summary=summary
         )

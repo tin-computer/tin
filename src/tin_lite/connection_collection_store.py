@@ -12,6 +12,7 @@ from uuid import uuid4
 from tin_lite.connection_collection import (
     CAPABILITY,
     POLICY,
+    POLICY_V2,
     PROVIDER,
     TERMINAL,
     Actor,
@@ -53,7 +54,10 @@ class CollectionStore:
         ):
             raise CollectionError("project_unavailable")
 
-    async def grant(self, project_id, user):
+    async def grant(self, project_id, user, setup=None):
+        from tin_lite.connection_collection_connection import setup_choice
+
+        choice = setup_choice(setup) if setup is not None else None
         async with self.db.pool.acquire() as conn:
             await self.access(conn, project_id, user)
         value = secrets.token_urlsafe(32)
@@ -66,6 +70,13 @@ class CollectionStore:
             requested_capabilities=(CAPABILITY,),
             expires_at=datetime.now(UTC) + timedelta(minutes=5),
         )
+        if choice is not None:
+            await self.db.pool.execute(
+                "UPDATE integration_auth_attempts SET connection_setup=$2::jsonb "
+                "WHERE token_hash=$1",
+                token_hash(value),
+                canonical_json(choice),
+            )
         return {"grant": value, "project_id": str(project_id), "expires_in": 300}
 
     async def pair(self, grant, bearer_hash, actor):
@@ -93,6 +104,9 @@ class CollectionStore:
             ):
                 raise CollectionError("pairing_expired")
             project_id, user = attempt["project_id"], attempt["clerk_user_id"]
+            setup = document(attempt["connection_setup"]) if attempt["connection_setup"] else None
+            if setup and setup["actor"]["key"] != actor.key:
+                raise CollectionError("account_changed")
             await self.access(conn, project_id, user)
             previous = await conn.fetchrow(
                 "SELECT * FROM connection_extension_devices WHERE pairing_hash=$1", hashed
@@ -138,6 +152,7 @@ class CollectionStore:
                         "actor": actor.model_dump(),
                         "granted_capabilities": [CAPABILITY],
                         "cloud_session": False,
+                        **({"collection_permission": setup} if setup else {}),
                     }
                 ),
                 user,
@@ -183,7 +198,7 @@ class CollectionStore:
 
     async def prepare(self, run, policy):
         inputs = CollectionInputs.model_validate({"project_id": str(run.project_id), **run.input})
-        if str(run.project_id) != inputs.project_id or policy != POLICY:
+        if str(run.project_id) != inputs.project_id or policy not in (POLICY, POLICY_V2):
             raise CollectionError("unsupported_collection_contract")
         async with self.db.pool.acquire() as conn, conn.transaction():
             await self.access(conn, run.project_id, run.started_by_clerk_user_id)
@@ -215,7 +230,13 @@ class CollectionStore:
             # Actor observations are not proof of ownership of another Tin user's account.
             # Lock this owner's observed account across every project they pair it to.
             account = digest([run.started_by_clerk_user_id, actor["key"]])
-            deadline = datetime.now(UTC) + timedelta(seconds=policy["job_seconds"])
+            from tin_lite.connection_collection_connection import permission, usable
+
+            config = document(connection["configuration"])
+            grant = permission(config)
+            deadline = datetime.now(UTC) + timedelta(
+                seconds=policy.get("waiting_seconds", policy["job_seconds"])
+            )
             locked = await conn.fetchval(
                 """INSERT INTO connection_collection_account_leases
                 (account_lock,run_id,expires_at) VALUES ($1,$2,$3)
@@ -244,6 +265,12 @@ class CollectionStore:
                 device["session_generation"],
                 deadline,
             )
+            if policy.get("waiting_seconds"):
+                await conn.execute(
+                    "UPDATE connection_collection_jobs SET waiting_deadline=$2 WHERE run_id=$1",
+                    run.id,
+                    deadline,
+                )
             if inputs.execution != "local_only":
                 if inputs.execution == "cloud_preferred" and not cloud_ready(self.settings):
                     # The selected policy already permits local collection. Pin that
@@ -257,11 +284,78 @@ class CollectionStore:
                 else:
                     row = await conn.fetchrow(
                         "UPDATE connection_collection_jobs SET "
-                        "cloud_template=$2,cloud_transport='http_v1' WHERE run_id=$1 RETURNING *",
+                        "cloud_template=$2,cloud_transport=$3 WHERE run_id=$1 RETURNING *",
                         run.id,
                         self.settings.linkedin_cloud_template,
+                        "http_v2" if grant else "http_v1",
                     )
+            if grant and inputs.execution != "local_only" and row["cloud_transport"] == "http_v2":
+                if grant["mode"] == "local_only":
+                    row = await conn.fetchrow(
+                        "UPDATE connection_collection_jobs SET "
+                        "state='paused',reason='cloud_permission_required' WHERE "
+                        "run_id=$1 RETURNING *",
+                        run.id,
+                    )
+                elif usable(config):
+                    row = await conn.fetchrow(
+                        "UPDATE connection_collection_jobs SET "
+                        "state='cloud_ready',credential_generation=$2 WHERE "
+                        "run_id=$1 RETURNING *",
+                        run.id,
+                        config["session_generation"],
+                    )
+            if grant.get("mode") == "cloud_only" and row["cloud_transport"] == "local_backup":
+                row = await conn.fetchrow(
+                    "UPDATE connection_collection_jobs SET state='paused',"
+                    "reason='local_permission_required' WHERE run_id=$1 RETURNING *",
+                    run.id,
+                )
             return record(row)
+
+    async def activate_cloud(self, run_id):
+        from tin_lite.connection_collection_connection import permission, usable
+
+        async with self.locked(run_id) as (conn, job):
+            if (
+                job["state"] != "waiting_browser"
+                or job["cloud_transport"] != "http_v2"
+                or job["reason"] == "browser_preparation_required"
+            ):
+                return
+            config = document(
+                await conn.fetchval(
+                    "SELECT configuration FROM integration_connections WHERE id=$1",
+                    job["connection_id"],
+                )
+            )
+            if permission(config).get("mode") != "local_only" and usable(config):
+                await conn.execute(
+                    "UPDATE connection_collection_jobs SET "
+                    "state='cloud_ready',credential_generation=$2,reason=NULL "
+                    "WHERE run_id=$1",
+                    run_id,
+                    config["session_generation"],
+                )
+
+    async def start_clock(self, conn, job):
+        if job["policy"].get("waiting_seconds") and not job.get("collection_started_at"):
+            deadline = datetime.now(UTC) + timedelta(seconds=job["policy"]["job_seconds"])
+            job = record(
+                await conn.fetchrow(
+                    "UPDATE connection_collection_jobs SET "
+                    "collection_started_at=now(),friend_started_at=now(),deadline=$2"
+                    " WHERE run_id=$1 RETURNING *",
+                    job["run_id"],
+                    deadline,
+                )
+            )
+            await conn.execute(
+                "UPDATE connection_collection_account_leases SET expires_at=$2 WHERE run_id=$1",
+                job["run_id"],
+                deadline + timedelta(seconds=120),
+            )
+        return job
 
     @asynccontextmanager
     async def locked(self, run_id, project_id=None):
@@ -344,12 +438,31 @@ class CollectionStore:
                 raise CollectionError("cloud_cleanup_pending")
             if job["lease_expires_at"] and job["lease_expires_at"] > datetime.now(UTC):
                 raise CollectionError("lease_busy")
-            if job["state"] == "handoff_pending" or job["execution_mode"] == "cloud":
+            if job["state"] == "handoff_pending" or (
+                job["execution_mode"] == "cloud" and job["reason"] != "browser_preparation_required"
+            ):
                 await conn.execute(
                     "UPDATE connection_collection_jobs SET cloud_transport='local_backup' "
                     "WHERE run_id=$1",
                     run_id,
                 )
+            from tin_lite.connection_collection_connection import permission
+
+            config = document(
+                await conn.fetchval(
+                    "SELECT configuration FROM integration_connections WHERE id=$1",
+                    job["connection_id"],
+                )
+            )
+            grant = permission(config)
+            if (
+                grant
+                and grant["mode"] == "cloud_only"
+                and job["inputs"]["execution"] != "local_only"
+                and (job["state"] == "handoff_pending" or job["cloud_transport"] == "local_backup")
+            ):
+                raise CollectionError("local_permission_required")
+            job = await self.start_clock(conn, job)
             lease = secrets.token_urlsafe(32)
             row = await conn.fetchrow(
                 """UPDATE connection_collection_jobs SET
@@ -411,6 +524,20 @@ class CollectionStore:
                     return self.public(job)
                 raise CollectionError("collection_stopped")
             self.fence(job, device, batch.generation, batch.lease, cloud=_cloud)
+            if _cloud and job["cloud_transport"] == "http_v2":
+                from tin_lite.connection_collection_connection import permission
+
+                config = document(
+                    await conn.fetchval(
+                        "SELECT configuration FROM integration_connections WHERE id=$1",
+                        job["connection_id"],
+                    )
+                )
+                grant = permission(config)
+                if not grant or grant["mode"] == "local_only":
+                    raise CollectionError("cloud_permission_required")
+                if job["credential_generation"] != config.get("session_generation"):
+                    raise CollectionError("session_superseded")
             batch.source.scope(keywords=job["inputs"]["keywords"])
             if batch.actor_key != job["actor"]["key"]:
                 raise CollectionError("account_changed")
@@ -556,6 +683,26 @@ class CollectionStore:
             self.current(job)
             if user != job["clerk_user_id"] or job["state"] != "paused":
                 raise CollectionError("collection_unavailable")
+            if job["cloud_transport"] == "http_v2":
+                from tin_lite.connection_collection_connection import usable
+
+                config = document(
+                    await conn.fetchval(
+                        "SELECT configuration FROM integration_connections WHERE id=$1",
+                        job["connection_id"],
+                    )
+                )
+                if usable(config) and (
+                    job["cloud_deadline"] is None or job["cloud_cleanup_confirmed"]
+                ):
+                    await conn.execute(
+                        "UPDATE connection_collection_jobs SET state='cloud_ready',reason=NULL,"
+                        "credential_generation=$2,generation=generation+1,lease_hash=NULL,"
+                        "lease_expires_at=NULL WHERE run_id=$1",
+                        run_id,
+                        config["session_generation"],
+                    )
+                    return
             if job["execution_mode"] == "cloud" and job["inputs"]["execution"] == "cloud_only":
                 raise CollectionError("cloud_only_paused")
             # A human retry does not reset the cumulative deadline or accepted pages.
@@ -575,8 +722,19 @@ class CollectionStore:
         async with self.locked(run_id, project_id) as (conn, job):
             device = await self.device(conn, bearer, project_id)
             self.fence(job, device, generation, lease)
-            if job["inputs"]["execution"] == "local_only" or job["cloud_transport"] != "http_v1":
+            if job["inputs"]["execution"] == "local_only" or job["cloud_transport"] not in {
+                "http_v1",
+                "http_v2",
+            }:
                 raise CollectionError("cloud_unavailable")
+            config = document(
+                await conn.fetchval(
+                    "SELECT configuration FROM integration_connections WHERE id=$1",
+                    job["connection_id"],
+                )
+            )
+            if config.get("collection_permission"):
+                raise CollectionError("update_extension")
             value = {
                 "version": 1,
                 "session": envelope,
@@ -614,7 +772,7 @@ class CollectionStore:
             source.scope(keywords=job["inputs"]["keywords"])
             index = job["friend_index"]
             if (
-                job["cloud_transport"] != "http_v1"
+                job["cloud_transport"] not in {"http_v1", "http_v2"}
                 or not source.query_id
                 or source.actor.key != job["actor"]["key"]
                 or source.friend_url != job["inputs"]["friends"][index]
@@ -626,6 +784,27 @@ class CollectionStore:
             ):
                 raise CollectionError("session_expired")
             sources = {**job["sources"], str(index): source.model_dump()}
+            if job["cloud_transport"] == "http_v2":
+                from tin_lite.connection_collection_connection import usable
+
+                config = document(
+                    await conn.fetchval(
+                        "SELECT configuration FROM integration_connections WHERE id=$1",
+                        job["connection_id"],
+                    )
+                )
+                if not usable(config):
+                    raise CollectionError("session_expired")
+                row = await conn.fetchrow(
+                    """UPDATE connection_collection_jobs SET sources=$2::jsonb,
+                    state='cloud_ready',reason=NULL,credential_generation=$3,
+                    generation=generation+1,lease_hash=NULL,lease_expires_at=NULL
+                    WHERE run_id=$1 RETURNING *""",
+                    run_id,
+                    canonical_json(sources),
+                    config["session_generation"],
+                )
+                return self.public(record(row))
             complete = index + 1 == len(job["inputs"]["friends"])
             row = await conn.fetchrow(
                 """UPDATE connection_collection_jobs SET sources=$2::jsonb,

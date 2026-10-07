@@ -8,7 +8,13 @@ from datetime import UTC, datetime, timedelta
 
 from e2b import AsyncSandbox, SandboxNotFoundException
 
-from tin_lite.connection_collection import CollectionError, Person, canonical_json, cloud_credential
+from tin_lite.connection_collection import (
+    CollectionError,
+    CollectionSource,
+    Person,
+    canonical_json,
+    cloud_credential,
+)
 from tin_lite.usage_capture import observe_sandbox
 
 
@@ -17,6 +23,34 @@ class LinkedInCloud:
         self.db, self.settings = database, settings
         credential = cloud_credential(settings)
         self.key = credential.get_secret_value() if credential is not None else None
+
+    async def authorize(self, job):
+        if job.get("cloud_transport") != "http_v2":
+            return
+        valid = await self.db.pool.fetchval(
+            """SELECT j.run_id FROM connection_collection_jobs j
+            JOIN workflow_runs r ON r.id=j.run_id
+            JOIN integration_connections c ON c.id=j.connection_id
+            JOIN project_memberships m ON m.project_id=j.project_id
+              AND m.clerk_user_id=j.clerk_user_id
+            WHERE j.run_id=$1 AND j.generation=$2 AND j.state='collecting'
+              AND j.execution_mode='cloud' AND j.lease_expires_at>now() AND j.deadline>now()
+              AND r.status IN ('pending','running') AND c.status='connected'
+              AND c.connected_by_clerk_user_id=j.clerk_user_id
+              AND c.configuration->'collection_permission'->>'version'='1'
+              AND c.configuration->'collection_permission'->>'mode'<>'local_only'
+              AND c.configuration->>'session_generation'=$3
+              AND c.configuration->>'session_state'='available'
+              AND (c.configuration->>'session_expires_at')::timestamptz>now()
+              AND c.credential_ciphertext IS NOT NULL
+              AND EXISTS (SELECT 1 FROM connection_extension_devices d
+                WHERE d.connection_id=c.id AND d.revoked_at IS NULL AND d.expires_at>now())""",
+            job["run_id"],
+            job["generation"],
+            job["credential_generation"],
+        )
+        if not valid:
+            raise CollectionError("cloud_permission_required")
 
     async def cleanup(self, sandbox_id):
         if self.key is None:
@@ -33,6 +67,11 @@ class LinkedInCloud:
         if self.key is None:
             raise CollectionError("cloud_unavailable")
         key = f"collection:{job['run_id']}:cloud:{job['friend_index']}:{job['next_page']}"
+        await self.authorize(job)
+        if job.get("cloud_transport") == "http_v2":
+            key += f":session:{job['credential_generation']}"
+        if "collection_url" not in source:
+            key += ":resolve"
         async with self.db.effect_lock(key, "connection_cloud_v1") as (conn, receipt):
             if receipt:
                 saved = receipt.result or {}
@@ -107,9 +146,11 @@ class LinkedInCloud:
                 }
                 # Static command and a root-only file; credentials are never shell arguments,
                 # environment variables, stdout, model input, or a project artifact.
+                await self.authorize(job)
                 await sandbox.files.write(
                     "/run/tin-collection/request.json", canonical_json(packet), user="root"
                 )
+                await self.authorize(job)
                 await sandbox.commands.run(
                     "chmod 600 /run/tin-collection/request.json && python "
                     "/opt/tin-collection/runner.py",
@@ -131,16 +172,28 @@ class LinkedInCloud:
                         "rate_limited",
                         "unsupported_search_contract",
                         "unsupported_identity",
+                        "browser_preparation_required",
+                        "friend_not_connected",
+                        "filters_changed",
                         "cloud_failed",
                     }:
                         raise CollectionError("cloud_failed")
-                elif set(value) == {"people", "next_page"}:
+                elif set(value) in ({"people", "next_page"}, {"people", "next_page", "source"}):
                     if (
                         type(value["next_page"]) is not bool
                         or not isinstance(value["people"], list)
                         or len(value["people"]) > 10
                     ):
                         raise CollectionError("cloud_failed")
+                    if "source" in value:
+                        resolved = CollectionSource.model_validate(value["source"])
+                        resolved.scope(keywords=job["inputs"]["keywords"])
+                        if (
+                            resolved.friend_url != job["inputs"]["friends"][job["friend_index"]]
+                            or resolved.actor.model_dump() != job["actor"]
+                        ):
+                            raise CollectionError("account_changed")
+                        value["source"] = resolved.model_dump()
                     value["people"] = [
                         Person.model_validate(p).model_dump() for p in value["people"]
                     ]
