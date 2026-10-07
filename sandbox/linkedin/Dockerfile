@@ -7,3 +7,4 @@ RUN pip install --no-cache-dir httpx==0.28.1 pydantic==2.11.10 \
 COPY src/tin_lite/connection_collection.py src/tin_lite/linkedin_session.py /opt/tin-collection/tin_lite/
 COPY sandbox/linkedin/runner.py /opt/tin-collection/runner.py
 RUN chmod -R go-rwx /opt/tin-collection
+RUN PYTHONPATH=/opt/tin-collection python -c "import tin_lite.linkedin_session"

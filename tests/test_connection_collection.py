@@ -292,8 +292,8 @@ async def cloud_fixture(db):
     f.store.settings.linkedin_cloud_template = "isolated-test-image"
     from pydantic import SecretStr
 
-    f.store.settings.linkedin_cloud_qualified = True
-    f.store.settings.linkedin_e2b_api_key = SecretStr("synthetic-dedicated-key")
+    f.store.settings.linkedin_cloud_enabled = True
+    f.store.settings.e2b_api_key = SecretStr("synthetic-existing-key")
     f.store.settings.integration_credential_key = SecretStr("synthetic-cipher-key")
     inputs = {**f.run.input, "execution": "cloud_preferred", "keywords": ""}
     await db.pool.execute(
@@ -463,8 +463,39 @@ def test_graphql_parser_excludes_unreferenced_people_and_checks_page_scope():
         search_page(payload, 2)
 
 
+@pytest.mark.parametrize("normalized", [False, True])
+def test_cloud_identity_matches_signed_in_avatar_without_profile_link(normalized):
+    from tin_lite.linkedin_session import identity_matches
+
+    mini = {
+        "entityUrn": "urn:li:fs_miniProfile:owner",
+        "publicIdentifier": "owner",
+        "picture": {
+            "com.linkedin.common.VectorImage": {
+                "rootUrl": "https://media.licdn.com/dms/image/v2/owner/",
+                "artifacts": [
+                    {"fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_100/0/fixture"}
+                ],
+            }
+        },
+    }
+    payload = {"miniProfile": mini}
+    if normalized:
+        payload = {"data": {"*miniProfile": mini["entityUrn"]}, "included": [mini]}
+    actor = {"key": "avatar:/dms/image/v2/owner", "profile_url": None}
+    assert identity_matches(payload, actor)
+    assert identity_matches(payload, ACTOR)
+    assert not identity_matches(payload, {**actor, "key": "avatar:/dms/image/v2/other"})
+    assert not identity_matches(payload, {**ACTOR, "profile_url": FRIEND})
+    mini["picture"]["com.linkedin.common.VectorImage"]["rootUrl"] = (
+        "https://untrusted.test/dms/image/v2/owner/"
+    )
+    assert not identity_matches(payload, actor)
+
+
+@pytest.mark.parametrize("override", [False, True])
 async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
-    collection_db, monkeypatch
+    collection_db, monkeypatch, override
 ):
     from pydantic import SecretStr
 
@@ -473,6 +504,9 @@ async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
 
     f = await cloud_fixture(collection_db)
     f.store.settings.e2b_api_key = SecretStr("synthetic-provider-key")
+    if override:
+        f.store.settings.linkedin_e2b_api_key = SecretStr("synthetic-override-key")
+    expected_key = "synthetic-override-key" if override else "synthetic-provider-key"
     job = record(
         await collection_db.pool.fetchrow(
             "SELECT * FROM connection_collection_jobs WHERE run_id=$1", f.run.id
@@ -527,7 +561,7 @@ async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
         @staticmethod
         async def create(template, **kwargs):
             assert template == "isolated-test-image"
-            assert kwargs["api_key"] == "synthetic-dedicated-key"
+            assert kwargs["api_key"] == expected_key
             assert kwargs["lifecycle"] == {"on_timeout": "kill", "auto_resume": False}
             assert kwargs["network"]["allow_out"] == ["www.linkedin.com"]
             assert kwargs["metadata"]["profile"] == "linkedin_http_v1"
@@ -537,7 +571,7 @@ async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
         @staticmethod
         async def connect(identifier, **kwargs):
             assert identifier == sandbox.sandbox_id
-            assert kwargs["api_key"] == "synthetic-dedicated-key"
+            assert kwargs["api_key"] == expected_key
             return sandbox
 
     monkeypatch.setattr(linkedin_cloud, "AsyncSandbox", Provider)
@@ -553,23 +587,23 @@ async def test_dedicated_cloud_image_receipts_cleanup_and_secret_boundary(
     assert usage.result["observed_wall_seconds"] is not None
 
 
-def test_cloud_gate_requires_separate_credentials_and_qualification():
+def test_cloud_gate_reuses_account_with_optional_override():
     from pydantic import SecretStr
 
     from tin_lite.connection_collection import cloud_ready
 
     settings = SimpleNamespace(
         linkedin_cloud_template="dedicated-v1",
-        linkedin_cloud_qualified=True,
+        linkedin_cloud_enabled=True,
         integration_credential_key=SecretStr("synthetic-cipher"),
         e2b_api_key=SecretStr("ordinary-compute"),
     )
-    assert not cloud_ready(settings)
+    assert cloud_ready(settings)
     settings.linkedin_e2b_api_key = SecretStr("ordinary-compute")
-    assert not cloud_ready(settings)
+    assert cloud_ready(settings)
     settings.linkedin_e2b_api_key = SecretStr("separate-compute")
     assert cloud_ready(settings)
-    settings.linkedin_cloud_qualified = False
+    settings.linkedin_cloud_enabled = False
     assert not cloud_ready(settings)
 
 

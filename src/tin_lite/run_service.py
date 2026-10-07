@@ -223,10 +223,11 @@ async def start_workflow_run(
         # Keep their pinned input exact; the collection job canonicalizes its copy.
         validate_inputs(project_id, normalized_inputs)
         # Cloud compute uses a separately qualified, explicitly funded contract.
-        if normalized_inputs["execution"] != "local_only" and not cloud_ready(settings):
+        if normalized_inputs["execution"] == "cloud_only" and not cloud_ready(settings):
             raise WorkflowExecutorUnavailableError(
                 "Cloud collection is not available on this deployment yet. "
-                "Choose Local only and keep Chrome open and awake while collecting."
+                "Choose Cloud preferred or Local only to collect in Chrome, "
+                "and keep it open and awake while collecting."
             )
         if not await runtime.database.has_project_access(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id

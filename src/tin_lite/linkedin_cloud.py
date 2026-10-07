@@ -8,14 +8,14 @@ from datetime import UTC, datetime, timedelta
 
 from e2b import AsyncSandbox, SandboxNotFoundException
 
-from tin_lite.connection_collection import CollectionError, Person, canonical_json
+from tin_lite.connection_collection import CollectionError, Person, canonical_json, cloud_credential
 from tin_lite.usage_capture import observe_sandbox
 
 
 class LinkedInCloud:
     def __init__(self, database, settings):
         self.db, self.settings = database, settings
-        credential = getattr(settings, "linkedin_e2b_api_key", None)
+        credential = cloud_credential(settings)
         self.key = credential.get_secret_value() if credential is not None else None
 
     async def cleanup(self, sandbox_id):

@@ -180,6 +180,11 @@ class CollectionActivities:
             "paused": "Collection paused. Check the extension before continuing.",
             "handoff_pending": "Cloud collection stopped. Continue in the Tin extension.",
         }.get(job["state"], f"Collecting connections. {count} pages saved.")
+        if job["state"] == "waiting_browser" and job["reason"] == "cloud_unavailable":
+            summary = (
+                "Cloud collection is unavailable. Open the Tin extension to collect in Chrome; "
+                "keep Chrome open and awake."
+            )
         await self.db.project_run_progress(
             run_id=run.id, mode="indeterminate", step="collect", summary=summary
         )
