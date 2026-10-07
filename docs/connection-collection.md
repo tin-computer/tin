@@ -32,6 +32,12 @@ one page at a time. Chrome must remain open and awake. The popup can close.
 
 The preview uses synthetic account and run state.
 
+Keywords narrow LinkedIn's search within each selected friend's connections. For example,
+enter `founder` to target that term, or leave the field blank for no keyword filter.
+The second-degree filter applies either way.
+
+![Optional keyword filter explained in workflow setup](images/connection-keywords.png)
+
 ## Resume and limits
 
 Each run pins its inputs and policy. Version 1 allows three friends, 20 pages and 200 people

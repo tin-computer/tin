@@ -2709,7 +2709,11 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
-    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}</label>`;
+    // The initial collection schema omitted this explanation. Fill only the missing
+    // help text; saved controls, validation, defaults and execution keep their pin.
+    const description = definition.description || (workflow.key === "connections.collect" && name === "keywords"
+      ? workflow.definition?.input_schema?.properties?.keywords?.description : "");
+    return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}${description ? workflowFieldHelp({description}, fieldId) : ""}</div>`;
   }).join("");
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));

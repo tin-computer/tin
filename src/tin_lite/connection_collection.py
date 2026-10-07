@@ -124,7 +124,17 @@ INPUT_SCHEMA = {
             "uniqueItems": True,
             "items": {"type": "string", "maxLength": 700},
         },
-        "keywords": {"type": "string", "maxLength": 300, "default": ""},
+        "keywords": {
+            "type": "string",
+            "maxLength": 300,
+            "default": "",
+            "title": "Keywords (optional)",
+            "description": (
+                "Narrow the LinkedIn search within each friend's connections with a "
+                "term such as founder, investor or designer. Leave blank to collect "
+                "without a keyword filter. Only your second-degree connections are included."
+            ),
+        },
         "execution": {"type": "string", "enum": list(MODES), "default": "local_only"},
     },
     "required": ["project_id", "friends"],
