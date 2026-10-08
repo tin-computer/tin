@@ -2320,7 +2320,7 @@ html[data-theme="dark"] .markdown-logo::before {
 /* One "Open" everywhere a row opens what it describes: a small bordered button, not a text link
    with an arrow. The container selectors outrank the plain-text button resets of each row. */
 .open-button,
-:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button {
+:is(.run-receipt, .activity-action, .decision-detail-card > header, .workflow-card) .open-button {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
@@ -2344,7 +2344,7 @@ html[data-theme="dark"] .markdown-logo::before {
 }
 
 .open-button:hover,
-:is(.run-receipt, .system-running-detail, .activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
+:is(.run-receipt, .activity-action, .decision-detail-card > header, .workflow-card) .open-button:hover {
   background: var(--paper-well);
   border-color: rgb(var(--ink-rgb) / 35%);
   text-decoration: none;
@@ -4375,8 +4375,9 @@ html[data-theme="dark"] .system-week-nav button {
   cursor: pointer;
 }
 
+/* A running card's sentence sits close under its title (Paper OPEN-A1). */
 .system-workflow-card.is-running .system-card-row {
-  padding-bottom: 10px;
+  padding-bottom: 4px;
 }
 
 .system-card-mark {
@@ -4500,8 +4501,7 @@ html[data-theme="dark"] .system-week-nav button {
   gap: 14px;
 }
 
-.system-action,
-.system-running-detail button {
+.system-action {
   padding: 0;
   background: transparent;
   color: var(--ink-muted);
@@ -4512,8 +4512,7 @@ html[data-theme="dark"] .system-week-nav button {
   cursor: pointer;
 }
 
-.system-action.is-strong,
-.system-running-detail button {
+.system-action.is-strong {
   color: var(--accent-text);
   font-weight: 700;
 }
@@ -4538,9 +4537,8 @@ html[data-theme="dark"] .system-week-nav button {
 .system-running-detail {
   display: flex;
   align-items: center;
-  gap: 10px;
   padding: 0 16px 14px 44px;
-  color: var(--accent-text);
+  color: var(--ink-secondary);
   font-size: 13px;
   line-height: 18px;
 }
@@ -4748,12 +4746,13 @@ html[data-theme="dark"] .system-week-nav button {
   border-top: 1px solid var(--card-hairline);
 }
 
+/* An opened card's settings: 6px inside a setting, 20px between settings (Paper OPEN-A1). */
 .system-config-body > section {
   display: flex;
   min-width: 0;
   flex: 1 1 0;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
   padding: 16px;
 }
 
@@ -4781,6 +4780,18 @@ html[data-theme="dark"] .system-week-nav button {
   line-height: 16px;
 }
 
+/* A label's box is its text: at the page's 16px it would sit 5px taller than its words. */
+.system-setting > label {
+  font-size: 12.5px;
+  line-height: 16px;
+}
+
+.system-setting .workflow-field-message {
+  color: var(--ink-secondary);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
 .system-setting .workflow-inline-input,
 .system-setting .tin-select,
 .system-setting .tin-segmented {
@@ -4800,6 +4811,16 @@ html[data-theme="dark"] .system-week-nav button {
 
 .system-config-when .workflow-config-row + .workflow-config-row {
   padding-top: 8px;
+}
+
+/* Each schedule row is a setting, so the section's gap spaces them; the line about how it
+   runs reads as the schedule's help, 6px under it. */
+.system-config-body > .system-config-when .workflow-config-row + .workflow-config-row {
+  padding-top: 0;
+}
+
+.system-config-body > .system-config-when > p:not([data-workflow-cost]) {
+  margin-top: -14px;
 }
 
 .system-config-when .workflow-row-label,
