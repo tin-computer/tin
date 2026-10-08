@@ -2557,13 +2557,23 @@ async def test_github_already_installed_path_authorizes_then_binds_the_remembere
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("installations", ["one", "none", "several"])
+@pytest.mark.parametrize("installations", ["one", "none", "several", "one-organization"])
 async def test_github_connect_starts_with_user_authorization_and_resolves_installations(
     tmp_path, installations
 ) -> None:
     listed = {
-        "one": [{"id": 77, "app_id": 1234, "account": {"login": "solo"}}],
+        "one": [{"id": 77, "app_id": 1234, "account": {"login": "solo", "type": "User"}}],
         "none": [],
+        # A member's only installation is their organization's; their own repository may not
+        # be there, so Tin asks rather than binding the organization.
+        "one-organization": [
+            {
+                "id": 80,
+                "app_id": 1234,
+                "target_type": "Organization",
+                "account": {"login": "example-org", "type": "Organization"},
+            }
+        ],
         "several": [
             {"id": 77, "app_id": 1234, "account": {"login": "solo"}},
             {"id": 78, "app_id": 1234, "account": {"login": "duo"}},
@@ -2611,12 +2621,29 @@ async def test_github_connect_starts_with_user_authorization_and_resolves_instal
             return
         with pytest.raises(GitHubInstallationChoiceError) as choice:
             await service.complete_github(**complete)
+        # Every choice offers the install page for an account without an installation.
+        install = urlsplit(choice.value.install_url)
+        assert install.path == "/apps/tin-test/installations/new"
+        assert parse_qs(install.query)["state"][0] != state
+        assert (PROJECT_ID, GITHUB_PROVIDER) not in database.connections
+        if installations == "one-organization":
+            assert choice.value.choices == [{"installation_id": 80, "account": "example-org"}]
+            # Installing on the member's own account returns with a code and the new id.
+            connection = await service.complete_github(
+                **{
+                    **complete,
+                    "state": parse_qs(install.query)["state"][0],
+                    "installation_id": 42,
+                    "setup_action": "install",
+                }
+            )
+            assert connection.external_account_id == "42"
+            return
         assert choice.value.choices == [
             {"installation_id": 78, "account": "duo"},
             {"installation_id": 77, "account": "solo"},
         ]
         assert "duo, solo" in str(choice.value)
-        assert (PROJECT_ID, GITHUB_PROVIDER) not in database.connections
         # The member chooses; a remembered-installation authorization finishes the connection.
         authorize = await service.start_github_authorization(
             project_id=choice.value.project_id,
@@ -2758,6 +2785,7 @@ async def test_github_complete_endpoint_returns_structured_next_steps(
     else:
         assert detail["code"] == "github_installation_choice"
         assert [c["account"] for c in detail["choices"]] == ["duo", "solo"]
+        assert "/installations/new?state=" in detail["install_url"]
 
 
 def test_integration_view_carries_the_connection_project_id() -> None:

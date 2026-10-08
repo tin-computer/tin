@@ -408,6 +408,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "Only repositories the Tin app is installed on appear here." in script
     assert 'href="${GITHUB_INSTALLATIONS_URL}"' in script
     assert 'GITHUB_INSTALLATIONS_URL = "https://github.com/settings/installations"' in script
+    # Any GitHub account choice also offers installing the app on another account.
+    assert "installUrl: error.detail.install_url || null," in script
+    assert '<a href="${escapeHtml(choice.installUrl)}">Install the Tin app there</a>' in script
     assert "if (state.resourceChoice) {\n    await confirmIntegrationResource();" in script
     assert "body: JSON.stringify({ option_id: choice.selected })" in script
     assert ".integration-project-empty" in stylesheet
