@@ -75,10 +75,13 @@ provider as a special workflow:
    GitHub issues that OAuth code only on a fresh install and does not redirect back at all
    from an already-installed app unless a Setup URL is configured, so the connection starts
    with GitHub user authorization instead of the install page. On return Tin lists the
-   installations of its app the user can reach: exactly one is bound through the same access
-   and write-permission checks; none returns `github_install_required` with a fresh install-page
-   URL whose callback carries the code and new installation ID; several returns
-   `github_installation_choice`, the dashboard asks which account, and
+   installations of its app the user can reach: exactly one on a personal account is bound
+   through the same access and write-permission checks; none returns `github_install_required`
+   with a fresh install-page URL whose callback carries the code and new installation ID;
+   several, or a lone organization installation, returns `github_installation_choice` with the
+   accounts and a fresh install-page URL for an account that has none yet (so a member is never
+   bound to their organization when their repository is on their own account). The dashboard
+   asks which account, and
    `POST /api/integrations/github/authorize` remembers the chosen installation on a new
    connect attempt (migration 031) before one more authorization completes it. A callback that
    arrives with an installation ID and no code takes that same authorize path.

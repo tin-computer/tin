@@ -7422,6 +7422,7 @@ async function completeIntegrationCallback() {
         state.githubInstallationChoice = {
           projectId: error.detail.project_id,
           choices: error.detail.choices,
+          installUrl: error.detail.install_url || null,
           selected: error.detail.choices[0].installation_id,
         };
         return null;
@@ -7755,8 +7756,9 @@ function chooseGitHubInstallation() {
   const choice = state.githubInstallationChoice;
   if (!choice) return;
   integrationProjectTitle.textContent = "Choose the GitHub account";
-  integrationProjectCopy.textContent =
-    "The Tin GitHub App is installed on more than one account you can access. Choose the one that owns this project’s repository.";
+  integrationProjectCopy.textContent = choice.choices.length > 1
+    ? "The Tin GitHub App is installed on more than one account you can access. Choose the one that owns this project’s repository."
+    : `The Tin GitHub App is installed on ${choice.choices[0].account}. Continue with it if it owns this project’s repository.`;
   integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Continue to GitHub";
   renderGitHubInstallationOptions();
   showIntegrationDialogError(null);
@@ -7781,6 +7783,14 @@ function renderGitHubInstallationOptions() {
       integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
     });
     integrationProjectOptions.append(option);
+  }
+  if (choice.installUrl) {
+    // The install page lists every account the user can install on and returns here with
+    // a code and the new installation id, like a first install.
+    const note = document.createElement("p");
+    note.className = "integration-project-empty";
+    note.innerHTML = `Repository on another account? <a href="${escapeHtml(choice.installUrl)}">Install the Tin app there</a>.`;
+    integrationProjectOptions.append(note);
   }
 }
 

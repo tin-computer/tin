@@ -1971,6 +1971,7 @@ async def complete_github_integration(
                 "code": "github_installation_choice",
                 "message": str(exc),
                 "choices": exc.choices,
+                "install_url": exc.install_url,
                 "project_id": str(exc.project_id),
             },
         ) from exc

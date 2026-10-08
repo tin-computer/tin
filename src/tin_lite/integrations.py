@@ -252,9 +252,16 @@ class GitHubInstallationRequiredError(IntegrationAuthorizationError):
 class GitHubInstallationChoiceError(IntegrationAuthorizationError):
     """The authorizing user can reach several installations; one must be chosen explicitly."""
 
-    def __init__(self, message: str, *, choices: list[dict[str, Any]], project_id: UUID) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        choices: list[dict[str, Any]],
+        install_url: str,
+        project_id: UUID,
+    ) -> None:
         super().__init__(message)
-        self.choices, self.project_id = choices, project_id
+        self.choices, self.install_url, self.project_id = choices, install_url, project_id
 
 
 class GoogleAdsCallError(IntegrationUpstreamError):
@@ -4994,7 +5001,10 @@ class IntegrationService:
 
         None means the user must install the app: a fresh install-page attempt is returned
         so the callback comes back with a code. Several means the member must choose; the
-        choice completes through a remembered-installation authorization.
+        choice completes through a remembered-installation authorization. A lone
+        organization installation is a choice too: a member connecting a repository on their
+        own account would otherwise be bound to the organization without being asked. Every
+        choice also offers the install page, for an account that has no installation yet.
         """
         response = await self._client.get(
             "https://api.github.com/user/installations",
@@ -5016,24 +5026,25 @@ class IntegrationService:
                 install_url=await self._github_install_url(attempt),
                 project_id=attempt.project_id,
             )
-        if len(found) > 1:
-            choices = sorted(
-                (
-                    {
-                        "installation_id": int(item["id"]),
-                        "account": str((item.get("account") or {}).get("login") or item["id"]),
-                    }
-                    for item in found
-                ),
-                key=lambda choice: choice["account"],
-            )
-            accounts = ", ".join(choice["account"] for choice in choices)
-            raise GitHubInstallationChoiceError(
-                f"Choose which GitHub account to connect; the Tin app is installed on {accounts}",
-                choices=choices,
-                project_id=attempt.project_id,
-            )
-        return int(found[0]["id"])
+        if len(found) == 1 and not _github_organization_installation(found[0]):
+            return int(found[0]["id"])
+        choices = sorted(
+            (
+                {
+                    "installation_id": int(item["id"]),
+                    "account": str((item.get("account") or {}).get("login") or item["id"]),
+                }
+                for item in found
+            ),
+            key=lambda choice: choice["account"],
+        )
+        accounts = ", ".join(choice["account"] for choice in choices)
+        raise GitHubInstallationChoiceError(
+            f"Choose which GitHub account to connect; the Tin app is installed on {accounts}",
+            choices=choices,
+            install_url=await self._github_install_url(attempt),
+            project_id=attempt.project_id,
+        )
 
     async def _github_tarball(
         self, repository_path: str, head_sha: str, headers: dict[str, str], sink: Any
@@ -5498,6 +5509,12 @@ def _installation_id(connection: IntegrationConnection) -> int:
         return int(connection.external_account_id or "")
     except ValueError as exc:
         raise IntegrationAuthorizationError("GitHub installation is invalid") from exc
+
+
+def _github_organization_installation(item: dict[str, Any]) -> bool:
+    account = item.get("account")
+    kind = item.get("target_type") or (account.get("type") if isinstance(account, dict) else None)
+    return kind == "Organization"
 
 
 def _granted(connection: IntegrationConnection) -> set[str]:
