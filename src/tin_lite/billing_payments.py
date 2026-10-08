@@ -1,4 +1,8 @@
-"""Dedicated Tin Lite test payments; shared Stripe account, separate product and webhook."""
+"""Tin Lite top-ups; shared Stripe account, separate product and webhook.
+
+TIN_LITE_STRIPE_MODE picks test or live. The key, every Stripe object and each payment row
+must be in that mode: a payment made in the other mode is kept, never read or refunded here.
+"""
 
 from datetime import UTC, datetime, timedelta
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
@@ -9,7 +13,11 @@ import stripe
 from tin_lite.billing_contracts import NANOS_PER_CENT, BillingError, usd
 from tin_lite.product_urls import dashboard_url
 
-PRODUCT_ID = "tin_lite_prepaid_test_v1"
+# Stripe test and live mode keep separate objects, so each mode has its own product.
+PRODUCTS = {
+    "test": ("tin_lite_prepaid_test_v1", "Tin Lite usage — test", "tin-lite:test-product:v1"),
+    "live": ("tin_lite_prepaid_v1", "Tin Lite usage", "tin-lite:product:v1"),
+}
 EVENTS = (
     "checkout.session.completed",
     "checkout.session.async_payment_succeeded",
@@ -50,15 +58,21 @@ class StripePayments:
         # A long-lived caller (the reconciliation loop) owns and closes a shared client.
         self.client = client
 
+    @property
+    def mode(self):
+        return getattr(self.settings, "stripe_mode", "test")
+
+    def in_mode(self, obj):
+        """Whether a Stripe object belongs to the configured mode; absent is never a match."""
+        return obj.get("livemode") is (self.mode == "live")
+
     def key(self):
         value = getattr(self.settings, "stripe_secret_key", None)
         if not getattr(self.settings, "billing_test_enabled", False) or not value:
-            raise BillingError(
-                "payments_unavailable", "Stripe test payments are not configured.", 503
-            )
+            raise BillingError("payments_unavailable", "Stripe payments are not configured.", 503)
         key = value.get_secret_value()
-        if not key.startswith(("sk_test_", "rk_test_")):
-            raise BillingError("wrong_payment_mode", "Use a Stripe test-mode key.", 503)
+        if not key.startswith((f"sk_{self.mode}_", f"rk_{self.mode}_")):
+            raise BillingError("wrong_payment_mode", f"Use a Stripe {self.mode}-mode key.", 503)
         return key
 
     async def request(self, method, path, *, data=None, idempotency_key=None, allow_missing=False):
@@ -87,33 +101,30 @@ class StripePayments:
             ) from exc
 
     async def ensure_product(self):
-        product = await self.request("GET", f"products/{PRODUCT_ID}", allow_missing=True)
+        product_id, name, idempotency_key = PRODUCTS[self.mode]
+        product = await self.request("GET", f"products/{product_id}", allow_missing=True)
         if product is None:
             product = await self.request(
                 "POST",
                 "products",
-                idempotency_key="tin-lite:test-product:v1",
+                idempotency_key=idempotency_key,
                 data={
-                    "id": PRODUCT_ID,
-                    "name": "Tin Lite usage — test",
+                    "id": product_id,
+                    "name": name,
                     "metadata[tin_product]": "tin-lite",
                 },
             )
         if (
-            product.get("livemode") is not False
+            not self.in_mode(product)
             or product.get("metadata", {}).get("tin_product") != "tin-lite"
         ):
-            raise BillingError(
-                "product_mismatch", "The Tin Lite test product could not be verified."
-            )
+            raise BillingError("product_mismatch", "The Tin Lite product could not be verified.")
         return product["id"]
 
     async def checkout(self, *, workspace_id, actor, amount_cents, request_id):
         self.key()
         if type(amount_cents) is not int or not 1000 <= amount_cents <= 100000:
-            raise BillingError(
-                "invalid_amount", "Choose a test top-up between $10 and $1,000.", 422
-            )
+            raise BillingError("invalid_amount", "Choose a top-up between $10 and $1,000.", 422)
         async with self.db.pool.acquire() as conn, conn.transaction():
             await self.billing.require_admin(conn, workspace_id, actor, lock=True)
             prior = await conn.fetchrow(
@@ -122,20 +133,23 @@ class StripePayments:
                 request_id,
             )
             if prior and (
-                prior["actor_clerk_user_id"] != actor or prior["amount_cents"] != amount_cents
+                prior["actor_clerk_user_id"] != actor
+                or prior["amount_cents"] != amount_cents
+                or prior["mode"] != self.mode
             ):
                 raise BillingError(
                     "request_conflict", "This payment request has different recorded terms."
                 )
             payment = prior or await conn.fetchrow(
                 """INSERT INTO billing_payments(id, workspace_id, actor_clerk_user_id,
-                   request_id, amount_cents)
-                   VALUES($1,$2,$3,$4,$5) RETURNING *""",
+                   request_id, amount_cents, mode)
+                   VALUES($1,$2,$3,$4,$5,$6) RETURNING *""",
                 uuid4(),
                 workspace_id,
                 actor,
                 request_id,
                 amount_cents,
+                self.mode,
             )
         if payment["stripe_session_id"]:
             return self.payment_view(payment)
@@ -170,12 +184,10 @@ class StripePayments:
                 "cancel_url": f"{base}/billing?billing_payment={payment['id']}",
             },
         )
-        if response.get("livemode") is not False or not str(response.get("url", "")).startswith(
+        if not self.in_mode(response) or not str(response.get("url", "")).startswith(
             "https://checkout.stripe.com/"
         ):
-            raise BillingError(
-                "checkout_unavailable", "A valid test checkout was not returned.", 502
-            )
+            raise BillingError("checkout_unavailable", "A valid checkout was not returned.", 502)
         async with self.db.pool.acquire() as conn, conn.transaction():
             await self.billing.require_admin(conn, workspace_id, actor, lock=True)
             row = await conn.fetchrow(
@@ -193,12 +205,16 @@ class StripePayments:
         return self.payment_view(row)
 
     def payment_view(self, payment, *, available_cents=0):
+        # A payment from the other Stripe mode keeps its history but has no live actions.
+        current = payment["mode"] == self.mode
         return {
             "id": str(payment["id"]),
-            "mode": "test",
+            "mode": payment["mode"],
             "status": payment["status"],
             "amount_usd": usd(payment["amount_cents"] * NANOS_PER_CENT),
-            "checkout_url": payment["checkout_url"] if payment["status"] == "pending" else None,
+            "checkout_url": payment["checkout_url"]
+            if payment["status"] == "pending" and current
+            else None,
             "invoice_url": payment["invoice_url"],
             "refundable_usd": usd(
                 max(
@@ -213,7 +229,7 @@ class StripePayments:
                 )
                 * NANOS_PER_CENT
             )
-            if payment["status"] == "paid"
+            if payment["status"] == "paid" and current
             else "0.00",
             "refund_pending_usd": usd(payment["refund_reserved_cents"] * NANOS_PER_CENT),
         }
@@ -257,12 +273,14 @@ class StripePayments:
             return
         # Session-less requests past Stripe's retry window await operator reconciliation;
         # they must not fill the window ahead of rows this pass can still recover.
+        # Only the configured mode's objects are readable with this key.
         payments = await self.db.pool.fetch(
-            """SELECT * FROM billing_payments WHERE status='pending'
+            """SELECT * FROM billing_payments WHERE status='pending' AND mode=$1
                AND created_at<now()-interval '30 seconds'
                AND (stripe_session_id IS NOT NULL OR created_at>now()-interval '23 hours')
                AND (next_reconcile_at IS NULL OR next_reconcile_at<=now())
-               ORDER BY created_at LIMIT 20"""
+               ORDER BY created_at LIMIT 20""",
+            self.mode,
         )
         failure = None
         for payment in payments:
@@ -309,10 +327,12 @@ class StripePayments:
                 # One unreconciled row must not starve later rows or refunds.
                 failure = failure or exc
         refunds = await self.db.pool.fetch(
-            """SELECT * FROM billing_refunds WHERE status='pending'
-               AND created_at<now()-interval '30 seconds'
-               AND (stripe_refund_id IS NOT NULL OR created_at>now()-interval '23 hours')
-               ORDER BY created_at LIMIT 20"""
+            """SELECT r.* FROM billing_refunds r JOIN billing_payments p ON p.id=r.payment_id
+               WHERE r.status='pending' AND p.mode=$1
+               AND r.created_at<now()-interval '30 seconds'
+               AND (r.stripe_refund_id IS NOT NULL OR r.created_at>now()-interval '23 hours')
+               ORDER BY r.created_at LIMIT 20""",
+            self.mode,
         )
         for refund in refunds:
             try:
@@ -348,7 +368,7 @@ class StripePayments:
 
     async def handle_event(self, event):
         """Called after signature verification (or directly by transport fixtures)."""
-        if event.get("livemode") is not False or event.get("type") not in EVENTS:
+        if not self.in_mode(event) or event.get("type") not in EVENTS:
             return {"received": True, "ignored": True}
         event_type, obj = event["type"], event.get("data", {}).get("object", {})
         async with self.db.pool.acquire() as conn, conn.transaction():
@@ -383,7 +403,11 @@ class StripePayments:
                 payment = await conn.fetchrow(
                     "SELECT * FROM billing_payments WHERE id=$1 FOR UPDATE", payment_id
                 )
-                if obj.get("livemode") is not False or obj.get("currency") != "usd":
+                if (
+                    not self.in_mode(obj)
+                    or payment["mode"] != self.mode
+                    or obj.get("currency") != "usd"
+                ):
                     raise BillingError(
                         "payment_mismatch", "Payment mode or currency did not match."
                     )
@@ -466,6 +490,12 @@ class StripePayments:
                 refund["actor_clerk_user_id"] != actor or refund["amount_cents"] != amount_cents
             ):
                 raise BillingError("request_conflict", "This refund request has different terms.")
+            if payment["mode"] != self.mode:
+                raise BillingError(
+                    "refund_unavailable",
+                    f"This top-up was a Stripe {payment['mode']}-mode payment and cannot be "
+                    "refunded through Stripe.",
+                )
             if not refund:
                 eligible = min(
                     payment["amount_cents"]
@@ -628,7 +658,7 @@ class StripePayments:
 
         intent = await self.request("GET", f"payment_intents/{quote(intent_id, safe='')}")
         meta = intent.get("metadata") or {}
-        if intent.get("livemode") is not False or meta.get("tin_product") != "tin-lite":
+        if not self.in_mode(intent) or meta.get("tin_product") != "tin-lite":
             return None
         raise BillingError("payment_pending", "Waiting for the Tin payment confirmation.", 503)
 

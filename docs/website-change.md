@@ -3,11 +3,13 @@
 ## In plain English
 
 `website.change` is meant to become the one workflow in the organic traffic system that writes
-to the founder's website: content drafts, page decisions (URL changes), the page tree, the
-blog index and technical fixes would all reach the site through it, after the founder approves
-them. Today it makes four kinds of change: approved pages, the technical fixes the latest
-audit found, the URL changes page decisions and the site plan made, and the blog index plan.
-content.deliver still opens its own pull requests for pages its approval starts.
+to the founder's website: content drafts, page decisions (URL changes) and technical fixes
+all reach the site through it, after the founder approves them. Today it makes three kinds of
+change: approved pages, the technical fixes the latest audit found and the URL changes page
+decisions made. organic.site_architecture and content.blog_index are retired for new work
+(see [Retired](#retired-the-page-tree-and-the-blog-index)). content.deliver is retired for new
+work too: every approval that adapts a page starts website.change
+([How content.deliver relates](#how-content-deliver-relates)).
 
 A change the founder approved publishes: Tin opens the pull request and merges it once the
 repository's required checks pass. For a page, approved means approved with commit to main as
@@ -99,6 +101,31 @@ The merge receipt records the state that allowed the merge (`mergeable_state`) a
 that applied: `checks_rule` is `required_checks` (with the `required_checks` names) or
 `all_checks`.
 
+### The site's own build must pass (10/8)
+
+GitHub calls a pull request with no checks at all `clean` at once, and Tin can't build the
+site itself: a sandbox build lacks the founder's secrets, services and runtime, and an
+experiment on prod project repositories built 2 of 7 even with per-site fixes. So before a
+merge, website.change also reads every check on the pull request's head
+(`github_commit_checks`: the commit's statuses and check runs; only names and states) and
+treats the site's own build as the deciding check:
+
+| The pull request's head has | website.change |
+| --- | --- |
+| a deploy preview (Vercel, Netlify, Cloudflare Pages, Render, Railway, Amplify) that passed | merges, under the rules above |
+| a deploy preview still building | waits, up to ten minutes, then leaves the PR open |
+| a deploy preview that failed | leaves the PR open at once |
+| checks but no preview: every one passed, required or not | merges |
+| checks but no preview: one failed | leaves the PR open at once |
+| no checks at all, after 90 seconds | leaves the PR open: nothing builds the change |
+| checks Tin can't read | leaves the PR open and asks for the GitHub App's read-only permissions |
+
+Reading checks needs the GitHub App's read-only **Checks** and **Commit statuses**
+permissions. Until an installation accepts them, its approved changes open a PR for the
+founder rather than merge. The merge receipt records `build_check` (the preview's name, or
+none, and how many checks reported). The wait is `BUILD_WAIT_SECONDS` (600); the delivery
+activity allows fifteen minutes.
+
 content.deliver keeps its own rule: it merges only on `clean` or `has_hooks`.
 
 ## Approvals
@@ -144,7 +171,7 @@ is refused. A trigger in Postgres refuses any update to a decided row.
 | read one | `GET /api/projects/{id}/website-changes/{change_id}` | |
 | approve | `POST …/{change_id}/approve` `{request_id, content_sha256}` | `approve_website_change` |
 | decline | `POST …/{change_id}/decline` `{request_id, content_sha256}` | `decline_website_change` |
-| preview a source's changes (`source`: `audit`, `planned`, `blog_index`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
+| preview a source's changes (`source`: `audit`, `planned`) | `POST /api/projects/{id}/website-changes/preflight` | `preflight_website_change` |
 | open judgment calls | `GET /api/projects/{id}/website-changes/questions` | (in `preflight_website_change`) |
 | read protected pages | `GET /api/projects/{id}/protected-paths` | `get_protected_paths` |
 | set protected pages | `PUT /api/projects/{id}/protected-paths` `{request_id, expected_revision, paths}` | `set_protected_paths` |
@@ -307,9 +334,26 @@ and stops a fortnight after the merge.
 It stays registered for pinned site-fix-v5 runs and saved schedules, byte for byte as on main
 except its catalog flag: 0.6.1 sets `public_discovery: false`, so new setups don't see it, and
 it left the growth plan's program lists and onboarding copy. The public ChatGPT plugin no
-longer starts, stops or lists technical fixes; `preflight_technical_fix` keeps working there
-and in Tin's MCP for older clients. The organic traffic system's technical step still starts
-it on its pinned definition.
+longer starts, stops or lists technical fixes. New starts are refused (retries, saved
+schedules and traffic system runs on v5 or earlier keep their pinned technical fix), and its
+preview tools are gone from both MCP servers: use `preflight_website_change`. The traffic
+system's v6 recipe starts website.change instead.
+
+## Retired: the page tree and the blog index
+
+`organic.site_architecture` and `content.blog_index` refuse new starts, and website.change
+refuses a new run with `source: blog_index` (`run_service.RETIRED`); the preflight tools offer
+only `audit` and `planned`. Retries, saved schedules and organic system runs that pinned them
+keep running. Both are hidden from discovery and new setups.
+
+- The page tree's triggers repeated the audit's orphan, depth and competing-page checks, and
+  no workflow read its page tree, URL rules or navigation. Its redirects needed the founder to
+  type every move. Page decisions plan the redirects and noindex changes `planned` makes.
+- The blog index planner ran a Codex session to plan an index most sites already have;
+  website.change adds each new article to the site's own index, and the audit reports posts
+  nothing links to.
+
+The sections below describe what pinned runs still do.
 
 ## Phase 3: planned URL changes and the blog index
 
@@ -389,11 +433,30 @@ and detail card:
 
 ## How content.deliver relates
 
-content.deliver stays registered and unchanged. Its definition (1.3.0), inputs, prompt, receipt
-keys, approval start (`approval-delivery:{run}`) and merge rule (the approval's
-`github_commit` pick) are byte for byte what they were; a test pins the definition's digest.
-Its exact-copy proof now refuses the shared dependency list rather than four of its names.
-The organic traffic system still starts it, until the recipe switches later.
+content.deliver is retired for new work. It stays registered, hidden from discovery
+(`public_discovery: false`), for its existing runs, retries, saved schedules and traffic
+system runs pinned to v5 or earlier; its inputs, prompt, receipt keys and merge rule (the
+approval's `github_commit` pick, merging only on `clean` or `has_hooks`) are unchanged for
+them, and a test pins the definition's digest.
+
+- `start_workflow_run` refuses a new content.deliver with a pointer to website.change
+  (`source: content_draft`).
+- The approval of an answer page or public article (`approval-delivery:{run}`) starts
+  website.change, as a content.generate answer page's already did. A start content.deliver
+  admitted under that key before the retirement is returned, never replaced by a second run.
+  Unlike content.deliver, website.change never guesses a route: an approved page whose type
+  has none records a failed delivery that asks the founder, and `retry_content_delivery`
+  starts it once `save_page_route` has saved one.
+- The content program card's **Prepare PR** and **Retry** start website.change, and the card
+  shows the latest adaptation by either workflow (`delivery_history`).
+- A content.generate article goes the same way (10/7): a draft selected for a repository
+  program pins website.change (`adapter`, `via: website.change`, no Markdown path), and an
+  approval that picks a pull request or commit to main adapts it, as an answer page's already
+  did. A planned article needs no chosen route; its plan item names its address. Drafts pinned
+  before keep the exact Markdown publisher. A page refresh still changes exactly its approved
+  lines itself (`deliver_refresh`), not through website.change.
+- `get_workflow` no longer prepares content.deliver; website.change's preparation covers
+  pages.
 
 website.change is built on content.deliver's machinery instead of beside it: the same page
 pinning (`page_source`), approval rechecks (`guard_page`), exact-copy proof, saved patch,
@@ -415,7 +478,7 @@ two never open two pull requests for the same page.
   system's `expected_repository` and `repository_serves_site`, the traffic snapshot, page
   decisions, the page tree, and typed content.generate items. Judgment calls go through
   `preflight_website_change`; approvals come from Decisions or MCP.
-- **Later**: the approval path starts website.change instead of content.deliver.
+- **Done**: the approval path starts website.change instead of content.deliver.
 
 ## Verification limits
 

@@ -1,0 +1,1 @@
+:root{font:15px/1.5 system-ui;color:#191915;background:#f4f0e8}body{width:350px;margin:0}main{padding:24px}h1{font-size:21px;margin:12px 0}p{overflow-wrap:anywhere}button{font:inherit;padding:10px 14px;margin:4px 5px 4px 0;border:0;background:#181814;color:white;cursor:pointer}button:disabled{opacity:.5}#stop{background:#dedad2;color:#191915}#detail{color:#a32720}

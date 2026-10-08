@@ -12,9 +12,9 @@ from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import AUDIT_POLICY
 from tin_lite.organic_audit_ai import (
     AnswerGrade,
-    BuyerPanel,
+    BuyerPanelV15,
     ContentReview,
-    PanelReview,
+    PanelReviewV15,
     payload,
 )
 from tin_lite.organic_audit_engines import per_question_usd
@@ -41,10 +41,10 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
     calls = (
         ("research", policy["max_research_attempts"], None, True),
         ("answer", questions * policy["repetitions"] + policy["brand_checks"], None, True),
-        ("panel", policy["max_panel_attempts"], BuyerPanel, False),
+        ("panel", policy["max_panel_attempts"], BuyerPanelV15, False),
         ("interpret", policy["max_panel_attempts"] * questions, None, False),
         # v11 reviews each question: the schema names rejected questions and why.
-        ("validate", policy["max_panel_attempts"], PanelReview, False),
+        ("validate", policy["max_panel_attempts"], PanelReviewV15, False),
         ("judge_graded", questions * policy["repetitions"], AnswerGrade, False),
         # One answer per question without web search, and its grade. Its input is the
         # question (at most 400 characters); the grade reads an answer of at most 32 KB.
@@ -68,36 +68,38 @@ def test_audit_ceiling_covers_every_call_at_every_bound():
         assert tokens < CARD["long_context_above_input_tokens"]
         total += count * usd(
             tokens * max(rate["input"], rate["cache_write"])
-            + policy["max_output_tokens"] * rate["output"]
+            + request["max_output_tokens"] * rate["output"]
             + searches * CARD["web_search_call_nanos"]
         )
-    # v10 asks at most 8 questions three times with web search and once without, plus a
-    # review of the top pages: 28 searched and 61 unsearched calls, about $1.92.
-    assert Decimal("1.9") < total < AUDIT_MAXIMUM_USD
+    # v15 asks at most 16 questions three times with web search and once without, plus a
+    # review of the top pages: 52 searched and 117 unsearched calls, about $3.56. Earlier
+    # policies asked at most eight and keep the $2 ceiling.
+    maximum = Decimal(policy["billing_maximum_usd"])
+    assert Decimal("3.5") < total < maximum == 4 > AUDIT_MAXIMUM_USD
     # v13 also asks the same questions on six AI engines within their own pinned ceiling.
     engines = per_question_usd(policy) * questions
-    assert engines <= Decimal(policy["ai_engines_max_cost_usd"]) == 1
+    assert engines <= Decimal(policy["ai_engines_max_cost_usd"]) == 2
     terms = service_terms(SPECS["organic.audit"].definition)
-    assert terms["maximum_nanos"] == (AUDIT_MAXIMUM_USD + 1) * NANOS_PER_DOLLAR
-    assert total + engines < AUDIT_MAXIMUM_USD + 1
+    assert terms["maximum_nanos"] == (maximum + 2) * NANOS_PER_DOLLAR
+    assert total + engines < maximum + 2
 
 
 def test_content_plan_share_covers_its_one_model_call():
     pages = {
         "pages": [
             {"page_id": f"p{index:03d}", "status": "inspected", "source_id": "page:" + "0" * 64}
-            for index in range(1, editorial.POLICY["max_pages"] + 1)
+            for index in range(1, editorial.V8_POLICY["max_pages"] + 1)
         ]
     }
     aliases = {f"s{index}": "keyword:" + "x" * 40 for index in range(400)}
     tokens = (
-        editorial.POLICY["max_input_bytes"]
-        + len(editorial.INSTRUCTIONS.encode())
+        editorial.V8_POLICY["max_input_bytes"]
+        + len(editorial.V8_INSTRUCTIONS.encode())
         + len(json.dumps(editorial.bound_schema(pages, aliases)).encode())
     )
     rate = LUNA["long_context"]
     bound = usd(
-        tokens * rate["cache_write"] + editorial.POLICY["max_output_tokens"] * rate["output"]
+        tokens * rate["cache_write"] + editorial.V8_POLICY["max_output_tokens"] * rate["output"]
     )
     assert bound < Decimal("0.10") < CONTENT_PLAN_SHARE_USD
 
@@ -105,16 +107,18 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        # Children add up to keyword $2 + audit $2 + plan $1 + draft $5 + adaptation $5 + first
-        # refresh $2.50 = $17.50 ($22.50 with a technical fix); the pool caps the run at the
-        # keyword limit + $10 + the refresh's $2.50.
-        ({}, 14.5),
-        ({"content_delivery": "draft_only"}, 12.5),  # $12.50 of children, under the pool
+        # organic-traffic-v8 (2026-10-08 calibration): the keyword limit + $12, plus $3 for
+        # page delivery and $3 for technical fixes (both on by default); about four times the
+        # children's p90s, and above any one child's own ceiling.
+        ({}, 20),
+        ({"technical_fix": False}, 17),
+        ({"content_delivery": "draft_only"}, 17),
+        ({"content_delivery": "draft_only", "technical_fix": False}, 14),
         (
             {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
-            14.5,
+            20,
         ),
-        ({"keyword_max_cost_usd": 9}, 21.5),  # a founder's higher keyword limit raises the pool
+        ({"keyword_max_cost_usd": 9}, 27),  # a founder's higher keyword limit raises it
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
@@ -134,17 +138,26 @@ def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
     assert terms["maximum_nanos"] == int(dollars * NANOS_PER_DOLLAR)
 
 
-def test_the_pool_is_about_five_times_a_measured_run():
-    from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
-    from tin_lite.service_pricing import TRAFFIC_SYSTEM_POOL_USD
+def test_the_v8_ceiling_is_about_four_times_its_estimate_and_holds_every_child():
+    from tin_lite.codex_api_pricing import api_terms
+    from tin_lite.service_pricing import TRAFFIC_SYSTEM_V8_USD
+    from tin_lite.workflow_estimates import estimate_nanos
 
-    measured = Decimal("2.49")  # a production run: audit, keywords, plan and one draft
-    refresh = Decimal("0.45")  # the first page refresh, estimated at list price
-    pool = (
-        2
-        + TRAFFIC_SYSTEM_POOL_USD
-        + Decimal(PROCEDURE_MAXIMUMS["content-refresh.v1"]) / NANOS_PER_DOLLAR
-    )
-    assert Decimal("4.5") < pool / (measured + refresh) < Decimal("5.5")
-    # Every child still fits on its own: the largest single child ceiling is $5.
-    assert pool > 5
+    spec = SPECS["organic.traffic_system"]
+    inputs = {"keyword_max_cost_usd": 2, "technical_fix": True, "content_delivery": "auto"}
+    maximum = service_terms(spec.definition, inputs=inputs)["maximum_nanos"]
+    estimate = estimate_nanos(spec.definition, inputs, maximum)
+    assert (maximum, estimate) == (20 * NANOS_PER_DOLLAR, 4_900_000_000)
+    assert Decimal("3.5") < Decimal(maximum) / estimate < Decimal("4.5")
+    # Every child fits on its own, without the keyword limit: audit v15 $6, the planning
+    # agent $6, the draft $6, website.change $4 and the refresh $1.
+    children = [
+        service_terms(SPECS["organic.audit"].definition)["maximum_nanos"],
+        service_terms(SPECS["content.plan"].definition)["maximum_nanos"],
+        *(
+            api_terms(SPECS[key].definition, child=True)["maximum_nanos"]
+            for key in ("content.generate", "website.change", "content.refresh")
+        ),
+    ]
+    assert children == [n * NANOS_PER_DOLLAR for n in (6, 6, 6, 4, 1)]
+    assert all(child <= TRAFFIC_SYSTEM_V8_USD * NANOS_PER_DOLLAR for child in children)

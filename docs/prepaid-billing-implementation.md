@@ -15,8 +15,8 @@ member accepted. Completed work receives one charge; unused funds return to the 
 balance. Native models and Codex procedures share this customer contract, while retaining
 different usage and supplier-cost records. Existing results stay readable without funding.
 
-This implementation starts in **test mode only**. No illustrative design amount or test rate
-is an approved live price. Existing, non-enrolled workspaces retain their current behavior.
+This implementation started in test mode and can now run in Stripe live mode at supplier list
+prices with no markup. The illustrative test rate card is never a live price. Existing, non-enrolled workspaces retain their current behavior.
 
 ## Implementation order
 
@@ -49,12 +49,13 @@ is an approved live price. Existing, non-enrolled workspaces retain their curren
 - Hosted self-service is restricted to profiles with integrated metering. Additional native
   workflows, parent branches and Codex profiles need their own paid-effect coverage before
   eligibility, not a second billing engine.
-- Live charging requires approved rates, failure/refund terms, tax treatment, configured live
-  payments and explicit enrollment. Test payment objects never fund a live account.
+- Live charging uses supplier list prices, the existing failure and refund handling, no tax
+  collection and live payment configuration. Balances from test top-ups carry over to live
+  accounts; a test payment object is never read, reconciled or refunded through live Stripe.
 
 ## Payment configuration
 
-`STRIPE_SECRET_KEY` must be a test key for this slice. Tin Lite requires its own
+`STRIPE_SECRET_KEY` must match `TIN_LITE_STRIPE_MODE` (`test` by default). Tin Lite requires its own
 `STRIPE_WEBHOOK_SECRET`; Strangeloop's signing secret is endpoint-specific and is not reused.
 The local Strangeloop billing runbook mentions `STRIPE_KEY` and `STRIPE_TEST_KEY`, but the
 current local env files do not contain them. No source credentials have been copied.
@@ -95,6 +96,30 @@ subscription, key, or webhook was changed.
    quoted workflow start, settlement and refund. That account-connected acceptance has **not**
    happened yet. Do not claim the simulated tests below prove it.
 
+### Switching to live mode
+
+Tin's own top-ups share the Stripe account with Strangeloop, using Tin's own product and
+webhook. Checkout does not collect tax, matching the account's other products.
+
+1. Apply migration `058_stripe_live_mode.sql`. It allows `live` accounts and records each
+   payment's Stripe mode; existing rows are test payments. Deploy this version in test mode.
+2. Wait until no test top-up is pending (Checkout expires 45 minutes after the request).
+   A pending test payment is not reconciled once the deployment is in live mode.
+3. In Stripe live mode, create a restricted key for Tin Lite with write access to Checkout
+   Sessions, Products and Refunds and read access to PaymentIntents. Create a live webhook
+   endpoint at `https://app.tin.computer/webhooks/stripe/tin-lite` with API version
+   `2024-06-20` and the nine events listed above. Never reuse another product's endpoint
+   or signing secret.
+4. Set `TIN_LITE_STRIPE_MODE=live`, the live `STRIPE_SECRET_KEY` and the live endpoint's
+   `STRIPE_WEBHOOK_SECRET`, then restart. The first live Checkout creates the product
+   `tin_lite_prepaid_v1`, named **Tin Lite usage**.
+5. Make one real small top-up and one refund, and check the balance, invoice and webhook.
+
+Balances carry over: welcome credits and earlier test top-ups stay spendable. A test top-up
+keeps its history but shows nothing refundable and is never sent to live Stripe. New accounts,
+quotes and terms record the live mode. Switching back to test mode is the same change reversed;
+live payments then wait, unreconciled, until live mode returns.
+
 ### Current implementation boundaries
 
 - Eligible profiles: `creative.character`, `content.plan`, and procedures whose immutable
@@ -108,7 +133,7 @@ subscription, key, or webhook was changed.
   rechecks project membership and current spending limits. A scheduled occurrence also needs
   a current saved-workflow creator and explicit `schedule_max_nanos` standing authority.
   The Billing limit editor sets it as "Per scheduled run"; blank keeps paid schedules off.
-  Hosted default policies start with $10.
+  Hosted default policies start with $50 (projects created before October 2, 2026: $10).
 - A start blocked by project limits keeps the `project_limit` code (HTTP 402) and names the one
   limit that applies: no spending policy, the per-run limit against the estimate, or this
   month's limit with the amount already committed. There is no limit on how many runs are
@@ -151,7 +176,7 @@ subscription, key, or webhook was changed.
   abandoned top-up stops being pending within the hour. Pending checkouts are reread from Stripe
   on a per-payment backoff: every 30 seconds for the first 2 minutes, every 2 minutes to 10,
   every 10 minutes to an hour, then every 30 minutes. Webhooks remain the primary path.
-- No automatic top-up, subscriptions, promotional credit, live-mode account, retroactive charge,
+- No automatic top-up, subscriptions, promotional credit, retroactive charge,
   or changed Strangeloop resource is part of this slice.
 
 ### Local verification

@@ -26,6 +26,10 @@ CODEX_ACTIVITIES = frozenset(
         "run_project_task_turn",
     }
 )
+COLLECTION_ACTIVITIES = frozenset(
+    {"collection_prepare", "collection_poll", "collection_publish", "collection_failure"}
+)
+
 TRUSTED_ACTIVITIES = frozenset(
     {
         "x_draft_prepare",
@@ -52,6 +56,15 @@ TRUSTED_ACTIVITIES = frozenset(
         "awesome_submit_publish",
         "awesome_submit_record_approval",
         "awesome_submit_request_review",
+        "payment_recovery_apply",
+        "payment_recovery_draft",
+        "payment_recovery_expire",
+        "payment_recovery_failure",
+        "payment_recovery_gather",
+        "payment_recovery_prepare",
+        "payment_recovery_publish",
+        "payment_recovery_record_approval",
+        "payment_recovery_request_review",
         "character_approval",
         "character_design",
         "character_failure",
@@ -68,6 +81,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "complete_email_campaign",
         "complete_email_campaign_recipient",
         "content_plan_execute",
+        "content_plan_research",
         "content_plan_failure",
         "deliver_content_draft",
         "dispatch_scheduled_workflow",
@@ -114,6 +128,7 @@ TRUSTED_ACTIVITIES = frozenset(
         "organic_start_crawl",
         "organic_system_failure",
         "organic_system_finish",
+        "organic_system_measurement",
         "organic_system_prepare",
         "organic_system_progress",
         "organic_system_refresh",
@@ -190,6 +205,10 @@ def trusted_task_queue(base: str) -> str:
     return f"{base}-trusted"
 
 
+def collection_task_queue(base: str) -> str:
+    return f"{base}-connections"
+
+
 class ActivityLaneInterceptor(Interceptor):
     def workflow_interceptor_class(
         self,
@@ -210,6 +229,9 @@ class _LaneOutbound(WorkflowOutboundInterceptor):
             input.task_queue = trusted_task_queue(base)
             # The workflow worker must not eagerly execute a trusted activity
             # on its legacy/Codex slot.
+            input.disable_eager_execution = True
+        if input.activity in COLLECTION_ACTIVITIES and input.task_queue in (None, base):
+            input.task_queue = collection_task_queue(base)
             input.disable_eager_execution = True
         return super().start_activity(input)
 

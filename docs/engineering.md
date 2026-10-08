@@ -111,7 +111,8 @@ optional `system` slug pinned in each definition; the global `workflow_systems` 
 only the display name and order. Unknown and absent slugs remain callable and appear last as
 unassigned. This taxonomy applies only to Registry discovery. “Your workflows” contains
 project-owned configurations that pin one Registry revision, store schema-validated inputs, and
-optionally own a daily or weekly Temporal Schedule in an IANA timezone. Product reads remain
+optionally own a daily, weekly or monthly Temporal Schedule in an IANA timezone. A workflow
+allows a cadence only by naming it in `schedule_modes`; the default leaves monthly out. Product reads remain
 Postgres-only. A scheduled occurrence creates an ordinary pinned workflow run through one explicit
 dispatcher; overlap is skipped and at most 24 hours of missed work is caught up.
 The dispatcher remains alive while its child awaits human review; the catch-up window
@@ -125,6 +126,16 @@ schedule are editable inline. Opening an active run expands the same card with i
 facts; there is no separate run-inspector page. Email campaign runs additionally read a bounded
 delivery projection for recipient, touch, schedule, send, reply, and failure state. Provider message
 and request identifiers are not returned to the browser.
+
+My system opens on a calendar of one week, Monday to Sunday in the viewer's time zone, read from
+`GET /api/projects/{project_id}/week?start=YYYY-MM-DD&timezone=Area/City`. It returns the runs
+started in those seven local days (project tasks and superseded versions excluded) and every
+scheduled occurrence still to come, computed by `next_run_after`, the same arithmetic as the
+schedule rows. An occurrence is planned, paused, skipped once, or held: Temporal skips overlapping
+occurrences while the configuration's latest run awaits review. Arrows walk to earlier and later
+weeks; polling refreshes the week on screen. A day shows at most three entries. Reviews,
+failures, running work and every day from today on are cards; earlier finished runs are one line,
+and "+N more" opens the whole day over the calendar.
 
 Files requests `GET /api/projects/{project_id}/files?include_modified=true` to show each
 file's last saved change. Dates come from code.storage's per-file commit metadata at the
@@ -311,11 +322,14 @@ into `content/articles/<date>-<id>.md` (for example `2026-09-29-1a2b3c4d.md`), a
 normal human-review queue because it is public-facing content. Neither procedure publishes,
 contacts anyone, or acquires the steering and arbitrary-diff semantics of `project.task`.
 
-Workflow definitions may also contain one small `presentation.flow`. It is immutable presentation
-metadata, not an executable graph: the Registry renders it only inside a template's setup panel.
-The first diagrams describe `site.health_improve`, `project.weekly_brief`, and
-`outreach.email_campaign`. They share seven node meanings and two edge meanings so the visual
-language stays recognizable as the catalog grows.
+Workflow definitions contain one small `presentation.flow`. It is immutable presentation metadata,
+not an executable graph: the System page draws it top to bottom in the workflow diagram panel
+(`static/workflow-spine.js`), opened from a workflow's row or template card. A saved workflow is
+drawn from its pinned revision, or from today's definition when the pin predates its drawing
+(`GET /api/projects/{id}/workflows/{project_workflow_id}/diagram` says which). Every built-in a
+person can save, every public package and every creator candidate carries one. They share seven
+node meanings and two edge meanings so the visual language stays recognizable as the catalog
+grows. See [Draw how it runs](adding-a-workflow.md#draw-how-it-runs).
 
 `content.diagram` uses the same vocabulary to create a reviewed, editable Mermaid source artifact
 at `diagrams/{slug}.mmd`. Tin validates a deliberately small Mermaid dialect before publication;
@@ -555,8 +569,9 @@ through `TIN_LITE_GITHUB_APP_SLUG`,
 `TIN_LITE_GITHUB_WEBHOOK_SECRET`, with OAuth-on-install callback URL
 `https://app.tin.computer/integrations/callback/github` and webhook URL
 `https://app.tin.computer/webhooks/github`. The app requests repository Contents
-write and Pull requests write; GitHub shows those permissions and repository selection during
-installation. Tin exchanges the one-time OAuth code only to prove the signed-in GitHub user can
+write and Pull requests write, plus read-only Checks and Commit statuses so website.change can
+wait for a pull request's own build before it merges (without them Tin never merges; it leaves
+the PR open); GitHub shows those permissions and repository selection during installation. Tin exchanges the one-time OAuth code only to prove the signed-in GitHub user can
 access the returned installation; it does not store that user token. Tin stores the installation
 ID, mints short-lived installation tokens on demand, and never stores a user PAT for the
 GitHub App connection.
@@ -568,7 +583,8 @@ configured with `TIN_LITE_GITHUB_OAUTH_CLIENT_ID` and `TIN_LITE_GITHUB_OAUTH_CLI
 narrowest classic scope that can open a pull request on someone else's public repository, and
 stores that user token encrypted. Only `outreach.awesome_submit` uses it, after the founder
 approves the exact changes: fork the list, commit one file change to a branch in the fork, open
-one pull request, or open one issue. Disconnecting revokes the grant in GitHub. All provider
+one pull request, or open one issue. Disconnecting revokes that project's token in GitHub, not
+the founder's whole grant, which their other projects share. All provider
 credentials remain on the trusted switchboard and are explicitly rejected from E2B sandbox
 environments.
 
@@ -644,9 +660,11 @@ pause for review.
 `qa.signup_walkthrough`. The first two write product understanding into project memory rather
 than into new files: each owns one subsection of `wiki/INDEX.md` → `## Product` (`### Code map`
 from the connected GitHub repository, `### Feature map` from the docs, the live signed-in product,
-and the code map), declared through `output.section` and checked by the `memory-section.v1`
-validator, which rejects any change outside the owned section and any feature line outside the
-closed status and claim vocabulary. `project.memory` keeps that block verbatim, and a procedure
+and the code map), declared through `output.section`. Tin keeps only that section from the
+procedure's output and writes it into the index as the run's base had it, so everything outside
+the section comes from the base byte for byte. The `memory-section.v1` validator then rejects a
+missing or oversized section and any feature line outside the closed status and claim
+vocabulary. `project.memory` keeps that block verbatim, and a procedure
 commit to the index refreshes the memory projection immediately. `product.code_map` reads a
 read-only repository snapshot while writing into the project-state checkout at `/home/user/state`.
 The two browser procedures reuse the walkthrough's active test identity (`identity.reuse: active`)

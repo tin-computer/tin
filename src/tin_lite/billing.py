@@ -17,7 +17,14 @@ from tin_lite.billing_contracts import (
     usd,
 )
 from tin_lite.codex_api import api_enabled as codex_api_enabled
-from tin_lite.workflow_costs import configured_terms, incremental, liability, session_funded
+from tin_lite.workflow_costs import (
+    BOUND_POLICY,
+    admitted_amount,
+    configured_terms,
+    incremental,
+    liability,
+    session_funded,
+)
 from tin_lite.workflow_definitions import resolve_execution_contract
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
@@ -40,14 +47,20 @@ async def configure_billing(database, settings):
     database.billing = None
 
 
-# Workflows with no Tin charge. X API credits are paid by the configured app's operator,
-# separately from Tin's model ledger; included execution does not claim X API calls are free.
-# The other providers below buy no model or provider work.
+# These workflows have no Tin charge. Collection compute is Tin-funded; X API
+# credits are paid by the configured app's operator. Supplier observations remain
+# separate from the customer model ledger. Other entries buy no provider work.
 CONNECTED_ACCOUNT_EXECUTORS = {
+    "connections.collect": "tin-funded-connections-v1",
     "outreach.email_campaign": "tin-connected-email-v1",
     "outreach.awesome_submit": "tin-connected-github-v1",
     "social.x_publish": "tin-x-operator-funded-v1",
 }
+# Spending limits a new hosted project starts with, in nanodollars. Saved policies keep
+# their own limits: these apply only where a project has no policy yet.
+HOSTED_DEFAULT_PER_RUN_NANOS = 25_000_000_000
+HOSTED_DEFAULT_MONTHLY_NANOS = 100_000_000_000
+HOSTED_DEFAULT_SCHEDULE_MAX_NANOS = 50_000_000_000
 LIMIT_HINT = " Raise the project's limits with set_project_spending_limits or on the Billing page."
 
 # A billing_run_budgets row's liability() in SQL: committed usage, plus the execution fee
@@ -78,20 +91,46 @@ _UNSTARTED_ESTIMATE_SQL = f"""CASE WHEN b.status='reserved' AND {_ROOT_CAN_WORK_
     ELSE 0 END"""
 
 
-def project_limit_message(policy, estimate, usage) -> str | None:
-    """Name the one project limit that blocks admission, or None when none does."""
+def run_room(policy, usage, credits) -> int:
+    """What one new root run may still spend: available credits, capped by the project's
+    per-run limit and the rest of this month's limit."""
+    room = credits["available"]
+    if policy:
+        room = min(room, policy["per_run_nanos"], policy["monthly_nanos"] - usage["exposure"])
+    return room
+
+
+def cost_words(terms) -> str:
+    """How a run's cost reads to the founder: its usual cost and its ceiling, kept apart, or
+    the amount held up front when a session budget holds its whole ceiling."""
+    maximum = terms["maximum_nanos"]
+    estimate = terms.get("estimate", {}).get("amount_nanos", maximum)
+    if estimate >= maximum:
+        return f"This workflow can cost up to ${usd(maximum)}"
+    if not incremental(terms):
+        return (
+            f"This workflow usually costs about ${usd(estimate)}, and it holds its "
+            f"${usd(maximum)} maximum while it runs"
+        )
+    return f"This workflow usually costs about ${usd(estimate)}, never more than ${usd(maximum)}"
+
+
+def project_limit_message(policy, amount, usage, *, terms=None) -> str | None:
+    """Name the one project limit that blocks admission, or None when none does.
+
+    `amount` is what admission checks (admitted_amount); `terms` words it for the founder.
+    """
     if not policy:
         return "This project has no spending policy yet." + LIMIT_HINT
-    if estimate > policy["per_run_nanos"]:
+    words = cost_words(terms) if terms else f"This workflow can cost up to ${usd(amount)}"
+    if amount > policy["per_run_nanos"]:
         return (
-            f"This workflow is estimated at up to ${usd(estimate)}; "
-            f"the project's per-run limit is ${usd(policy['per_run_nanos'])}." + LIMIT_HINT
+            f"{words}; the project's per-run limit is ${usd(policy['per_run_nanos'])}." + LIMIT_HINT
         )
-    if usage["exposure"] + estimate > policy["monthly_nanos"]:
+    if usage["exposure"] + amount > policy["monthly_nanos"]:
         return (
-            f"This workflow is estimated at up to ${usd(estimate)}, which would exceed "
-            f"this month's ${usd(policy['monthly_nanos'])} project limit "
-            f"(${usd(usage['exposure'])} already committed)." + LIMIT_HINT
+            f"{words}, which would exceed this month's ${usd(policy['monthly_nanos'])} project "
+            f"limit (${usd(usage['exposure'])} already committed)." + LIMIT_HINT
         )
     return None
 
@@ -99,6 +138,20 @@ def project_limit_message(policy, estimate, usage) -> str | None:
 class BillingService:
     def __init__(self, *, database, settings):
         self.db, self.settings = database, settings
+
+    @property
+    def mode(self):
+        """The Stripe mode funding new credits; it labels new accounts, terms and views."""
+        return getattr(self.settings, "stripe_mode", "test")
+
+    def funds_notice(self, notice):
+        return f"Test funds; {notice[0].lower()}{notice[1:]}" if self.mode == "test" else notice
+
+    def fallback_terms(self, definition):
+        # The fallback card's rates are invented, so they never charge live funds.
+        if self.mode != "test":
+            raise BillingError("unmetered_profile", "This execution profile is not billing-ready.")
+        return test_terms(definition)
 
     async def workspace_billing_admin(self, conn, workspace_id):
         """One authority for wallet creation and activation, including older workspaces.
@@ -124,8 +177,8 @@ class BillingService:
     async def ensure_hosted_project(self, conn, project_id):
         """Hosted policy only. Preserve existing ownership, credits and spending limits.
 
-        The default includes standing schedule authority equal to the per-run limit: credits
-        are checked on every paid step and the monthly limit caps total spend. An admin can
+        The default includes standing schedule authority (HOSTED_DEFAULT_SCHEDULE_MAX_NANOS):
+        credits are checked on every paid step and the monthly limit caps total spend. An admin can
         still clear it in Billing to keep paid scheduled runs off.
         """
         if not getattr(self.settings, "billing_hosted_defaults_enabled", False):
@@ -140,21 +193,25 @@ class BillingService:
             return
         await conn.execute(
             """INSERT INTO billing_accounts(workspace_id, mode,
-                admin_clerk_user_id, run_billing_enabled) VALUES($1,'test',$2,true)
+                admin_clerk_user_id, run_billing_enabled) VALUES($1,$3,$2,true)
             ON CONFLICT(workspace_id) DO UPDATE SET run_billing_enabled=true
             WHERE billing_accounts.workspace_id=$1 AND NOT billing_accounts.run_billing_enabled""",
             workspace_id,
             admin,
+            self.mode,
         )
         # `concurrency` is no longer read: the money limits bound spending. The column is
         # written until a later migration drops it, so this release needs no migration.
         await conn.execute(
             """INSERT INTO billing_project_policies(project_id, workspace_id, per_run_nanos,
                 monthly_nanos, concurrency, schedule_max_nanos, revision)
-            VALUES($1,$2,10000000000,10000000000,1,10000000000,1)
+            VALUES($1,$2,$3,$4,1,$5,1)
             ON CONFLICT(project_id) DO NOTHING""",
             project_id,
             workspace_id,
+            HOSTED_DEFAULT_PER_RUN_NANOS,
+            HOSTED_DEFAULT_MONTHLY_NANOS,
+            HOSTED_DEFAULT_SCHEDULE_MAX_NANOS,
         )
 
     async def ensure_hosted_projects(self, actor):
@@ -207,10 +264,11 @@ class BillingService:
             if admin:
                 await conn.execute(
                     """INSERT INTO billing_accounts(workspace_id, mode, admin_clerk_user_id,
-                           run_billing_enabled) VALUES($1,'test',$2,false)
+                           run_billing_enabled) VALUES($1,$3,$2,false)
                        ON CONFLICT(workspace_id) DO NOTHING""",
                     target["workspace_id"],
                     admin,
+                    self.mode,
                 )
             account = await conn.fetchrow(
                 "SELECT * FROM billing_accounts WHERE workspace_id=$1 FOR UPDATE",
@@ -276,6 +334,31 @@ class BillingService:
             )
         return account
 
+    async def month_usage(self, conn, project_id):
+        """This month's committed exposure of a project's root runs.
+
+        Per-call funding reserves nothing at admission, so a run that can buy work now counts
+        at the larger of its admitted estimate and its committed liability, as in
+        wallet_credits. Otherwise any number of parallel starts pass before their first paid
+        call and then fail mid-work. begin_operation keeps checking actual commitments for
+        runs already admitted.
+        """
+        period = datetime.now(UTC).date().replace(day=1)
+        return await conn.fetchrow(
+            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
+                                        AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
+                                        THEN charged_nanos
+                                      WHEN status<>'settled'
+                                        AND terms->>'funding'='per_operation_v1'
+                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
+                                                      {_COMMITTED_LIABILITY_SQL})
+                                      WHEN status<>'settled' THEN maximum_nanos
+                                      ELSE 0 END),0) AS exposure
+               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
+            project_id,
+            period,
+        )
+
     async def wallet_credits(self, conn, account):
         """The one definition of a wallet's held and available credits.
 
@@ -331,12 +414,13 @@ class BillingService:
                 raise BillingError("billing_admin_exists", "A billing admin is already assigned.")
             await conn.execute(
                 """INSERT INTO billing_accounts(workspace_id, mode, admin_clerk_user_id)
-                   VALUES($1,'test',$2) ON CONFLICT(workspace_id) DO UPDATE
+                   VALUES($1,$3,$2) ON CONFLICT(workspace_id) DO UPDATE
                    SET run_billing_enabled=true WHERE billing_accounts.workspace_id=$1""",
                 workspace_id,
                 actor,
+                self.mode,
             )
-        return {"workspace_id": str(workspace_id), "mode": "test"}
+        return {"workspace_id": str(workspace_id), "mode": self.mode}
 
     async def update_policy(self, project_id, actor, policy: ProjectSpendingPolicy):
         if not policy.per_run_nanos or not policy.monthly_nanos or policy.schedule_max_nanos == 0:
@@ -370,14 +454,40 @@ class BillingService:
             )
         return {"revision": policy.expected_revision + 1}
 
-    def terms(self, definition, project_id, inputs=None, *, session_budget=True):
-        return configured_terms(
-            self._terms(definition, project_id, inputs, session_budget=session_budget),
+    def terms(
+        self,
+        definition,
+        project_id,
+        inputs=None,
+        *,
+        session_budget=True,
+        before_v5=False,
+        room=None,
+    ):
+        terms = self._terms(
             definition,
+            project_id,
             inputs,
+            session_budget=session_budget,
+            before_v5=before_v5,
+            room=room,
         )
+        return configured_terms(terms, definition, inputs)
 
-    def _terms(self, definition, project_id, inputs=None, *, session_budget=True):
+    def _terms(self, definition, project_id, inputs=None, **options):
+        """Priced terms labelled with the Stripe mode that funds them."""
+        return {**self._priced_terms(definition, project_id, inputs, **options), "mode": self.mode}
+
+    def _priced_terms(
+        self,
+        definition,
+        project_id,
+        inputs=None,
+        *,
+        session_budget=True,
+        before_v5=False,
+        room=None,
+    ):
         from tin_lite.codex_api import supports_api_definition
         from tin_lite.free_workflows import onboarding_is_free
         from tin_lite.service_pricing import service_terms
@@ -392,7 +502,7 @@ class BillingService:
             return {
                 "rate_card": POLICY,
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -401,7 +511,7 @@ class BillingService:
             return {
                 "rate_card": "tin-funded-onboarding-v1",
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -411,7 +521,7 @@ class BillingService:
             if native["kind"] == "parent":
                 native["codex_api_children"] = codex_api_enabled(self.settings, project_id)
                 if not native["codex_api_children"] and (
-                    definition["executor"] == "growth.onboarding"
+                    definition["executor"] in {"growth.onboarding", "content.plan"}
                     or (inputs or {}).get("technical_fix")
                     or definition.get("organic_system_policy", {}).get("version")
                     in {
@@ -420,6 +530,8 @@ class BillingService:
                         "organic-traffic-v4",
                         "organic-traffic-v5",
                         "organic-traffic-v6",
+                        "organic-traffic-v7",
+                        "organic-traffic-v8",
                     }
                 ):
                     raise BillingError(
@@ -430,7 +542,7 @@ class BillingService:
             return {
                 "rate_card": CONNECTED_ACCOUNT_EXECUTORS[definition["executor"]],
                 "kind": "included",
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "maximum_nanos": 0,
                 "definition_sha256": digest(definition),
@@ -443,8 +555,10 @@ class BillingService:
         if supports_api_definition(definition) and codex_api_enabled(self.settings, project_id):
             from tin_lite.codex_api_pricing import api_terms
 
-            return api_terms(definition, session_budget=session_budget)
-        return test_terms(definition)
+            return api_terms(
+                definition, session_budget=session_budget, before_v5=before_v5, room=room
+            )
+        return self.fallback_terms(definition)
 
     async def quote(
         self,
@@ -463,6 +577,14 @@ class BillingService:
             account = await conn.fetchrow(
                 "SELECT * FROM billing_accounts WHERE workspace_id=$1", project["workspace_id"]
             )
+            if account and account["run_billing_enabled"]:
+                room = run_room(
+                    await conn.fetchrow(
+                        "SELECT * FROM billing_project_policies WHERE project_id=$1", project_id
+                    ),
+                    await self.month_usage(conn, project_id),
+                    await self.wallet_credits(conn, account),
+                )
         if not account or not account["run_billing_enabled"]:
             return {"enabled": False, "mode": "disabled"}
         configured = None
@@ -492,11 +614,11 @@ class BillingService:
         normalized = normalize_workflow_inputs(
             schema=workflow.definition["input_schema"], project_id=project_id, inputs=inputs
         )
-        terms = self.terms(workflow.definition, project_id, normalized)
+        terms = self.terms(workflow.definition, project_id, normalized, room=room)
         if terms["kind"] == "included":
             return {
                 "enabled": False,
-                "mode": "test",
+                "mode": self.mode,
                 "maximum_usd": "0.00",
                 "estimated_usd": "0.00",
                 "approval_required": False,
@@ -510,7 +632,7 @@ class BillingService:
             }
         preview = {
             "enabled": True,
-            "mode": "test",
+            "mode": self.mode,
             "currency": "USD",
             "maximum_usd": usd(terms["maximum_nanos"]),
             "estimated_usd": usd(
@@ -519,10 +641,7 @@ class BillingService:
             "estimate": terms.get("estimate"),
             "approval_required": False,
             "rate_card": terms["rate_card"],
-            "notice": (
-                "Configured spending maximum, not a measured estimate. "
-                "Only actual verified usage is charged."
-            ),
+            "notice": f"{cost_words(terms)}. Only actual verified usage is charged.",
         }
         if preview_only:
             return preview
@@ -548,20 +667,20 @@ class BillingService:
         return {
             **preview,
             "id": str(quote_id),
-            "mode": "test",
+            "mode": self.mode,
             "currency": "USD",
             "maximum_usd": usd(terms["maximum_nanos"]),
             "expires_at": expires.isoformat(),
             "rate_card": terms["rate_card"],
             "terms": terms,
-            "notice": (
-                "Test funds; published OpenAI API rates, no markup or sandbox fee. "
+            "notice": self.funds_notice(
+                "Published OpenAI API rates, no markup or sandbox fee. "
                 "Only verified usage is charged, up to this maximum."
                 if terms["kind"] == "codex_api"
-                else "Test funds; verified model and data-provider usage at the quoted rates. "
+                else "Verified model and data-provider usage at the quoted rates. "
                 "Child steps share this maximum; no orchestration fee."
                 if "service_pricing" in terms
-                else "Test funds and illustrative rates; no real customer charge."
+                else "Illustrative rates; no real customer charge."
             ),
         }
 
@@ -650,9 +769,10 @@ class BillingService:
                 from tin_lite.codex_api_pricing import api_terms
 
                 if parent_terms.get("codex_api_children"):
-                    terms = api_terms(definition)
+                    terms = api_terms(definition, child=True)
                 else:
-                    terms = test_terms(definition)
+                    terms = self.fallback_terms(definition)
+                terms = {**terms, "mode": self.mode}
             else:
                 terms = self.terms(definition, run["project_id"], object_value(run["input"]))
             if "service_pricing" in terms:
@@ -675,13 +795,16 @@ class BillingService:
                 parent["period_start"],
             )
             return
-        terms = self.terms(definition, run["project_id"], object_value(run["input"]))
+        policy = await conn.fetchrow(
+            "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
+        )
+        usage = await self.month_usage(conn, run["project_id"])
+        credits = await self.wallet_credits(conn, account)
+        room = run_room(policy, usage, credits)
+        terms = self.terms(definition, run["project_id"], object_value(run["input"]), room=room)
         if run["trigger_source"] == "schedule":
             await self.require_spending_actor(conn, run, run["project_id"])
             # Standing monetary authority belongs to an explicitly configured policy.
-            policy = await conn.fetchrow(
-                "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
-            )
             if not policy or (policy["schedule_max_nanos"] or 0) < terms["maximum_nanos"]:
                 raise BillingError(
                     "schedule_not_funded",
@@ -699,11 +822,35 @@ class BillingService:
                     "stale_quote", "This quote is unavailable. Start again without a quote.", 402
                 )
             quoted_terms = object_value(quote["terms"]) if quote else None
+            if quoted_terms and quoted_terms.get("kind") == "codex_api":
+                # A quote pinned its ceiling from the room it saw; the limit and credit checks
+                # below still hold the run to today's room.
+                terms = self.terms(
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    room=quoted_terms["maximum_nanos"],
+                )
             # A still-valid pre-session quote keeps its original runtime and funding.
             if quoted_terms and session_funded(terms) and not session_funded(quoted_terms):
                 terms = self.terms(
-                    definition, run["project_id"], object_value(run["input"]), session_budget=False
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=False,
+                    before_v5=True,
                 )
+            # A still-valid quote issued before v5 keeps its v3/v4 contract and $5 ceiling.
+            elif quoted_terms and quoted_terms.get("kind") == "codex_api" and quoted_terms != terms:
+                previous = self.terms(
+                    definition,
+                    run["project_id"],
+                    object_value(run["input"]),
+                    session_budget=session_funded(quoted_terms),
+                    before_v5=True,
+                )
+                if quoted_terms == previous:
+                    terms = previous
             # A still-valid quote issued before isolated procedures joined v3 keeps v1.
             from tin_lite.codex_api_pricing import isolated_v1_terms, issued_before_isolated_v3
 
@@ -715,6 +862,7 @@ class BillingService:
                             run["project_id"],
                             object_value(run["input"]),
                             session_budget=False,
+                            before_v5=True,
                         )
                     ),
                     definition,
@@ -723,6 +871,11 @@ class BillingService:
             # Previously issued quotes preserve their whole-run funding contract.
             if quoted_terms and "funding" not in quoted_terms:
                 expected = {k: v for k, v in terms.items() if k not in {"funding", "estimate"}}
+            # A quote issued before calibrated estimates keeps its estimate at the ceiling.
+            elif quoted_terms and quoted_terms.get("estimate", {}).get("policy") == BOUND_POLICY:
+                expected = configured_terms(
+                    terms, definition, object_value(run["input"]), policy=BOUND_POLICY
+                )
             else:
                 expected = terms
             if quote and (
@@ -747,38 +900,16 @@ class BillingService:
             if quoted_terms:
                 terms = quoted_terms
         maximum = terms["maximum_nanos"]
-        estimate = terms.get("estimate", {}).get("amount_nanos", maximum)
-        policy = await conn.fetchrow(
-            "SELECT * FROM billing_project_policies WHERE project_id=$1", run["project_id"]
-        )
+        # Admission checks the estimate; the ceiling stays each paid call's hard stop.
+        amount = admitted_amount(terms)
         period = datetime.now(UTC).date().replace(day=1)
-        # Per-call funding reserves nothing here, so a run that can buy work now counts at
-        # the larger of its admitted estimate and its committed liability, as in
-        # wallet_credits. Otherwise any number of parallel starts pass before their first
-        # paid call and then fail mid-work. begin_operation keeps checking actual
-        # commitments for runs already admitted.
-        usage = await conn.fetchrow(
-            f"""SELECT COALESCE(sum(CASE WHEN status='settled'
-                                        AND settled_at >= ($2::date::timestamp AT TIME ZONE 'UTC')
-                                        THEN charged_nanos
-                                      WHEN status<>'settled'
-                                        AND terms->>'funding'='per_operation_v1'
-                                        THEN GREATEST({_UNSTARTED_ESTIMATE_SQL},
-                                                      {_COMMITTED_LIABILITY_SQL})
-                                      WHEN status<>'settled' THEN maximum_nanos
-                                      ELSE 0 END),0) AS exposure
-               FROM billing_run_budgets b WHERE project_id=$1 AND run_id=root_run_id""",  # noqa: S608 — static SQL, no caller text
-            run["project_id"],
-            period,
-        )
-        if limit := project_limit_message(policy, estimate, usage):
+        if limit := project_limit_message(policy, amount, usage, terms=terms):
             raise BillingError("project_limit", limit, 402)
-        credits = await self.wallet_credits(conn, account)
-        if credits["available"] < estimate:
+        if credits["available"] < amount:
             set_aside = credits["set_aside"]
             raise BillingError(
                 "insufficient_funds",
-                f"This workflow is estimated at up to ${usd(estimate)}. "
+                f"{cost_words(terms)}. "
                 f"Available credits: ${usd(max(credits['available'], 0))}"
                 + (f" after ${usd(set_aside)} set aside for runs in progress" if set_aside else "")
                 + ". Add credits before starting.",
@@ -899,13 +1030,26 @@ class BillingService:
             )
         if parent["executor"] == "organic.traffic_system":
             from tin_lite.organic_system import (
+                MEASURE_STEPS,
                 REFRESH_KEY,
                 STEPS,
+                measures_pages,
                 policy_steps,
                 refreshes_pages,
                 writes_with_website_change,
             )
 
+            if definition["key"] in MEASURE_STEPS.values():
+                # v7's weekly snapshot and Page decisions, pinned at preparation like its steps.
+                step = next(s for s, child in MEASURE_STEPS.items() if child == definition["key"])
+                prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
+                return bool(
+                    key == f"system:{parent_id}:{step}"
+                    and prepared
+                    and prepared.status == "completed"
+                    and measures_pages(prepared.result.get("policy"))
+                    and prepared.result["definitions"].get(step) == definition
+                )
             if definition["key"] == REFRESH_KEY:
                 # The v5 recipe's first page refresh, pinned at preparation like its steps.
                 prepared = await self.db.get_effect(f"traffic:{parent_id}:prepare", conn=conn)
@@ -950,6 +1094,20 @@ class BillingService:
                 ):
                     return False
             return step is not None and key == f"system:{parent_id}:{step}"
+        if parent["executor"] == "content.plan":
+            # v9: the plan's one child is its planning agent, at the plan's own registry
+            # revision, under the start key the plan derives from its run.
+            from tin_lite.content_plan_agent import RESEARCH_KEY
+
+            revision = await conn.fetchval(
+                "SELECT definition_commit_sha FROM workflow_runs WHERE id=$1", parent_id
+            )
+            return bool(
+                definition.get("key") == RESEARCH_KEY
+                and key == f"content:{parent_id}:research"
+                and revision is not None
+                and str(run["definition_commit_sha"]) == str(revision)
+            )
         if parent["executor"] != "growth.onboarding":
             return False
         if key == f"onboarding:{parent_id}:plan":
@@ -1490,7 +1648,7 @@ class BillingService:
             return {
                 "run_id": str(run_id),
                 "root_run_id": str(root["run_id"]),
-                "mode": "test",
+                "mode": self.mode,
                 "status": "in_progress"
                 if (incremental(terms) or session_funded(terms)) and root["status"] == "reserved"
                 else root["status"],
@@ -1572,7 +1730,7 @@ class BillingService:
             result = {
                 "enabled": True,
                 "run_billing_enabled": account["run_billing_enabled"],
-                "mode": "test",
+                "mode": self.mode,
                 "currency": "USD",
                 "is_admin": bool(admin),
                 "workspace_id": str(project["workspace_id"]),

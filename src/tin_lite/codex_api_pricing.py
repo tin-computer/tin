@@ -7,9 +7,12 @@ from tin_lite.billing_contracts import NANOS_PER_DOLLAR, digest, token_charge
 from tin_lite.codex_api import (
     CONTRACT,
     DIAGRAM_CONTRACT,
+    DIAGRAM_VALIDATORS,
     MODE,
     MODEL,
+    PROCEDURE_CONTRACT,
     SESSION_CONTRACT,
+    SESSION_CONTRACT_V4,
     procedure_contract,
 )
 from tin_lite.workflow_costs import SESSION_FUNDING
@@ -72,24 +75,115 @@ REQUEST_MAXIMUM = (
 )
 
 
-# Session ceilings below the default $5, by the procedure's output contract. A page refresh
-# reads the page's current text, a few positioning files and the style guide, then writes one
-# short document: about 150,000 input and 6,000 output tokens at list price, roughly $0.45.
-# Its ceiling is about five times that. No refresh has run yet; recalibrate from measurements.
-PROCEDURE_MAXIMUMS = {"content-refresh.v1": 2_500_000_000}
+# The default Codex procedure ceiling. It is a runaway guard, set well above real use:
+# over the 30 days to 2026-10-02 the costliest ordinary procedure's p90 was $4.30, and
+# two sessions stopped at the old $5. Runs admitted earlier keep their pinned $5.
+DEFAULT_MAXIMUM = 10 * NANOS_PER_DOLLAR
+BEFORE_V5_MAXIMUM = 5 * NANOS_PER_DOLLAR
+# A child of a parent budget keeps $5: parent pools (e.g. the organic traffic system's) were
+# composed from $5 children, and the parent's maximum bounds the whole run anyway.
+CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
+# Session ceilings by the procedure's output contract. A page refresh reads the page's current
+# text, a few positioning files and the style guide, then writes one short document; its p90
+# over six runs was $0.20 (workflow_estimates), and its ceiling is five times that.
+PROCEDURE_MAXIMUMS = {
+    "content-refresh.v1": 1_000_000_000,
+    # content.plan_research reads the program's research and the project's files and searches
+    # before it plans up to 81 pages; a runaway guard, not an estimate.
+    "content-plan-portfolio.v1": 6_000_000_000,
+}
+# Session ceilings by workflow key, for procedures whose output has no validator entry above.
+# A validator entry wins; a workflow with neither keeps the default. Like a validator entry, a
+# key entry also replaces the $5 child ceiling. Runaway guards, not estimates: about five times
+# each workflow's p90 (workflow_estimates), rounded to 3/4/5/6/8/10/12/15 and never below twice
+# the most a run has cost at today's rates. Only ceilings other than the $10 default are listed.
+PROCEDURE_KEY_MAXIMUMS: dict[str, int] = {
+    key: dollars * NANOS_PER_DOLLAR
+    for key, dollars in {
+        "product.deep_dive": 12,
+        "qa.product_audit": 12,
+        "research.deep_dive": 8,
+        "outreach.awesome_lists": 8,
+        "growth.free_tool": 8,
+        "content.generate": 6,
+        "content.public_article": 6,
+        "outreach.email_shortlist": 6,
+        "organic.mention_backlinks": 6,
+        "content.diagram": 6,
+        "qa.signup_walkthrough": 5,
+        "outreach.newsletter_placements": 5,
+        "outreach.syllabus_placement": 5,
+        "outreach.podcast_guest": 5,
+        "website.change": 4,
+        "brand.capture": 4,
+        "outreach.community_threads": 4,
+        "outreach.speaking_shortlist": 4,
+        "product.analytics_brief": 3,
+        "competitor.watch": 3,
+        "site.health_improve": 3,
+        "outreach.marketplace_listings": 3,
+        "outreach.campus_events": 3,
+        "competitor.sunset_rescue": 3,
+        "growth.signup_source": 3,
+        "content.design_md": 3,
+        "qa.buyer_trust": 3,
+        "growth.framework_starter": 3,
+    }.items()
+}
 
 
-def api_terms(definition, *, session_budget=False):
+def procedure_maximum(definition, *, before_v5=False, child=False, room=None):
+    """A procedure's ceiling: its validator's entry, else its workflow key's, else the default
+    ($10 root, $5 child, $5 for quotes issued before v5)."""
+    validator = definition.get("procedure", {}).get("output", {}).get("validator")
+    if validator in PROCEDURE_MAXIMUMS:
+        return PROCEDURE_MAXIMUMS[validator]
+    # Quotes issued before v5 were priced before key entries existed. An entry above the $10
+    # default applies, like the default, only where the project's limits and wallet can cover
+    # it; elsewhere the default's own rule keeps old behaviour.
+    entry = PROCEDURE_KEY_MAXIMUMS.get(definition.get("key"))
+    if (
+        entry is not None
+        and not before_v5
+        and (room is None or entry <= DEFAULT_MAXIMUM or room >= entry)
+    ):
+        return entry
+    return BEFORE_V5_MAXIMUM if before_v5 else CHILD_MAXIMUM if child else default_maximum(room)
+
+
+def default_maximum(room=None):
+    """A root run's default ceiling: $10 when the project's limits and wallet can cover it,
+    otherwise the earlier $5, so a project or wallet without $10 of room keeps its old
+    behaviour (and its old refusals). `room` is None where nothing is admitted (estimates)."""
+    if room is not None and room < DEFAULT_MAXIMUM:
+        return BEFORE_V5_MAXIMUM
+    return DEFAULT_MAXIMUM
+
+
+def request_maximum(contract):
+    """One request's customer liability: the whole context as cache writes, a maximum
+    response and one search call. Tin absorbs any supplier excess and stops further calls."""
+    return (
+        contract["context_window"] * RATE_CARD["standard"]["cache_write"]
+        + contract["max_output_tokens"] * RATE_CARD["standard"]["output"]
+        + RATE_CARD["web_search_call_nanos"]
+    )
+
+
+def api_terms(definition, *, session_budget=False, before_v5=False, child=False, room=None):
+    """Terms a new admission pins. `before_v5` rebuilds the terms (v3/v4 contract, $5
+    default) that quotes issued before v5 carry, only to honor such a quote while valid.
+    `child` is a run funded inside its parent's budget; it keeps the $5 child ceiling.
+    `room` is what a root run may still spend (`default_maximum`)."""
     validator = definition.get("procedure", {}).get("output", {}).get("validator")
     terms = {
         "rate_card": RATE_CARD["id"],
         "pricing": RATE_CARD,
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "codex_api",
         "codex_auth": MODE,
-        "maximum_nanos": PROCEDURE_MAXIMUMS.get(validator, 5 * NANOS_PER_DOLLAR),
+        "maximum_nanos": procedure_maximum(definition, before_v5=before_v5, child=child, room=room),
         "request_maximum_nanos": REQUEST_MAXIMUM,
         "request_maximum_input_bytes": REQUEST_INPUT_ENVELOPE,
         "execution_fee_nanos": 0,
@@ -106,34 +200,34 @@ def api_terms(definition, *, session_budget=False):
         "browser",
         "studio",
     }:
-        contract = procedure_contract(
-            definition.get("procedure", {}).get("output", {}).get("validator")
-        )
+        if before_v5:
+            contract = DIAGRAM_CONTRACT if validator in DIAGRAM_VALIDATORS else PROCEDURE_CONTRACT
+        else:
+            contract = procedure_contract(validator)
         terms.update(
             codex_contract=contract,
             request_maximum_input_bytes=contract["max_request_bytes"],
-            request_maximum_nanos=(
-                contract["context_window"] * RATE_CARD["standard"]["cache_write"]
-                + contract["max_output_tokens"] * RATE_CARD["standard"]["output"]
-                + RATE_CARD["web_search_call_nanos"]
-            ),
+            request_maximum_nanos=request_maximum(contract),
         )
     if definition.get("procedure", {}).get("sandbox", {}).get("profile") == "studio":
         from tin_lite.studio_billing import CARD
 
         terms.update(studio_pricing=CARD, operations=["codex_api", "tool"])
     procedure = definition.get("procedure", {})
+    # Diagrams and Studio keep per-operation funding: their tool operations and image
+    # loops are not session-funded. Only the context contract changed for them.
     if (
         session_budget
         and definition.get("executor") == "codex.procedure"
         and procedure.get("sandbox", {}).get("profile", "default")
         in {"default", "isolated", "browser"}
-        and procedure_contract(procedure.get("output", {}).get("validator")) != DIAGRAM_CONTRACT
+        and validator not in DIAGRAM_VALIDATORS
     ):
+        session = SESSION_CONTRACT_V4 if before_v5 else SESSION_CONTRACT
         terms.update(
             funding=SESSION_FUNDING,
-            codex_contract=SESSION_CONTRACT,
-            request_maximum_input_bytes=SESSION_CONTRACT["max_request_bytes"],
+            codex_contract=session,
+            request_maximum_input_bytes=session["max_request_bytes"],
         )
         terms.pop("request_maximum_nanos")
     return terms
@@ -142,7 +236,7 @@ def api_terms(definition, *, session_budget=False):
 def isolated_v1_terms(terms):
     """The pilot v1 shape isolated procedures were quoted with before 2026-09-25.
 
-    Only for honoring an already-issued, unexpired quote; new admissions use v3.
+    Only for honoring an already-issued, unexpired quote; new admissions use v5.
     """
     terms = {key: value for key, value in terms.items() if key != "codex_contract"}
     terms.update(

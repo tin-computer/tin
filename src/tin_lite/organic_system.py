@@ -47,13 +47,30 @@ REFRESH_POLICY = {**FALLBACK_POLICY, "version": "organic-traffic-v5", "refresh":
 # content.deliver. Everything else is v5's. Runs pinned to v5 and earlier keep their steps.
 WEBSITE_KEY = "website.change"
 WEBSITE_STEPS = {**STEPS, "technical": WEBSITE_KEY, "delivery": WEBSITE_KEY}
-POLICY = {
+WEBSITE_POLICY = {
     **REFRESH_POLICY,
     "version": "organic-traffic-v6",
     "steps": WEBSITE_STEPS,
     "site_writer": WEBSITE_KEY,
 }
+# v7 also measures the site each week. After the audit it runs the traffic snapshot and then
+# Page decisions as child runs, before the content plan reads both, and saves each as a weekly
+# schedule that runs ahead of the weekly page refresh: snapshot, then decisions, then refresh.
+# Onboarding no longer installs the two on their own. Everything else is v6's.
+SNAPSHOT_KEY = "organic.traffic_snapshot"
+DECISIONS_KEY = "organic.content_efficacy"
+MEASURE_STEPS = {"snapshot": SNAPSHOT_KEY, "decisions": DECISIONS_KEY}
+MEASUREMENT_POLICY = {
+    **WEBSITE_POLICY,
+    "version": "organic-traffic-v7",
+    "measurement": "weekly_measurement",
+}
+# v8: the content step's plan runs its planning agent (content.plan 1.0.0), so the plan's share
+# of the system's spending pool grows to the agent's ceiling (service_pricing). The steps and
+# their order are v7's.
+POLICY = {**MEASUREMENT_POLICY, "version": "organic-traffic-v8", "content_planner": "agent"}
 DRAFT_POLICIES = (CONTENT_POLICY, WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY)
+WEBSITE_POLICIES = (WEBSITE_POLICY, MEASUREMENT_POLICY, POLICY)
 REFRESH_KEY = "content.refresh"
 # The executor each child must have; any other step's executor is its own key.
 CHILD_EXECUTORS = {
@@ -61,6 +78,8 @@ CHILD_EXECUTORS = {
     "content.generate": "codex.procedure",
     "content.deliver": "codex.procedure",
     WEBSITE_KEY: "codex.procedure",
+    SNAPSHOT_KEY: "workflow.code",
+    DECISIONS_KEY: "workflow.code",
 }
 
 
@@ -69,7 +88,7 @@ def policy_steps(policy):
         return LEGACY_STEPS
     if policy in DRAFT_POLICIES:
         return STEPS
-    if policy == POLICY:
+    if policy in WEBSITE_POLICIES:
         return WEBSITE_STEPS
     raise ValueError("Unsupported organic system policy.")
 
@@ -79,24 +98,29 @@ def child_executor(workflow_key):
 
 
 def writes_with_website_change(policy):
-    """Whether this recipe's technical and delivery steps start website.change (v6)."""
-    return policy == POLICY
+    """Whether this recipe's technical and delivery steps start website.change (v6 on)."""
+    return policy in WEBSITE_POLICIES
 
 
 def drafts_articles(policy):
-    return policy in DRAFT_POLICIES or policy == POLICY
+    return policy in DRAFT_POLICIES or policy in WEBSITE_POLICIES
 
 
 def schedules_articles(policy):
-    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY, POLICY)
+    return policy in (WEEKLY_POLICY, FALLBACK_POLICY, REFRESH_POLICY, *WEBSITE_POLICIES)
 
 
 def falls_back_to_saved_plan(policy):
-    return policy in (FALLBACK_POLICY, REFRESH_POLICY, POLICY)
+    return policy in (FALLBACK_POLICY, REFRESH_POLICY, *WEBSITE_POLICIES)
 
 
 def refreshes_pages(policy):
-    return policy in (REFRESH_POLICY, POLICY)
+    return policy in (REFRESH_POLICY, *WEBSITE_POLICIES)
+
+
+def measures_pages(policy):
+    """Whether this recipe runs and schedules the traffic snapshot and Page decisions (v7)."""
+    return policy in (MEASUREMENT_POLICY, POLICY)
 
 
 INPUT_SCHEMA = {
@@ -138,9 +162,11 @@ INPUT_SCHEMA = {
         },
         "technical_fix": {
             "type": "boolean",
-            "title": "Propose one technical fix",
-            "default": False,
-            "description": "May open one unmerged PR; repository CI may run.",
+            "title": "Fix what the audit found",
+            "default": True,
+            "description": "Opens one pull request with the audit's fixes in the repository "
+            "selected on GitHub, or the one named below; repository CI may run. Skipped "
+            "without GitHub.",
         },
         "content_delivery": {
             "type": "string",
@@ -155,11 +181,14 @@ INPUT_SCHEMA = {
             "title": "GitHub owner/repository",
             "default": "",
             "maxLength": 140,
+            "description": "Leave empty to use the repository selected on GitHub.",
         },
         "repository_serves_site": {
             "type": "boolean",
             "default": False,
             "title": "This repository serves the audited website",
+            "description": "Needed only with a repository named here: the repository "
+            "selected on GitHub is the one the founder chose for the site.",
         },
         "article_weekdays": {
             "type": "array",
@@ -187,10 +216,6 @@ def check_inputs(inputs):
     date.fromisoformat(inputs["start_date"])
     if inputs["market"] not in MARKETS or inputs.get("duration", "6_months") not in DURATIONS:
         raise ValueError("Choose a supported market and content-plan duration.")
-    if inputs.get("technical_fix") and (
-        inputs.get("repository_serves_site") is not True or not inputs.get("expected_repository")
-    ):
-        raise ValueError("Confirm the exact GitHub repository before enabling technical fixes.")
     weekdays = inputs.get("article_weekdays", [])
     if len(set(weekdays)) != len(weekdays) or any(day not in WEEKDAYS for day in weekdays):
         raise ValueError("Choose each drafting weekday once, by its lowercase English name.")
@@ -246,6 +271,19 @@ async def system_facts(*, database, project_id, run_id):
             }
         )
     weekly = await database.get_effect(f"traffic:{run_id}:weekly")
+    measurement = {}
+    for step in MEASURE_STEPS:
+        receipt = await database.get_effect(f"traffic:{run_id}:measure:{step}")
+        if receipt and receipt.status == "completed" and receipt.result:
+            value = dict(receipt.result)
+            if value.get("run_id"):
+                from uuid import UUID
+
+                child = await database.get_run(UUID(value["run_id"]))
+                if child is not None and child.project_id == project_id:
+                    value["run_status"] = child.status.value
+                    value["artifact_path"] = child.artifact_path
+            measurement[step] = value
     return {
         "run_id": str(run.id),
         "project_id": str(project_id),
@@ -253,6 +291,8 @@ async def system_facts(*, database, project_id, run_id):
         "steps": steps,
         # The saved weekly drafting configuration, when this recipe includes one.
         "weekly_articles": weekly.result if weekly and weekly.status == "completed" else None,
+        # v7's weekly traffic snapshot and Page decisions: each saved schedule and its run now.
+        "measurement": measurement or None,
         "artifact_path": run.artifact_path,
         "artifact_ref": run.artifact_ref,
     }

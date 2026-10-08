@@ -71,7 +71,13 @@ text. Do not duplicate existing preferences. Keep rules concise and directly use
 A guide's explicit preferences take precedence over sampled habits; newer explicit corrections
 qualify older preferences. Do not change the account or broaden a guide to other channels.
 """
-POLICY = {"version": "x-feedback-v1", "max_input_bytes": 60000, "max_output_tokens": 8000}
+POLICY_V1 = {"version": "x-feedback-v1", "max_input_bytes": 60000, "max_output_tokens": 8000}
+# x-feedback-v2 (social.x_revise 1.2.0) only raises the output cap from 8,000 to 32,000 tokens.
+# A runaway guard, not an expected length: reasoning counts against the cap, and billing
+# charges the tokens a call actually used. GPT-6 Sol allows 128,000 output tokens.
+POLICY = {**POLICY_V1, "version": "x-feedback-v2", "max_output_tokens": 32_000}
+# Every policy a pinned definition may carry; runs keep the cap they were admitted with.
+POLICIES = {policy["version"]: policy for policy in (POLICY_V1, POLICY)}
 # A guide revision may read up to eight project files (samples, notes) the feedback points at.
 MAX_REFERENCE_FILES = 8
 MAX_REFERENCE_BYTES = 20_000

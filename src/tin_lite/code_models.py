@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 from copy import deepcopy
 from dataclasses import asdict
@@ -21,10 +22,22 @@ from tin_lite.model_providers import (
 )
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.service_pricing import CARD, model_maximum
-from tin_lite.workflow_code import MODEL_TARGETS, validate_code_definition
+from tin_lite.workflow_code import (
+    MODEL_TARGETS,
+    RUN_MODEL_INPUT_WARNING_BYTES,
+    validate_code_definition,
+)
+
+logger = logging.getLogger(__name__)
 
 OPERATION = "code_model_call_v1"
-MAX_RESPONSE_BYTES = 64_000
+MAX_RESPONSE_BYTES = 1_000_000
+# Serialized request bytes per input token assumed when reserving a model call. The o200k
+# tokenizer measures 4.4-4.7 bytes per token on prose, code and JSON, and real workflow input
+# about 3.5, so three stays above the tokens a call is charged for. Tin absorbs any excess.
+BYTES_PER_INPUT_TOKEN = 3
+# Fixed per-call allowance for the provider's own request envelope, in tokens.
+REQUEST_ENVELOPE_TOKENS = 4096
 ERRORS = {
     "invalid_model_request": "The model request exceeds or differs from its declared contract.",
     "model_unavailable": "The declared managed model route is unavailable.",
@@ -59,6 +72,30 @@ def registered_routes():
     )
 
 
+def call_input_tokens(input_bytes):
+    """The input tokens one call reserves for its serialized request."""
+    return -(-input_bytes // BYTES_PER_INPUT_TOKEN) + REQUEST_ENVELOPE_TOKENS
+
+
+def model_routes_maximum(terms, routes):
+    """The most a run's declared model calls can cost at these terms.
+
+    Every call may send its route's whole max_input_bytes, at BYTES_PER_INPUT_TOKEN, and use
+    its whole output allowance. The run's input warning does not lower this: it refuses nothing.
+    """
+    return sum(
+        route.max_calls
+        * model_maximum(
+            terms,
+            provider=route.provider,
+            model=route.model,
+            input_tokens=call_input_tokens(route.max_input_bytes),
+            output_tokens=route.max_output_tokens,
+        )
+        for route in routes
+    )
+
+
 def model_terms(definition):
     """Metered code terms: declared model routes plus paid managed service reads."""
     from tin_lite.managed_services import CALL_CEILING_USD
@@ -68,7 +105,6 @@ def model_terms(definition):
     terms = {
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
         "kind": "metered_workflow",
@@ -78,17 +114,7 @@ def model_terms(definition):
         "failure_policy": "verified_usage; platform_duplicates_and_overages_absorbed",
         "unknown_policy": "pending_up_to_24h_then_unresolved_cost_absorbed",
     }
-    terms["maximum_nanos"] = sum(
-        route.max_calls
-        * model_maximum(
-            terms,
-            provider=route.provider,
-            model=route.model,
-            input_tokens=route.max_input_bytes + 4096,
-            output_tokens=route.max_output_tokens,
-        )
-        for route in spec.model_routes
-    ) + sum(
+    terms["maximum_nanos"] = model_routes_maximum(terms, spec.model_routes) + sum(
         # Each paid read reserves its provider's per-call ceiling; reported cost settles it.
         service.max_calls * amount_nanos(CALL_CEILING_USD[service.provider_key])
         for service in spec.paid_services
@@ -148,6 +174,11 @@ def validate_output_schema(schema, *, depth=0):
             raise ValueError("invalid model output schema") from None
 
 
+def request_bytes(request):
+    """Serialized request size: what max_input_bytes and the run's input budget count."""
+    return len(json.dumps(asdict(request), ensure_ascii=False, allow_nan=False).encode())
+
+
 def request_contract(spec, payload):
     try:
         if not isinstance(payload, dict) or set(payload) != {
@@ -177,8 +208,7 @@ def request_contract(spec, payload):
             max_output_tokens=route.max_output_tokens,
             output_schema=schema,
         )
-        encoded = json.dumps(asdict(request), ensure_ascii=False, allow_nan=False).encode()
-        if len(encoded) > route.max_input_bytes:
+        if request_bytes(request) > route.max_input_bytes:
             raise ValueError("model input exceeds declared allowance")
         return route, request
     except (ValueError, TypeError, KeyError, StopIteration, RecursionError):
@@ -228,6 +258,7 @@ class CodeModels:
 
     async def generate(self, *, conn, run, workflow, spec, payload):
         route, request = request_contract(spec, payload)
+        input_bytes = request_bytes(request)
         step = payload["step"]
         fingerprint = digest(
             {
@@ -273,6 +304,26 @@ class CodeModels:
             )
             if used >= route.max_calls:
                 raise CodeModelError("model_call_limit")
+            # A soft gate: a run whose model input passes the expected bound still sends the
+            # call, and the crossing is logged once for operators. Every started call counts,
+            # whatever its outcome; receipts written before input_bytes was recorded count as 0.
+            sent = await conn.fetchval(
+                """SELECT COALESCE(sum((result->>'input_bytes')::bigint), 0)
+                   FROM effect_receipts WHERE operation=$1 AND execution_key LIKE $2""",
+                OPERATION,
+                prefix + "%",
+            )
+            if sent <= RUN_MODEL_INPUT_WARNING_BYTES < sent + input_bytes:
+                logger.warning(
+                    "code workflow model input passed %s bytes: run=%s workflow=%s step=%s "
+                    "sent=%s call=%s",
+                    RUN_MODEL_INPUT_WARNING_BYTES,
+                    run.id,
+                    workflow.key,
+                    step,
+                    sent,
+                    input_bytes,
+                )
             record = {
                 "version": 1,
                 "run_id": str(run.id),
@@ -280,17 +331,26 @@ class CodeModels:
                 "step": step,
                 "route": route.name,
                 "fingerprint": fingerprint,
+                "input_bytes": input_bytes,
             }
             await self.db.start_effect(conn, execution_key=key, operation=OPERATION)
             await self.db.save_effect_progress(conn, execution_key=key, result=record)
             try:
                 # Recorder owns paid intent, reservation and observed usage. The owning
                 # operation below owns recoverable output, just like native activities.
-                with model_usage_scope(run_id=run.id, step=f"code:{step}", conn=conn):
+                with model_usage_scope(
+                    run_id=run.id,
+                    step=f"code:{step}",
+                    conn=conn,
+                    input_tokens=call_input_tokens(input_bytes),
+                ):
                     # The package's declared runtime bounds its model calls: a slower answer
-                    # arrives after the package has given up on it.
+                    # arrives after the package has given up on it. The provider waits as
+                    # long, not its shorter default, so a slow answer within the window lands.
                     async with asyncio.timeout(spec.timeout_seconds):
-                        result = await self.router.generate(route.router_key, request)
+                        result = await self.router.generate(
+                            route.router_key, request, timeout_seconds=spec.timeout_seconds
+                        )
             except ModelProviderError as exc:
                 if exc.observation is not None:
                     await self.db.complete_effect(

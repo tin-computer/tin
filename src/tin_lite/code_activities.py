@@ -108,6 +108,11 @@ class CodeActivities:
                         context.get("approved_article"),
                     )
                 file_source = await saved_project_files(self.db, run, project)
+                connections = await self.services.connections(
+                    conn=conn, run=run, workflow=workflow, spec=spec
+                )
+                if connections:
+                    context["connections"] = connections
                 branch = f"procedures/{run.id}/{run.generation}"
                 revision = await self.storage.procedure_checkpoint_revision(
                     repo_id=project.state_repo_id, branch=branch

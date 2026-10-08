@@ -531,6 +531,7 @@ async def test_an_approved_technical_pull_request_never_merges_blocked_or_dirty(
 ):
     f = await fixture(publication_db, monkeypatch)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     await audit_run(f, findings(), revision="2" * 40)
     await preflight(f)
     await approve(f, SITEMAP_LINE)
@@ -601,11 +602,6 @@ async def test_caps_are_enforced(publication_db, monkeypatch):
         batch_rules.check_bounds(
             [{"path": "app/page.tsx", "content": "y\n" * 801}], {"app/page.tsx": "x\n"}
         )
-    # A page change keeps content.deliver's five files.
-    proof = {"article_path": "content/blog/a.md"}
-    six = {"files": [{"path": f"content/blog/{i}.md", "content": "x"} for i in range(6)]}
-    with pytest.raises(ValueError, match="at most 5 files"):
-        website_change.check_patch(six, {}, proof)
 
 
 # --- The technical fix is hidden; its pinned runs are unchanged ----------------------------
@@ -616,9 +612,13 @@ def test_the_technical_fix_is_hidden_but_pinned_v5_runs_are_unchanged():
     definition, files = spec.definition_and_resource_files()
     assert spec.version_label == "0.6.1" and definition["public_discovery"] is False
     assert technical_fix.definition_policy(definition) == "site-fix-v5"
-    # Everything a pinned run reads besides the version label and the catalog flag is main's
-    # 0.6.0: inputs, procedure, prompt and skills, byte for byte.
-    pinned = {k: v for k, v in definition.items() if k not in {"version", "public_discovery"}}
+    # Everything a pinned run reads besides the version label, the catalog flag and the drawing
+    # is main's 0.6.0: inputs, procedure, prompt and skills, byte for byte.
+    pinned = {
+        k: v
+        for k, v in definition.items()
+        if k not in {"version", "public_discovery", "presentation"}
+    }
     digest = hashlib.sha256(canonical_json(pinned))
     for path in sorted(files):
         digest.update(path.encode())

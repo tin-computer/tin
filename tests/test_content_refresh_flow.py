@@ -403,7 +403,7 @@ async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
     missing = (
         ()
         if readable
-        else ({"path": "src/data/pages.json", "size": 2_400_000, "reason": "too_large"},)
+        else ({"path": "src/data/pages.json", "size": 12_400_000, "reason": "too_large"},)
     )
     # A built file the search never reads doesn't count toward what Tin reads into memory.
     repo = {"app/guides/setup/page.tsx": PAGE_TSX, "out/report.txt": "x" * 30_000}
@@ -432,7 +432,7 @@ async def test_large_files_stop_a_refresh_only_when_they_could_hold_its_text(
         receipt = (await f.db.get_effect(delivery_key(run.id))).result
         assert receipt["changed_paths"] == ["app/guides/setup/page.tsx"]
         return
-    with pytest.raises(ValueError, match=r"src/data/pages\.json \(2\.4 MB, over the 2 MB limit"):
+    with pytest.raises(ValueError, match=r"src/data/pages\.json \(12\.4 MB, over the 10 MB limit"):
         await delivery.deliver(run.id)
     receipt = await f.db.get_effect(delivery_key(run.id))
     assert receipt.status == "failed" and "src/data/pages.json" in receipt.error_message
@@ -514,9 +514,10 @@ async def test_a_failed_delivery_retries_against_the_current_head(publication_db
 def test_refresh_compute_has_its_own_ceiling_about_five_times_the_estimate():
     definition = spec(refresh.KEY).definition
     assert definition["procedure"]["output"]["validator"] == refresh.VALIDATOR
-    assert PROCEDURE_MAXIMUMS[refresh.VALIDATOR] == 2_500_000_000
+    # Five times its $0.20 p90 over six runs (2026-10-08 calibration).
+    assert PROCEDURE_MAXIMUMS[refresh.VALIDATOR] == 1_000_000_000
     terms = api_terms(definition)
-    assert terms["maximum_nanos"] == 2_500_000_000
+    assert terms["maximum_nanos"] == 1_000_000_000
     assert json.dumps(terms)  # Pinned into the run as plain data.
 
 

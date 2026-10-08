@@ -464,8 +464,8 @@ def pull_request_body(source: dict, plan: dict) -> str:
         "",
         f"Change `{source['changes'][0]['change_id']}` from Tin's website.change.",
         "",
-        "Tin merges this pull request once the repository's required checks pass, because you "
-        "approved it in Tin."
+        "Tin merges this pull request once the site's build and the repository's required checks "
+        "pass, because you approved it in Tin."
         if source["publish"]["mode"] == "direct"
         else "Review and merge it when it looks right; Tin doesn't merge it.",
     ]

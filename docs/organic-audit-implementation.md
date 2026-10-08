@@ -603,7 +603,7 @@ The weekly loop reads `LATEST.json` (or a named run's `SUMMARY.json`) and never 
 `reports/organic-audit/*/findings.json`, which can pass 64 KB. Each checks the summary's
 `host` against its own site and sets a mismatch aside:
 
-- The page tree (`organic.site_architecture`) shows each page's click depth, exact or "at
+- The page tree (`organic.site_architecture`, retired for new work) shows each page's click depth, exact or "at
   most" as `links.depth` says, and inbound links. Possible orphans are pages the orphan
   check names or that no read page links to; a key page more than three clicks deep fires
   its trigger only on an exact depth.
@@ -627,6 +627,9 @@ policy, `organic-audit-v13` (catalog organic.audit 0.9.0). It keeps v12 and adds
 `prompt_panel` and the `ai_engines` keys. Runs pinned to v11 or v12 draft their own
 questions and ask no engine, exactly as before; tests freeze v12's policy and the files a
 synthetic v12 run writes, and a workflow history recorded on main still replays.
+
+Catalog organic.audit 0.9.1 runs the same v13 policy and also allows a monthly schedule
+(`schedule_modes: ["on_demand", "monthly"]`), so the audit can rerun quarterly.
 
 ### The buyer prompt panel
 
@@ -678,3 +681,85 @@ questions on six answer engines through DataForSEO ([AI answers](ai-answers-data
   that fits no question is reported as not measured with its reason. A measurement that
   fails leaves the audit to publish without it, and the report says it did not finish;
   answers already bought stay in receipts and are billed.
+
+## 0.10 — follow links when there is no sitemap (organic-audit-v14)
+
+v9 onward asks the provider crawl to respect the sitemap. When a site has no sitemap, or an
+empty or unreadable one, the provider then crawls only the homepage instead of following
+links, and since Tin reads the pages it selected plus the pages the crawl returns, the whole
+audit covers one page. v13 is on main and may deploy at any time, so the fix is a new pinned
+policy, `organic-audit-v14` (catalog organic.audit 0.10.0). It keeps v13 and adds
+`follow_links_without_sitemap`. A run pinned to v13 or earlier sends exactly the crawl
+request it did before; tests freeze v13's policy and the files a synthetic v13 run writes.
+
+### The rule
+
+- A v14 crawl request sends `respect_sitemap: true` only when the run's saved `site_files`
+  list at least one sitemap URL that is HTTPS and on the audited site (the same URLs the
+  page selection uses). Otherwise it sends `respect_sitemap: false`, and the provider follows
+  links from the homepage up to the run's page cap.
+- The decision reads only the `site_files` receipt saved before submission, never the site
+  again, so a retry or `recover()` rebuilds the request it submitted and the saved request
+  fingerprint still matches.
+- An answer completion reuses its source crawl and reads no site files, so it keeps the
+  policy's `respect_sitemap`; its crawl receipt is already complete and nothing is sent.
+- `follow_links_without_sitemap` is a crawl setting in `SITE_EVIDENCE_POLICY_KEYS`, so an
+  answer completion may cross v13 and v14.
+
+### Fixable findings name website.change
+
+v14 also sets `next_action_fix: "website_change"`: a finding Tin can fix says `next_action:
+"website_change"` instead of `"technical_fix"`, because website.change (`source: audit`) is
+the one workflow that fixes audit findings and organic.technical_fix refuses new starts. Both
+the published findings and the technical inventory a fix recomputes use the pinned policy's
+label, so v13 and earlier keep `"technical_fix"` and still verify.
+
+### What the report says
+
+- `evidence.json`'s crawl records `crawl_mode` (`sitemap` or `links`), and its note says why:
+  with no sitemap, "No sitemap URL on this site was found, so the provider followed links
+  from the homepage up to the page cap." AUDIT.md shows the note under Evidence and limits,
+  and Pages inspected says the crawl followed links from the homepage rather than the
+  sitemap. A crawl stopped at its time limit keeps the same mode and note.
+- Each page's `provider_context.respect_sitemap` is what the request sent, not the policy's
+  value. The orphan-page check needs the sitemap, so in a links crawl it is unknown rather
+  than a pass or a problem. Technical fix and website change sources read the same context
+  key, a boolean either way, so v14 evidence verifies unchanged.
+
+## 0.11 — sixteen questions, drafted from Search Console (organic-audit-v15)
+
+The buyer prompt panel was a separate workflow that only a hand-started run produced: in
+production it never ran for a customer, and the one audit that read a panel asked 8 of its 36
+prompts. The audit already drafts a question set on its first run and reuses it on later runs,
+so v15 folds the panel's one useful input, the site's own searches, into that draft and stops
+reading `organic.prompt_panel`. v14 is on main and may deploy at any time, so this is a new
+pinned policy, `organic-audit-v15` (catalog organic.audit 0.11.0). Tests freeze v14's policy,
+instructions and schemas as main shipped them.
+
+- **Sixteen questions:** `max_panel_jobs` 4 and `max_questions` 16. The draft may name one to
+  four buyer jobs of four questions (`BuyerPanelV15`, `PanelReviewV15`); a site with fewer
+  supported jobs asks fewer. Every question is still read blind and reviewed one by one;
+  v15 reads eight at a time (`question_interpretation_concurrency`), so the preparation
+  activity keeps the same depth of sequential calls as eight questions at four.
+  Runs pinned to v14 or earlier draft up to three jobs and keep two, as before.
+- **Search Console searches:** the draft reads up to `search_console_questions` (40) of the
+  run's own Search Console queries, impressions summed over pages, without queries that
+  contain the site's host label. The instructions treat them as evidence of what buyers look
+  for and the words they use: the job with the most search demand the product supports comes
+  first, and searches for the product's or another site's name are ignored. Without Search
+  Console the draft reads the public research alone.
+- **Output bound:** the draft alone gets `panel_max_output_tokens` (12,000); every other call
+  keeps 6,000.
+- **No prompt panel:** `prompt_panel` is false, so a v15 run never reads an
+  `organic.prompt_panel` run. Audits pinned to v13 or v14 still do. The package stays
+  registered with `public_discovery: false`, so new setups, the onboarding plan and the
+  dashboard order no longer offer it.
+- **Cost:** sixteen questions on the six engines cost at most $1.24, so
+  `ai_engines_max_cost_usd` is $2. Every audit call at every bound costs at most $3.56, so the
+  policy pins `billing_maximum_usd` $4; the audit's billing maximum is $6 for v15 runs and
+  stays $3 for v13 and v14. On a project that is not billed, the audit's spending limit
+  counts reservations ($0.20 for each answer with web search), so the operator's
+  `TIN_LITE_ORGANIC_AUDIT_MAX_COST_USD` must be about $16 for sixteen questions and the
+  engines to fit; with $5 the audit stops buying answers partway through.
+- The new keys are panel-preparation settings and `billing_maximum_usd` is neutral, so an
+  answer completion may cross v14 and v15.

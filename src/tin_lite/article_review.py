@@ -23,6 +23,10 @@ contents over checkout copies. If a requested file is missing or ambiguous, expl
 in Generation notes instead of inventing its contents or claiming you read it.
 Recheck factual corrections against evidence. You may retain an assessment if another
 article still adds no value. Never claim a requested change was made when it was not.
+When `source.assets` lists figures or embeds, they are the saved copy's files in the project
+checkout. Copy the ones you keep into this run's own assets folder, change them as the
+feedback asks, and point the article's references at your folder; files you don't copy are
+left out of the revision.
 Put a short `## What changed` section and `## Feedback not followed` section in the separate
 Generation notes file. Use 'None.' in the latter only when appropriate. Neither section,
 process notes, nor a link to them belongs in the public copy. The existing output contract,
@@ -35,14 +39,23 @@ def revision_prompt(context):
     return REVISION_INSTRUCTION + json.dumps(context, ensure_ascii=False, sort_keys=True)
 
 
-SEARCH_LISTING_KEYS = frozenset({"meta_title", "meta_description"})
+SEARCH_LISTING_KEYS = frozenset({"meta_title", "meta_description", "slug"})
+# The page's last path segment, chosen with the draft so the founder approves the address.
+PAGE_SLUG = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+){0,9}")
+
+
+def page_slug(value):
+    """A usable slug from a draft's listing, or None: an odd one is left to delivery."""
+    value = value.strip() if isinstance(value, str) else ""
+    return value if len(value) <= 80 and PAGE_SLUG.fullmatch(value) else None
 
 
 def search_listing(text):
     """Split an article's optional search-listing frontmatter from its copy.
 
     Only what delivery can merge into a site header is accepted: `meta_title` and
-    `meta_description` as plain one-line strings. Lengths are guidance, not checks.
+    `meta_description` as plain one-line strings, plus the page's `slug`. Lengths are guidance,
+    not checks, and a slug that isn't a plain lowercase slug is dropped rather than refused.
     """
     match = re.match(r"\A---\r?\n(.*?)\r?\n---\r?\n+", text, re.S)
     if not match:
@@ -64,6 +77,8 @@ def search_listing(text):
             "Write the search listing as quoted one-line meta_title and meta_description "
             "values, or leave it out."
         )
+    if "slug" in listing and not page_slug(listing["slug"]):
+        listing = {key: value for key, value in listing.items() if key != "slug"}
     return listing, text[match.end() :]
 
 
@@ -84,18 +99,6 @@ def validate_notes(content, *, revision=False):
     text = content.decode("utf-8")
     if not 1 <= len(content) <= 24_000 or not text.lstrip().startswith("# Generation notes\n"):
         raise ValueError("Write separate, bounded Generation notes.")
-    if revision:
-        validate_changes(content)
-
-
-def validate_changes(content):
-    text = content.decode("utf-8")
-    for title in ("What changed", "Feedback not followed"):
-        sections = re.findall(rf"(?m)^## {title}\n+(.+?)(?=\n## |\Z)", text, re.S)
-        if len(sections) != 1 or not 4 <= len(sections[0].strip()) <= 2000:
-            raise ValueError(
-                f"Explain '{title}' once, in at most 2,000 characters in Generation notes."
-            )
 
 
 def change_summary(content):

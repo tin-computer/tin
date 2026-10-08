@@ -16,6 +16,7 @@ from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
 from tin_lite.memory import MAX_MEMORY_BYTES, validate_memory_index
+from tin_lite.page_assets import AssetPolicy
 from tin_lite.procedure_documents import (
     DocumentPair,
     parse_document_pair,
@@ -54,8 +55,10 @@ ARTIFACT_MEDIA_TYPES = frozenset(
         DEMO_VIDEO_MEDIA_TYPE,
     }
 )
-MAX_PROCEDURE_PULL_REQUEST_BYTES = 512_000
-MAX_PROCEDURE_PULL_REQUEST_FILES = 10
+# Ceilings a procedure may declare; the default stays 512 KB so existing contracts don't move.
+MAX_PROCEDURE_PULL_REQUEST_BYTES = 2_000_000
+MAX_PROCEDURE_PULL_REQUEST_FILES = 30
+DEFAULT_PULL_REQUEST_BYTES = 512_000
 PROJECT_ARTIFACT_RESULT = "project.artifact"
 GITHUB_PULL_REQUEST_RESULT = "github.pull_request"
 PROJECT_STATE_WORKSPACE = "project.state"
@@ -92,8 +95,12 @@ ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
 ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 BLOG_INDEX_PLAN_VALIDATOR = blog_index_plan.VALIDATOR
 CONTENT_REFRESH_VALIDATOR = "content-refresh.v1"
+# content.plan_research's portfolio (content_plan_agent): one validator, one run-owned path.
+CONTENT_PORTFOLIO_VALIDATOR = "content-plan-portfolio.v1"
+CONTENT_PORTFOLIO_PATH_TEMPLATE = "reports/content-plan/{run_id}/PORTFOLIO.md"
 ARTIFACT_VALIDATORS = frozenset(
     {
+        CONTENT_PORTFOLIO_VALIDATOR,
         "brand-design-capture.v1",
         ANALYTICS_BRIEF_VALIDATOR,
         BLOG_INDEX_PLAN_VALIDATOR,
@@ -228,8 +235,11 @@ SANDBOX_PROFILES = frozenset(
 FENCED_SANDBOX_EGRESS = "fenced"
 OPEN_SANDBOX_EGRESS = "open"
 SANDBOX_EGRESS_MODES = frozenset({FENCED_SANDBOX_EGRESS, OPEN_SANDBOX_EGRESS})
+# Serialized into every built-in definition that does not declare its own timeout, so raising
+# it would silently change pinned (including retired) catalog contracts without a version
+# bump. Raise a workflow's time by declaring it in its definition with a new version.
 DEFAULT_SANDBOX_TIMEOUT_SECONDS = 900
-MAX_SANDBOX_TIMEOUT_SECONDS = 3600
+MAX_SANDBOX_TIMEOUT_SECONDS = 7200
 EMAIL_SHORTLIST_HEADERS = (
     "candidate_id",
     "email",
@@ -290,7 +300,7 @@ class GitHubPullRequestProcedure:
     receipt_path_template: str
     verification_commands: tuple[str, ...]
     max_files: int = 3
-    max_bytes: int = MAX_PROCEDURE_PULL_REQUEST_BYTES
+    max_bytes: int = DEFAULT_PULL_REQUEST_BYTES
     provider_key: str = "infra.github"
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -374,6 +384,7 @@ class CodexProcedureSpec:
     sandbox: SandboxProfile = SandboxProfile()
     identity: TestIdentityPolicy = TestIdentityPolicy()
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -409,6 +420,8 @@ class PinnedCodexProcedure:
     sandbox: SandboxProfile = SandboxProfile()
     identity: TestIdentityPolicy = TestIdentityPolicy()
     output_section: OutputSection | None = None
+    # Article drafts that may write figures and embeds into their assets folder.
+    output_assets: AssetPolicy | None = None
     workspace_capabilities: tuple[str, ...] = ()
     repair_policy: str | None = None
     allow_no_change: bool = False
@@ -431,6 +444,14 @@ class PinnedCodexProcedure:
     @property
     def binary_output(self) -> bool:
         return self.output_media_type in BINARY_ARTIFACT_MEDIA_TYPES
+
+    @property
+    def assets_folder(self) -> str | None:
+        if self.output_assets is None or not self.output_path:
+            return None
+        from tin_lite.page_assets import folder
+
+        return folder(self.output_path)
 
     @property
     def companion_path(self) -> str | None:
@@ -521,6 +542,8 @@ class PinnedCodexProcedure:
             output["validator"] = self.output_validator
         if self.output_section is not None:
             output["section"] = self.output_section.definition()
+        if self.assets_folder is not None:
+            output["assets"] = {"folder": self.assets_folder, **self.output_assets.definition()}
         context: dict[str, Any] = {
             "workflow_key": self.workflow_key,
             "prompt": self.prompt,
@@ -632,6 +655,7 @@ class CodexProcedureSource:
     github_pull_request: GitHubPullRequestProcedure | None = None
     github_workspace: GitHubRepositoryWorkspace | None = None
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
     sandbox: SandboxProfile = SandboxProfile()
     identity: bool | TestIdentityPolicy = False
 
@@ -741,11 +765,18 @@ class CodexProcedureSource:
                 output["validator"] = self.output_validator
             if self.output_section is not None:
                 output["section"] = self.output_section.definition()
+            if self.output_assets is not None:
+                output["assets"] = self.output_assets.definition()
             verification = {"commands": []}
         else:
-            if self.github_workspace is not None or self.output_section is not None:
+            if (
+                self.github_workspace is not None
+                or self.output_section is not None
+                or self.output_assets is not None
+            ):
                 raise ValueError(
-                    "pull-request procedures cannot declare a read-only workspace or a section"
+                    "pull-request procedures cannot declare a read-only workspace, a section "
+                    "or assets"
                 )
             pull_request = self.github_pull_request
             workspace = {
@@ -901,6 +932,8 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         MAX_PROCEDURE_BINARY_ARTIFACT_BYTES
         if result_kind == PROJECT_ARTIFACT_RESULT
         and declared_media_type in BINARY_ARTIFACT_MEDIA_TYPES
+        else MAX_PROCEDURE_PULL_REQUEST_BYTES
+        if result_kind == GITHUB_PULL_REQUEST_RESULT
         else MAX_PROCEDURE_ARTIFACT_BYTES
     )
     if (
@@ -917,6 +950,9 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
     output_max_files = 1
     receipt_path_template: str | None = None
     output_section: OutputSection | None = None
+    output_assets: AssetPolicy | None = None
+    if result_kind != PROJECT_ARTIFACT_RESULT and output.get("assets") is not None:
+        raise ValueError("Only article drafts carry an assets folder")
     if result_kind == PROJECT_ARTIFACT_RESULT:
         if workspace_kind == GITHUB_REPOSITORY_WORKSPACE and workspace_capabilities != (
             "contents.read",
@@ -957,6 +993,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                         PUBLIC_ARTICLE_VALIDATOR,
                         CONTENT_REFRESH_VALIDATOR,
                         BLOG_INDEX_PLAN_VALIDATOR,
+                        CONTENT_PORTFOLIO_VALIDATOR,
                     }
                 ):
                     raise ValueError("run-owned paths require a plain report or draft validation")
@@ -1018,6 +1055,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != GITHUB_REPOSITORY_WORKSPACE
         ):
             raise ValueError("A blog index plan is content.blog_index's run-owned PLAN.md.")
+        if output_validator == CONTENT_PORTFOLIO_VALIDATOR and (
+            definition.get("key") != "content.plan_research"
+            or output_path_template != CONTENT_PORTFOLIO_PATH_TEMPLATE
+            or output_media_type != "text/markdown"
+            or workspace_kind != PROJECT_STATE_WORKSPACE
+        ):
+            raise ValueError("A content portfolio is content.plan_research's PORTFOLIO.md.")
         if output_validator == CONTENT_REFRESH_VALIDATOR and (
             definition.get("key") != "content.refresh"
             or output_path_template != "content/refreshes/{run_folder}.md"
@@ -1037,6 +1081,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             PUBLIC_ARTICLE_VALIDATOR,
         }:
             output_max_files = 2
+        if output.get("assets") is not None:
+            if output_validator not in {
+                *content_draft.CLEAN_VALIDATORS,
+                PUBLIC_ARTICLE_VALIDATOR,
+            } or not resolved_path.endswith(".md"):
+                raise ValueError("Only article drafts carry an assets folder")
+            output_assets = AssetPolicy.load(output["assets"])
         if output_validator == CHARACTER_SVG_VALIDATOR and (
             output_media_type != CHARACTER_SVG_MEDIA_TYPE
             or output_path_template is None
@@ -1259,6 +1310,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
         sandbox=sandbox,
         identity=identity,
         output_section=output_section,
+        output_assets=output_assets,
         workspace_capabilities=workspace_capabilities,
         repair_policy=repair_policy,
         allow_no_change=allow_no_change,
@@ -1414,6 +1466,7 @@ async def load_pinned_codex_procedure(
         sandbox=spec.sandbox,
         identity=spec.identity,
         output_section=spec.output_section,
+        output_assets=spec.output_assets,
         workspace_capabilities=spec.workspace_capabilities,
         repair_policy=spec.repair_policy,
         allow_no_change=spec.allow_no_change,
@@ -1498,6 +1551,10 @@ def validate_procedure_artifact(
         analytics_brief.validate(text)
     elif spec.output_validator == BLOG_INDEX_PLAN_VALIDATOR:
         blog_index_plan.validate(text)
+    elif spec.output_validator == CONTENT_PORTFOLIO_VALIDATOR:
+        from tin_lite import content_plan_agent
+
+        content_plan_agent.validate(text)
 
 
 def signup_walkthrough_activation(content: str) -> bool:
@@ -1612,6 +1669,51 @@ def memory_section_present(text: str, heading: str) -> bool:
 
 def _content_lines(lines: list[str]) -> list[str]:
     return [line.rstrip() for line in lines if line.strip()]
+
+
+def splice_memory_section(content: bytes, *, section: OutputSection, base: bytes | None) -> bytes:
+    """The base index with only the owned section taken from `content`.
+
+    A section-owning procedure owns one section, so whatever else its output changed (a
+    reformatted neighbour, a rewritten introduction) is dropped and the rest of the index stays
+    exactly as the base had it. Without a base, without a usable section in the output, or when
+    the base has no parent heading for it, the output is returned unchanged for validation to
+    judge.
+    """
+    if base is None:
+        return content
+    try:
+        lines = content.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        base_lines = base.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        span = _owned_section_span(lines, section=section)
+        base_span = _owned_section_span(base_lines, section=section)
+    except (UnicodeDecodeError, ValueError):
+        return content
+    if span is None:
+        return content
+    owned = lines[span[0] : span[1]]
+    while owned and not owned[-1].strip():
+        owned.pop()
+    if base_span is not None:
+        start, end = base_span
+    else:
+        parents = [i for i, line in enumerate(base_lines) if line.rstrip() == section.parent]
+        if not parents:
+            return content
+        start = end = _section_bounds(base_lines, start=parents[0], stops=("## ",))
+    head, tail = base_lines[:start], base_lines[end:]
+    if head and head[-1].strip():
+        owned = ["", *owned]
+    if tail and tail[0].strip():
+        owned = [*owned, ""]
+    return "\n".join(head + owned + tail).encode("utf-8")
+
+
+def settle_procedure_artifact(content: bytes, *, spec, base: bytes | None) -> bytes:
+    """The output Tin keeps: a section-owning procedure contributes only its own section."""
+    if spec.output_validator == MEMORY_SECTION_VALIDATOR and spec.output_section is not None:
+        return splice_memory_section(content, section=spec.output_section, base=base)
+    return content
 
 
 def validate_memory_section(

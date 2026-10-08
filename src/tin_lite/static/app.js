@@ -24,6 +24,7 @@ const projectMenu = document.querySelector("#project-menu");
 const integrationProjectDialog = document.querySelector("#integration-project-dialog");
 const integrationProjectForm = document.querySelector("#integration-project-form");
 const integrationProjectTitle = document.querySelector("#integration-project-title");
+const integrationProjectError = document.querySelector("#integration-project-error");
 const integrationProjectCopy = document.querySelector("#integration-project-copy");
 const integrationProjectOptions = document.querySelector("#integration-project-options");
 const projectCreateDialog = document.querySelector("#project-create-dialog");
@@ -264,6 +265,7 @@ const state = {
   workflowSearch: "",
   workflowEditor: null,
   expandedRun: null,
+  diagramPanel: null,
   runDetails: new Map(),
   activityFilter: "all",
   activityHasMore: false,
@@ -285,6 +287,8 @@ const state = {
   chatDrafts: new Map(),
   sending: false,
   pendingReviewRunIds: new Set(),
+  // The System calendar: the week on screen and the weeks already read (see ensureWeek).
+  week: null,
   deferredReviewRunIds: [],
   pollTimer: null,
   pollInFlight: false,
@@ -489,10 +493,19 @@ async function api(path, options = {}) {
 }
 
 function showToast(message) {
+  // A modal dialog sits in the top layer above everything else, so the toast joins it there.
+  const host = document.querySelector("dialog:modal") || document.body;
+  if (toast.parentElement !== host) host.append(toast);
   toast.textContent = message;
   toast.classList.add("is-visible");
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => toast.classList.remove("is-visible"), 3200);
+}
+
+function showIntegrationDialogError(message) {
+  // Failures inside the connection dialog stay in it until the founder retries or closes it.
+  integrationProjectError.textContent = message || "";
+  integrationProjectError.hidden = !message;
 }
 
 async function signOutTin() {
@@ -950,11 +963,17 @@ function systemTemplateCard(workflow, query) {
       <span class="system-template-description">${escapeHtml(workflow.description)}</span>
       <code>${workflowSearchMatch(workflow.key, query, "workflow-search-id-match")}${contextLabel ? ` · ${escapeHtml(contextLabel)}` : ""}</code>
     </span>
-    <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
-      ${saved
-        ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
-        : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
-      <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
+    <span class="system-template-side">
+      <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
+        ${saved
+          ? `<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>${state.templateView === "saved" ? `<button class="system-quiet-action" type="button" data-remove-saved-template="${escapeHtml(workflow.id)}">Remove from saved</button>` : ""}`
+          : `<button class="system-quiet-action" type="button" data-save-template="${escapeHtml(workflow.id)}">Save</button>`}
+        ${systemDiagramSlot(workflow)}
+        <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
+      </span>
+      ${workflow.last_run_id && workflow.last_run_at
+        ? `<button class="system-last-run" type="button" data-template-last-run="${escapeHtml(workflow.last_run_id)}">Last run ${escapeHtml(dayLabel(workflow.last_run_at))}, ${escapeHtml(ledgerTime(workflow.last_run_at))}</button>`
+        : ""}
     </span>
   </article>`;
 }
@@ -1019,13 +1038,29 @@ function bindXWorkflowFields(root) {
   });
 }
 
+function workflowFieldPresentation(workflow, name, definition) {
+  if (workflow.key !== "connections.collect") return definition;
+  const current = workflow.definition?.input_schema?.properties?.[name] || {};
+  const mode = state.integrations.find(item => item.key === "network.linkedin")?.configuration?.collection_permission?.mode;
+  // Add missing explanations to older saved configurations without changing their
+  // defaults, constraints or selected execution policy.
+  return {...definition,
+    ...(name === "execution" && mode ? {default:mode} : {}),
+    title: definition.title || current.title,
+    description: name === "execution" && workflow.collection_availability?.cloud_ready === false
+      ? "Cloud collection is not available here yet. Browser collection needs Chrome open and awake."
+      : definition.description || current.description,
+  };
+}
+
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
   const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+    definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
-    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</label>`;
+    return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</div>`;
   }).join("");
   const requirements = workflowRequirementState(workflow);
   const requirementRows = requirements.map(({ requirement, integration, ready }) => `<div class="system-requirement ${ready ? "is-ready" : "is-missing"}">
@@ -1037,7 +1072,7 @@ function systemTemplateSetupCard(workflow) {
   return `<form class="system-template-card is-open workflow-config-form ${workflow.key === "content.plan" ? "is-weekly" : "is-manual"}" data-workflow-id="${escapeHtml(workflow.id)}">
     <header class="system-template-open-header">
       <span class="system-template-identity"><strong>${escapeHtml(workflow.title)}</strong><span class="system-template-description">${escapeHtml(workflow.description)}</span><code>${escapeHtml(workflow.key)} · v${escapeHtml(workflow.version_label)}</code></span>
-      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
+      <span class="system-template-actions">${workflow.saved ? '<span class="system-saved-mark"><i aria-hidden="true"></i>Saved</span>' : ""}${systemDiagramButton(workflow)}<button class="system-quiet-action" type="button" data-cancel-workflow-editor>Cancel</button></span>
     </header>
     <div class="system-template-setup-body">
       <section>
@@ -1048,7 +1083,7 @@ function systemTemplateSetupCard(workflow) {
       </section>
       <section class="system-config-when">
         ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : null, false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(workflow.id, workflow.key === "content.plan" ? {cadence: "weekly", weekdays: ["monday"], local_time: "09:00", timezone: state.project?.timezone || "UTC"} : workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}<p>Saving pins v${escapeHtml(workflow.version_label)}. You can change the schedule later.</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -1578,6 +1613,7 @@ function render() {
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
   });
   updateRail();
+  if (state.diagramPanel && (state.view !== "workflows" || !hasProject)) closeWorkflowDiagram({ restoreFocus: false });
   if (state.projectAccess === "locked") {
     if (state.view === "integrations" && connectRequest().length) renderIntegrations();
     else renderLockPage();
@@ -1830,6 +1866,9 @@ function bindWorkflowResultControls(root) {
   root.querySelectorAll("[data-save-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.saveTemplate, true, button));
   });
+  root.querySelectorAll("[data-template-last-run]").forEach((button) => {
+    button.addEventListener("click", () => openTemplateLastRun(button.dataset.templateLastRun));
+  });
   root.querySelectorAll("[data-remove-saved-template]").forEach((button) => {
     button.addEventListener("click", () => setTemplateSaved(button.dataset.removeSavedTemplate, false, button));
   });
@@ -1919,10 +1958,7 @@ function bindWorkflowResultControls(root) {
     window.TinStyleCapture.bind(form, styleCaptureServices());
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
   root.querySelectorAll(".system-config-form").forEach((form) => {
     // Polling may refresh the saved configuration while this editor stays open.
@@ -1933,19 +1969,13 @@ function bindWorkflowResultControls(root) {
     form.addEventListener("submit", saveSystemWorkflowSettings);
     bindTinControls(form);
     bindWorkflowFieldValidation(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
   });
   bindXWorkflowFields(root);
   root.querySelectorAll(".workflow-ledger-form").forEach((form) => {
     form.addEventListener("submit", saveProjectWorkflowField);
     bindTinControls(form);
-    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => {
-      form.classList.toggle("is-weekly", form.elements.schedule_mode.value === "weekly");
-      form.classList.toggle("is-manual", form.elements.schedule_mode.value === "manual");
-    });
+    form.querySelector("[name=schedule_mode]")?.addEventListener("change", () => syncScheduleMode(form));
     bindWorkflowFieldValidation(form);
   });
   root.querySelectorAll(".workflow-config-form, .system-config-form").forEach((form) => {
@@ -1987,6 +2017,13 @@ function bindWorkflowResultControls(root) {
   });
   root.querySelectorAll("[data-skip-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => skipProjectWorkflow(button.dataset.skipProjectWorkflow, button));
+  });
+  root.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    button.addEventListener("click", (event) => {
+      // The row opens its settings on click; the diagram is a separate thing.
+      event.stopPropagation();
+      toggleWorkflowDiagram(button);
+    });
   });
   root.querySelectorAll("[data-remove-project-workflow]").forEach((button) => {
     button.addEventListener("click", () => removeProjectWorkflow(button.dataset.removeProjectWorkflow, button));
@@ -2065,9 +2102,9 @@ function renderWorkflows({ preserveEditor = false } = {}) {
     </header>
     <div class="workflow-sections system-sections" aria-label="System sections">
       <button class="workflow-section ${state.workflowSection === "yours" ? "is-active" : ""}" type="button" data-workflow-section="yours">My system ${runningCount ? `<i aria-hidden="true"></i><span>${runningCount}</span>` : ""}</button>
-      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Add workflows</button>
+      <button class="workflow-section ${state.workflowSection === "registry" ? "is-active" : ""}" type="button" data-workflow-section="registry">Workflows</button>
       <button class="workflow-section ${state.workflowSection === "activity" ? "is-active" : ""}" type="button" data-workflow-section="activity">Activity</button>
-      <span class="system-pace">${escapeHtml(state.workflowSection === "activity" ? systemActivityPace() : systemPaceLine())}</span>
+      ${state.workflowSection === "activity" ? `<span class="system-pace">${escapeHtml(systemActivityPace())}</span>` : state.workflowSection === "yours" ? systemWeekNavHtml() : ""}
     </div>
     ${sectionContent}
   </section>`;
@@ -2098,6 +2135,7 @@ function renderWorkflows({ preserveEditor = false } = {}) {
   }
   bindWorkflowResultControls(document);
   bindWorkflowRunControls(main);
+  if (state.diagramPanel) renderDiagramPanel();
   if (state.workflowSection === "activity") bindActivityControls(main, "workflows");
   if (placeholder) {
     if (freshStatus.length) {
@@ -2126,33 +2164,20 @@ function systemActivityHtml() {
     <p class="activity-boundary">${state.activityLoading ? "loading earlier activity…" : state.activityHasMore ? "scroll for earlier activity" : "30-day activity boundary"}</p>`;
 }
 
-function systemPaceLine() {
-  const summary = state.systemSummary;
-  const workflowCountValue = summary?.workflow_count ?? state.projectWorkflows.length;
-  const runningCount = summary?.running_count ?? state.runs.filter((run) => RUNNING_STATES.has(run.status)).length;
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-  const runsThisMonth = summary?.runs_this_month ?? state.runs.filter(
-    (run) => run.workflow_name !== "project.task" && new Date(run.created_at) >= monthStart,
-  ).length;
-  const nextRunAt = summary?.next_run_at || state.projectWorkflows
-    .map((item) => item.next_run_at)
-    .filter(Boolean)
-    .sort()[0];
-  const next = nextRunAt ? `next ${systemDateTime(nextRunAt)}` : "nothing scheduled";
-  const setUpAt = summary?.set_up_at ? new Date(summary.set_up_at) : null;
-  const justSetUp = setUpAt && Date.now() - setUpAt.getTime() < 24 * 60 * 60 * 1000;
-  const firstRun = justSetUp
-    ? `Set up today: ${workflowCountValue} ${workflowCountValue === 1 ? "role" : "roles"}. First results ${nextRunAt ? systemDateTime(nextRunAt) : "within the hour"}. · `
-    : "";
-  return `${firstRun}${workflowCountValue} saved ${workflowCountValue === 1 ? "workflow" : "workflows"} · ${runningCount} running · ${runsThisMonth} runs this month · ${next}`;
+// The System page shows times in the viewer's own time zone, as its calendar does. A
+// project's stored zone defaults to UTC, which put 10:00 schedules at 17:00.
+function viewerTimeZone() {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 function systemDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "later";
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone;
+  const timeZone = viewerTimeZone();
   try {
     const weekday = date.toLocaleDateString(undefined, { weekday: "short", timeZone }).toLowerCase();
     const time = date.toLocaleTimeString([], {
@@ -2174,17 +2199,40 @@ function systemShortDate(value) {
     return date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      timeZone: state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: viewerTimeZone(),
     }).toLowerCase();
   } catch {
     return date.toLocaleDateString(undefined, { month: "short", day: "numeric" }).toLowerCase();
   }
 }
 
+function syncScheduleMode(form) {
+  const mode = form.elements.schedule_mode.value;
+  form.classList.toggle("is-weekly", mode === "weekly");
+  form.classList.toggle("is-monthly", mode === "monthly");
+  form.classList.toggle("is-manual", mode === "manual");
+}
+
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+function ordinalDay(day) {
+  const value = Number(day) || 1;
+  const suffix = value % 100 >= 10 && value % 100 <= 20 ? "th" : ({1: "st", 2: "nd", 3: "rd"}[value % 10] || "th");
+  return `${value}${suffix}`;
+}
+
+// "the 1st of every month" or "the 15th of Jan, Apr, Jul, Oct"; `short` abbreviates months.
+function monthlyWords(schedule, short = false) {
+  const months = (schedule.months || []).map((month) => MONTH_NAMES[month - 1]).filter(Boolean);
+  if (!months.length) return `the ${ordinalDay(schedule.day_of_month)} of every month`;
+  return `the ${ordinalDay(schedule.day_of_month)} of ${months.map((name) => (short ? name.slice(0, 3) : name)).join(", ")}`;
+}
+
 function systemScheduleLabel(configured) {
   const schedule = configured?.schedule;
   if (!schedule) return "manual";
   if (schedule.cadence === "daily") return `day · ${schedule.local_time}`;
+  if (schedule.cadence === "monthly") return `${monthlyWords(schedule, true)} · ${schedule.local_time}`;
   const days = (schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ");
   return `${days} · ${schedule.local_time}`;
 }
@@ -2264,16 +2312,27 @@ function systemRunningSentence(run, title) {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: viewerTimeZone(),
     });
   } catch {
     // The Postgres projection is authoritative; local time is a safe display fallback.
   }
   const source = systemStartedBy(run);
-  const startPhrase = ["from chat", "from Claude Code", "from Codex", "from the API"].includes(source)
-    ? `Started ${source} at ${started}`
-    : `Started ${started}, ${source}`;
+  const startPhrase = source === "manual" ? `Started ${started}`
+    : source === "scheduled" ? `Started ${started} on schedule`
+      : `Started ${source} at ${started}`;
   return `${clause.replace(/[.\s]+$/, "")}. ${startPhrase}.`;
+}
+
+// A running card's Open sits in the row's actions, where Skip once and Pause sit on others
+// (Paper OPEN-A1); the line below the row is the sentence alone.
+function systemOpenRunAction(run) {
+  const expanded = state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null;
+  return `<span class="system-card-actions"><button class="system-action is-strong" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button></span>`;
+}
+
+function systemRunningDetail(run, title) {
+  return `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, title))}</span></div>`;
 }
 
 function systemProgressBar(run) {
@@ -2296,13 +2355,13 @@ function systemRunDetailTime(value, timeZone = null) {
     const day = date.toLocaleDateString(undefined, {
       month: "short",
       day: "numeric",
-      timeZone: timeZone || state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: timeZone || viewerTimeZone(),
     }).toLowerCase();
     const time = date.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,
-      timeZone: timeZone || state.systemSummary?.timezone || state.project?.timezone,
+      timeZone: timeZone || viewerTimeZone(),
     });
     return `${day} ${time}`;
   } catch {
@@ -2402,6 +2461,7 @@ function systemCardIndicator(kind) {
   if (kind === "running") return '<span class="system-card-dot is-running" aria-hidden="true"></span>';
   if (kind === "pending") return '<span class="system-card-dot is-pending" aria-hidden="true"></span>';
   if (kind === "failed") return '<span class="system-card-failed" aria-hidden="true">×</span>';
+  if (kind === "open") return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 6.5 5 3.5 8 6.5" /></svg>';
   return '<svg aria-hidden="true" viewBox="0 0 10 10"><path d="M2 3.5 5 6.5 8 3.5" /></svg>';
 }
 
@@ -2422,21 +2482,21 @@ function systemRunCard(run, configured = null) {
     ? `data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" data-editor-run-id="${escapeHtml(run.id)}"`
     : "";
   const expanded = state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null;
-  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""}">
+  const diagramShown = workflow ? diagramPanelShows(workflow.id, configured?.id) : false;
+  return `<article class="system-workflow-card is-running ${expanded ? "is-open" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row ${configured ? "is-configurable" : ""}" ${configured ? `data-open-system-workflow ${configureAttributes}` : ""}>
       ${configured
         ? `<button class="system-card-mark is-toggle" type="button" ${configureAttributes} aria-label="Open ${escapeHtml(title)} settings">${systemCardIndicator(run.status)}</button>
            <button class="system-card-identity is-toggle" type="button" ${configureAttributes}><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></button>`
         : `<span class="system-card-mark">${systemCardIndicator(run.status)}</span>
            <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${escapeHtml(key)}</code></span>`}
+      ${systemDiagramSlot(workflow || (configured && workflowForProjectWorkflow(configured)), configured)}
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
+      ${systemOpenRunAction(run)}
     </div>
-    <div class="system-running-detail">
-      <span>${escapeHtml(systemRunningSentence(run, title))}</span>
-      <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button>
-    </div>
+    ${systemRunningDetail(run, title)}
     ${expanded ? systemRunDetailHtml(run, false) : ""}
     ${systemProgressBar(run)}
   </article>`;
@@ -2459,10 +2519,12 @@ function systemConfiguredCard(configured) {
         ? `<button class="system-action is-strong" type="button" data-skip-project-workflow="${escapeHtml(configured.id)}">Skip once</button>
            <button class="system-action" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="pause">Pause</button>`
         : `<button class="system-action is-strong" type="button" data-run-project-workflow="${escapeHtml(configured.id)}">Manual run</button>`;
-  return `<article class="system-workflow-card ${failed ? "is-failed" : ""}">
+  const diagramShown = diagramPanelShows(configured.workflow_id, configured.id);
+  return `<article class="system-workflow-card ${failed ? "is-failed" : ""} ${diagramShown ? "is-diagram-open" : ""}">
     <div class="system-card-row is-configurable" data-open-system-workflow data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
       <button class="system-card-mark is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}" aria-label="Open ${escapeHtml(configured.name)} settings">${systemCardIndicator(failed ? "failed" : "idle")}</button>
       <button class="system-card-identity is-toggle" type="button" data-configure-workflow="${escapeHtml(configured.workflow_id)}" data-project-workflow-id="${escapeHtml(configured.id)}"><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2531,7 +2593,7 @@ function systemMySystemHtml() {
     )
     .map((run) => systemRunCard(run));
   const content = `${systemWorkflowGroup("Running", runningCards)}${systemWorkflowGroup("Scheduled", scheduledCards)}${systemWorkflowGroup("Available", availableCards)}`;
-  const week = query ? "" : systemWeekAheadHtml();
+  const week = query ? "" : systemWeekHtml();
   if (!content) {
     return query
       ? '<div class="empty-list workflow-empty"><strong>No workflows match this search.</strong><button class="button-quiet" type="button" data-clear-workflow-search>Clear search</button></div>'
@@ -2540,95 +2602,153 @@ function systemMySystemHtml() {
   return `${week}${content}<button class="system-add-workflow" type="button" data-browse-registry>Add workflows →</button>`;
 }
 
-// The week ahead, as on Paper board SYS-V3: seven columns from today, what runs each day and
-// where it lands, then the weekly rhythm in one sentence. Static; the cards below carry actions.
-function systemWeekAheadHtml() {
-  const timeZone = state.systemSummary?.timezone || state.project?.timezone || undefined;
-  const scheduled = state.projectWorkflows.filter(
-    (item) => item.schedule && item.status !== "paused" && item.status !== "archived",
-  );
-  const setUpAt = state.systemSummary?.set_up_at ? new Date(state.systemSummary.set_up_at) : null;
-  const recentlySetUp = Boolean(setUpAt) && Date.now() - setUpAt.getTime() < 7 * 86400000;
-  if (!scheduled.length && !recentlySetUp) return "";
-  const format = (date, options) => {
-    try {
-      return date.toLocaleDateString("en-US", { ...options, timeZone });
-    } catch (_error) {
-      return date.toLocaleDateString("en-US", options);
-    }
-  };
-  const clock = (date) => {
-    try {
-      return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone });
-    } catch (_error) {
-      return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false });
-    }
-  };
-  const dayKey = (date) => format(date, { year: "numeric", month: "numeric", day: "numeric" });
-  const now = new Date();
-  const days = Array.from({ length: 7 }, (_, index) => new Date(now.getTime() + index * 86400000));
-  const runsOn = (configured, date) => {
-    const schedule = configured.schedule;
-    if (schedule.end_at && new Date(schedule.end_at) <= date) return false;
-    if (schedule.cadence === "daily") return true;
-    const weekday = format(date, { weekday: "long" }).toLowerCase();
-    return (schedule.weekdays || []).some((day) => String(day).toLowerCase() === weekday);
-  };
-  const lands = (configured) => {
-    if (configured.last_run_status === "failed") return "last run failed; retry below";
-    return String(configured.workflow_key || "").startsWith("content.") ? "in Decisions" : "in Files";
-  };
-  const columns = days.map((date, index) => {
-    const label = `${format(date, { weekday: "short" }).toLowerCase()} ${format(date, { day: "numeric" })}`;
-    const entries = [];
-    if (index === 0 && setUpAt && dayKey(setUpAt) === dayKey(date)) {
-      const firstRuns = state.runs.filter(
-        (run) => run.workflow_name !== "project.task" && new Date(run.created_at) >= setUpAt,
-      );
-      const results = firstRuns.filter((run) => run.status === "succeeded").length;
-      const running = firstRuns.filter((run) => RUNNING_STATES.has(run.status)).length;
-      const waiting = firstRuns.filter((run) => run.status === "needs_input" || run.status === "failed").length;
-      const parts = [];
-      if (results) parts.push(`${results} ${results === 1 ? "result" : "results"}`);
-      if (running) parts.push(`${running} running`);
-      if (waiting) parts.push(`${waiting} waiting`);
-      entries.push(
-        `<span>${escapeHtml(clock(setUpAt))} · set up by your coding agent</span>` +
-        `<small>${firstRuns.length} first ${firstRuns.length === 1 ? "run" : "runs"}${parts.length ? ` · ${escapeHtml(parts.join(", "))}` : ""}</small>`,
-      );
-    }
-    const nowClock = clock(now);
-    for (const configured of scheduled) {
-      if (!runsOn(configured, date)) continue;
-      // Today: what already ran is in the setup line or the cards below, not the week ahead.
-      if (index === 0 && (entries.length || (configured.schedule.local_time || "09:00") <= nowClock)) continue;
-      entries.push(
-        `<span>${escapeHtml(configured.schedule.local_time || "09:00")} · ${escapeHtml(configured.name)}</span><small>${escapeHtml(lands(configured))}</small>`,
-      );
-    }
-    const body = entries.length ? entries.join("") : '<span class="is-quiet">quiet</span>';
-    return `<div class="system-week-day ${index === 0 ? "is-today" : ""}"><code>${escapeHtml(label)}${index === 0 ? " · today" : ""}</code>${body}</div>`;
+// The System calendar (Paper WK-N6 and WK-N5b): a week of runs and of what is still to come,
+// in the viewer's time zone. Weeks load on demand; polling refreshes the week on screen.
+function currentWeekStart() {
+  return window.TinSystemWeek.weekStart(new Date(), viewerTimeZone());
+}
+
+function ensureWeek() {
+  if (!state.project || !window.TinSystemWeek) return null;
+  if (state.week?.projectId !== state.project.id) {
+    state.week = { projectId: state.project.id, start: currentWeekStart(), views: new Map(), openDay: null, loading: null, failed: null };
+  }
+  const week = state.week;
+  if (!week.views.has(week.start) && week.loading !== week.start && week.failed !== week.start) {
+    window.setTimeout(loadWeek, 0);
+  }
+  return week;
+}
+
+async function loadWeek() {
+  const week = state.week;
+  if (!week || !state.project || week.loading === week.start) return;
+  const start = week.start;
+  const context = currentProjectContext();
+  week.loading = start;
+  try {
+    const query = new URLSearchParams({ start, timezone: viewerTimeZone() });
+    const view = await api(`/api/projects/${encodeURIComponent(context.projectId)}/week?${query}`);
+    if (!isCurrentProjectContext(context) || state.week !== week) return;
+    week.views.set(start, { start, runs: view?.runs || [], occurrences: view?.occurrences || [] });
+    week.failed = null;
+    if (week.start === start) renderWeek();
+  } catch (error) {
+    if (!isCurrentProjectContext(context) || state.week !== week) return;
+    // A refresh that fails keeps the week already on screen; a first read says so once.
+    if (week.views.has(start)) return;
+    week.failed = start;
+    if (week.start === start) renderWeek();
+    showToast(`Could not load this week: ${error.message}`);
+  } finally {
+    if (state.week === week && week.loading === start) week.loading = null;
+  }
+}
+
+function systemWeekHtml() {
+  const week = ensureWeek();
+  if (!week) return "";
+  const timeZone = viewerTimeZone();
+  const view = week.views.get(week.start);
+  return window.TinSystemWeek.render(view || { start: week.start, runs: [], occurrences: [] }, {
+    today: window.TinSystemWeek.localDay(new Date(), timeZone),
+    timeZone,
+    needsYou: new Set(state.decisions.map((decision) => decision.run_id)),
+    names: new Map(state.projectWorkflows.map((item) => [item.id, item.name])),
+    openDay: week.openDay,
+    loading: !view && week.failed !== week.start,
   });
-  const weekdayName = (day) => `${String(day).charAt(0).toUpperCase()}${String(day).slice(1)}s`;
-  const WEEK = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"];
-  const firstDay = (configured) => Math.min(...(configured.schedule.weekdays || []).map((day) => WEEK.indexOf(String(day).toLowerCase())), 7);
-  const rhythm = [...scheduled].sort((a, b) => firstDay(a) - firstDay(b)).map((configured) => {
-    const schedule = configured.schedule;
-    if (schedule.cadence === "daily") return `${configured.name} every day`;
-    return `${configured.name} ${(schedule.weekdays || []).map(weekdayName).join(" and ") || "weekly"}`;
-  });
-  const nextRunAt = scheduled.map((item) => item.next_run_at).filter(Boolean).sort()[0];
-  const nextConfigured = scheduled.find((item) => item.next_run_at === nextRunAt);
-  const footer = rhythm.length
-    ? `Then every week: ${rhythm.join(", ")}.${nextConfigured ? ` Next: ${nextConfigured.name}, ${systemDateTime(nextRunAt)}.` : ""}`
-    : "Nothing is on the calendar yet; the runs above were one-offs.";
-  const city = timeZone ? String(timeZone).split("/").pop().replace(/_/g, " ") : "";
-  const range = `${format(days[0], { month: "short" }).toLowerCase()} ${format(days[0], { day: "numeric" })} – ${format(days[6], { day: "numeric" })}`;
-  return `<section class="system-week" aria-label="This week">
-    <header><strong>This week</strong><code>${escapeHtml(range)}${city ? ` · ${escapeHtml(city)}` : ""}</code></header>
-    <div class="system-week-days">${columns.join("")}</div>
-    <p>${escapeHtml(footer)}</p>
-  </section>`;
+}
+
+function systemWeekNavHtml() {
+  const away = Boolean(state.week && window.TinSystemWeek && state.week.start !== currentWeekStart());
+  return `<span id="system-week-nav" class="system-week-nav">
+    ${away ? '<button class="system-week-today" type="button" data-week-nav="today">Today</button>' : ""}
+    <button type="button" data-week-nav="-7" aria-label="Previous week"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M7.5 2.5 4 6l3.5 3.5" /></svg></button>
+    <button type="button" data-week-nav="7" aria-label="Next week"><svg aria-hidden="true" viewBox="0 0 12 12"><path d="M4.5 2.5 8 6l-3.5 3.5" /></svg></button>
+  </span>`;
+}
+
+// Redraw the calendar and its arrows in place, leaving the cards below and any open editor.
+function renderWeek() {
+  const calendar = document.getElementById("system-week");
+  if (calendar) calendar.outerHTML = systemWeekHtml();
+  const nav = document.getElementById("system-week-nav");
+  if (nav) nav.outerHTML = systemWeekNavHtml();
+}
+
+function moveWeek(step) {
+  const week = state.week;
+  if (!week) return;
+  week.start = step === "today" ? currentWeekStart() : window.TinSystemWeek.addDays(week.start, Number(step));
+  week.openDay = null;
+  week.failed = null;
+  renderWeek();
+}
+
+function openWeekDay(day) {
+  const week = state.week;
+  if (!week) return;
+  week.openDay = week.openDay === day ? null : day;
+  renderWeek();
+  document.querySelector(".system-week-sheet")?.focus({ preventScroll: true });
+}
+
+function closeWeekSheet({ focus = true } = {}) {
+  const day = state.week?.openDay;
+  if (!day) return;
+  state.week.openDay = null;
+  renderWeek();
+  if (focus) document.querySelector(`[data-week-more="${CSS.escape(day)}"]`)?.focus({ preventScroll: true });
+}
+
+// A review opens its decision; a finished run opens its output. Work still running, failed
+// or stopped, or a run without output, is told in Activity.
+async function openWeekRun(runId) {
+  closeWeekSheet({ focus: false });
+  const decision = state.decisions.find((item) => item.run_id === runId);
+  if (decision) {
+    openDecisionReview(decision);
+    return;
+  }
+  let run = state.runs.find((item) => item.id === runId);
+  if (!run) {
+    const context = currentProjectContext();
+    try {
+      run = await api(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+    } catch (error) {
+      showToast(`Could not open this run: ${error.message}`);
+      return;
+    }
+    if (!isCurrentProjectContext(context)) return;
+    upsertRun(run);
+  }
+  if (run.status === "succeeded" && availableRunOutput(run)) {
+    openRunArtifact(run.id, "workflows");
+    return;
+  }
+  const event = state.activity.find((item) => item.run_id === run.id);
+  state.activityFilter = "all";
+  state.expandedRun = event ? { runId: run.id, eventId: event.id } : null;
+  navigate("activity");
+}
+
+// A slot still to come opens its saved workflow's settings.
+function openWeekSlot(projectWorkflowId) {
+  const configured = state.projectWorkflows.find((item) => item.id === projectWorkflowId);
+  if (!configured) return;
+  closeWeekSheet({ focus: false });
+  openSavedWorkflowSettings(configured);
+}
+
+// A saved workflow's settings, opened on My system and brought into view.
+function openSavedWorkflowSettings(configured) {
+  state.workflowSection = "yours";
+  state.expandedRun = null;
+  state.workflowEditor = { workflowId: configured.workflow_id, projectWorkflowId: configured.id, runId: null, field: null };
+  renderWorkflows();
+  main.querySelector(`.system-config-form[data-project-workflow-id="${CSS.escape(configured.id)}"], .workflow-config-ledger[data-project-workflow-id="${CSS.escape(configured.id)}"]`)
+    ?.scrollIntoView({ block: "nearest" });
 }
 
 function systemProjectWorkflowEditor(workflow, configured, run = null) {
@@ -2636,14 +2756,17 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
   const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+    definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
-    return `<label class="system-setting"><strong>${escapeHtml(label)}</strong>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}</label>`;
+    return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}${definition.description ? workflowFieldHelp(definition, fieldId) : ""}</div>`;
   }).join("");
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
-  const rowActions = !isRunning && configured.schedule
+  const rowActions = isRunning
+    ? systemOpenRunAction(run)
+    : configured.schedule
     ? `<span class="system-card-actions">
         ${configured.status === "paused"
           ? `<button class="system-action is-strong" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="resume">Resume</button>`
@@ -2651,19 +2774,15 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
              <button class="system-action" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="pause">Pause</button>`}
        </span>`
     : "";
-  const runningDetail = isRunning
-    ? `<div class="system-running-detail">
-        <span>${escapeHtml(systemRunningSentence(run, configured.name))}</span>
-        <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button>
-       </div>`
-    : "";
+  const runningDetail = isRunning ? systemRunningDetail(run, configured.name) : "";
   const runDetail = isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null
     ? systemRunDetailHtml(run, false)
     : "";
-  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
+  return `<form class="system-workflow-card system-config-form ${isRunning ? "is-running" : ""} ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
@@ -2673,13 +2792,11 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     ${runDetail}
     <div class="system-config-body">
       <section>
-        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">what it works on</code>'}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
         <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}" /></label>
       </section>
       <section class="system-config-when">
-        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
-        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
+        ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
     </div>
     <footer class="system-config-footer">
@@ -2698,22 +2815,22 @@ function systemContentProgramEditor(workflow, configured, run) {
   const mode = configured.schedule?.cadence || "manual";
   return `<article class="system-workflow-card content-program-card ${isRunning ? "is-running" : ""}">
     <div class="system-card-row is-configurable" data-close-system-workflow>
-      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("idle")}</button>
+      <button class="system-card-mark is-toggle" type="button" data-cancel-workflow-editor aria-label="Close ${escapeHtml(configured.name)} settings">${systemCardIndicator("open")}</button>
       <button class="system-card-identity is-toggle" type="button" data-cancel-workflow-editor><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(configured.workflow_key)}</code></button>
+      ${systemDiagramSlot(workflow, configured)}
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
+      ${isRunning ? systemOpenRunAction(run) : ""}
     </div>
-    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button></div>` : ""}
+    ${isRunning ? systemRunningDetail(run, configured.name) : ""}
     ${isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? systemRunDetailHtml(run, false) : ""}
     <div class="system-config-body">
       <section class="content-program-work" aria-label="Upcoming content">
-        <code class="system-config-kicker">what it works on</code>
         <div class="content-program-panel" data-content-program="${escapeHtml(configured.id)}" data-content-projection="${escapeHtml(JSON.stringify([configured.content_revision || null, configured.last_run_id, configured.last_run_status, configured.run_count, state.runs.filter(run => ["00000000-0000-4000-8000-000000000031", "00000000-0000-4000-8000-000000000036"].includes(run.workflow_id)).map(runFingerprint)]))}"></div>
       </section>
       <section class="system-config-when">
-        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
-          <code class="system-config-kicker">when</code>
+        <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
           ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.schedule_modes)}
           <p class="system-config-note">${escapeHtml(systemConfigurationFact(configured))}</p>
           <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}"></label>
@@ -3240,6 +3357,7 @@ function renderDocument() {
       ? cached.path || run?.artifact_path : null;
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached, {
       mode: "in-app",
+      loadAsset: route.source !== "retained" ? bundleAssetLoader(cached.revision) : undefined,
       contextLabel: route.source === "retained" && run?.retained_output?.reason === "execution_interrupted"
         ? `Partial result · ${cached.filename}` : undefined,
       pathElement: projectPath ? projectFilePathElement({ path: projectPath }, "markdown-filename") : undefined,
@@ -3396,6 +3514,7 @@ function workflowForProjectWorkflow(configured) {
     description: configured.workflow_description,
     version_label: configured.version_label,
     definition: { input_schema: configured.input_schema },
+    drawn: Boolean(configured.workflow_drawn),
   };
 }
 
@@ -3438,7 +3557,7 @@ function scheduleLabel(schedule, nextRunAt) {
   const time = schedule.local_time || "";
   const base = schedule.cadence === "weekly"
     ? `${(schedule.weekdays || []).map((day) => day.slice(0, 3)).join(", ")} · ${time}`
-    : `daily · ${time}`;
+    : schedule.cadence === "monthly" ? `${monthlyWords(schedule, true)} · ${time}` : `daily · ${time}`;
   if (!nextRunAt) return base;
   return `${base} · next ${timeLabel(nextRunAt)}`;
 }
@@ -3492,9 +3611,8 @@ function workflowDraftForm(workflow) {
         <div class="workflow-row-control"><input class="workflow-inline-input" id="workflow-name-${escapeHtml(workflow.id)}" name="workflow_name" required maxlength="120" value="${escapeHtml(workflow.title)}" /></div>
       </div>
       ${fields || '<p class="workflow-no-inputs">This workflow has no additional inputs.</p>'}
-      ${workflowHowItRuns(workflow)}
       <div class="workflow-config-divider"><span>Schedule</span></div>
-      ${workflowScheduleControls(workflow.id, null, false, workflow.definition?.schedule_modes)}
+      ${workflowScheduleControls(workflow.id, workflowDefaultSchedule(workflow), false, workflow.definition?.schedule_modes)}
     </div>
     <div class="workflow-config-actions">
       <code>Run now uses these inputs once · saving pins v${escapeHtml(workflow.version_label)}</code>
@@ -3509,42 +3627,164 @@ function loadDiagramRenderer() {
   return window.TinDiagramLoader.load();
 }
 
-function workflowHowItRuns(workflow) {
-  const flow = workflow.definition?.presentation?.flow;
-  if (!flow) return "";
-  const counts = flow.nodes.reduce((value, node) => {
-    value[node.kind] = (value[node.kind] || 0) + 1;
-    return value;
-  }, {});
-  const facts = [
-    `${flow.nodes.length} ${flow.nodes.length === 1 ? "step" : "steps"}`,
-    counts.gate ? `${counts.gate} gate` : null,
-    counts.wait ? `${counts.wait} wait` : null,
-  ].filter(Boolean).join(" · ");
-  return `<section class="workflow-how-it-runs" aria-label="How it runs">
-    <header><strong>How it runs</strong><code>derived from the pinned definition · ${escapeHtml(facts)}</code></header>
-    <div class="tin-diagram workflow-diagram" data-workflow-diagram="${escapeHtml(workflow.id)}"><span>Drawing workflow…</span></div>
-  </section>`;
+// The workflow diagram panel. A row's diagram button opens one workflow's
+// presentation flow in a narrow sheet on the right, read top to bottom
+// (workflow-spine.js); the page stays usable beside it.
+const DIAGRAM_ICON = '<svg aria-hidden="true" viewBox="0 0 14 14"><rect x="3.5" y="0.75" width="7" height="3.5" rx="1" /><rect x="3.5" y="9.75" width="7" height="3.5" rx="1" /><path d="M7 4.25v5.5" /></svg>';
+let diagramSpine = null;
+
+function workflowFlow(workflow) {
+  return workflow?.definition?.presentation?.flow || null;
 }
 
-async function hydrateWorkflowDiagrams(root) {
-  const targets = [...root.querySelectorAll("[data-workflow-diagram]")];
-  if (!targets.length) return;
-  try {
-    const renderer = await loadDiagramRenderer();
-    for (const target of targets) {
-      if (!target.isConnected) continue;
-      const workflow = state.workflows.find((item) => item.id === target.dataset.workflowDiagram);
-      const flow = workflow?.definition?.presentation?.flow;
-      if (!flow) continue;
-      const rendered = await renderer.renderFlow(flow);
-      if (target.isConnected) target.innerHTML = rendered.svg;
-    }
-  } catch (_error) {
-    for (const target of targets) {
-      if (target.isConnected) target.innerHTML = "<span>Diagram unavailable.</span>";
-    }
+// A saved workflow the catalog hides (content.refresh) is drawn all the same; its drawing
+// comes from the saved workflow's diagram endpoint rather than the catalog.
+function workflowDrawn(workflow) {
+  return Boolean(workflowFlow(workflow) || workflow?.drawn);
+}
+
+function diagramPanelShows(workflowId, projectWorkflowId) {
+  const open = state.diagramPanel;
+  return Boolean(open && open.workflowId === workflowId && (open.projectWorkflowId || "") === (projectWorkflowId || ""));
+}
+
+function systemDiagramButton(workflow, configured = null) {
+  if (!workflowDrawn(workflow)) return "";
+  const shown = diagramPanelShows(workflow.id, configured?.id);
+  const name = configured?.name || workflow.title || workflow.key;
+  return `<button class="system-card-diagram" type="button" data-show-workflow-diagram="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured?.id || "")}" aria-pressed="${shown}" aria-label="Workflow diagram for ${escapeHtml(name)}" title="Show workflow diagram">${DIAGRAM_ICON}</button>`;
+}
+
+// In a list row the button keeps its slot when there is nothing to draw (a private package
+// without a flow), so every row has the same height and its columns stay in their lanes.
+function systemDiagramSlot(workflow, configured = null) {
+  return systemDiagramButton(workflow, configured) || '<span class="system-card-diagram is-empty" aria-hidden="true"></span>';
+}
+
+function diagramTrigger(configured) {
+  const schedule = configured?.schedule;
+  if (!schedule) return "";
+  const label = systemScheduleLabel(configured);
+  const when = schedule.cadence === "monthly" ? label : `every ${label}`;
+  return configured.status === "paused" ? `paused · ${when}` : when;
+}
+
+// A saved workflow is drawn from its pinned revision, or from today's definition when the
+// pin has no drawing (the API says which); a template is drawn from today's definition.
+const savedDiagrams = new Map();
+
+function savedDiagramKey(configured) {
+  return `${configured.id}:${configured.settings_revision ?? ""}:${configured.version_label ?? ""}`;
+}
+
+function loadSavedDiagram(configured) {
+  const key = savedDiagramKey(configured);
+  if (savedDiagrams.has(key)) return;
+  savedDiagrams.set(key, null);
+  const context = currentProjectContext();
+  api(`/api/projects/${encodeURIComponent(context.projectId)}/workflows/${encodeURIComponent(configured.id)}/diagram`)
+    .then((value) => savedDiagrams.set(key, value))
+    .catch(() => savedDiagrams.set(key, { failed: true }))
+    .finally(() => {
+      if (isCurrentProjectContext(context)) renderDiagramPanel();
+    });
+}
+
+function closeDiagramPanelElement(existing) {
+  state.diagramPanel = null;
+  diagramSpine?.dispose();
+  diagramSpine = null;
+  existing?.remove();
+  document.body.classList.remove("has-diagram-panel");
+}
+
+function renderDiagramPanel() {
+  const open = state.diagramPanel;
+  const existing = document.getElementById("workflow-diagram-panel");
+  const configured = open?.projectWorkflowId
+    ? state.projectWorkflows.find((item) => item.id === open.projectWorkflowId) : null;
+  const workflow = configured
+    ? workflowForProjectWorkflow(configured)
+    : open ? state.workflows.find((item) => item.id === open.workflowId) : null;
+  if (!open || !workflowDrawn(workflow) || (open.projectWorkflowId && !configured)) {
+    closeDiagramPanelElement(existing);
+    return;
   }
+  const saved = configured ? savedDiagrams.get(savedDiagramKey(configured)) : undefined;
+  if (configured && saved === undefined) loadSavedDiagram(configured);
+  const loading = Boolean(configured) && !saved;
+  const resolved = saved && !saved.failed ? saved : null;
+  const flow = resolved?.flow || workflowFlow(workflow);
+  if (!flow && !loading) {
+    closeDiagramPanelElement(existing);
+    return;
+  }
+  // One line under the title: the key and version, and which version drew it when the
+  // schedule is pinned to an older one.
+  const runs = resolved?.pinned_version;
+  const drawn = resolved?.version || configured?.version_label || workflow.version_label;
+  const versionLine = runs && drawn && runs !== drawn
+    ? `${workflow.key} · runs v${runs} · drawn from v${drawn}`
+    : `${workflow.key}${drawn ? ` · v${drawn}` : ""}`;
+  const trigger = diagramTrigger(configured);
+  const title = configured?.name || workflow.title || workflow.key;
+  const key = JSON.stringify([workflow.id, configured?.id || "", title, versionLine, trigger, loading, flow]);
+  document.body.classList.add("has-diagram-panel");
+  if (existing?.dataset.panelKey === key) return;
+  const panel = existing || document.createElement("aside");
+  panel.id = "workflow-diagram-panel";
+  panel.className = "workflow-diagram-panel";
+  panel.tabIndex = -1;
+  panel.dataset.panelKey = key;
+  panel.setAttribute("aria-labelledby", "workflow-diagram-title");
+  panel.innerHTML = `<header>
+      <h2 id="workflow-diagram-title">${escapeHtml(title)}</h2>
+      <button class="diagram-panel-close" type="button" data-close-workflow-diagram aria-label="Close the workflow diagram"><svg aria-hidden="true" viewBox="0 0 14 14"><path d="M3 3l8 8M11 3l-8 8" /></svg></button>
+      <code>${escapeHtml(versionLine)}</code>
+    </header>
+    <div class="diagram-panel-canvas ${loading ? "is-loading" : ""}" tabindex="0" aria-label="${escapeHtml(title)}, from start to finish" aria-busy="${loading}"></div>
+    <footer>
+      <code>${flow ? escapeHtml(window.TinWorkflowSpine.summary(flow)) : ""}</code>
+      ${configured ? `<button type="button" data-diagram-workflow-settings>Workflow settings</button>` : ""}
+    </footer>`;
+  diagramSpine?.dispose();
+  diagramSpine = flow ? window.TinWorkflowSpine.render(flow, { trigger }) : null;
+  if (diagramSpine) panel.querySelector(".diagram-panel-canvas").append(diagramSpine.element);
+  if (!existing) document.body.append(panel);
+  window.requestAnimationFrame(() => diagramSpine?.redraw());
+  panel.querySelector("[data-close-workflow-diagram]").addEventListener("click", () => closeWorkflowDiagram());
+  panel.querySelector("[data-diagram-workflow-settings]")?.addEventListener("click", () => openSavedWorkflowSettings(configured));
+}
+
+function syncDiagramButtons() {
+  document.querySelectorAll("[data-show-workflow-diagram]").forEach((button) => {
+    const shown = diagramPanelShows(button.dataset.showWorkflowDiagram, button.dataset.projectWorkflowId);
+    if (button.matches(".system-card-diagram")) button.setAttribute("aria-pressed", String(shown));
+    button.closest(".system-workflow-card")?.classList.toggle("is-diagram-open", shown);
+  });
+}
+
+function toggleWorkflowDiagram(button) {
+  const workflowId = button.dataset.showWorkflowDiagram;
+  const projectWorkflowId = button.dataset.projectWorkflowId || "";
+  if (diagramPanelShows(workflowId, projectWorkflowId)) {
+    closeWorkflowDiagram();
+    return;
+  }
+  state.diagramPanel = { workflowId, projectWorkflowId };
+  renderDiagramPanel();
+  syncDiagramButtons();
+  document.getElementById("workflow-diagram-panel")?.focus({ preventScroll: true });
+}
+
+function closeWorkflowDiagram({ restoreFocus = true } = {}) {
+  const open = state.diagramPanel;
+  state.diagramPanel = null;
+  renderDiagramPanel();
+  syncDiagramButtons();
+  if (!restoreFocus || !open) return;
+  document.querySelector(`[data-show-workflow-diagram="${CSS.escape(open.workflowId)}"][data-project-workflow-id="${CSS.escape(open.projectWorkflowId || "")}"]`)
+    ?.focus({ preventScroll: true });
 }
 
 function projectWorkflowLedger(workflow, configured, editingField) {
@@ -3561,6 +3801,7 @@ function projectWorkflowLedger(workflow, configured, editingField) {
     <div class="workflow-config-heading">
       <span class="status-dot is-${escapeHtml(configured.status)}"></span>
       <div><strong>${escapeHtml(configured.name)}</strong><code>${escapeHtml(workflow.key)} · v${escapeHtml(configured.version_label)}</code></div>
+      ${systemDiagramButton(workflow, configured)}
       <button class="workflow-collapse" type="button" data-cancel-workflow-editor>collapse ↑</button>
     </div>
     <div class="workflow-config-rows">
@@ -3621,21 +3862,42 @@ function workflowLedgerSchedule(configured, editing) {
     if (mode === "weekly") {
       rows.push(workflowLedgerRestingRow("Day", (schedule.weekdays || []).map(humanize).join(", "), "schedule", true));
     }
+    if (mode === "monthly") {
+      rows.push(workflowLedgerRestingRow("Day", monthlyWords(schedule).replace(/^the /, ""), "schedule", true));
+    }
     if (mode !== "manual") {
       rows.push(workflowLedgerRestingRow("Time", `${schedule.local_time} · ${schedule.timezone}`, "schedule", true));
     }
     return rows.join("");
   }
   const workflow = state.workflows.find((item) => item.id === configured.workflow_id);
-  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
+  return `<form class="workflow-ledger-form workflow-ledger-schedule-form ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-project-workflow-id="${escapeHtml(configured.id)}" data-workflow-field="schedule">
     ${workflowScheduleControls(configured.workflow_id, schedule, true, workflow?.definition?.schedule_modes)}
   </form>`;
+}
+
+// A workflow may declare the cadence a new setup starts with, in the project's timezone.
+function workflowDefaultSchedule(workflow) {
+  const schedule = workflow.definition?.default_schedule;
+  return schedule ? {...schedule, timezone: state.project?.timezone || "UTC"} : null;
 }
 
 function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = null) {
   const mode = schedule?.cadence || "manual";
   const timezone = schedule?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const weekday = schedule?.weekdays?.[0] || "tuesday";
+  const dayOfMonth = String(schedule?.day_of_month || 1);
+  const months = (schedule?.months || []).join(",");
+  const monthOptions = [
+    ["", "Every month"],
+    ["1,4,7,10", "Jan, Apr, Jul, Oct"],
+    ["2,5,8,11", "Feb, May, Aug, Nov"],
+    ["3,6,9,12", "Mar, Jun, Sep, Dec"],
+  ];
+  // A saved set of months the presets don't cover stays selectable as it is.
+  if (months && !monthOptions.some(([value]) => value === months)) {
+    monthOptions.push([months, (schedule.months || []).map((month) => MONTH_NAMES[month - 1].slice(0, 3)).join(", ")]);
+  }
   const localTime = schedule?.local_time || "09:00";
   const actions = ledger ? workflowLedgerActions() : "";
   const allowed = new Set(scheduleModes || ["on_demand", "daily", "weekly"]);
@@ -3643,8 +3905,9 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     ["manual", "On demand", "on_demand"],
     ["daily", "Daily", "daily"],
     ["weekly", "Weekly", "weekly"],
+    ["monthly", "Monthly", "monthly"],
   ].filter((item) => allowed.has(item[2])).map((item) => item.slice(0, 2));
-  return `<div class="workflow-config-row ${ledger ? "workflow-ledger-row is-editing" : ""}">
+  return `<div class="workflow-config-row schedule-mode ${ledger ? "workflow-ledger-row is-editing" : ""}">
       <span class="workflow-row-label">Runs</span>
       <div class="workflow-row-control">${tinSegmentedControl("schedule_mode", mode, modeOptions, "Runs")}</div>
       ${actions}
@@ -3652,6 +3915,14 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     <div class="workflow-config-row schedule-weekday ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <span class="workflow-row-label">Day</span>
       <div class="workflow-row-control">${tinSelectControl("schedule_weekday", weekday, ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"].map((day) => [day, humanize(day)]), "Day")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Day</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_day_of_month", dayOfMonth, Array.from({ length: 28 }, (_, index) => [String(index + 1), ordinalDay(index + 1)]), "Day of the month")}</div>
+    </div>
+    <div class="workflow-config-row schedule-monthly ${ledger ? "workflow-ledger-row is-nested" : ""}">
+      <span class="workflow-row-label">Months</span>
+      <div class="workflow-row-control">${tinSelectControl("schedule_months", months, monthOptions, "Months")}</div>
     </div>
     <div class="workflow-config-row schedule-timed ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <label for="schedule-time-${escapeHtml(id)}">Time</label>
@@ -4004,9 +4275,10 @@ async function saveProjectWorkflow(event) {
     workflow_id: workflow.id,
     request_id: window.crypto.randomUUID(),
   };
+  let saved = null;
   try {
     const projectId = encodeURIComponent(context.projectId);
-    const saved = await api(
+    saved = await api(
       `/api/projects/${projectId}/workflows`,
       { method: "POST", body: JSON.stringify(payload) },
     );
@@ -4033,6 +4305,14 @@ async function saveProjectWorkflow(event) {
       : schedule ? "Workflow saved and scheduled." : "Workflow saved.");
   } catch (error) {
     if (!isCurrentProjectContext(context)) return;
+    if (saved) {
+      state.workflowEditor = {workflowId: workflow.id, projectWorkflowId: saved.id, runId: null, field: null};
+      state.workflowSection = "yours";
+      state.workflowFilter = "all";
+      renderWorkflows();
+      showToast(`Workflow saved, but it could not start: ${error.message}`);
+      return;
+    }
     submit.disabled = false;
     submit.textContent = idleSubmitLabel;
     showToast(`Could not save workflow: ${error.message}`);
@@ -4064,8 +4344,9 @@ function readWorkflowInputValue(field, definition) {
 function workflowScheduleFromForm(form) {
   const mode = form.elements.schedule_mode.value;
   if (mode === "manual") return null;
-  return {
-    ...(form.tinCodeSchedule || {}),
+  const { day_of_month: _day, months: _months, ...saved } = form.tinCodeSchedule || {};
+  const schedule = {
+    ...saved,
     cadence: mode,
     weekdays: mode === "weekly" ? (form.querySelector("[data-code-weekdays]")
       ? [...form.querySelectorAll("[name=schedule_days]:checked")].map((field) => field.value)
@@ -4073,6 +4354,11 @@ function workflowScheduleFromForm(form) {
     local_time: form.elements.schedule_time.value,
     timezone: form.elements.schedule_timezone.value.trim(),
   };
+  if (mode === "monthly") {
+    schedule.day_of_month = Number.parseInt(form.elements.schedule_day_of_month.value, 10);
+    schedule.months = String(form.elements.schedule_months.value || "").split(",").filter(Boolean).map(Number);
+  }
+  return schedule;
 }
 
 async function saveProjectWorkflowField(event) {
@@ -4491,8 +4777,8 @@ function isProposal(decision) {
   return decision.kind === "review" && PROPOSAL_WORKFLOWS.has(decision.workflow_key);
 }
 
-// Answer pages and public articles that Tin adapts to the site (a metered content.deliver or
-// website.change run) get one Publish button. The server says whether adaptation applies (for
+// Answer pages and public articles that Tin adapts to the site (a metered website.change run)
+// get one Publish button. The server says whether adaptation applies (for
 // content.generate, only its answer pages) and, from the saved delivery setting and the cost
 // preview, the footer line: what Publish does and about what it costs. Everything about that
 // card lives here so its wording and layout stay easy to change.
@@ -4709,7 +4995,7 @@ function websiteChangeDetailHtml(item) {
       ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
       ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
       ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
-      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
+      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your site's build and your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
     </div>
     <footer>
       <button class="decision-discard" type="button" data-change-action="decline">Decline</button>
@@ -5010,16 +5296,50 @@ function activityAction(event) {
   }
   const run = state.runs.find((item) => item.id === event.run_id);
   if (!run) return "";
-  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) {
+  const target = runOpenTarget(run);
+  if (target === "task") {
     return `<button class="open-button" type="button" data-activity-task="${escapeHtml(run.id)}">Open</button>`;
   }
-  if (run.retained_output && !run.canonical_commit_sha) {
+  if (target === "retained") {
     return `<button type="button" data-activity-artifact="${escapeHtml(run.id)}">${retainedOutputLabel(run)} →</button>`;
   }
-  if (!availableRunOutput(run)) {
+  if (target === "details") {
     return `<button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}" data-observe-event="${escapeHtml(event.id)}">Open</button>`;
   }
   return `<button class="open-button" type="button" data-activity-artifact="${escapeHtml(run.id)}" title="${escapeHtml(run.artifact_path)}">Open</button>`;
+}
+
+// What Open does for a run, shared by Activity rows and the Workflows tab's last-run link.
+function runOpenTarget(run) {
+  if (run.workflow_name === "project.task" && run.task_diff?.files?.length) return "task";
+  if (run.retained_output && !run.canonical_commit_sha) return "retained";
+  if (!availableRunOutput(run)) return "details";
+  return "artifact";
+}
+
+// The Workflows tab's "Last run" link opens the run as Activity's Open button would. The run
+// may be older than the recent runs the dashboard holds, so it is fetched when missing. A run
+// without output expands its details in Activity, where they render.
+async function openTemplateLastRun(runId) {
+  let run = state.runs.find((item) => item.id === runId);
+  if (!run) {
+    try {
+      run = await api(`/api/workflows/runs/${encodeURIComponent(runId)}`);
+    } catch (error) {
+      showToast(error.message);
+      return;
+    }
+    if (!state.runs.some((item) => item.id === runId)) state.runs.push(run);
+  }
+  const target = runOpenTarget(run);
+  if (target === "task") { openTask(run.id); return; }
+  if (target !== "details") { openRunArtifact(run.id, "workflows"); return; }
+  const event = state.activity.find((item) => item.run_id === run.id);
+  if (!event) { openRunArtifact(run.id, "workflows"); return; }
+  state.workflowSection = "activity";
+  state.workflowEditor = null;
+  state.expandedRun = null;
+  await toggleRunDetails(run.id, event.id);
 }
 
 function safeHttpsUrl(value) {
@@ -5541,6 +5861,14 @@ function projectFileRawUrl(route, download = false, projectId = state.project.id
   return `/api/projects/${encodeURIComponent(projectId)}/files/raw?${query.toString()}`;
 }
 
+// A draft's figures and embeds, read at the document's revision with the member's session.
+function bundleAssetLoader(revision, projectId = state.project?.id) {
+  if (!revision || !projectId) return undefined;
+  return (path) => authorizedFetch(projectFileRawUrl({ path, revision }, false, projectId), {
+    headers: { Accept: "*/*" },
+  }).then((response) => response.arrayBuffer());
+}
+
 function formatFileSize(bytes) {
   if (bytes < 1024) return `${bytes} b`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)} kb`;
@@ -5890,6 +6218,7 @@ function renderFile() {
   if (cached?.kind === "markdown") {
     state.documentCleanup = window.TinMarkdownViewer.mount(main, cached.document, {
       mode: "in-app",
+      loadAsset: bundleAssetLoader(route.revision),
       contextLabel: route.path,
       pathElement: projectFilePathElement(route, "markdown-filename"),
       factsText: `markdown · ${comparisonFileLabel(route)} · ${shortRevision(route.revision)}`,
@@ -6112,6 +6441,7 @@ function renderIntegrationCard(integration) {
   const connected = Boolean(integration.connection_id);
   const selected = integrationSelection(integration);
   const needsResource = connected && RESOURCE_SCOPED_INTEGRATIONS.has(integration.key) && !selected;
+  const needsLinkedInSetup = connected && integration.key === "network.linkedin" && !linkedInSetupReady(integration);
   const logoPaths = {
     "analytics.gsc": "/assets/integrations/google-search-console.svg",
     "infra.github": "/assets/integrations/github.svg",
@@ -6129,8 +6459,11 @@ function renderIntegrationCard(integration) {
       : integration.key === "analytics.posthog" ? "Choose a PostHog project" : "Choose a Search property"
     : integration.key === "analytics.posthog"
       ? integration.external_account_label || "PostHog"
+    : integration.key === "network.linkedin" && connected
+      ? linkedInAccountLabel(integration)
       : selected || integration.external_account_label || "Choose an account";
-  const health = integration.key.startsWith("custom.api.")
+  const health = integration.key === "network.linkedin" && connected ? linkedInHealth(integration)
+    : integration.key.startsWith("custom.api.")
     ? integration.configuration?.access_verified ? "access verified" : "saved · not verified"
     : integration.key === "social.x" && connected
     ? integration.status === "needs_attention" ? "reconnect required"
@@ -6147,7 +6480,7 @@ function renderIntegrationCard(integration) {
       ? `checked ${timeLabel(integration.last_checked_at)}`
       : "ready for workflows";
   const unlocks = (integration.unlocks || []).join(" · ");
-  return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
+  return `<article class="integration-card ${connected ? "is-connected" : "is-available"} ${needsResource || needsLinkedInSetup ? "is-needs-setup" : ""} ${expanded ? "is-expanded" : ""}">
     <div class="integration-card-row">
       <span class="integration-badge ${["infra.github", "infra.github_user"].includes(integration.key) ? "is-monochrome" : ""}" aria-hidden="true">${logo}</span>
       <span class="integration-identity">
@@ -6157,7 +6490,9 @@ function renderIntegrationCard(integration) {
       <span class="integration-state-mark is-${escapeHtml(integration.status)}" aria-hidden="true"></span>
       ${connected ? `<span class="integration-primary">${escapeHtml(primary)}</span>
         <span class="integration-health">${escapeHtml(health)}</span>
-        ${RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
+        ${needsLinkedInSetup
+          ? `<button class="integration-row-action" type="button" data-integration-connect="network.linkedin" aria-haspopup="dialog">Finish setup</button>`
+          : RESOURCE_SCOPED_INTEGRATIONS.has(integration.key)
           ? `<button class="integration-row-action" type="button" data-integration-choose="${escapeHtml(integration.key)}" aria-haspopup="dialog">${needsResource ? "Set up" : "Configure"}</button>`
           : `<button class="integration-row-action" type="button" data-integration-expand="${escapeHtml(integration.key)}" aria-expanded="${expanded}">Configure</button>`}`
         : `<span class="integration-unlocks">would unlock ${escapeHtml(unlocks)}</span>
@@ -6254,6 +6589,20 @@ function renderXIntegrationExpanded(integration) {
 }
 
 function renderIntegrationExpanded(integration) {
+  if (integration.key === "network.linkedin") {
+    const permission = integration.configuration?.collection_permission;
+    const mode = {cloud_preferred:"Cloud with browser backup",cloud_only:"Cloud only",local_only:"This browser only"}[permission?.mode];
+    return `<div class="integration-expanded">
+      <div class="integration-detail-row"><span class="integration-detail-label">Account</span><span class="integration-detail-value">${escapeHtml(linkedInAccountLabel(integration))}</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Collection</span><span class="integration-detail-value">${escapeHtml(mode || "Not set up")}</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Access</span><span class="integration-detail-value">Read selected connections</span></div>
+      <div class="integration-detail-row"><span class="integration-detail-label">Unlocks</span><span class="integration-detail-value is-muted">${escapeHtml((integration.unlocks || []).join(" · "))}</span></div>
+      <div class="integration-control-footer">
+      <span>connected ${escapeHtml(integration.connected_at ? timeLabel(integration.connected_at) : "recently")} · via Tin extension</span>
+      <button type="button" class="integration-reconnect" data-integration-connect="network.linkedin">${linkedInSetupReady(integration) ? "Settings" : "Finish setup"}</button>
+      <button type="button" class="integration-disconnect" data-integration-disconnect="network.linkedin">Disconnect</button>
+      <button type="button" class="integration-done" data-integration-expand="network.linkedin">Done</button></div></div>`;
+  }
   if (integration.key === "payments.stripe") return renderStripeExpanded(integration);
   if (integration.key === "social.x") return renderXIntegrationExpanded(integration);
   const selected = integrationSelection(integration) || "";
@@ -6384,6 +6733,175 @@ async function promptForIntegrationResource(providerKey) {
   await chooseIntegrationResource(providerKey);
 }
 
+function linkedInAccountLabel(integration) {
+  return integration.external_account_label || integration.configuration?.actor?.name || integration.configuration?.actor?.profile_url || "LinkedIn account connected";
+}
+
+function linkedInSetupReady(integration) {
+  const config = integration.configuration || {};
+  return config.collection_permission?.mode === "local_only" ||
+    (config.collection_permission && config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now());
+}
+
+function linkedInHealth(integration) {
+  const config = integration.configuration || {}, permission = config.collection_permission;
+  if (!permission) return "finish setup";
+  if (permission.mode === "local_only") return "keep Chrome open while collecting";
+  if (config.session_state === "reconnect") return "reconnect LinkedIn";
+  if (config.session_state === "available" && Date.parse(config.session_expires_at) > Date.now()) return `cloud access enabled${config.session_verified_at ? ` · checked ${timeLabel(config.session_verified_at)}` : ""}`;
+  return "cloud setup incomplete";
+}
+
+function linkedInMessage(type, payload = {}, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const id = crypto.randomUUID();
+    const timeout = setTimeout(() => {window.removeEventListener("message", listener);reject(new Error("extension_unavailable"));}, timeoutMs);
+    function listener(event) {
+      if (event.source !== window || event.origin !== location.origin || event.data?.source !== "tin.linkedin.collection.v3" || event.data.id !== id) return;
+      clearTimeout(timeout);window.removeEventListener("message", listener);
+      if (event.data.ok) resolve(event.data.payload);
+      else reject(new Error(event.data.error || "extension_unavailable"));
+    }
+    window.addEventListener("message", listener);
+    window.postMessage({source:"tin.dashboard.collection.v3",type,id,...payload},location.origin);
+  });
+}
+
+function linkedInSetupError(code) {
+  return {
+    extension_unavailable:"Install or update the Tin extension, then refresh this Tin tab.",
+    open_linkedin_tab:"Open LinkedIn and sign in, then check again.",
+    account_unavailable:"Sign in to LinkedIn in this Chrome profile, then check again.",
+    account_changed:"The LinkedIn account changed. Check again before connecting.",
+    session_expired:"LinkedIn needs you to sign in again. Open LinkedIn, then try connecting again.",
+    challenge:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
+    rate_limited:"LinkedIn asked us to wait. Try connecting again later.",
+    access_denied:"LinkedIn did not allow this connection. Check your account on LinkedIn before trying again.",
+    unsupported_identity:"Tin could not confirm the LinkedIn account. Refresh LinkedIn and try again.",
+    account_owner_required:"Only the person who connected this LinkedIn account can change its settings.",
+    collection_active:"A collection is running. Stop it or let it finish before reconnecting.",
+    pairing_expired:"Setup timed out. Check again to continue.",
+    legacy_retirement_pending:"The earlier Tin connection is still closing. Try connecting again shortly.",
+    update_extension:"Update the Tin extension to version 0.4 or later, then refresh this Tin tab.",
+    refresh_linkedin_context:"Tin could not finish reading LinkedIn. Keep LinkedIn open and try again.",
+    search_setup_unavailable:"Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.",
+    ambiguous_search_contract:"Tin could not confirm LinkedIn search. Refresh LinkedIn and try again.",
+    cloud_setup_pending:"Cloud setup did not finish. Keep LinkedIn open and try again.",
+    login_or_checkpoint:"LinkedIn needs your attention. Open LinkedIn and finish its sign-in check, then try again.",
+    platform_limit:"LinkedIn asked us to wait. Try connecting again later.",
+  }[code] || "LinkedIn could not connect. Check that it is open in this Chrome profile, then try again.";
+}
+
+async function chooseLinkedInConnection(context) {
+  const existing = state.integrations.find(item => item.key === "network.linkedin");
+  const choice = {context,existing,mode:existing?.configuration?.collection_permission?.mode || "cloud_preferred",account:null};
+  state.linkedInChoice = choice;
+  integrationProjectTitle.textContent = "Connect LinkedIn";
+  integrationProjectCopy.textContent = "Use the LinkedIn account signed in to this Chrome profile.";
+  integrationProjectOptions.setAttribute("aria-label", "LinkedIn setup");
+  integrationProjectOptions.removeAttribute("role");
+  integrationProjectOptions.innerHTML = `<div class="linkedin-setup">
+    <ol class="linkedin-install-steps">
+      <li><a href="${escapeHtml(existing?.setup_url || "https://chromewebstore.google.com/detail/tin-computer-for-linkedin/eanmnipacaadfahphbcijncgpfkdcbec")}" target="_blank" rel="noopener noreferrer">Install Tin for Chrome</a>. Choose <strong>Add to Chrome</strong>, then <strong>Add extension</strong>.</li>
+      <li><a href="https://www.linkedin.com/feed/" target="_blank" rel="noopener noreferrer">Open LinkedIn</a> and sign in.</li>
+      <li>Return here. If you just installed Tin, refresh this tab first.</li>
+    </ol>
+    <p data-linkedin-account role="status">Checking the extension…</p>
+    <button type="button" class="button-quiet" data-linkedin-check>Check again</button>
+    <fieldset class="linkedin-modes" hidden><legend>Where should Tin collect?</legend>
+      <label><input type="radio" name="linkedin_mode" value="cloud_preferred"> Cloud with browser backup</label>
+      <label><input type="radio" name="linkedin_mode" value="cloud_only"> Cloud only</label>
+      <label><input type="radio" name="linkedin_mode" value="local_only"> This browser only</label>
+      <p data-linkedin-mode-copy></p>
+    </fieldset></div>`;
+  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
+  confirm.textContent = existing?.connection_id ? "Save connection" : "Connect";
+  confirm.disabled = true;
+  function modeCopy() {
+    const cloud = choice.mode !== "local_only";
+    integrationProjectOptions.querySelector("[data-linkedin-mode-copy]").textContent = cloud
+      ? "Allow Tin to collect for this project while Chrome is closed. Tin securely stores your login for up to 7 days and refreshes it while Chrome is open. Disconnect here anytime." + (choice.mode === "cloud_preferred" ? " Browser backup needs Chrome open and may open a LinkedIn tab." : "")
+      : "Tin collects in Chrome without uploading your login. Keep Chrome open and your computer awake while collecting.";
+  }
+  integrationProjectOptions.querySelectorAll('[name="linkedin_mode"]').forEach(input => {
+    input.checked = input.value === choice.mode;
+    input.addEventListener("change", () => {choice.mode = input.value;modeCopy();});
+  });
+  modeCopy();
+  const check = async () => {
+    confirm.disabled = true; choice.account = null;
+    const account = integrationProjectOptions.querySelector("[data-linkedin-account]");
+    account.textContent = "Checking the extension…";
+    try {
+      const result = await linkedInMessage("DISCOVER");
+      if (state.linkedInChoice !== choice || !isCurrentProjectContext(context)) return;
+      if (result?.protocol !== 4) throw new Error("update_extension");
+      if (!result.account) throw new Error(result.reason || "open_linkedin_tab");
+      choice.account = result.account;choice.deviceProject = result.project_id;
+      account.textContent = `Account: ${result.account.name || result.account.profile_url || "your signed-in LinkedIn account"}`;
+      integrationProjectOptions.querySelector(".linkedin-install-steps").hidden = true;
+      integrationProjectOptions.querySelector(".linkedin-modes").hidden = false;
+      confirm.disabled = false;showIntegrationDialogError(null);
+    } catch (error) {
+      if (state.linkedInChoice !== choice) return;
+      account.textContent = linkedInSetupError(error.message);
+      integrationProjectOptions.querySelector(".linkedin-install-steps").hidden = false;
+    }
+  };
+  integrationProjectOptions.querySelector("[data-linkedin-check]").addEventListener("click", check);
+  showIntegrationDialogError(null);
+  integrationProjectDialog.showModal();
+  await check();
+}
+
+async function confirmLinkedInConnection() {
+  const choice = state.linkedInChoice;
+  if (!choice?.account || !isCurrentProjectContext(choice.context)) return;
+  const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
+  confirm.disabled = true;confirm.textContent = "Connecting…";
+  try {
+    const body = JSON.stringify({actor:choice.account,mode:choice.mode,consent_version:1});
+    const prefix = `/api/projects/${choice.context.projectId}/connection-collection`;
+    // Existing pairing can update permission without replacing its device or active account.
+    const sameAccount = choice.deviceProject === choice.context.projectId && choice.existing?.configuration?.actor?.key === choice.account.key;
+    if (sameAccount) {
+      await api(`${prefix}/preferences`, {method:"PUT",body});
+    } else {
+      const grant = await api(`${prefix}/pairing`, {method:"POST",body});
+      const paired = await linkedInMessage("PAIR", {grant:grant.grant}, 30000);
+      if (paired?.project_id !== choice.context.projectId) throw new Error("account_changed");
+      choice.deviceProject = paired.project_id;
+      choice.existing = {configuration:{actor:choice.account}};
+    }
+    await linkedInMessage("WAKE");
+    let ready = choice.mode === "local_only", cloudAvailable = true;
+    if (!ready) {
+      confirm.textContent = "Preparing cloud access…";
+      integrationProjectOptions.querySelector("[data-linkedin-account]").textContent = "Keep LinkedIn open for a moment while Tin finishes connecting.";
+      const deadline = Date.now() + 45000;
+      while (Date.now() < deadline && state.linkedInChoice === choice && isCurrentProjectContext(choice.context)) {
+        let status;
+        try { status = await linkedInMessage("DISCOVER", {}, 35000); } catch { break; }
+        if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
+        if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit"].includes(status.reason)) throw new Error(status.reason);
+        ready = status.session_available === true;
+        cloudAvailable = status.cloud_available === true;
+        if (ready || !cloudAvailable) break;
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    if (!isCurrentProjectContext(choice.context) || state.linkedInChoice !== choice) return;
+    if (!ready && cloudAvailable) throw new Error("cloud_setup_pending");
+    integrationProjectDialog.close();
+    showToast(ready ? "LinkedIn connected. Start collections from Tin." : cloudAvailable ? "LinkedIn connected. Keep Chrome open while cloud setup finishes." : "LinkedIn connected. Cloud collection is not available here yet.");
+    await bootstrap();
+  } catch (error) {
+    if (state.linkedInChoice !== choice) return;
+    showIntegrationDialogError(linkedInSetupError(error.message));
+    confirm.disabled = false;confirm.textContent = "Try again";
+  }
+}
+
 async function connectIntegration(providerKey, capabilities = null) {
   if (providerKey === CUSTOM_API_TEMPLATE.key) {
     await openCustomApi();
@@ -6395,6 +6913,10 @@ async function connectIntegration(providerKey, capabilities = null) {
     return;
   }
   const context = currentProjectContext();
+  if (providerKey === "network.linkedin") {
+    await chooseLinkedInConnection(context);
+    return;
+  }
   if (providerKey === "ads.google") {
     chooseGoogleAdsAccount(context.projectId);
     return;
@@ -6558,6 +7080,7 @@ async function pollRuns() {
       state.activity = activity;
       state.projectWorkflows = projectWorkflows;
       state.activityHasMore = state.activity.length === 100;
+      if (state.week && state.view === "workflows" && state.workflowSection === "yours") loadWeek();
     }
     renderPolledRuns({ collectionsChanged, summaryChanged });
   } catch (error) {
@@ -6971,7 +7494,10 @@ async function chooseIntegrationResource(providerKey) {
   integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Later";
   integrationProjectOptions.setAttribute("aria-label", copy.noun);
   renderIntegrationResourceOptions();
-  if (!integrationProjectDialog.open) integrationProjectDialog.showModal();
+  if (!integrationProjectDialog.open) {
+    showIntegrationDialogError(null);
+    integrationProjectDialog.showModal();
+  }
   const current = () => state.resourceChoice?.providerKey === providerKey && state.resourceChoice.projectId === context.projectId;
   try {
     const options = await api(`/api/projects/${encodeURIComponent(context.projectId)}/integrations/${encodeURIComponent(providerKey)}/options`);
@@ -6982,7 +7508,7 @@ async function chooseIntegrationResource(providerKey) {
   } catch (error) {
     if (!isCurrentProjectContext(context) || !current()) return;
     state.resourceChoice.options = [];
-    showToast(`Could not load the choices: ${error.message}`);
+    showIntegrationDialogError(`Could not load the choices: ${error.message}`);
   }
   renderIntegrationResourceOptions();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
@@ -7053,7 +7579,7 @@ async function confirmIntegrationResource() {
     showToast(`${updated.name} now uses ${option?.label || "your choice"}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not link the ${copy.noun}: ${error.message}`);
+    showIntegrationDialogError(`Could not link the ${copy.noun}: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = copy.confirm;
   }
@@ -7077,6 +7603,7 @@ function chooseGoogleAdsAccount(projectId) {
   input.value = state.googleAdsChoice.customerId;
   input.addEventListener("input", () => { state.googleAdsChoice.customerId = input.value; });
   integrationProjectOptions.append(field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   input.focus();
 }
@@ -7086,7 +7613,7 @@ async function confirmGoogleAdsAccount() {
   if (!choice) return;
   const digits = (choice.customerId || "").replace(/[^0-9]/g, "");
   if (digits.length !== 10) {
-    showToast("A Google Ads customer id has ten digits, like 123-456-7890.");
+    showIntegrationDialogError("A Google Ads customer id has ten digits, like 123-456-7890.");
     return;
   }
   const confirm = integrationProjectForm.querySelector("[data-confirm-integration-project]");
@@ -7108,7 +7635,7 @@ async function confirmGoogleAdsAccount() {
       : "Invitation sent. Accept it in Google Ads, then press Check again.");
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not link Google Ads: ${error.message}`);
+    showIntegrationDialogError(`Could not link Google Ads: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Send invitation";
   }
@@ -7137,6 +7664,7 @@ function chooseStripeKey(projectId) {
   field.className = "project-create-field";
   field.innerHTML = `<span>Stripe restricted key</span><input type="password" name="restricted_key" autocomplete="off" spellcheck="false" placeholder="rk_live_…" maxlength="300" required />`;
   integrationProjectOptions.append(link, field);
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   field.querySelector("input").focus();
 }
@@ -7147,7 +7675,7 @@ async function confirmStripeKey() {
   const input = integrationProjectOptions.querySelector('input[name="restricted_key"]');
   const key = (input?.value || "").trim();
   if (!/^rk_(live|test)_/.test(key)) {
-    showToast(/^(sk|pk)_/.test(key)
+    showIntegrationDialogError(/^(sk|pk)_/.test(key)
       ? "That is a secret or publishable key. Paste a restricted key starting rk_live_ or rk_test_."
       : "Paste a Stripe restricted key; it starts with rk_live_ or rk_test_.");
     return;
@@ -7170,7 +7698,7 @@ async function confirmStripeKey() {
     showToast(`Stripe connected: ${stripeHealth(updated)}.`);
     if (state.view === "integrations") renderIntegrations();
   } catch (error) {
-    showToast(`Could not connect Stripe: ${error.message}`);
+    showIntegrationDialogError(`Could not connect Stripe: ${error.message}`);
     confirm.disabled = false;
     confirm.textContent = "Save key";
   }
@@ -7220,6 +7748,7 @@ function chooseGitHubInstallation() {
     "The Tin GitHub App is installed on more than one account you can access. Choose the one that owns this project’s repository.";
   integrationProjectForm.querySelector("[data-confirm-integration-project]").textContent = "Continue to GitHub";
   renderGitHubInstallationOptions();
+  showIntegrationDialogError(null);
   integrationProjectDialog.showModal();
   integrationProjectOptions.querySelector('[aria-checked="true"]')?.focus();
 }
@@ -7499,6 +8028,35 @@ projectSwitcher.addEventListener("click", () => {
   else closeProjectMenu();
 });
 
+// The calendar redraws itself, so one listener serves every render of it. A click anywhere
+// outside an opened day closes it.
+document.addEventListener("click", (event) => {
+  if (!state.week) return;
+  const target = event.target.closest?.("[data-week-nav], [data-week-more], [data-week-close], [data-week-run], [data-week-slot]");
+  const ours = Boolean(target && main.contains(target));
+  if (state.week.openDay && !event.target.closest?.(".system-week-sheet, [data-week-more]")) {
+    closeWeekSheet({ focus: false });
+  }
+  if (!ours) return;
+  if (target.dataset.weekNav) moveWeek(target.dataset.weekNav);
+  else if (target.dataset.weekMore) openWeekDay(target.dataset.weekMore);
+  else if (target.hasAttribute("data-week-close")) closeWeekSheet();
+  else if (target.dataset.weekRun) openWeekRun(target.dataset.weekRun);
+  else if (target.dataset.weekSlot) openWeekSlot(target.dataset.weekSlot);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !state.week?.openDay) return;
+  event.preventDefault();
+  closeWeekSheet();
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || event.defaultPrevented || !state.diagramPanel) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  closeWorkflowDiagram();
+});
+
 projectSwitcher.addEventListener("keydown", (event) => {
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
@@ -7617,6 +8175,8 @@ projectInviteDialog.addEventListener("close", () => {
 
 integrationProjectForm.addEventListener("submit", async (event) => {
   event.preventDefault();
+  showIntegrationDialogError(null);
+  if (state.linkedInChoice) { await confirmLinkedInConnection(); return; }
   if (state.resourceChoice) {
     await confirmIntegrationResource();
     return;
@@ -7640,11 +8200,14 @@ integrationProjectForm.querySelector("[data-cancel-integration-project]").addEve
 });
 
 integrationProjectDialog.addEventListener("close", () => {
+  showIntegrationDialogError(null);
   state.githubInstallationChoice = null;
   state.resourceChoice = null;
   integrationProjectForm.querySelector("[data-cancel-integration-project]").textContent = "Cancel";
   integrationProjectOptions.setAttribute("aria-label", "Tin project");
   state.googleAdsChoice = null;
+  state.linkedInChoice = null;
+  integrationProjectOptions.setAttribute("role", "radiogroup");
   state.stripeKeyChoice = null;
   const stripeKey = integrationProjectOptions.querySelector('input[name="restricted_key"]');
   if (stripeKey) stripeKey.value = "";

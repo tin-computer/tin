@@ -18,6 +18,17 @@ from tin_lite.workflow_costs import _estimate, configured_terms
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
 
+@pytest.fixture(autouse=True)
+def estimates_at_ceiling(monkeypatch):
+    """These tests check funding mechanics with each run's estimate at its ceiling, as under
+    configured-cost-bound-v1; test_workflow_estimates covers calibrated estimates."""
+    from tin_lite import workflow_estimates
+
+    for key in ("organic.audit", "organic.keyword_plan"):
+        monkeypatch.setitem(workflow_estimates.ESTIMATES_USD, key, "1000")
+    monkeypatch.setattr(workflow_estimates, "AUDIT_V15_USD", "1000")
+
+
 async def direct(f, key="organic.audit", inputs=None, *, project_id=None, configured=None):
     workflow = await install(f, key)
     project_id = project_id or f.project.id
@@ -167,30 +178,31 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
         view = await f.billing.overview(f.project.id, ACTOR)
         return view["reserved_usd"], view["set_aside_usd"], view["available_usd"]
 
-    # Admission reserves nothing; the rest of the $2 estimate is set aside while it runs.
-    assert await held() == ("0.00", "2.00", "8.00")
+    # Admission reserves nothing; the rest of the $6 estimate (organic-audit-v15) is set aside
+    # while it runs.
+    assert await held() == ("0.00", "6.00", "4.00")
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
     await operation(f, run, "one", 500_000_000)
-    assert await held() == ("0.50", "1.50", "8.00")
+    assert await held() == ("0.50", "5.50", "4.00")
     await asyncio.gather(*(observe(f, "one", 125_000_000) for _ in range(3)))
-    assert await held() == ("0.13", "1.87", "8.00")
+    assert await held() == ("0.13", "5.87", "4.00")
     await operation(f, run, "two", 500_000_000)
     await observe(f, "two", 125_000_000)
-    assert await held() == ("0.25", "1.75", "8.00")
+    assert await held() == ("0.25", "5.75", "4.00")
     await finish(f, run)
     assert await asyncio.gather(*(f.billing.settle(run.id) for _ in range(3))) == [250_000_000] * 3
     view = await f.billing.overview(f.project.id, ACTOR)
     assert view["available_usd"] == "9.75" and view["reserved_usd"] == "0.00"
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_ledger WHERE kind='charge'") == 1
     charge = await f.billing.run_charge(run.id, ACTOR)
-    # $2 for the audit's own calls and $1 for its six AI engines (organic-audit-v13).
-    assert charge["estimated_usd"] == "3.00" and charge["charged_usd"] == "0.25"
+    # $4 for the audit's own calls and $2 for its six AI engines (organic-audit-v15).
+    assert charge["estimated_usd"] == "6.00" and charge["charged_usd"] == "0.25"
     assert charge["released_usd"] is None  # Never imply a $2 upfront hold existed.
 
 
 async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
     f = billed
-    with pytest.raises(BillingError, match=r"estimated at up to \$3.00") as error:
+    with pytest.raises(BillingError, match=r"can cost up to \$6.00") as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
@@ -208,12 +220,12 @@ def test_project_limit_message_names_the_limit_that_blocks_admission():
     assert "set_project_spending_limits" in no_policy
     per_run = project_limit_message(policy, 12_500_000_000, idle)
     assert per_run.startswith(
-        "This workflow is estimated at up to $12.50; the project's per-run limit is $10.00."
+        "This workflow can cost up to $12.50; the project's per-run limit is $10.00."
     )
     assert "set_project_spending_limits" in per_run
     monthly = project_limit_message(policy, 5_000_000_000, {"exposure": 7_250_000_000})
     assert monthly.startswith(
-        "This workflow is estimated at up to $5.00, which would exceed this month's "
+        "This workflow can cost up to $5.00, which would exceed this month's "
         "$10.00 project limit ($7.25 already committed)."
     )
 
@@ -284,10 +296,9 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed, monkeypatch):
     assert await f.billing.settle(unstarted.id) == 0
     # With calibrated estimates below the maximum, both start and every paid call
     # still contends for the same credits under the wallet lock.
-    import tin_lite.workflow_costs as workflow_costs
+    from tin_lite import workflow_estimates
 
-    real = workflow_costs._estimate
-    monkeypatch.setattr(workflow_costs, "_estimate", lambda *key: (real(*key)[0], key[-1] // 2))
+    monkeypatch.setitem(workflow_estimates.ESTIMATES_USD, "organic.keyword_plan", "5.00")
     runs = [
         await direct(f, "organic.keyword_plan", ten, project_id=p)
         for p in (f.project.id, sibling.id)
@@ -406,7 +417,8 @@ async def test_zero_work_or_zero_cost_releases_everything(billed):
 
 async def test_runs_start_while_another_is_active_and_an_unknown_bill_keeps_its_liability(billed):
     f = billed
-    await fund(f, 1000)
+    # Two $6 audits at once (organic-audit-v15).
+    await fund(f, 2000)
     await f.billing.update_policy(
         f.project.id,
         ACTOR,
@@ -424,7 +436,7 @@ async def test_runs_start_while_another_is_active_and_an_unknown_bill_keeps_its_
     assert await f.billing.settle(concurrent.id) == 0
     await finish(f, first)
     assert await f.billing.settle(first.id) is None
-    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "9.90"
+    assert (await f.billing.overview(f.project.id, ACTOR))["available_usd"] == "19.90"
     second = await direct(f)
     assert second.id != first.id
     assert (

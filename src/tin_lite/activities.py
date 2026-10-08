@@ -88,6 +88,7 @@ from tin_lite.memory import (
     MemoryGardener,
     MemorySource,
     extract_owned_section,
+    newest_sources,
     validate_memory_index,
 )
 from tin_lite.model_usage import model_usage_scope
@@ -104,6 +105,7 @@ from tin_lite.procedures import (
     load_pinned_codex_procedure,
     procedure_checkpoint_path,
     procedure_receipt_path,
+    settle_procedure_artifact,
     validate_procedure_artifact,
     validate_procedure_pull_request,
 )
@@ -224,6 +226,30 @@ def transient_failure(message: str | None, *, restarted: bool = False) -> bool:
     if not message:
         return False
     return _TRANSIENT_FAILURE_PATTERN.search(message) is not None
+
+
+NEEDS_YOU_PREFIX = "no change: needs you:"
+
+
+def blocked_by_setup(title) -> str | None:
+    """What the founder must fix, when a no-change result says a setup problem stopped the run
+    (its title starts "No change: needs you:"). Any other no-change is an ordinary quiet week."""
+    text = " ".join(str(title or "").split())
+    if not text.lower().startswith(NEEDS_YOU_PREFIX):
+        return None
+    return text[len(NEEDS_YOU_PREFIX) :].strip()[:500] or None
+
+
+def procedure_project_revision(run, procedure, content_source):
+    """The project revision a procedure's checkout pins, or None for the canonical head."""
+    if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS or (
+        procedure.review_revision_context or {}
+    ).get("project_revision"):
+        return run.expected_head_sha
+    if content_source is not None and content_source.get("assets"):
+        # A page's figures and embeds are read where they were approved.
+        return content_source["source_revision"]
+    return None
 
 
 class TinActivities:
@@ -1272,11 +1298,14 @@ class TinActivities:
                     await _refuse_repeated_model_request(
                         self._db, conn, run_id=run_id, step="memory", label="project memory"
                     )
+                    # The newest sources that fit one gardener call; the activity records how
+                    # many older ones were left for a later index.
+                    kept = newest_sources(sources) if sources else []
                     with external_usage_scope(self._db, conn, run_id, "memory"):
                         memory_index = await self._await_with_heartbeats(
                             reporter.garden(
                                 project_name=project.name,
-                                sources=sources,
+                                sources=kept,
                                 owned_section=owned_section,
                             ),
                             details={"stage": "memory_gardener"},
@@ -1293,7 +1322,11 @@ class TinActivities:
                 await self._db.add_activity(
                     run_id=run_id,
                     event_type="memory_gardened",
-                    details={"source_count": len(sources), "changed": changed},
+                    details={
+                        "source_count": len(kept),
+                        "dropped_source_count": len(sources) - len(kept),
+                        "changed": changed,
+                    },
                     dedupe_key=f"{execution_key}:memory_gardened",
                 )
                 await self._db.complete_effect(
@@ -1303,7 +1336,7 @@ class TinActivities:
                         "canonical_commit_sha": canonical_sha,
                         "artifact_path": MEMORY_INDEX_PATH,
                         "changed": changed,
-                        "source_run_ids": [str(source.run_id) for source in sources],
+                        "source_run_ids": [str(source.run_id) for source in kept],
                     },
                 )
             except BaseException as exc:
@@ -3240,10 +3273,12 @@ class TinActivities:
             if recovered is not None:
                 diagram_validation = {}
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        recovered,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    recovered, recovered_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=recovered,
+                        revision=recovered_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3267,6 +3302,14 @@ class TinActivities:
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=recovered
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, recovered_revision, recovered
+                    )
+                    if recovered_revision is not None
+                    and procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3274,6 +3317,7 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=None,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "summary": f"{workflow_definition.title} produced its result.",
                         "message": "The procedure result is ready.",
@@ -3296,6 +3340,7 @@ class TinActivities:
                                     companions=await self._procedure_companions(
                                         run, project, procedure, recovered_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if recovered_revision is not None
@@ -3372,7 +3417,7 @@ class TinActivities:
                 )
                 if public_host not in {"127.0.0.1", "localhost"} and proxy_url is None:
                     raise RuntimeError("TIN_LITE_PROXY_URL is required outside local development")
-                workspace_archive: bytes | None = None
+                workspace_archive: Any = None
                 workspace_evidence: bytes | None = None
                 workspace_context: dict[str, str | int] | None = None
                 run_tools_url: str | None = None
@@ -3483,12 +3528,12 @@ class TinActivities:
                         f"{self._settings.switchboard_public_url.rstrip('/')}"
                         "/internal/run-tools/mcp"
                     )
+                content_source = None
                 if procedure.result_kind == GITHUB_PULL_REQUEST_RESULT:
                     technical = None
                     expected_binding = None
                     from tin_lite import content_repository_delivery
 
-                    content_source = None
                     if content_repository_delivery.adapts(run):
                         content_source = await content_repository_delivery.saved_source(
                             self._db, run_id
@@ -3606,15 +3651,8 @@ class TinActivities:
                             ),
                             # Card runs keep no agent narration, as they keep no rollouts.
                             progress_sink=None if payment_card else self._progress_sink(run_id),
-                            project_revision=(
-                                run.expected_head_sha
-                                if (
-                                    procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS
-                                    or (procedure.review_revision_context or {}).get(
-                                        "project_revision"
-                                    )
-                                )
-                                else None
+                            project_revision=procedure_project_revision(
+                                run, procedure, content_source
                             ),
                             result_kind=procedure.result_kind,
                             run_tools_url=run_tools_url,
@@ -3661,11 +3699,14 @@ class TinActivities:
                     )
                 )
                 diagram_validation = {}
+                checkpoint_revision = result.ephemeral_commit_sha
                 if procedure.result_kind == PROJECT_ARTIFACT_RESULT:
-                    validate_procedure_artifact(
-                        checkpoint,
-                        spec=procedure,
-                        base=await self._procedure_artifact_base(run=run, procedure=procedure),
+                    checkpoint, checkpoint_revision = await self._settled_procedure_checkpoint(
+                        run=run,
+                        project=project,
+                        procedure=procedure,
+                        content=checkpoint,
+                        revision=checkpoint_revision,
                     )
                     if procedure.output_validator in REVIEWED_DIAGRAM_VALIDATORS:
                         diagram_validation = {
@@ -3698,6 +3739,13 @@ class TinActivities:
                     await self._reject_card_leak(
                         run_id=run_id, procedure=procedure, content=checkpoint
                     )
+                assets, dropped_assets = (
+                    await self._procedure_assets(
+                        run, project, procedure, checkpoint_revision, checkpoint
+                    )
+                    if procedure.result_kind == PROJECT_ARTIFACT_RESULT
+                    else ((), [])
+                )
                 await self._complete_procedure_persist(
                     conn=conn,
                     run_id=run_id,
@@ -3705,21 +3753,23 @@ class TinActivities:
                     ephemeral_branch=run.ephemeral_branch,
                     sandbox_id=sandbox_id,
                     result={
+                        **({"dropped_assets": dropped_assets} if dropped_assets else {}),
                         "checkpoint_path": checkpoint_path,
                         "result_kind": procedure.result_kind,
-                        "ephemeral_commit_sha": result.ephemeral_commit_sha,
+                        "ephemeral_commit_sha": checkpoint_revision,
                         **diagram_validation,
                         **(
                             {
                                 "checkpoint": OutputCheckpoint.create(
                                     run=run,
-                                    revision=result.ephemeral_commit_sha,
+                                    revision=checkpoint_revision,
                                     path=checkpoint_path,
                                     media_type=procedure.output_media_type or "text/markdown",
                                     content=checkpoint,
                                     companions=await self._procedure_companions(
-                                        run, project, procedure, result.ephemeral_commit_sha
+                                        run, project, procedure, checkpoint_revision
                                     ),
+                                    assets=assets,
                                 ).to_dict()
                             }
                             if procedure.result_kind == PROJECT_ARTIFACT_RESULT
@@ -3806,6 +3856,28 @@ class TinActivities:
     @activity.defn(name="commit_codex_procedure_artifact")
     async def commit_codex_procedure_artifact(self, run_id_text: str) -> None:
         run_id = UUID(run_id_text)
+        needs_you = await self._commit_codex_procedure_artifact(run_id)
+        if needs_you:
+            await self._pause_blocked_schedule(run_id, needs_you)
+
+    async def _pause_blocked_schedule(self, run_id: UUID, message: str) -> None:
+        """A run stopped by something only the founder can fix pauses its saved schedule, so
+        later runs don't repeat the same no-op; Activity says what to fix. Safe to repeat."""
+        run = await self._require_run(run_id)
+        if run.project_workflow_id is None:
+            return
+        configured = await self._db.get_project_workflow(run.project_workflow_id)
+        if configured is None or configured.schedule is None:
+            return
+        if configured.status == "active" or (
+            configured.status == "paused" and configured.last_error
+        ):
+            from tin_lite.code_schedules import pause_for_issue
+
+            await pause_for_issue(self, configured, configured.last_error or message)
+
+    async def _commit_codex_procedure_artifact(self, run_id: UUID) -> str | None:
+        """Publish the procedure's result; returns what the founder must fix when it says so."""
         execution_key = f"{run_id}:procedure_canonical_commit"
         operation = "procedure_canonical_commit"
         async with self._db.effect_lock(execution_key, operation) as (conn, existing):
@@ -3825,7 +3897,7 @@ class TinActivities:
                     ),
                 )
                 await self._db.release_lease(run_id)
-                return
+                return existing.result.get("needs_you")
             await self._db.start_effect(conn, execution_key=execution_key, operation=operation)
             try:
                 run = await self._require_run(run_id)
@@ -3949,7 +4021,9 @@ class TinActivities:
                                     "allow_unrelated_base_advance": True,
                                     # Only the page itself blocks: a sitemap or index that
                                     # another open PR also edits is not the same change.
-                                    "blocking_paths": frozenset({copy_proof["article_path"]}),
+                                    "blocking_paths": content_repository_delivery.blocking_paths(
+                                        copy_proof
+                                    ),
                                 }
                                 if copy_proof
                                 else {}
@@ -4034,11 +4108,15 @@ class TinActivities:
                             }
                         )
                     elif no_change:
+                        needs_you = blocked_by_setup(manifest.get("title"))
                         external_result = {
                             "outcome": "no_change",
                             "repository": str(manifest["repository"]),
-                            "summary": "No change proposed; no pull request was opened.",
+                            "summary": f"Needs you: {needs_you}"
+                            if needs_you
+                            else "No change proposed; no pull request was opened.",
                             "message": receipt.decode(),
+                            **({"needs_you": needs_you} if needs_you else {}),
                         }
                         await self._db.add_activity(
                             run_id=run_id,
@@ -4063,6 +4141,7 @@ class TinActivities:
                     },
                 )
                 await self._db.release_lease(run_id)
+                return external_result.get("needs_you")
             except Exception as exc:
                 await self._db.fail_effect(
                     conn,
@@ -4093,6 +4172,50 @@ class TinActivities:
             sandbox_id=run.sandbox_id,
         ):
             raise StaleGenerationError("procedure lease no longer owns the session")
+
+    async def _procedure_assets(self, run, project, procedure, revision, content):
+        """The article's figures and embeds: the files it refers to that Tin can keep.
+
+        A missing, oversized or unsafe file is left out with its reason; it never fails a run.
+        """
+        from tin_lite import page_assets
+
+        policy = procedure.output_assets
+        if policy is None or procedure.assets_folder is None:
+            return (), []
+        try:
+            article = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return (), []
+        kept, dropped, total = [], [], 0
+        for path in page_assets.referenced(article, procedure.output_path):
+            if len(kept) == policy.max_files:
+                dropped.append({"path": path, "reason": "the article refers to too many files"})
+                continue
+            try:
+                raw = await self._storage.read_procedure_checkpoint(
+                    repo_id=project.state_repo_id, revision=revision, path=path
+                )
+            except (ValueError, OutputConflictError):
+                dropped.append({"path": path, "reason": "the file is missing"})
+                continue
+            reason = page_assets.problem(path, raw)
+            if reason is None and total + len(raw) > policy.max_bytes:
+                reason = "the files together are larger than their limit"
+            if reason is not None:
+                dropped.append({"path": path, "reason": reason})
+                continue
+            total += len(raw)
+            kept.append(
+                OutputCheckpoint.create(
+                    run=run,
+                    revision=revision,
+                    path=path,
+                    media_type=page_assets.media_type(path),
+                    content=raw,
+                )
+            )
+        return tuple(kept), dropped
 
     async def _procedure_companions(self, run, project, procedure, revision):
         from tin_lite import content_draft
@@ -4129,8 +4252,6 @@ class TinActivities:
             )
         else:
             content_draft.validate_notes(raw, procedure.content_draft_context)
-        if procedure.review_revision_context is not None:
-            article_review.validate_changes(raw)
         return (
             OutputCheckpoint.create(
                 run=run,
@@ -4205,11 +4326,16 @@ class TinActivities:
             run, project, procedure, revision
         ):
             raise ValueError("Saved companions differ from the pinned output contract.")
+        if (
+            checkpoint.assets
+            != (await self._procedure_assets(run, project, procedure, revision, content))[0]
+        ):
+            raise ValueError("Saved assets differ from the article they belong to.")
         from tin_lite import content_draft
         from tin_lite.content_editorial_judgment import (
-            LABELS,
             NO_DRAFT,
             covering_page,
+            no_draft_summary,
             validate_pair,
         )
 
@@ -4291,11 +4417,8 @@ class TinActivities:
                         )
                         if covered:
                             result["covered_by"] = covered
-                        result["summary"] = (
-                            f"{LABELS[editorial['outcome']]}"
-                            + (f" by {covered}" if covered else "")
-                            + f": {procedure.content_draft_context['item']['title']}. "
-                            "No article drafted."
+                        result["summary"] = no_draft_summary(
+                            editorial, procedure.content_draft_context["item"], covered
                         )
                 if analytics is not None and analytics_brief.summary(analytics):
                     result["summary"] = analytics_brief.summary(analytics)
@@ -4365,6 +4488,13 @@ class TinActivities:
                 repo_id=project.state_repo_id, commit_sha=sha, path=path
             )
             artifact_title, lede = display_title(raw), review_line(raw)
+            from tin_lite.page_assets import attachments_line
+
+            attachments = attachments_line(
+                canonical.result.get("checkpoint"), raw.decode("utf-8", errors="replace")
+            )
+        else:
+            attachments = None
         destination = (
             f"Approval opens an unmerged GitHub PR in {delivery['repository']}"
             + ("." if delivery.get("system_run_id") else f" at {delivery['path']}.")
@@ -4387,7 +4517,7 @@ class TinActivities:
             artifact_path=path,
             artifact_title=artifact_title,
             summary=summary,
-            explanation=" ".join(part for part in (lede, destination) if part),
+            explanation=" ".join(part for part in (lede, attachments, destination) if part),
         )
         if required:
             from tin_lite.organic_content import project_review_progress
@@ -4617,7 +4747,7 @@ class TinActivities:
                 runtime=runtime, settings=self._settings, run=source_run, intent=intent
             )
 
-        # An adapted page starts its one content.deliver run; any other approved document
+        # An adapted page starts its one website.change run; any other approved document
         # goes to the Markdown publisher. Each path returns at once for the other's intent.
         try:
             await self._await_with_heartbeats(
@@ -5554,6 +5684,31 @@ class TinActivities:
             credential_key_version=key_version,
             phone_number=getattr(self._settings, "test_phone_number", None),
         )
+
+    async def _settled_procedure_checkpoint(self, *, run, project, procedure, content, revision):
+        """The validated output Tin keeps, and the revision that holds it.
+
+        A section-owning procedure contributes only its own section; the rest of the index comes
+        from the pinned base. The sandbox's checkpoint holds Codex's whole file, so a changed
+        index is staged as its own ephemeral commit and the checkpoint, its hash, recovery and
+        publication all refer to the same bytes. Re-assembly is deterministic, so a recovery
+        stages nothing new.
+        """
+        base = await self._procedure_artifact_base(run=run, procedure=procedure)
+        settled = settle_procedure_artifact(content, spec=procedure, base=base)
+        validate_procedure_artifact(settled, spec=procedure, base=base)
+        if settled == content:
+            return content, revision
+        staged = await self._storage.stage_native_output(
+            repo_id=project.state_repo_id,
+            branch=project.canonical_branch,
+            run_id=str(run.id),
+            generation=run.generation,
+            path=procedure.output_path,
+            content=settled,
+            executor=CODEX_PROCEDURE_EXECUTOR,
+        )
+        return settled, staged
 
     async def _procedure_artifact_base(
         self, *, run: WorkflowRun, procedure: PinnedCodexProcedure

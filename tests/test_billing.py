@@ -23,8 +23,10 @@ from tin_lite.billing_contracts import (
     final_charge,
     token_charge,
 )
-from tin_lite.billing_payments import PRODUCT_ID, StripePayments
+from tin_lite.billing_payments import PRODUCTS, StripePayments
 from tin_lite.run_service import start_workflow_run
+
+PRODUCT_ID = PRODUCTS["test"][0]
 
 
 @pytest.fixture
@@ -515,7 +517,7 @@ async def test_legacy_native_usage_and_receipt_recovery_are_charged_once(
     from tin_lite.billing_contracts import test_terms
 
     monkeypatch.setattr(
-        f.billing, "terms", lambda definition, project_id, inputs=None: test_terms(definition)
+        f.billing, "terms", lambda definition, project_id, inputs=None, **_: test_terms(definition)
     )
     run = await native_run(f)
     calls = []

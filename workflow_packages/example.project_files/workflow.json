@@ -33,6 +33,23 @@
         "media_type": "text/markdown",
         "max_bytes": 32000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "brand", "kind": "store", "label": "BRAND.md in project Files", "fact": "project root, at most 30,000 bytes"},
+          {"id": "notes", "kind": "step", "label": "Use your brand notes instead", "fact": "only when BRAND.md is missing"},
+          {"id": "none", "kind": "ghost", "label": "Nothing to read", "fact": "no file and no notes, the run fails"},
+          {"id": "receipt", "kind": "receipt", "label": "Brand reference", "fact": "BRAND_REFERENCE.md in reports, no model"}
+        ],
+        "edges": [
+          {"from": "brand", "to": "receipt", "kind": "call", "label": "file found"},
+          {"from": "brand", "to": "notes", "kind": "call", "label": "file missing"},
+          {"from": "notes", "to": "receipt", "kind": "call"},
+          {"from": "notes", "to": "none", "kind": "call", "label": "notes empty"}
+        ]
+      }
     }
   }
 }

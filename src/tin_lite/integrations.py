@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
@@ -45,6 +46,7 @@ from tin_lite.repository_limits import (
     REPOSITORY_FILE_MAX_BYTES,
     REPOSITORY_MAX_BYTES,
     REPOSITORY_MAX_FILES,
+    REPOSITORY_SNAPSHOTS_AT_ONCE,
     skippable_large_file,
 )
 from tin_lite.settings import Settings
@@ -52,6 +54,7 @@ from tin_lite.settings import Settings
 logger = logging.getLogger(__name__)
 
 _SHA = re.compile(r"[0-9a-f]{40}")
+LINKEDIN_PROVIDER = "network.linkedin"
 GSC_PROVIDER = "analytics.gsc"
 GITHUB_PROVIDER = "infra.github"
 GOOGLE_WORKSPACE_PROVIDER = "workspace.google"
@@ -63,6 +66,7 @@ X_PROVIDER = "social.x"
 GITHUB_USER_PROVIDER = "infra.github_user"
 PROVIDER_KEYS = frozenset(
     {
+        LINKEDIN_PROVIDER,
         GSC_PROVIDER,
         GITHUB_PROVIDER,
         GOOGLE_WORKSPACE_PROVIDER,
@@ -163,6 +167,12 @@ GSC_MAX_START_ROW = 100_000
 GSC_MIN_ROW_BYTES = 70
 
 
+# Runaway guards for one pull request or commit Tin writes: a technical batch (20 files) or a
+# page with its figures, embeds, route and sitemap. Each procedure declares its own, smaller limit.
+PULL_REQUEST_MAX_FILES = 30
+PULL_REQUEST_MAX_BYTES = 2_000_000
+
+
 class IntegrationError(RuntimeError):
     """A safe integration failure that may be shown to a project member."""
 
@@ -257,6 +267,14 @@ class GoogleAdsCallError(IntegrationUpstreamError):
 
 class IntegrationDeliveryUnknownError(IntegrationUpstreamError):
     """The provider call may have succeeded, so automatic replay must fail closed."""
+
+
+class IntegrationDeliveryRefusedError(IntegrationError):
+    """The provider answered and refused the send, so nothing was delivered."""
+
+    def __init__(self, message: str, *, status: int) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -355,7 +373,9 @@ class GitHubRepositoryBundle:
     repository: str
     default_branch: str
     head_sha: str
-    archive: bytes
+    # The compressed tar.gz: an open temporary file (read it with
+    # repository_limits.snapshot_reader), or bytes.
+    archive: Any
     file_count: int
     complete: bool = True
     skipped: tuple[dict[str, Any], ...] = ()
@@ -373,6 +393,16 @@ class GitHubOpenPullRequestEvidence:
 
 def registered_integrations() -> tuple[IntegrationDefinition, ...]:
     return (
+        IntegrationDefinition(
+            key=LINKEDIN_PROVIDER,
+            setup_url="https://chromewebstore.google.com/detail/tin-computer-for-linkedin/eanmnipacaadfahphbcijncgpfkdcbec",
+            name="LinkedIn",
+            badge="in",
+            description="Collect visible connections with the Tin extension.",
+            access_label="Read selected connections",
+            capabilities=("connections.read",),
+            unlocks=("Collect connections",),
+        ),
         IntegrationDefinition(
             key=GSC_PROVIDER,
             name="Google Search Console",
@@ -600,6 +630,8 @@ class IntegrationService:
         self._settings = settings
         self._client = client or httpx.AsyncClient(timeout=30.0)
         self._owns_client = client is None
+        # Snapshots are built on the switchboard's small disk: only a few at a time.
+        self._snapshot_gate = asyncio.Semaphore(REPOSITORY_SNAPSHOTS_AT_ONCE)
         self._google_ads = google_ads
         self._cipher = (
             CredentialCipher(settings.integration_credential_key.get_secret_value())
@@ -634,6 +666,8 @@ class IntegrationService:
 
     def is_configured(self, provider_key: str) -> bool:
         self._definition(provider_key)
+        if provider_key == LINKEDIN_PROVIDER:
+            return bool(getattr(self._settings, "linkedin_extension_ids", ()))
         from tin_lite import managed_services
 
         if managed_services.is_managed(provider_key):
@@ -711,11 +745,16 @@ class IntegrationService:
 
         return GitHubAccounts(self)
 
-    def definitions(self, connections):
+    def definitions(self, connections, *, project_id=None):
+        from tin_lite.connection_collection import enabled
         from tin_lite.project_connections import CUSTOM_KEY, custom_definition
 
         return (
-            *registered_integrations(),
+            *(
+                d
+                for d in registered_integrations()
+                if d.key != LINKEDIN_PROVIDER or enabled(self._settings, project_id)
+            ),
             *(
                 custom_definition(c.provider_key)
                 for c in connections
@@ -801,6 +840,12 @@ class IntegrationService:
                         + "; reconnect PostHog and approve the read access"
                     )
                 continue
+            if requirement.provider_key == LINKEDIN_PROVIDER:
+                from tin_lite.connection_collection import enabled
+
+                if not enabled(self._settings, project_id):
+                    raise IntegrationNotConfiguredError("Connection collection is unavailable.")
+                continue
             if requirement.provider_key == X_PROVIDER:
                 if connection.credential_ciphertext is None or set(
                     requirement.capabilities
@@ -875,6 +920,15 @@ class IntegrationService:
             raise IntegrationError("Tin holds this service's key; there is nothing to connect.")
         self._require_configured(provider_key)
         definition = self._definition(provider_key)
+        if provider_key == LINKEDIN_PROVIDER:
+            from tin_lite.connection_collection import enabled
+            from tin_lite.product_urls import dashboard_url
+
+            if not enabled(self._settings, project_id):
+                raise IntegrationNotConfiguredError("Connection collection is unavailable.")
+            return ConnectStart(
+                authorization_url=f"{dashboard_url(self._settings)}/connect?project={project_id}&providers={LINKEDIN_PROVIDER}"
+            )
         if provider_key == STRIPE_PROVIDER:
             # A restricted key is pasted only in Tin's own page, never through chat or MCP.
             from tin_lite.product_urls import dashboard_url
@@ -2037,6 +2091,67 @@ class IntegrationService:
             pass
         return {"readable": readable, "contexts": contexts[:50]}
 
+    async def github_commit_checks(
+        self, *, project_id: UUID, repository: str, sha: str
+    ) -> dict[str, Any]:
+        """Every check reported on one commit: commit statuses (Vercel, Netlify and other
+        deploy previews) and check runs (GitHub Actions and other apps).
+
+        Needs the GitHub App's read-only Commit statuses and Checks permissions; `readable` is
+        False when either list can't be read, so callers never mistake that for no checks.
+        Only names, states and whether a check is a deploy preview leave this method; never
+        output, logs or URLs.
+        """
+        if not _SHA.fullmatch(sha or ""):
+            raise IntegrationError("GitHub commit is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}/commits/{sha}"
+        headers = self._github_headers(token)
+        checks: list[dict[str, Any]] = []
+        try:
+            combined = _provider_json(
+                await self._client.get(f"{root}/status", headers=headers, params={"per_page": 100}),
+                provider="GitHub",
+            )
+            runs = _provider_json(
+                await self._client.get(
+                    f"{root}/check-runs", headers=headers, params={"per_page": 100}
+                ),
+                provider="GitHub",
+            )
+        except (IntegrationError, httpx.HTTPError):
+            return {"readable": False, "checks": []}
+        statuses = combined.get("statuses") if isinstance(combined.get("statuses"), list) else []
+        check_runs = runs.get("check_runs") if isinstance(runs.get("check_runs"), list) else []
+        for listed, total in (
+            (statuses, combined.get("total_count")),
+            (check_runs, runs.get("total_count")),
+        ):
+            if isinstance(total, int) and total > len(listed):
+                # More than one page: a failure Tin didn't read must not pass for none.
+                return {"readable": False, "checks": [], "truncated": True}
+        for status in statuses:
+            if not isinstance(status, dict) or not isinstance(status.get("context"), str):
+                continue
+            name = status["context"][:255]
+            state = {"success": "success", "pending": "pending"}.get(status.get("state"), "failure")
+            checks.append({"name": name, "state": state, "preview": _is_preview(name, None)})
+        for run in check_runs:
+            if not isinstance(run, dict) or not isinstance(run.get("name"), str):
+                continue
+            app = run.get("app") if isinstance(run.get("app"), dict) else {}
+            if run.get("status") != "completed":
+                state = "pending"
+            elif run.get("conclusion") in {"success", "neutral", "skipped"}:
+                state = "success"
+            else:
+                state = "failure"
+            name = run["name"][:255]
+            checks.append(
+                {"name": name, "state": state, "preview": _is_preview(name, app.get("slug"))}
+            )
+        return {"readable": True, "checks": checks}
+
     async def github_merge_pull_request(
         self,
         *,
@@ -2067,8 +2182,9 @@ class IntegrationService:
             raise IntegrationError("GitHub pull request to merge is invalid")
         if not commit_title.strip() or len(commit_title) > 200 or not _safe_github_ref(branch):
             raise IntegrationError("GitHub merge request is invalid")
-        # Up to 20: a website.change technical batch (site-fix-v5's file cap).
-        if not 1 <= len(files) <= 20 or not all(_safe_github_path(item.path) for item in files):
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES or not all(
+            _safe_github_path(item.path) for item in files
+        ):
             raise IntegrationError("GitHub merge must name the pull request's files")
 
         def request_fingerprint(repository):
@@ -2445,16 +2561,25 @@ class IntegrationService:
         wanted = {item["path"]: item for item in blobs}
         # One tarball request instead of one API call per file. Every file is checked
         # against its blob hash in the pinned tree, so the archive is exactly head_sha.
-        with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
-            await self._github_tarball(repository_path, head_sha, headers, download)
-            contents = await to_thread.run_sync(_verified_tarball_blobs, download, wanted)
-        missing = [item for path, item in wanted.items() if path not in contents]
-        if len(missing) > REPOSITORY_BLOB_FALLBACKS:
-            raise IntegrationUpstreamError("GitHub repository tarball is missing pinned files")
-        for item in missing:
-            # export-ignore drops a path from the tarball and export-subst rewrites it.
-            contents[item["path"]] = await self._github_blob_content(repository_path, headers, item)
-        archive = await to_thread.run_sync(_repository_archive, blobs, contents)
+        # Verified bytes wait in a temporary file, not in memory: only the final
+        # compressed archive and one file at a time are ever held in RAM.
+        async with self._snapshot_gate:
+            with tempfile.TemporaryFile() as spool:
+                with tempfile.SpooledTemporaryFile(max_size=16_000_000) as download:
+                    await self._github_tarball(repository_path, head_sha, headers, download)
+                    located = await to_thread.run_sync(
+                        _verified_tarball_blobs, download, wanted, spool
+                    )
+                missing = [item for path, item in wanted.items() if path not in located]
+                if len(missing) > REPOSITORY_BLOB_FALLBACKS:
+                    raise IntegrationUpstreamError(
+                        "GitHub repository tarball is missing pinned files"
+                    )
+                for item in missing:
+                    # export-ignore drops a path from the tarball and export-subst rewrites it.
+                    content = await self._github_blob_content(repository_path, headers, item)
+                    located[item["path"]] = _spool(spool, content)
+                archive = await to_thread.run_sync(_repository_archive, blobs, spool, located)
         return GitHubRepositoryBundle(
             repository=repository,
             default_branch=default_branch,
@@ -2967,8 +3092,9 @@ class IntegrationService:
                         status="failed",
                         error_code=f"gmail_http_{response.status_code}",
                     )
-                    raise IntegrationError(
-                        f"Gmail refused the message (HTTP {response.status_code})"
+                    raise IntegrationDeliveryRefusedError(
+                        f"Gmail refused the message (HTTP {response.status_code})",
+                        status=response.status_code,
                     )
                 try:
                     payload = _provider_json(response, provider="Gmail")
@@ -3252,10 +3378,12 @@ class IntegrationService:
             raise IntegrationError("GitHub execution key is invalid")
         if not title.strip() or len(title) > 200 or len(body) > 20_000:
             raise IntegrationError("GitHub pull-request title or body is invalid")
-        if not 1 <= len(files) <= 10:
-            raise IntegrationError("GitHub pull requests must contain between 1 and 10 files")
-        if sum(len(item.content.encode()) for item in files) > 512_000:
-            raise IntegrationError("GitHub pull-request files exceed the 512 KB limit")
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES:
+            raise IntegrationError(
+                f"GitHub pull requests must contain between 1 and {PULL_REQUEST_MAX_FILES} files"
+            )
+        if sum(len(item.content.encode()) for item in files) > PULL_REQUEST_MAX_BYTES:
+            raise IntegrationError("GitHub pull-request files exceed the 2 MB limit")
         for item in files:
             if not _safe_github_path(item.path):
                 raise IntegrationError("GitHub pull request contains an unsafe file path")
@@ -3442,10 +3570,12 @@ class IntegrationService:
             raise IntegrationError("GitHub execution key is invalid")
         if not message.strip() or len(message) > 200:
             raise IntegrationError("GitHub commit message is invalid")
-        if not 1 <= len(files) <= 10:
-            raise IntegrationError("GitHub commits must contain between 1 and 10 files")
-        if sum(len(item.content.encode()) for item in files) > 512_000:
-            raise IntegrationError("GitHub commit files exceed the 512 KB limit")
+        if not 1 <= len(files) <= PULL_REQUEST_MAX_FILES:
+            raise IntegrationError(
+                f"GitHub commits must contain between 1 and {PULL_REQUEST_MAX_FILES} files"
+            )
+        if sum(len(item.content.encode()) for item in files) > PULL_REQUEST_MAX_BYTES:
+            raise IntegrationError("GitHub commit files exceed the 2 MB limit")
         for item in files:
             if not _safe_github_path(item.path):
                 raise IntegrationError("GitHub commit contains an unsafe file path")
@@ -3901,7 +4031,6 @@ class IntegrationService:
                     item["patch"] = bounded_patch
                     if bounded_patch != patch:
                         item["patch_truncated"] = "true"
-                        truncated = True
                 files.append(item)
                 file_count += 1
             head = raw_pull.get("head")
@@ -4188,6 +4317,21 @@ class IntegrationService:
         return updated
 
     async def disconnect(self, *, project_id: UUID, provider_key: str) -> bool:
+        if provider_key == LINKEDIN_PROVIDER:
+            async with self._database.pool.acquire() as conn, conn.transaction():
+                await conn.execute(
+                    "UPDATE connection_collection_jobs SET "
+                    "state='partial',reason='disconnected',generation=generation+1,lease_hash=NULL,"
+                    "lease_expires_at=NULL WHERE project_id=$1 "
+                    "AND state NOT IN ('completed','partial','failed','stopped')",
+                    project_id,
+                )
+                result = await conn.execute(
+                    "DELETE FROM integration_connections WHERE project_id=$1 AND provider_key=$2",
+                    project_id,
+                    provider_key,
+                )
+                return result != "DELETE 0"
         definition = self._definition(provider_key)
         if provider_key == ADS_PROVIDER:
             connection = await self._database.get_integration_connection(
@@ -4214,27 +4358,10 @@ class IntegrationService:
             )
             if connection is not None:
                 await self.github_account.revoke(connection)
-        if provider_key in {GSC_PROVIDER, GOOGLE_WORKSPACE_PROVIDER}:
-            connection = await self._database.get_integration_connection(
-                project_id=project_id, provider_key=provider_key
-            )
-            if connection is not None and connection.credential_ciphertext is not None:
-                try:
-                    assert self._cipher is not None
-                    refresh_token = self._cipher.decrypt(
-                        connection.credential_ciphertext,
-                        context=f"credential:{project_id}:{provider_key}",
-                    )
-                    await self._client.post(
-                        "https://oauth2.googleapis.com/revoke",
-                        params={"token": refresh_token},
-                    )
-                except Exception:
-                    # Local disconnection is authoritative even when upstream revocation is down.
-                    logger.warning(
-                        "Google token revocation unavailable for project integration",
-                        extra={"project_id": str(project_id), "provider_key": provider_key},
-                    )
+        # Google (Search Console, Workspace) is not revoked upstream. Revoking any token ends
+        # the founder's whole grant to Tin's app, which every other project they connected with
+        # the same Google account shares. Deleting the stored credential below is the
+        # disconnection; the founder can remove Tin from their Google account themselves.
         deleted = await self._database.delete_integration_connection(
             project_id=project_id, provider_key=provider_key
         )
@@ -5385,6 +5512,55 @@ def _selected_string(connection: IntegrationConnection, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+# The one resource a provider's connection works on. Signing in is not enough: until the
+# founder chooses it, nothing that reads the provider can use the connection.
+SELECTED_RESOURCES = {
+    GSC_PROVIDER: ("selected_site_url", "Search Console property"),
+    GITHUB_PROVIDER: ("selected_repository", "repository"),
+    POSTHOG_PROVIDER: ("selected_project_id", "PostHog project"),
+}
+
+
+def connection_readiness(
+    connection: IntegrationConnection | None, *, site_url: str | None = None
+) -> dict[str, Any]:
+    """Whether a connection can be used now, and if not, what the founder does next.
+
+    `ready` needs a connected status and the provider's chosen resource. With `site_url`,
+    a Search Console property must also cover that site, the way the audit and the keyword
+    plan match it; a property for another domain reads nothing for this one.
+    """
+    if connection is None or connection.status != "connected":
+        return {
+            "ready": False,
+            "reason": "not_connected",
+            "next_action": "Connect it, then choose what Tin should use.",
+        }
+    key, noun = SELECTED_RESOURCES.get(connection.provider_key, (None, None))
+    selected = _selected_string(connection, key) if key else None
+    if key and not selected:
+        return {
+            "ready": False,
+            "reason": "selection_required",
+            "next_action": f"Choose the {noun} on Tin's Integrations page.",
+        }
+    if connection.provider_key == GSC_PROVIDER and site_url:
+        from tin_lite.keyword_plan import gsc_property_matches
+
+        host = (urlsplit(site_url.strip()).hostname or "").lower()
+        hosts = {host, host.removeprefix("www."), f"www.{host.removeprefix('www.')}"}
+        if host and not any(gsc_property_matches(selected or "", item) for item in hosts):
+            return {
+                "ready": False,
+                "reason": "property_mismatch",
+                "next_action": (
+                    f"The chosen Search Console property ({selected}) is not {host}; choose "
+                    f"the property for {host} on Tin's Integrations page."
+                ),
+            }
+    return {"ready": True, "reason": None, "next_action": None}
+
+
 def _search_console_filters(value: Any) -> list[dict[str, str]]:
     if value is None:
         return []
@@ -5712,9 +5888,20 @@ def _git_blob_sha(content: bytes, expected: str) -> str:
     return digest.hexdigest()
 
 
-def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> dict[str, bytes]:
-    """Read the tree's eligible files from a GitHub tarball; skip anything unverified."""
-    contents: dict[str, bytes] = {}
+def _spool(spool: Any, content: bytes) -> tuple[int, int]:
+    """Append verified bytes to the spool file; returns where they are (offset, size)."""
+    spool.seek(0, io.SEEK_END)
+    offset = spool.tell()
+    spool.write(content)
+    return offset, len(content)
+
+
+def _verified_tarball_blobs(
+    fileobj: Any, wanted: dict[str, dict[str, Any]], spool: Any
+) -> dict[str, tuple[int, int]]:
+    """Copy the tree's eligible files from a GitHub tarball into `spool`; skip anything
+    unverified. Returns each copied path's (offset, size) in the spool."""
+    located: dict[str, tuple[int, int]] = {}
     root: str | None = None
     try:
         with tarfile.open(fileobj=fileobj, mode="r|gz") as archive:
@@ -5726,7 +5913,7 @@ def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> 
                 item = wanted.get(path)
                 if (
                     item is None
-                    or path in contents
+                    or path in located
                     or not member.isreg()
                     or member.size != item["size"]
                 ):
@@ -5737,10 +5924,10 @@ def _verified_tarball_blobs(fileobj: Any, wanted: dict[str, dict[str, Any]]) -> 
                     len(content) == item["size"]
                     and _git_blob_sha(content, item["sha"]) == item["sha"]
                 ):
-                    contents[path] = content
+                    located[path] = _spool(spool, content)
     except (tarfile.TarError, EOFError, OSError, zlib.error) as exc:
         raise IntegrationUpstreamError("GitHub repository tarball is unreadable") from exc
-    return contents
+    return located
 
 
 def _repository_tree_entries(
@@ -5788,19 +5975,48 @@ def _repository_tree_entries(
     return blobs, tuple(skipped), tuple(missing)
 
 
-def _repository_archive(blobs: list[dict[str, Any]], contents: dict[str, bytes]) -> bytes:
-    archive_buffer = io.BytesIO()
-    with tarfile.open(fileobj=archive_buffer, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
-        for item in sorted(blobs, key=lambda value: value["path"]):
-            content = contents[item["path"]]
-            info = tarfile.TarInfo(name=item["path"])
-            info.size = len(content)
-            info.mode = 0o755 if item["mode"] == "100755" else 0o644
-            info.mtime = 0
-            info.uid = info.gid = 0
-            info.uname = info.gname = ""
-            archive.addfile(info, io.BytesIO(content))
-    return archive_buffer.getvalue()
+def _repository_archive(
+    blobs: list[dict[str, Any]], spool: Any, located: dict[str, tuple[int, int]]
+) -> Any:
+    """The snapshot as a deterministic tar.gz in an open temporary file, read from the spool
+    one file at a time. The file stays on disk, out of memory, until the bundle is dropped."""
+    output = tempfile.TemporaryFile()
+    try:
+        # Level 6 (gzip's own default) packs a large snapshot faster than tarfile's 9.
+        with tarfile.open(
+            fileobj=output, mode="w:gz", format=tarfile.PAX_FORMAT, compresslevel=6
+        ) as archive:
+            for item in sorted(blobs, key=lambda value: value["path"]):
+                offset, size = located[item["path"]]
+                spool.seek(offset)
+                content = spool.read(size)
+                if len(content) != size:
+                    raise IntegrationUpstreamError("GitHub repository snapshot is incomplete")
+                info = tarfile.TarInfo(name=item["path"])
+                info.size = size
+                info.mode = 0o755 if item["mode"] == "100755" else 0o644
+                info.mtime = 0
+                info.uid = info.gid = 0
+                info.uname = info.gname = ""
+                archive.addfile(info, io.BytesIO(content))
+    except BaseException:
+        output.close()
+        raise
+    output.seek(0)
+    return output
+
+
+# Deploy previews report on a pull request's commit under these names (commit statuses) or
+# apps (check runs). A preview is the site's own build, with its own runtime and secrets.
+_PREVIEW_NAME = re.compile(
+    r"^(vercel\b|netlify\b|deploy/netlify|cloudflare pages|render\b|railway\b|amplify\b)",
+    re.I,
+)
+_PREVIEW_APPS = frozenset({"vercel", "netlify", "cloudflare-workers-and-pages", "render"})
+
+
+def _is_preview(name: str, app: str | None) -> bool:
+    return bool(_PREVIEW_NAME.match(name.strip())) or (app or "").lower() in _PREVIEW_APPS
 
 
 def _safe_github_ref(value: str) -> bool:

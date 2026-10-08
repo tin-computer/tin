@@ -4,7 +4,7 @@
     "key": "organic.content_efficacy",
     "title": "Decide what each page needs",
     "description": "Each week, judge every page the site shows in search from its clicks, visits, signups and audit findings: keep it, refresh it, rewrite it, merge it into a stronger page or retire it. Merges and retirements are held back whenever paid visits, links or a safe redirect target are unknown. website.change reads each URL change and asks you before it changes the site; pages to refresh or rewrite are listed. Edits nothing itself.",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": [
@@ -60,7 +60,7 @@
           "maxItems": 10,
           "items": {"type": "string", "minLength": 1, "maxLength": 150},
           "title": "Ad landing page paths",
-          "description": "Defaults to /offer/, /lp/ and URLs with utm_."
+          "description": "Path fragments such as /offer/; defaults to /offer/ and /lp/. Query strings such as ?utm_ are folded into their page."
         },
         "links_file": {
           "type": "string",
@@ -118,6 +118,27 @@
         "path": "content/efficacy.md",
         "media_type": "text/markdown",
         "max_bytes": 64000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "snapshot", "kind": "store", "label": "Traffic snapshot in Files", "fact": "no merge or retirement without it"},
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "two 28-day windows, at most 3 calls"},
+          {"id": "audit", "kind": "store", "label": "Audit and positioning in Files", "fact": "LATEST.json, BRAND.md, wiki, context/"},
+          {"id": "judge", "kind": "step", "label": "Judge intent and positioning", "fact": "one model call, retried once if invalid"},
+          {"id": "decide", "kind": "step", "label": "Decide what each page needs", "fact": "keep, refresh, rewrite, merge or retire"},
+          {"id": "receipt", "kind": "receipt", "label": "Page decisions", "fact": "content/efficacy.md, edits nothing"}
+        ],
+        "edges": [
+          {"from": "snapshot", "to": "search_console", "kind": "call", "label": "missing or older"},
+          {"from": "snapshot", "to": "audit", "kind": "call", "label": "14 days or newer"},
+          {"from": "search_console", "to": "audit", "kind": "call"},
+          {"from": "audit", "to": "judge", "kind": "call"},
+          {"from": "judge", "to": "decide", "kind": "call"},
+          {"from": "decide", "to": "receipt", "kind": "call"}
+        ]
       }
     }
   }

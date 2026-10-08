@@ -51,6 +51,7 @@ from tin_lite.domain import (
 from tin_lite.projects import ProjectCreationConflictError
 from tin_lite.rollouts import RolloutFile
 from tin_lite.usage_capture import borrowed_connection, effect_connection
+from tin_lite.workflow_order import WORKFLOW_DISPLAY_ORDER
 
 logger = logging.getLogger(__name__)
 _warned_unknown_workflow_system_ids: set[str] = set()
@@ -185,6 +186,16 @@ def revision_wait_seconds(pending_for: timedelta) -> int:
 # founder's run start.
 PROJECT_ADMISSION_LOCK = (
     "SELECT true FROM projects WHERE id = $1 AND deleted_at IS NULL FOR NO KEY UPDATE"
+)
+
+
+# A pull request's outcome is written on the change run and on the approved page's run, so
+# each run's own history shows it. The project feeds list it once, on the change run: the
+# page's copy is the one whose run is its own source.
+MIRRORED_ON_PAGE = (
+    "(events.event_type IN ('website_change_merged', 'website_change_left_open', "
+    "'content_delivery_merged', 'content_delivery_left_open') "
+    "AND events.details->>'source_run_id' = events.run_id::text)"
 )
 
 
@@ -1648,8 +1659,10 @@ class Database:
                 LEFT JOIN workflow_systems AS system
                   ON system.id = workflow.definition ->> 'system'
                 WHERE workflow.project_id IS NULL AND workflow.status <> 'archived'
-                ORDER BY (system.id IS NULL), system.display_order, system.name, workflow.key
-                """
+                ORDER BY (system.id IS NULL), system.display_order, system.name,
+                         array_position($1::text[], workflow.key) NULLS LAST, workflow.key
+                """,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         else:
             rows = await self.pool.fetch(
@@ -1664,9 +1677,11 @@ class Database:
                 WHERE (workflow.project_id IS NULL OR workflow.project_id = $1)
                   AND workflow.status <> 'archived'
                 ORDER BY workflow.project_id NULLS FIRST,
-                         (system.id IS NULL), system.display_order, system.name, workflow.key
+                         (system.id IS NULL), system.display_order, system.name,
+                         array_position($2::text[], workflow.key) NULLS LAST, workflow.key
                 """,
                 project_id,
+                list(WORKFLOW_DISPLAY_ORDER),
             )
         workflows = [_workflow(row) for row in rows]
         for workflow in workflows:
@@ -1692,15 +1707,25 @@ class Database:
                    (saved.workflow_id IS NOT NULL) AS saved,
                    count(configured.id) FILTER (
                        WHERE configured.status <> 'archived'
-                   )::integer AS project_workflow_count
+                   )::integer AS project_workflow_count,
+                   latest.id AS last_run_id,
+                   latest.finished_at AS last_run_at
             FROM workflows AS workflow
             LEFT JOIN saved_workflow_templates AS saved
               ON saved.workflow_id = workflow.id AND saved.clerk_user_id = $2
             LEFT JOIN project_workflows AS configured
               ON configured.workflow_id = workflow.id AND configured.project_id = $1
+            LEFT JOIN LATERAL (
+                SELECT id, finished_at
+                FROM workflow_runs
+                WHERE project_id = $1 AND workflow_id = workflow.id
+                  AND finished_at IS NOT NULL
+                ORDER BY finished_at DESC NULLS LAST, id DESC
+                LIMIT 1
+            ) AS latest ON true
             WHERE workflow.status <> 'archived'
               AND (workflow.project_id IS NULL OR workflow.project_id = $1)
-            GROUP BY workflow.id, saved.workflow_id
+            GROUP BY workflow.id, saved.workflow_id, latest.id, latest.finished_at
             """,
             project_id,
             clerk_user_id,
@@ -1709,6 +1734,8 @@ class Database:
             row["id"]: {
                 "saved": bool(row["saved"]),
                 "project_workflow_count": int(row["project_workflow_count"] or 0),
+                "last_run_id": row["last_run_id"],
+                "last_run_at": row["last_run_at"],
             }
             for row in rows
         }
@@ -1742,6 +1769,7 @@ class Database:
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
+                   (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1796,6 +1824,7 @@ class Database:
             SELECT configured.*, workflows.key AS workflow_key,
                    workflows.title AS workflow_title,
                    workflows.description AS workflow_description,
+                   (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                    workflows.version_label,
                    latest.id AS last_run_id,
                    latest.status AS last_run_status,
@@ -1986,6 +2015,7 @@ class Database:
                 SELECT configured.*, workflows.key AS workflow_key,
                        workflows.title AS workflow_title,
                        workflows.description AS workflow_description,
+                       (workflows.definition -> 'presentation') IS NOT NULL AS workflow_drawn,
                        workflows.version_label,
                        NULL::uuid AS last_run_id,
                        NULL::text AS last_run_status,
@@ -3399,11 +3429,39 @@ class Database:
         )
         return [_run(row) for row in rows]
 
+    async def list_runs_between(
+        self, *, project_id: UUID, start: datetime, end: datetime, limit: int = 500
+    ) -> list[tuple[WorkflowRun, str, str]]:
+        """Runs that started in [start, end), oldest first, with their workflow's key and title.
+
+        Chat tasks have their own transcript, and a superseded run is an earlier version of
+        a review the founder already sees, so neither belongs on the calendar.
+        """
+        rows = await self.pool.fetch(
+            """
+            SELECT runs.*, workflows.key AS workflow_key, workflows.title AS workflow_title
+            FROM workflow_runs AS runs
+            JOIN workflows ON workflows.id = runs.workflow_id
+            WHERE runs.project_id = $1
+              AND runs.executor <> 'project.task'
+              AND runs.status <> 'superseded'
+              AND COALESCE(runs.started_at, runs.created_at) >= $2
+              AND COALESCE(runs.started_at, runs.created_at) < $3
+            ORDER BY COALESCE(runs.started_at, runs.created_at), runs.id
+            LIMIT $4
+            """,
+            project_id,
+            start,
+            end,
+            limit,
+        )
+        return [(_run(row), row["workflow_key"], row["workflow_title"]) for row in rows]
+
     async def list_product_activity(
         self, *, project_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[ActivityEvent]:
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT events.*,
                    jsonb_strip_nulls(
                        events.details || jsonb_build_object(
@@ -3419,9 +3477,10 @@ class Database:
             WHERE events.project_id = $1
               AND events.audience = 'product'
               AND events.created_at >= now() - interval '30 days'
+              AND NOT {MIRRORED_ON_PAGE}
             ORDER BY events.created_at DESC, events.id DESC
             LIMIT $2 OFFSET $3
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
             limit,
             offset,
@@ -3823,7 +3882,7 @@ class Database:
         limit: int = 50,
     ) -> list[ActivityEvent]:
         rows = await self.pool.fetch(
-            """
+            f"""
             SELECT *
             FROM (
                 SELECT events.*,
@@ -3842,11 +3901,12 @@ class Database:
                 WHERE events.project_id = $1 AND events.audience = 'product'
                   AND events.created_at >= $2 AND events.created_at < $3
                   AND (events.run_id IS NULL OR events.run_id <> $4)
+                  AND NOT {MIRRORED_ON_PAGE}
                 ORDER BY events.created_at DESC, events.id DESC
                 LIMIT $5
             ) AS recent
             ORDER BY created_at, id
-            """,
+            """,  # noqa: S608 — static SQL predicate, no caller text
             project_id,
             period_start,
             period_end,
@@ -6698,6 +6758,11 @@ class Database:
             "DELETE FROM project_test_identities WHERE project_id = $1",
             "DELETE FROM integration_auth_attempts WHERE project_id = $1",
             "DELETE FROM integration_call_receipts WHERE project_id = $1",
+            # Failed-payment recovery keeps Stripe and mailbox evidence in its run receipts and
+            # one send receipt per invoice, keyed payment_recovery:<run or project>:...
+            "DELETE FROM effect_receipts WHERE operation = 'revenue.payment_recovery' AND "
+            "split_part(execution_key, ':', 2) IN (SELECT id::text FROM workflow_runs "
+            "WHERE project_id = $1 UNION SELECT $1::text)",
             "UPDATE integration_webhook_deliveries SET project_id = NULL WHERE project_id = $1",
             "DELETE FROM integration_connections WHERE project_id = $1",
             "DELETE FROM project_secrets WHERE project_id = $1",
@@ -6771,6 +6836,14 @@ class Database:
             error_message[:2000],
         )
 
+    async def discard_started_effect(self, conn: asyncpg.Connection, *, execution_key: str) -> None:
+        """Forget an effect the provider refused outright, so nothing happened and a later run
+        may try again. Completed effects are never discarded."""
+        await conn.execute(
+            "DELETE FROM effect_receipts WHERE execution_key = $1 AND status = 'started'",
+            execution_key,
+        )
+
     async def save_publication_intent(
         self, conn: asyncpg.Connection, *, execution_key: str, intent: dict[str, Any]
     ) -> None:
@@ -6804,6 +6877,113 @@ class Database:
             raise SideEffectConflictError(
                 "effect progress cannot replace a completed or failed effect"
             )
+
+    async def payment_recovery_sends(self, project_id: UUID) -> list[EffectReceipt]:
+        """Every recovery send attempt in a project: one receipt per emailed invoice."""
+        rows = await self.pool.fetch(
+            """
+            SELECT * FROM effect_receipts
+            WHERE operation = 'revenue.payment_recovery' AND execution_key LIKE $1
+            """,
+            f"payment_recovery:{project_id}:invoice:%",
+        )
+        return [_effect_receipt(row) for row in rows]
+
+    async def expire_payment_recovery_review(
+        self, *, run_id: UUID, summary: str, execution_key: str
+    ) -> bool:
+        """Close a recovery Decision nobody answered in time: the run stops unsent and the
+        next scheduled run may start. Returns False when someone decided first, including an
+        approval whose reviewer is recorded but whose signal has not landed yet."""
+        async with self.pool.acquire() as conn, conn.transaction():
+            closed = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'stopped', finished_at = COALESCE(finished_at, now()),
+                    lease_active = false, lease_released_at = COALESCE(lease_released_at, now()),
+                    result_summary = $2, progress_summary = $2, progress_updated_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND status = 'needs_input' AND review_decision IS NULL
+                  AND reviewed_by_clerk_user_id IS NULL
+                RETURNING id
+                """,
+                run_id,
+                result_line(summary),
+            )
+            if closed is None:
+                return False
+            await conn.execute("DELETE FROM broker_grants WHERE run_id = $1", run_id)
+            await conn.execute(
+                """
+                UPDATE run_decisions
+                SET status = 'dismissed', response = '{"action":"expired"}'::jsonb,
+                    applied_at = now()
+                WHERE run_id = $1 AND status = 'pending'
+                """,
+                run_id,
+            )
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_expired",
+                details={"kind": "runs", "status": "stopped"},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_expired",
+            )
+        await self._track_run(run_id, "run_review_recorded", decision="expired")
+        return True
+
+    async def complete_payment_recovery_projection(
+        self,
+        conn: asyncpg.Connection,
+        *,
+        execution_key: str,
+        run_id: UUID,
+        canonical_commit_sha: str,
+        artifact_path: str,
+        artifact_ref: str,
+        summary: str,
+        approved: bool,
+    ) -> None:
+        """A recovery run finishes with its result: after approval when it drafted emails, or
+        without a decision when Stripe had no failed payment to recover."""
+        async with conn.transaction():
+            projected = await conn.fetchval(
+                """
+                UPDATE workflow_runs
+                SET status = 'succeeded', canonical_commit_sha = $2, artifact_ref = $3,
+                    artifact_path = $4, result_summary = $5, error_message = NULL,
+                    finished_at = COALESCE(finished_at, now()), progress_percent = 100,
+                    progress_updated_at = now(), heartbeat_at = now()
+                WHERE id = $1 AND executor = 'revenue.payment_recovery'
+                  AND (NOT $6 OR (review_required AND review_decision = 'approved'))
+                  AND ($6 OR review_decision IS NULL)
+                  AND status NOT IN ('failed', 'stopped', 'superseded')
+                RETURNING id
+                """,
+                run_id,
+                canonical_commit_sha,
+                artifact_ref,
+                artifact_path,
+                result_line(summary),
+                approved,
+            )
+            if projected is None:
+                raise SideEffectConflictError("recovery run cannot complete in its current state")
+            await self.add_activity(
+                conn=conn,
+                run_id=run_id,
+                event_type="payment_recovery_ready",
+                details={"kind": "runs", "status": "succeeded", "artifact_ref": artifact_ref},
+                summary=summary,
+                audience="product",
+                dedupe_key=f"{execution_key}:payment_recovery_ready",
+            )
+            await self.complete_effect(
+                conn, execution_key=execution_key, result={"artifact_ref": artifact_ref}
+            )
+        await self._track_run(run_id, "run_succeeded", artifact_path=artifact_path)
 
     async def complete_organic_audit_projection(
         self,
@@ -8121,6 +8301,7 @@ def _project_workflow(row: asyncpg.Record) -> ProjectWorkflow:
         workflow_key=row["workflow_key"],
         workflow_title=row["workflow_title"],
         workflow_description=row["workflow_description"],
+        workflow_drawn=bool(row.get("workflow_drawn")),
         version_label=row["version_label"],
         definition_commit_sha=row["definition_commit_sha"],
         name=row["name"],

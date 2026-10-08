@@ -292,11 +292,12 @@ async def test_full_frozen_ai_panel_duplicate_execution_uses_saved_calls(publica
     async def model(request):
         calls.append(request)
         name = request.get("text", {}).get("format", {}).get("name")
-        if name == "BuyerPanel":
+        # v15 pins its own sixteen-question schemas under their own names.
+        if name in {"BuyerPanel", "BuyerPanelV15"}:
             return response(json.dumps(panel_fixture()))
-        if name in {"PanelValidation", "PanelReview"}:
+        if name in {"PanelValidation", "PanelReview", "PanelReviewV15"}:
             value = {"accepted": True, "explanation": "All questions are grounded and unbranded."}
-            if name == "PanelReview":
+            if name != "PanelValidation":
                 value["rejected_questions"] = []
             return response(json.dumps(value), search=False)
         if name == "AnswerGrade":

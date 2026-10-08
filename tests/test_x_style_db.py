@@ -39,16 +39,16 @@ RESULT = {
 }
 
 
-async def fixture(db, *, source_path=False, version=2):
+async def fixture(db, *, source_path=False, version=3):
     f = await project_fixture(db)
     await db.upsert_workflow_system(
         system_id="organic-traffic", name="Organic traffic", display_order=1
     )
     builtin = next(item for item in BUILTIN_WORKFLOWS if item.key == x_style.KEY)
     definition = builtin.definition
-    if version == 1:
-        # A run pinned to the 1.0.0 definition.
-        policy, instructions = x_style.CONTRACTS[1]
+    if version != 3:
+        # A run pinned to the 1.0.0 (version 1) or 1.1.0 (version 2) definition.
+        policy, instructions = x_style.CONTRACTS[version]
         definition = {**definition, "x_style_policy": policy, "x_style_instructions": instructions}
     revision = "d" * 40
     await db.upsert_registry_workflow(
@@ -263,7 +263,7 @@ async def test_x_style_uncertain_model_not_rebought(publication_db):
     assert f.storage.repo.writes == 0
 
 
-@pytest.mark.parametrize("version", [1, 2])
+@pytest.mark.parametrize("version", [1, 2, 3])
 async def test_a_run_keeps_the_sampling_of_the_version_it_was_pinned_to(publication_db, version):
     f = await fixture(publication_db, version=version)
     run = await start(f)
@@ -275,4 +275,6 @@ async def test_a_run_keeps_the_sampling_of_the_version_it_was_pinned_to(publicat
     assert request.system == x_style.CONTRACTS[version][1]
     samples = json.loads(request.messages[0].content)["samples"]
     assert len(samples) == 2
-    assert all(("kind" in item) == (version == 2) for item in samples)
+    assert all(("kind" in item) == (version >= 2) for item in samples)
+    # Version 3 only raises the output cap; earlier pins keep 6,000 tokens.
+    assert request.max_output_tokens == (32_000 if version == 3 else 6000)

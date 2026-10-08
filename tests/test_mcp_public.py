@@ -218,13 +218,13 @@ async def test_saved_configuration_uses_existing_pinned_contract(fixture):
     f.start.assert_not_called()
 
 
-async def test_the_hidden_technical_fix_has_no_public_tools_but_its_preview(fixture):
-    # organic.technical_fix is hidden: new technical fixes go through website.change, which
-    # this plugin does not expose. Older clients keep the read-only preview.
+async def test_the_retired_technical_fix_has_no_public_tools(fixture):
+    # organic.technical_fix is retired for new work: technical fixes go through
+    # website.change, which this plugin does not expose.
     assert "organic.technical_fix" not in {w.key for w in published_workflows().values()}
     names = {tool.name for tool in await fixture.server.list_tools()}
-    assert "preflight_technical_fix" in names
     assert not names & {
+        "preflight_technical_fix",
         "start_technical_fix",
         "stop_technical_fix",
         "list_technical_fix_sources",
@@ -617,7 +617,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 
     entries = published_workflows()
-    assert len(entries) == 42
+    assert len(entries) == 43
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id not in entries} == {
         "social.x_compose",
         "competitor.sunset_rescue",
@@ -633,6 +633,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "organic.prompt_panel",
     }
     assert {w.key for w in BUILTIN_WORKFLOWS if w.id not in entries} == {
+        "connections.collect",
         "visibility.audit",
         "content.deliver",
         "website.change",
@@ -646,6 +647,8 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "project.task",
         "growth.onboarding",
         "growth.onboarding_plan",
+        # content.plan's planning agent; only content.plan starts it.
+        "content.plan_research",
     }
     assert {w.key for w in PUBLIC_WORKFLOWS if w.id in entries} | {
         "style.capture",
@@ -740,73 +743,3 @@ async def test_code_package_unknown_inputs_rejected_before_admission(fixture):
             },
         )
     fixture.start.assert_not_called()
-
-
-@pytest.mark.parametrize("has_repairs", [True, False])
-async def test_technical_preflight_uses_existing_selection_and_redacts_binding_ids(
-    fixture, monkeypatch, has_repairs
-):
-    f = fixture
-    from tin_lite.technical_fix_sources import TechnicalFixSources
-
-    selection = {
-        "audit_run_id": str(uuid4()),
-        "audit_revision": "a" * 40,
-        "finding_id": "oa_" + "b" * 20,
-        "expected_repository": "fixture/product",
-        "repository_serves_site": True,
-    }
-    f.runtime.storage = SimpleNamespace()
-    f.runtime.integrations = SimpleNamespace()
-    preview = AsyncMock(
-        return_value={
-            "source": {"audit_revision": selection["audit_revision"]},
-            "summary": {"fixable": 1},
-            "live_verification": "not_performed",
-            "repository_binding": {
-                "connection_id": str(uuid4()),
-                "installation_id": 12,
-                "repository_id": 34,
-                "repository": "fixture/product",
-                "default_branch": "main",
-                "head_sha": "c" * 40,
-            },
-        }
-    )
-    if not has_repairs:
-        preview.return_value.pop("repository_binding")
-        preview.return_value["summary"] = {"fixable": 0}
-        preview.return_value["execution_available"] = False
-    monkeypatch.setattr(TechnicalFixSources, "batch", preview)
-    result = await f.server.call_tool(
-        "preflight_technical_fix",
-        {
-            "project_id": str(f.project),
-            **selection,
-        },
-    )
-    assert preview.call_args.kwargs["project_id"] == f.project
-    assert str(preview.call_args.kwargs["audit_run_id"]) == selection["audit_run_id"]
-    assert preview.call_args.kwargs["finding_ids"] == [selection["finding_id"]]
-    if has_repairs:
-        assert result.structured_content["repository_binding"] == {
-            "repository": "fixture/product",
-            "default_branch": "main",
-            "head_sha": "c" * 40,
-        }
-    else:
-        assert "repository_binding" not in result.structured_content
-        assert result.structured_content["execution_available"] is False
-    assert "relay" not in result.structured_content
-    f.start.assert_not_called()
-    preview.reset_mock()
-    f.db.has_project_access.return_value = False
-    with pytest.raises(ToolError, match="not_found"):
-        await f.server.call_tool(
-            "preflight_technical_fix",
-            {
-                "project_id": str(f.project),
-                **selection,
-            },
-        )
-    preview.assert_not_called()

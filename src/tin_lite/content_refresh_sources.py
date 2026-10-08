@@ -100,7 +100,16 @@ class ContentRefreshSources:
                 "refresh works from its search findings.",
             }
         blocked = {item["path"] for item in history if item["blocks"]}
-        selection = refresh.choose(audit["findings"], audit["evidence"], blocked)
+        from tin_lite.content_plan_sources import EFFICACY_PATH, _read_if_exists, page_decisions
+
+        # Page decisions (organic.content_efficacy) names the pages to refresh first, when its
+        # file is current; a missing or stale file leaves the audit's own pick.
+        decisions = page_decisions(
+            await _read_if_exists(self.storage, project, revision, EFFICACY_PATH), now.date()
+        )
+        selection = refresh.choose(
+            audit["findings"], audit["evidence"], blocked, decisions=decisions
+        )
         if selection is None:
             waiting = sorted(item["path"] for item in history if item["blocks"])
             return {

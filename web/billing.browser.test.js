@@ -312,12 +312,12 @@ test("configuration cost preview reuses unchanged inputs and ignores stale repli
     await f.page.locator('[name="scope"]').dispatchEvent("change");
     await f.page.waitForFunction(()=>costCalls.length===3);
     await f.page.evaluate(()=>{
-      costReplies[2](new Response(JSON.stringify({estimated_usd:"7.00"})));
-      costReplies[1](new Response(JSON.stringify({estimated_usd:"6.00"})));
+      costReplies[2](new Response(JSON.stringify({estimated_usd:"1.50",maximum_usd:"7.00"})));
+      costReplies[1](new Response(JSON.stringify({estimated_usd:"1.25",maximum_usd:"6.00"})));
     });
-    await f.page.getByText("Estimated cost: up to $7.00 per run · actual usage is charged",{exact:true}).waitFor();
+    await f.page.getByText("Usually about $1.50 per run, never more than $7.00 · actual usage is charged",{exact:true}).waitFor();
     assert.equal(await f.page.evaluate(()=>costCalls.every(c=>c.path.endsWith("/billing/estimate"))),true);
-    assert.equal(await f.page.getByText(/up to \$6.00/).count(),0);
+    assert.equal(await f.page.getByText(/\$6.00/).count(),0);
     assert.deepEqual(f.errors,[]);
   } finally {await f.close();}
 });

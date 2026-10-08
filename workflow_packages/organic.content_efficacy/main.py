@@ -36,7 +36,7 @@ STOP = set(
 )
 PROTECTED = ["/", "/pricing", "/privacy", "/terms", "/security"]
 UTILITY = ["/sign-in", "/sign-up", "/signin", "/signup", "/login", "/account", "/dashboard"]
-ADS = ["/offer/", "/lp/", "utm_"]
+ADS = ["/offer/", "/lp/"]
 # Backlinko, "Google Organic CTR Study" (2023): position 1 is 27.6%; the other values are a
 # fixed interpolation for planning, not quoted measurements.
 CTR = [0, 0.276, 0.158, 0.110, 0.080, 0.065, 0.050, 0.040, 0.033, 0.027, 0.022]
@@ -141,6 +141,68 @@ def clean(value):
     return (path_of(value) or "/").split("?")[0].rstrip("/") or "/"
 
 
+def page_key(value):
+    """The path a page is listed under: no query string or fragment; None for /cdn-cgi/.
+
+    A ?ref= or ?utm_ variant is the same page to the site, and /cdn-cgi/ paths are the CDN's
+    own (email protection, challenges), never a page the founder wrote.
+    """
+    url = path_of(value)
+    if not url:
+        return None
+    url = url.split("?")[0].split("#")[0] or "/"
+    return None if url.startswith("/cdn-cgi/") else url
+
+
+def twin(url):
+    """The same path with or without its trailing slash."""
+    return url if url == "/" else (url[:-1] if url.endswith("/") else url + "/")
+
+
+def find(inventory, url):
+    """The page listed under this path or its trailing-slash twin, if any."""
+    if not url:
+        return None
+    return inventory.get(url) or inventory.get(twin(url))
+
+
+def entry(inventory, url):
+    """The page for this path, folding a trailing-slash twin into the one already listed."""
+    return find(inventory, url) or inventory.setdefault(url, blank(url))
+
+
+def compact(text):
+    return re.sub(r"[^a-z0-9]", "", str(text).lower())
+
+
+def brand_names(terms):
+    """Brand terms without spaces or punctuation, plus a host term's first label."""
+    names = set()
+    for term in terms:
+        for name in (compact(term), compact(str(term).removeprefix("www.").split(".")[0])):
+            if len(name) >= 4:
+                names.add(name)
+    return names
+
+
+def branded(query, names):
+    """A search for the brand, however it is spaced: "acme photo edit.com" is acmephotoedit."""
+    text = compact(query)
+    return any(name in text for name in names)
+
+
+def unbranded(queries, names):
+    return [q for q in queries if not branded(q["query"], names)]
+
+
+def brand_share(page, names):
+    """The share of the page's known search impressions that are brand searches."""
+    total = sum(q["impressions"] for q in page["queries"])
+    if not total:
+        return 0.0
+    return sum(q["impressions"] for q in page["queries"] if branded(q["query"], names)) / total
+
+
 def words(text):
     return set(re.findall("[a-z0-9]+", str(text).lower())) - STOP
 
@@ -214,18 +276,81 @@ def blank(url):
         "first_seen": None,
         "last_change": None,
         "links": "unknown",
+        "spellings": {},
+        "weights": [0, 0],
+        "visit_parts": [],
+        "replaced": [False, False],
     }
+
+
+# Search Console counts each URL it shows on its own, so www., bare-host, trailing-slash and
+# query-string variants of one page add up rather than double count; summing keeps the clicks
+# a pick-one rule would drop (a www. homepage row of 1 click once hid the bare host's 2,695).
+def measure(page, spelling, slot, clicks, impressions, position):
+    """Add one variant's figures; position is impression-weighted over variants that have one."""
+    clicks, impressions, position = integer(clicks), integer(impressions), number(position)
+    page["clicks"][slot] += clicks
+    page["impressions"][slot] += impressions
+    if position:
+        weight, known = max(impressions, 1), page["weights"][slot]
+        page["position"][slot] = (page["position"][slot] * known + position * weight) / (
+            known + weight
+        )
+        page["weights"][slot] = known + weight
+    if slot == 0:
+        page["spellings"][spelling] = page["spellings"].get(spelling, 0) + impressions
+
+
+def merge_queries(page, queries):
+    """Add queries, summing a search that two variants of the page both show for."""
+    by_text = {q["query"]: q for q in page["queries"]}
+    for query in queries:
+        same = by_text.get(query["query"])
+        if same is None:
+            by_text[query["query"]] = dict(query)
+            continue
+        weight = same["impressions"] + query["impressions"]
+        if weight:
+            same["position"] = (
+                same["position"] * same["impressions"] + query["position"] * query["impressions"]
+            ) / weight
+        same["clicks"] += query["clicks"]
+        same["impressions"] = weight
+    page["queries"] = list(by_text.values())
+
+
+def settle(inventory):
+    """List each page under the spelling search shows most, and sum its variants' visits."""
+    for key in list(inventory):
+        page = inventory[key]
+        parts = page["visit_parts"]
+        if parts:
+            if all(isinstance(p, dict) for p in parts):
+                names = dict.fromkeys(name for part in parts for name in part)
+                page["visits"] = {name: sum(p.get(name, 0) for p in parts) for name in names}
+            else:
+                page["visits"] = None  # one variant's visits are unknown, so the page's are
+            page["visit_parts"] = []
+        if not page["spellings"]:
+            continue
+        best = max(page["spellings"], key=lambda s: (page["spellings"][s], s == key))
+        if best != key and best not in inventory:
+            del inventory[key]
+            page["url"] = best
+            inventory[best] = page
 
 
 # ---------- evidence ----------
 
 
-def site_origin(snapshot, audit_host):
+def site_origin(snapshot, audit_host, search_host=None):
     hosts = (snapshot.get("definitions") or {}).get("website_hosts") or []
     if hosts:
         return "https://" + str(hosts[0]).strip("/")
     if audit_host:
         return "https://" + audit_host
+    if search_host:
+        return "https://" + search_host
     for row in snapshot.get("pages") or []:
         text = row.get("page") or ""
         if "/" in text:
@@ -247,62 +372,78 @@ def add_snapshot(inventory, snapshot):
         }
 
     for row in snapshot.get("pages") or []:
-        url = path_of(row.get("page"))
+        url = page_key(row.get("page"))
         if not url:
             continue
-        page = inventory.setdefault(url, blank(url))
+        page = entry(inventory, url)
         search = row.get("search") or {}
         now = search.get("current") or [0, 0, 0, 0]
         before = search.get("prior") or [0, 0, 0, 0]
-        page["clicks"] = [integer(now[0]), integer(before[0])]
-        page["impressions"] = [integer(now[1]), integer(before[1])]
-        page["position"] = [number(now[3]), number(before[3])]
-        page["queries"] = [
-            {
-                "query": str(q[0]),
-                "clicks": integer(q[1]),
-                "impressions": integer(q[2]),
-                "position": number(q[3]),
-            }
-            for q in (search.get("queries") or [])[:5]
-            if isinstance(q, list) and len(q) >= 4
-        ]
-        page["visits"] = visits(((row.get("visits") or {}).get("current") or {}).get("by_channel"))
+        measure(page, url, 0, now[0], now[1], now[3])
+        measure(page, url, 1, before[0], before[1], before[3])
+        merge_queries(
+            page,
+            [
+                {
+                    "query": str(q[0]),
+                    "clicks": integer(q[1]),
+                    "impressions": integer(q[2]),
+                    "position": number(q[3]),
+                }
+                for q in (search.get("queries") or [])[:5]
+                if isinstance(q, list) and len(q) >= 4
+            ],
+        )
+        page["visit_parts"].append(
+            visits(((row.get("visits") or {}).get("current") or {}).get("by_channel"))
+        )
         signups = row.get("signups") or {}
-        page["signups"] = integer((signups.get("first_touch") or [0])[0])
-        page["activated"] = integer((signups.get("activated") or [0])[0])
-        if day(row.get("first_seen")) and row.get("first_seen_exact"):
-            page["first_seen"] = str(row["first_seen"])
-        page["audit"] = [str(x[1]) for x in row.get("audit") or [] if isinstance(x, list)]
+        page["signups"] += integer((signups.get("first_touch") or [0])[0])
+        page["activated"] += integer((signups.get("activated") or [0])[0])
+        seen = day(row.get("first_seen")) if row.get("first_seen_exact") else None
+        if seen and (not day(page["first_seen"]) or seen < day(page["first_seen"])):
+            page["first_seen"] = str(seen)
+        page["audit"] += [
+            str(x[1]) for x in row.get("audit") or [] if isinstance(x, list) and x[1:]
+        ]
     for name in ("more_pages", "entry_only_pages", "dropped_pages"):
         for raw in snapshot.get(name) or []:
             if not isinstance(raw, list) or not raw:
                 continue
             row = dict(zip(columns, raw, strict=False))
-            url = path_of(row.get("page"))
+            url = page_key(row.get("page"))
             if not url:
                 continue
-            page = inventory.setdefault(url, blank(url))
-            if page["clicks"] != [0, 0] or page["impressions"] != [0, 0]:
-                continue
-            page["clicks"] = [integer(row.get("clicks")), integer(row.get("clicks_prior"))]
-            page["impressions"] = [
-                integer(row.get("impressions")),
-                integer(row.get("impressions_prior")),
-            ]
-            page["position"] = [number(row.get("position")), number(row.get("position_prior"))]
-            page["visits"] = visits(row.get("by_channel"))
-            page["signups"] = integer(row.get("signups"))
-            page["activated"] = integer(row.get("activated"))
+            page = entry(inventory, url)
+            measure(page, url, 0, row.get("clicks"), row.get("impressions"), row.get("position"))
+            measure(
+                page,
+                url,
+                1,
+                row.get("clicks_prior"),
+                row.get("impressions_prior"),
+                row.get("position_prior"),
+            )
+            page["visit_parts"].append(visits(row.get("by_channel")))
+            page["signups"] += integer(row.get("signups"))
+            page["activated"] += integer(row.get("activated"))
             if row.get("top_query"):
-                page["queries"] = [
-                    {
-                        "query": str(row["top_query"]),
-                        "clicks": 0,
-                        "impressions": integer(row.get("top_query_impressions")),
-                        "position": number(row.get("top_query_position")),
-                    }
-                ]
+                merge_queries(
+                    page,
+                    [
+                        {
+                            "query": str(row["top_query"]),
+                            "clicks": 0,
+                            "impressions": integer(row.get("top_query_impressions")),
+                            "position": number(row.get("top_query_position")),
+                        }
+                    ],
+                )
+    for page in inventory.values():
+        page["audit"] = list(dict.fromkeys(page["audit"]))
+        page["queries"] = sorted(page["queries"], key=lambda q: (-q["clicks"], -q["impressions"]))[
+            :5
+        ]
 
 
 def provider_rows(response):
@@ -313,8 +454,12 @@ def provider_rows(response):
 
 
 async def read_search_console(ctx, inventory, windows, notes):
-    """Without a fresh snapshot: pages for both windows, then queries for low-click pages."""
-    count = 0
+    """Without a fresh snapshot: pages for both windows, then queries for low-click pages.
+
+    Returns the number of calls and the host search shows most (www. folded), which names the
+    site when neither a snapshot nor an audit does.
+    """
+    count, hosts = 0, Counter()
     for step, which in (("gsc_pages_current", "current"), ("gsc_pages_prior", "prior")):
         count += 1
         try:
@@ -338,20 +483,39 @@ async def read_search_console(ctx, inventory, windows, notes):
             continue
         slot = 0 if which == "current" else 1
         for row in provider_rows(response):
-            url = path_of((row.get("keys") or [None])[0])
+            raw = (row.get("keys") or [None])[0]
+            url = page_key(raw)
             if not url:
                 continue
-            page = inventory.setdefault(url, blank(url))
-            page["clicks"][slot] = integer(row.get("clicks"))
-            page["impressions"][slot] = integer(row.get("impressions"))
-            page["position"][slot] = number(row.get("position"))
+            page = entry(inventory, url)
+            if not page["replaced"][slot]:
+                # Fresh rows replace a stale snapshot's figures for the pages they list.
+                page["replaced"][slot] = True
+                page["clicks"][slot], page["impressions"][slot] = 0, 0
+                page["position"][slot], page["weights"][slot] = 0.0, 0
+                if slot == 0:
+                    page["spellings"], page["queries"] = {}, []
+            measure(page, url, slot, row.get("clicks"), row.get("impressions"), row.get("position"))
+            host = (urlsplit(str(raw)).hostname or "").lower().removeprefix("www.")
+            if slot == 0 and host:
+                hosts[host] += integer(row.get("impressions"))
         if response.get("truncated") or response.get("next_start_row"):
             notes.append(f"{step}: truncated response; some pages may be absent")
     low = sorted(
         (p for p in inventory.values() if p["clicks"][0] < 20 and p["impressions"][0] > 0),
         key=lambda p: (-p["impressions"][0], p["url"]),
     )
-    expression = "|".join(re.escape(p["url"].split("?")[0]) + "$" for p in low[:12])
+    # One regex for the site's host (www. or not) and each page in any spelling: with or
+    # without its trailing slash or a query string. A bare "/$" would match every page.
+    site = hosts.most_common(1)[0][0] if hosts else None
+    prefix = r"^https?://(?:www\.)?" + re.escape(site) if site else r"^https?://[^/]+"
+    paths = []
+    for page in low[:12]:
+        paths.append(re.escape(page["url"].rstrip("/")))
+        if len(prefix) + len("|".join(paths)) + 20 > 3000:
+            paths.pop()
+            break
+    expression = prefix + "(?:" + "|".join(paths) + r")/?(?:\?.*)?$" if paths else ""
     if expression:
         count += 1
         try:
@@ -369,22 +533,25 @@ async def read_search_console(ctx, inventory, windows, notes):
                         {
                             "dimension": "page",
                             "operator": "includingRegex",
-                            "expression": expression[:3000],
+                            "expression": expression,
                         }
                     ],
                 },
             )
             for row in provider_rows(response):
                 keys = row.get("keys") or []
-                page = inventory.get(path_of(keys[0])) if len(keys) >= 2 else None
+                page = find(inventory, page_key(keys[0])) if len(keys) >= 2 else None
                 if page:
-                    page["queries"].append(
-                        {
-                            "query": str(keys[1]),
-                            "clicks": integer(row.get("clicks")),
-                            "impressions": integer(row.get("impressions")),
-                            "position": number(row.get("position")),
-                        }
+                    merge_queries(
+                        page,
+                        [
+                            {
+                                "query": str(keys[1]),
+                                "clicks": integer(row.get("clicks")),
+                                "impressions": integer(row.get("impressions")),
+                                "position": number(row.get("position")),
+                            }
+                        ],
                     )
             if response.get("truncated") or response.get("next_start_row"):
                 notes.append("gsc_low_query: truncated response")
@@ -394,7 +561,7 @@ async def read_search_console(ctx, inventory, windows, notes):
             notes.append(f"gsc_low_query: {str(exc)[:120]}")
     for page in inventory.values():
         page["queries"] = sorted(page["queries"], key=lambda q: -q["impressions"])[:5]
-    return count
+    return count, (hosts.most_common(1)[0][0] if hosts else None)
 
 
 LATEST = "reports/organic-audit/LATEST.json"
@@ -453,13 +620,15 @@ def attach_audit(inventory, summary, origin, notes):
         url = row.get("path")
         if not isinstance(url, str) or not url.startswith("/"):
             continue
+        url = page_key(url)
         checks = row.get("checks") if isinstance(row.get("checks"), list) else []
         named = [names[i] for i in checks if type(i) is int and 0 <= i < len(names)]
-        if named:
-            page = inventory.setdefault(url, blank(url))
+        if named and url:
+            page = entry(inventory, url)
             page["audit"] += [name for name in named if name not in page["audit"]]
             for name in named:
-                tagged[name].append(url)
+                if page["url"] not in tagged[name]:
+                    tagged[name].append(page["url"])
     # `pages` sums what each finding affects; `listed` is how many rows name it. Fewer listed
     # means a finding named examples only, the whole site or pages outside the crawl.
     short = [
@@ -511,19 +680,28 @@ def read_links(ctx, file, inventory, notes):
     else:
         notes.append("links export may be capped; absent pages have unknown links")
     for row in rows:
-        url, value = path_of(row.get(target)), row.get(incoming)
-        if url in inventory and value is not None:
-            inventory[url]["links"] = integer(str(value).replace(",", ""))
+        page, value = find(inventory, page_key(row.get(target))), row.get(incoming)
+        if page and value is not None:
+            known = page["links"] if isinstance(page["links"], int) else 0
+            page["links"] = known + integer(str(value).replace(",", ""))
     return "file"
 
 
 def date_pages(ctx, inventory, origin, previous, notes):
     """First-seen and last-changed dates from earlier runs and earlier content.refresh drafts."""
-    old = {r.get("url"): r for r in previous.get("decisions") or [] if isinstance(r, dict)}
-    for url, row in old.items():
-        page = inventory.setdefault(url, blank(url))
-        if day(row.get("first_seen")):
-            page["first_seen"] = row["first_seen"]
+    old = {}
+    for row in previous.get("decisions") or []:
+        url = page_key(row.get("url")) if isinstance(row, dict) else None
+        if not url:
+            continue  # a /cdn-cgi/ row from before 1.1.0
+        page = entry(inventory, url)
+        # A ?ref= or trailing-slash row from before 1.1.0 belongs to its page; the page's own
+        # row wins over a variant's.
+        if page["url"] not in old or row.get("url") == page["url"]:
+            old[page["url"]] = row
+        first = day(row.get("first_seen"))
+        if first and (not day(page["first_seen"]) or first < day(page["first_seen"])):
+            page["first_seen"] = str(first)
     if old and previous.get("generated") and not previous.get("truncated"):
         for url, page in inventory.items():
             seen = sum(page["impressions"]) or (page["visits"] and sum(page["visits"].values()))
@@ -584,6 +762,7 @@ def brand_terms(inputs, sources, origin):
 
 def groups(inventory, findings, brand, utility):
     out, pairs, used = [], [], set()
+    names = brand_names(brand)
     site_impressions = sum(p["impressions"][0] for p in inventory.values())
 
     def group(kind, urls, summary):
@@ -608,8 +787,8 @@ def groups(inventory, findings, brand, utility):
     for finding in findings:
         if finding.get("check_id") != "search.cannibalization":
             continue
-        urls = [path_of(u) for u in finding.get("urls") or []]
-        urls = [u for u in urls if u in inventory]
+        urls = [find(inventory, page_key(u)) for u in finding.get("urls") or []]
+        urls = list(dict.fromkeys(p["url"] for p in urls if p))
         if len(urls) > 1:
             gid = group("duplicate_pair", urls, "The audit found pages competing for one search.")
             for other in urls[1:]:
@@ -624,7 +803,8 @@ def groups(inventory, findings, brand, utility):
             used.add(tuple(sorted((url, other))))
     by_query = defaultdict(list)
     for url, page in inventory.items():
-        for query in page["queries"]:
+        # A brand search lands on many pages; sharing it does not make two pages duplicates.
+        for query in unbranded(page["queries"], names):
             if query["impressions"] > 0:
                 by_query[query["query"].lower()].append((url, query["impressions"]))
     for text, rows in by_query.items():
@@ -670,15 +850,17 @@ def groups(inventory, findings, brand, utility):
     return out, pairs
 
 
-def judgment_input(inventory, pairs, found_groups, sources, notes):
+def judgment_input(inventory, pairs, found_groups, sources, notes, brand=()):
     tasks = {
         "pairs": [{"a": a, "b": b} for a, b, matched, _ in pairs if not matched],
         "queries": [],
         "sections": [],
         "sources": {k: v[:1800] for k, v in sources.items()},
     }
+    names = brand_names(brand)
     for url, page in inventory.items():
-        top = page["queries"][:3]
+        # A brand search asks for the product, not for what this page covers.
+        top = unbranded(page["queries"], names)[:3]
         if top and not (set().union(*(words(q["query"]) for q in top)) & words(clean(url))):
             tasks["queries"].append({"url": url, "queries": top})
     for item in found_groups:
@@ -789,8 +971,19 @@ def evidence(page):
 
 
 def decide(
-    inventory, pairs, pair_verdicts, query_verdicts, off, inputs, posthog, old, notes, today
+    inventory,
+    pairs,
+    pair_verdicts,
+    query_verdicts,
+    off,
+    inputs,
+    posthog,
+    old,
+    notes,
+    today,
+    brand=(),
 ):
+    names = brand_names(brand)
     protected = inputs.get("protected_paths") or PROTECTED
     utility = inputs.get("utility_paths") or UTILITY
     ads = inputs.get("ad_paths") or ADS
@@ -1051,12 +1244,24 @@ def decide(
             )
             continue
         expected = expected_clicks(impressions, page["position"][0])
-        if (
+        low_ctr = (
             0 < page["position"][0] <= 10
             and impressions >= 50
             and expected >= 3
             and clicks < 0.35 * expected
-        ):
+        )
+        if low_ctr and url != "/" and brand_share(page, names) > 0.5:
+            # Searchers asking for the brand want the homepage; a new title here won't win them.
+            make(
+                page,
+                "keep",
+                "none",
+                "brand_search",
+                "Shows mainly for brand searches, which belong to the homepage; a new title here "
+                "would not win those clicks.",
+            )
+            continue
+        if low_ctr:
             make(
                 page,
                 "refresh",
@@ -1066,7 +1271,10 @@ def decide(
                 owner="content.refresh",
             )
             continue
-        if any(q["impressions"] >= 20 and 4 <= q["position"] <= 15 for q in page["queries"]):
+        if any(
+            q["impressions"] >= 20 and 4 <= q["position"] <= 15
+            for q in unbranded(page["queries"], names)
+        ):
             make(
                 page,
                 "refresh",
@@ -1129,7 +1337,7 @@ def rank_rows(rows, inventory):
 # ---------- report ----------
 
 
-def report(block, inventory, notes, has_snapshot, posthog, previous):
+def report(block, inventory, notes, has_snapshot, posthog, old):
     rows = block["decisions"]
     counts = Counter(block["counts"])
     source = block["sources"]
@@ -1199,7 +1407,6 @@ def report(block, inventory, notes, has_snapshot, posthog, previous):
     lines += ["", "## Kept and waiting", ""]
     lines += [f"- {s}: {n}" for s, n in sorted(block["keep_counts"].items())] or ["None."]
     lines += ["", "## Changes since last week", ""]
-    old = {r.get("url"): r for r in previous.get("decisions") or [] if isinstance(r, dict)}
     if not old:
         lines.append("First run: nothing to compare yet.")
     else:
@@ -1261,9 +1468,12 @@ async def run(ctx, inputs):
             "current": [str(end - dt.timedelta(days=27)), str(end)],
             "prior": [str(end - dt.timedelta(days=55)), str(end - dt.timedelta(days=28))],
         }
-    calls = await read_search_console(ctx, inventory, windows, notes) if not has_snapshot else 0
+    calls, search_host = 0, None
+    if not has_snapshot:
+        calls, search_host = await read_search_console(ctx, inventory, windows, notes)
+    settle(inventory)
     summary = audit_summary(ctx, inputs.get("audit_run_id"), notes)
-    origin = site_origin(snapshot, str((summary or {}).get("host") or "") or None)
+    origin = site_origin(snapshot, str((summary or {}).get("host") or "") or None, search_host)
     findings, audit_host = attach_audit(inventory, summary, origin, notes)
     run_id = str(summary.get("run_id") or "") if summary and audit_host else None
     if origin == "unknown":
@@ -1300,11 +1510,21 @@ async def run(ctx, inputs):
             )
     utility = inputs.get("utility_paths") or UTILITY
     found_groups, pairs = groups(inventory, findings, brand, utility)
-    tasks = judgment_input(inventory, pairs, found_groups, sources, notes)
+    tasks = judgment_input(inventory, pairs, found_groups, sources, notes, brand)
     answer = await judge(ctx, tasks, notes, started) if inventory else None
     pair_verdicts, query_verdicts, off = checked_judgments(answer, tasks, notes)
     rows, changes, keeps = decide(
-        inventory, pairs, pair_verdicts, query_verdicts, off, inputs, posthog, old, notes, today
+        inventory,
+        pairs,
+        pair_verdicts,
+        query_verdicts,
+        off,
+        inputs,
+        posthog,
+        old,
+        notes,
+        today,
+        brand,
     )
     rows = rank_rows(rows, inventory)
     block = {
@@ -1341,7 +1561,7 @@ async def run(ctx, inputs):
     while len(block["decisions"]) > int(inputs.get("max_rows") or 120) and drop_one():
         pass
     while True:
-        content = report(block, inventory, notes, has_snapshot, posthog, previous)
+        content = report(block, inventory, notes, has_snapshot, posthog, old)
         if len(content.encode()) < 64000:
             break
         if not drop_one():

@@ -29,6 +29,9 @@ PAID_ADS_ASSESSMENT_WORKFLOW_NAME = "ads.assessment"
 PAID_ADS_LAUNCH_WORKFLOW_NAME = "ads.launch"
 PAID_ADS_MONITOR_WORKFLOW_NAME = "ads.monitor"
 AWESOME_SUBMIT_WORKFLOW_NAME = "outreach.awesome_submit"
+PAYMENT_RECOVERY_WORKFLOW_NAME = "revenue.payment_recovery"
+# Shorter than a week, so an unanswered weekly run closes before the next one is due.
+PAYMENT_RECOVERY_DECISION_DAYS = 6
 CREATIVE_CHARACTER_WORKFLOW_NAME = "creative.character"
 CREATIVE_PRODUCT_DEMO_WORKFLOW_NAME = "creative.product_demo"
 CODEX_PROCEDURE_EXECUTOR = "codex.procedure"
@@ -256,6 +259,8 @@ class ProjectWorkflow:
     failed_count: int = 0
     typical_duration_seconds: float | None = None
     content_revision: dict[str, Any] | None = None
+    # Whether today's definition draws how it runs (presentation.flow).
+    workflow_drawn: bool = False
 
 
 @dataclass(frozen=True)

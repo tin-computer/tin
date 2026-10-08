@@ -53,7 +53,7 @@ def snapshot(**extra):
         row("/blog/mileage-log-template", (18, 5000), (19, 4800), position=4.1),
         row("/blog/new-post", (0, 20), (0, 0), first_seen="2026-09-01"),
         row("/offer/spring-sale", (0, 40), (0, 30)),
-        row("/blog/earning-post", (60, 900), (58, 880), position=3.0),
+        row("/blog/earning-post", (60, 900), (58, 880), position=3.0, queries=["studio cash flow"]),
     ]
     value = {
         "schema": "tin.traffic_snapshot/1",
@@ -72,7 +72,7 @@ def snapshot(**extra):
 
 JUDGMENT = {
     "pairs": [],
-    "queries": [{"url": "/", "verdict": "answers"}, {"url": "/sign-in", "verdict": "unclear"}],
+    "queries": [{"url": "/blog/earning-post", "verdict": "answers"}],
     "sections": [],
 }
 FILES = {
@@ -161,7 +161,7 @@ async def test_unusable_judgment_changes_no_decision(monkeypatch):
     """Plausible but unusable: verdicts on pages we never asked about and a made-up quote."""
     unusable = {
         "pairs": [{"a": "/blog/earning-post", "b": "/", "verdict": "same_intent"}],
-        "queries": [{"url": "/blog/earning-post", "verdict": "does_not_answer"}],
+        "queries": [{"url": "/blog/mileage-log-template", "verdict": "does_not_answer"}],
         "sections": [{"section": "/blog", "verdict": "off_positioning", "quote": "we sell boats"}],
     }
     content, _ = await run(monkeypatch, model=unusable)
@@ -201,6 +201,12 @@ CASES = {
     "ordinary": (FILES, JUDGMENT, None),
     "no_snapshot": ({}, JUDGMENT, search_console()),
     "unusable_judgment": (FILES, {"pairs": "none"}, None),
+    # Called when the case runs: brand_snapshot is defined further down.
+    "brand_searches": (
+        lambda: {**FILES, "analytics/traffic-snapshot.json": brand_snapshot()},
+        JUDGMENT,
+        None,
+    ),
 }
 
 
@@ -210,6 +216,7 @@ async def test_qualification_cases_pass_on_their_fixtures(monkeypatch):
     assert {case.id for case in qualification.cases} == set(CASES)
     for case in qualification.cases:
         files, model, services = CASES[case.id]
+        files = files() if callable(files) else files
         content, _ = await run(
             monkeypatch, files=files, model=model, services=services, inputs=case.inputs
         )
@@ -305,3 +312,103 @@ async def test_a_named_audit_needs_its_summary(monkeypatch):
     content, _ = await run(monkeypatch, files=files, inputs={"audit_run_id": old})
     assert "that audit wrote no SUMMARY.json" in content
     assert block(content)["sources"]["audit"] == "none"
+
+
+def brand_snapshot():
+    """/about and /help rank only for the brand, however it is spaced."""
+    pages = snapshot()["pages"] + [
+        row("/about", (2, 700), (3, 650), position=3.2, queries=["tallyfox", "tally fox.com"]),
+        row("/help", (1, 650), (2, 600), position=6.0, queries=["tallyfox", "tally-fox"]),
+    ]
+    return snapshot(pages=pages)
+
+
+async def test_brand_searches_drive_no_refresh_pair_or_judgment(monkeypatch):
+    files = {**FILES, "analytics/traffic-snapshot.json": brand_snapshot()}
+    content, ctx = await run(monkeypatch, files=files)
+    rows = decisions(content)
+    about = rows["/about"]
+    assert (about["decision"], about["rule"]) == ("keep", "brand_search")
+    assert "brand searches" in about["reason"]
+    # Ranking 4-15 for "tally-fox" is not a near-page-one opportunity either.
+    assert (rows["/help"]["decision"], rows["/help"]["rule"]) == ("keep", "brand_search")
+    found = block(content)["groups"]
+    assert not any(g["kind"] == "duplicate_pair" and "tallyfox" in g["summary"] for g in found)
+    asked = ctx.models.calls[0]["data"]["queries"]
+    assert [item["url"] for item in asked] == ["/blog/earning-post"]
+    assert "tally" not in json.dumps(asked)
+    # The homepage still gets a title refresh when its own brand searches do not click.
+    pages = brand_snapshot()["pages"]
+    pages[1] = row("/", (2, 900), (3, 850), position=2.0, queries=["tallyfox"])
+    files = {**FILES, "analytics/traffic-snapshot.json": snapshot(pages=pages)}
+    content, _ = await run(monkeypatch, files=files)
+    assert decisions(content)["/"]["rule"] == "low_ctr"
+
+
+async def test_without_a_snapshot_the_site_comes_from_search_console(monkeypatch):
+    content, ctx = await run(monkeypatch, files={}, services=search_console())
+    assert block(content)["site"] == f"https://{SITE}"
+    assert "site origin unavailable" not in content
+    low = next(c for c in ctx.services.calls if c["step"] == "gsc_low_query")
+    expression = low["arguments"]["dimension_filters"][0]["expression"]
+    assert expression.startswith(r"^https?://(?:www\.)?tallyfox\.example(?:")
+    assert re.search(expression, f"https://www.{SITE}/blog/old-launch-notes/?ref=x")
+    assert not re.search(expression, f"https://{SITE}/blog/other")
+
+
+def variant_console():
+    """www. and bare homepages, a trailing-slash twin and a ?ref= variant of one page."""
+    current = [
+        {"keys": [f"https://{SITE}/"], "clicks": 2695, "impressions": 44100, "position": 9.0},
+        {"keys": [f"https://www.{SITE}/"], "clicks": 1, "impressions": 1, "position": 2.0},
+        {"keys": [f"https://{SITE}/guide/"], "clicks": 15, "impressions": 900, "position": 4.0},
+        {"keys": [f"https://{SITE}/guide"], "clicks": 2, "impressions": 100, "position": 14.0},
+        {"keys": [f"https://{SITE}/guide?ref=nav"], "clicks": 1, "impressions": 0},
+        {"keys": [f"https://{SITE}/cdn-cgi/l/email-protection"], "clicks": 0, "impressions": 9},
+    ]
+    prior = [
+        {"keys": [f"https://{SITE}/"], "clicks": 1518, "impressions": 46488, "position": 14.0},
+        {"keys": [f"https://{SITE}/guide/"], "clicks": 30, "impressions": 800, "position": 5.0},
+    ]
+    query = [
+        {"keys": [f"https://{SITE}/guide/", "ledger guide"], "clicks": 3, "impressions": 60},
+        {"keys": [f"https://{SITE}/guide", "ledger guide"], "impressions": 40, "position": 6.0},
+    ]
+    return {
+        "gsc_pages_current": gsc(current),
+        "gsc_pages_prior": gsc(prior),
+        "gsc_low_query": gsc(query),
+    }
+
+
+async def test_url_variants_fold_into_one_page(monkeypatch):
+    previous = {
+        "schema": "content.efficacy/1",
+        "generated": "2026-09-22",
+        "decisions": [
+            {"url": "/guide?ref=nav", "decision": "keep", "rule": "earning", "clicks": [0, 0]},
+            {"url": "/cdn-cgi/l/email-protection", "decision": "keep", "rule": "earning"},
+        ],
+    }
+    summary = audit_summary(
+        [("/guide", [0]), ("/cdn-cgi/l/email-protection", [0]), ("/guide/?ref=x", [0])],
+        [("search.brand_landing_page", 1, 1, 1)],
+    )
+    files = {
+        "content/efficacy.md": "## Decisions block\n```json\n" + json.dumps(previous) + "\n```",
+        "reports/organic-audit/LATEST.json": summary,
+    }
+    content, _ = await run(monkeypatch, files=files, services=variant_console())
+    rows = decisions(content)
+    assert set(rows) == {"/", "/guide/"}  # no ?ref=, slash twin or /cdn-cgi/ row
+    home = rows["/"]["evidence"]
+    assert home["clicks"] == [2696, 1518] and home["impressions"] == [44101, 46488]
+    guide = rows["/guide/"]["evidence"]
+    assert guide["clicks"] == [18, 30] and guide["impressions"] == [1000, 800]
+    assert guide["position"][0] == 5.0  # impression-weighted: (4 * 900 + 14 * 100) / 1000
+    assert guide["audit"] == ["search.brand_landing_page"]
+    # Clicks fell while impressions held, across both spellings; their searches are merged.
+    assert (rows["/guide/"]["rule"], guide["top_query"]) == ("decline", "ledger guide")
+    assert "Clicks and impressions fell together" not in json.dumps(rows["/"])
+    # The variant's old row counts as the page's, so this is a comparison, not a first run.
+    assert "First run" not in content

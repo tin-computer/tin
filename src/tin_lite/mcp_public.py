@@ -69,8 +69,6 @@ SHARED_TOOLS = {
     "stop_paid_ads_launch": (False, True, False),
     "stop_paid_ads_monitor": (False, True, False),
     "stop_email_campaign": (False, True, False),
-    # organic.technical_fix is hidden; only its read-only preview stays, for older clients.
-    "preflight_technical_fix": (True, False, False),
 }
 
 PUBLIC_DESCRIPTIONS = {
@@ -97,15 +95,6 @@ PUBLIC_DESCRIPTIONS = {
     "read_run_output": "Read the selected run's text output at its retained or canonical revision.",
     "list_integrations": (
         "Read existing project connection status. Connect or repair accounts in Tin."
-    ),
-    "preflight_technical_fix": (
-        "Preview repairs from the exact saved audit without starting a run or creating a PR. "
-        "Inspect plan.repairs, decisions_needed and plan.left_out; ask the user about "
-        "uncertain judgment calls. Pass decisions as finding_id=choice strings to this "
-        "preview. Kept for older clients: this plugin no longer starts technical fixes, "
-        "which Tin now makes through website.change. An optional finding_id limits the "
-        "preview to one finding. "
-        "repository_serves_site records the user's assertion. This is not live site verification."
     ),
 }
 
@@ -220,13 +209,6 @@ def public_result(name: str, value: dict, entries: dict[UUID, CatalogWorkflow]) 
             value,
             "id run_id project_id status review_decision approved delivery delivery_cost result",
         )
-    if name == "preflight_technical_fix":
-        result = {key: item for key, item in value.items() if key != "relay"}
-        if "repository_binding" in value:
-            result["repository_binding"] = select(
-                value["repository_binding"], "repository default_branch head_sha"
-            )
-        return result
     if name == "list_integrations":
         return {
             "result": [

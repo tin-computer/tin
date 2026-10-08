@@ -37,6 +37,9 @@ MAX_SITE_RESPONSE_BYTES = 500_000
 # The provider's wait for the proposal: 16,000 output tokens at high effort take minutes, not
 # the client's 90-second default. The drafting activity heartbeats and allows 15 minutes.
 MODEL_TIMEOUT_SECONDS = 300
+# A runaway guard, not an expected length: reasoning counts against the cap, and billing
+# charges the tokens a call actually used. It was 16,000; GPT-6 Luna allows 128,000.
+MAX_OUTPUT_TOKENS = 32_000
 MAX_SITE_CHANGE_BYTES = 512_000
 
 _PROPOSAL_SCHEMA: dict[str, Any] = {
@@ -227,7 +230,7 @@ class SiteHealthImprover:
                         content=json.dumps(reference, ensure_ascii=False, separators=(",", ":")),
                     ),
                 ),
-                max_output_tokens=16_000,
+                max_output_tokens=MAX_OUTPUT_TOKENS,
                 reasoning_effort=ReasoningEffort.HIGH,
                 output_schema=_PROPOSAL_SCHEMA,
                 output_schema_name="site_health_fix",

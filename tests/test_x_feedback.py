@@ -561,3 +561,42 @@ async def test_project_purge_removes_revision_content_receipts(publication_db):
     async with f.db.pool.acquire() as conn, conn.transaction():
         await f.db.purge_project_data(conn, project_id=f.project.id)
     assert await f.db.get_effect(f"{run.id}:x_feedback_model") is None
+
+
+@pytest.mark.parametrize("pinned, cap", [("current", 32_000), ("v1", 8000), ("edited", None)])
+async def test_a_revision_sends_the_output_cap_of_the_policy_it_was_pinned_to(
+    publication_db, pinned, cap
+):
+    assert x_feedback.POLICY["version"] == "x-feedback-v2"
+    assert x_feedback.POLICY == {
+        **x_feedback.POLICY_V1,
+        "max_output_tokens": 32_000,
+        "version": "x-feedback-v2",
+    }
+    f = await setup(publication_db)
+    policy = {
+        "current": x_feedback.POLICY,
+        "v1": x_feedback.POLICY_V1,
+        "edited": {**x_feedback.POLICY, "max_output_tokens": 128_000},
+    }[pinned]
+    builtin = next(w for w in BUILTIN_WORKFLOWS if w.key == x_feedback.KEY)
+    definition = {
+        **builtin.definition,
+        "x_feedback_contract": {**builtin.definition["x_feedback_contract"], "policy": policy},
+    }
+    original = f.storage.read_canonical_artifact
+
+    async def read(**kw):
+        if kw["repo_id"] == "registry/workflows" and kw["path"] == builtin.definition_path:
+            return json.dumps(definition).encode()
+        return await original(**kw)
+
+    f.storage.read_canonical_artifact = read
+    run = await request(f)
+    if cap is None:  # A policy no version defines is refused before any model call.
+        with pytest.raises(ApplicationError, match="revision contract"):
+            await f.activities.generate(str(run.id))
+        assert f.router.generate.await_count == 0
+        return
+    await f.activities.generate(str(run.id))
+    assert f.router.generate.await_args.args[1].max_output_tokens == cap

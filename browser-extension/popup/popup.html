@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tin LinkedIn</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="mark" aria-hidden="true">T</span>
+        <div>
+          <h1>Tin LinkedIn</h1>
+          <p>Delegated outreach from Tin</p>
+        </div>
+      </header>
+
+      <section
+        aria-live="polite"
+        aria-atomic="true"
+        aria-busy="true"
+        id="status-card"
+      >
+        <span class="status-dot" id="status-dot" aria-hidden="true"></span>
+        <div class="status-copy">
+          <strong id="status-title">Checking this browser…</strong>
+          <span id="status-detail">Checking the connection to Tin.</span>
+        </div>
+      </section>
+
+      <p class="privacy">
+        After you choose Allow outreach in Tin, this extension syncs only the
+        LinkedIn session cookies Tin needs. Passwords, browsing history, and
+        unrelated sites are never accessed.
+      </p>
+
+      <div class="actions">
+        <button type="button" id="refresh">Refresh</button>
+        <button
+          type="button"
+          id="disconnect"
+          class="danger"
+          aria-describedby="disconnect-note"
+          hidden
+        >
+          Stop browser sync
+        </button>
+      </div>
+      <p class="device-note" id="disconnect-note" hidden>
+        This stops session refresh from this browser; it does not remove an
+        existing project delegation. To stop outreach, remove your account from
+        the project in Tin.
+      </p>
+      <p id="error" role="alert" hidden></p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

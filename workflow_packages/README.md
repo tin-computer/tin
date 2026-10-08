@@ -58,11 +58,9 @@ A procedure writes only its declared output. A weekly package keeps its history 
 | `content.release_announce` | changelog, style guide (filled in by the agent) | founder posts and sends | Owned audience, launches |
 | `social.content_plan` | current product context and optional writing guide | editable social plan and weekly calendar | Earned media and launches |
 | `social.post_batch` | social plan and current source notes, or an article; current writing guide | founder reviews dated drafts and posts | Earned media and launches |
-| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy`, `organic.site_architecture`, `content.blog_index` read its data file; its weekly readout routes decisions to `growth.signup_source`, `content.refresh` and `organic.audit` | Organic traffic |
+| `organic.traffic_snapshot` | Search Console and PostHog connections, organic audit | `organic.content_efficacy` reads its data file; its weekly readout routes decisions to `growth.signup_source`, `content.refresh` and `organic.audit` | Organic traffic |
 | `organic.content_efficacy` | traffic snapshot, organic audit, onboarding plan, brand guide, earlier `content.refresh` drafts | `website.change` (source `planned`, PR #266) reads its URL changes; refresh rows wait for the content workflow | Organic traffic, technical SEO |
-| `organic.site_architecture` | organic audit summary, Search Console, traffic snapshot, page decisions | `website.change` (source `planned`, PR #266) reads its `redirects.json` block; `content.refresh`, `content.diagram` | Technical SEO |
-| `content.blog_index` | connected repository (read-only), saved article route (`save_page_route`), Code map, traffic snapshot | `website.change` (source `blog_index`) builds the index from `PLAN.md` after approval; `content.deliver` adds a missing route with the next article | Organic traffic |
-| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` asks the newest panel for its site | Organic traffic |
+| `organic.prompt_panel` | brand guide, Feature map, onboarding plan, Search Console | `organic.audit` runs pinned to v13 or v14 ask the newest panel for its site; hidden from new setups since v15 drafts its own questions | Organic traffic |
 
 The onboarding plan lists these under their programs in
 [programs.json](../src/tin_lite/growth_plan_assets/programs.json), with one `workflow_scope`
@@ -168,10 +166,27 @@ This one validates. Copy it and change the parts that describe your workflow.
         "media_type": "text/markdown",
         "max_bytes": 250000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          { "id": "context", "kind": "store", "label": "Project evidence", "fact": "context files and the optional focus" },
+          { "id": "recommend", "kind": "step", "label": "Recommend one next action", "fact": "cites the project paths behind it" },
+          { "id": "report", "kind": "receipt", "label": "Report in Files", "fact": "reports/EXAMPLE_PLAY.md" }
+        ],
+        "edges": [
+          { "from": "context", "to": "recommend", "kind": "call" },
+          { "from": "recommend", "to": "report", "kind": "call" }
+        ]
+      }
     }
   }
 }
 ```
+
+`presentation` draws how the run goes for the workflow's diagram panel; see
+[Draw how it runs](../docs/adding-a-workflow.md#draw-how-it-runs).
 
 Every text input needs a `maxLength`, every array a `maxItems`, and `project_id` stays as it is.
 A `"format": "uri"` input accepts only an http(s) URL with a host, and no input may contain NUL.

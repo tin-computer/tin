@@ -167,9 +167,26 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
     PublicWorkflow(UUID("4cfd20c4-6aaa-46d7-a5c1-1f67032a4358"), "growth.framework_starter"),
     PublicWorkflow(UUID("cf62caaa-fc6f-4a32-b0bd-8babceec534d"), "organic.traffic_snapshot"),
     PublicWorkflow(UUID("51b9959f-3f5c-4df3-b417-f6fbf12d19fc"), "organic.content_efficacy"),
-    PublicWorkflow(UUID("d6a097d3-056f-4ffd-af85-3205f32f58f8"), "organic.site_architecture"),
-    PublicWorkflow(UUID("896b8e66-ea09-4dda-ac11-7a1824282349"), "content.blog_index"),
-    PublicWorkflow(UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"), "organic.prompt_panel"),
+    # Retired for new work (run_service.RETIRED): the audit and page decisions cover the page
+    # tree's findings, and website.change adds each article to the site's own index. Kept
+    # registered so past runs keep their definitions.
+    PublicWorkflow(
+        UUID("d6a097d3-056f-4ffd-af85-3205f32f58f8"),
+        "organic.site_architecture",
+        public_discovery=False,
+    ),
+    PublicWorkflow(
+        UUID("896b8e66-ea09-4dda-ac11-7a1824282349"),
+        "content.blog_index",
+        public_discovery=False,
+    ),
+    # organic-audit-v15 drafts its own questions from Search Console, so new setups no longer
+    # offer the panel; audits pinned to v13 or v14 still read the newest one.
+    PublicWorkflow(
+        UUID("5e1f2809-6673-4ff9-be16-d0420bf05e69"),
+        "organic.prompt_panel",
+        public_discovery=False,
+    ),
 )
 
 

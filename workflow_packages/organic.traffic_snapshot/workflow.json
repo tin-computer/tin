@@ -3,8 +3,8 @@
   "definition": {
     "key": "organic.traffic_snapshot",
     "title": "Take a weekly traffic snapshot and growth readout",
-    "description": "Each week, read Search Console and PostHog once into one file. Per landing page it holds clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth and the latest audit's checks; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages, with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
-    "version": "1.0.0",
+    "description": "Each week, read Search Console, and PostHog when it is connected, once into one file. Per landing page it holds clicks, impressions and top searches, the latest audit's checks and, with PostHog, sessions by channel, first-touch signups and activation and reading depth; Page decisions, the page tree and the blog index read it instead of querying again. The same file carries the weekly growth readout: where visitors and signups came from, by channel and by named AI assistant, search with a brand split, content and landing pages (search only without PostHog), with a change called only when an exact test with Holm's correction says it is real, and each decision naming the workflow that acts on it. No model calls; a failed read stays empty, never zero.",
+    "version": "1.2.0",
     "executor": "workflow.code",
     "system": "organic-traffic",
     "schedule_modes": [
@@ -31,7 +31,7 @@
           "type": "string",
           "maxLength": 128,
           "title": "Signup event",
-          "description": "The PostHog event a new account sends, such as signed_up. Leave empty to skip signups."
+          "description": "The PostHog event a new account sends, such as signed_up. Leave empty to skip signups. Needs PostHog, like every event and exclusion setting here."
         },
         "activation_event": {
           "type": "string",
@@ -171,7 +171,7 @@
         "capabilities": [
           "query.read"
         ],
-        "required": true
+        "required": false
       }
     ],
     "code": {
@@ -187,7 +187,7 @@
         "gsc": {
           "provider_key": "analytics.gsc",
           "max_calls": 4,
-          "max_response_bytes": 64000
+          "max_response_bytes": 256000
         },
         "posthog": {
           "provider_key": "analytics.posthog",
@@ -200,6 +200,27 @@
         "path": "analytics/traffic-snapshot.json",
         "media_type": "application/json",
         "max_bytes": 64000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "search_console", "kind": "surface", "label": "Search Console", "fact": "a year of days, pages, queries, 4 reads"},
+          {"id": "posthog", "kind": "surface", "label": "PostHog", "fact": "sessions, signups, reading, 4 queries"},
+          {"id": "pages", "kind": "step", "label": "Build a row per landing page", "fact": "top 30 in detail, audit checks added"},
+          {"id": "test", "kind": "step", "label": "Test each weekly change", "fact": "exact test with Holm's correction"},
+          {"id": "kept", "kind": "ghost", "label": "Previous snapshot stays", "fact": "no provider read returned data"},
+          {"id": "receipt", "kind": "receipt", "label": "Snapshot with weekly readout", "fact": "decisions name the workflow that acts"}
+        ],
+        "edges": [
+          {"from": "search_console", "to": "posthog", "kind": "call", "label": "if connected"},
+          {"from": "search_console", "to": "pages", "kind": "call", "label": "without PostHog"},
+          {"from": "posthog", "to": "pages", "kind": "call"},
+          {"from": "pages", "to": "test", "kind": "call"},
+          {"from": "pages", "to": "kept", "kind": "call", "label": "nothing read"},
+          {"from": "test", "to": "receipt", "kind": "call"}
+        ]
       }
     }
   }

@@ -10,10 +10,9 @@ For current metadata repair profiles and finding eligibility, see
 ## ELI5
 
 The system starts two research jobs: inspect the website and research buyer searches.
-Their exact saved results become the inputs to an editable content program. If you
-enable technical fixes and confirm the GitHub repository, Tin can also inspect one
-supported audit finding and propose a small, unmerged PR. Each job is still callable
-on its own.
+Their exact saved results become the inputs to an editable content program. With GitHub
+connected, Tin also opens one unmerged PR with the audit's fixes in the repository you
+selected for the site. Each job is still callable on its own.
 
 This is a fixed Temporal recipe, not a graph engine or a second database in Files.
 The files remain the working material. Existing Postgres run rows and effect receipts
@@ -40,6 +39,21 @@ recipe. Old revisions retain their original children and resources.
 
 ### `organic.traffic_system`
 
+**v7 (0.7.0): the system measures the site each week.** After the audit, the parent runs
+`organic.traffic_snapshot` and then `organic.content_efficacy` (Page decisions) as child runs,
+and waits for both before the content plan, which reads `analytics/traffic-snapshot.json` and
+`content/efficacy.md`. Each is saved as a weekly configuration on the weekly page refresh's
+day: the snapshot two hours before the refresh, Page decisions one hour before, so the
+refresh reads this week's decisions and the decisions this week's snapshot. An earlier
+saved schedule of either is kept, with its inputs, and still runs once now. Both need Search
+Console; without it nothing is saved and the report names the reason. A measurement that
+cannot start never fails the recipe. `content.refresh` now picks the first page Page decisions
+marks for a refresh that is not waiting, in its order, never a page it keeps, merges or
+retires, and falls back to the audit's pick when the file is missing or older than its window.
+Onboarding no longer installs the two workflows on their own; the system sets them up. Runs
+pinned to `organic-traffic-v6` keep their steps; a test pins v6's policy digest. The parent's
+spending pool grows by $1 for Page decisions' bounded model call; the snapshot makes none.
+
 **v6 (0.6.0): both writer steps go through website.change** (Emre, 10/1). The technical step
 starts website.change `source: audit` instead of organic.technical_fix, and the delivery step
 starts website.change for the approved draft (its page source) instead of content.deliver:
@@ -52,8 +66,13 @@ $5 procedure ceiling as the workflows they replace.
 
 Manual-only. Inputs: HTTPS site origin, English-language buyer market, explicit buyer
 context, content start date, duration (default six months), and keyword spending ceiling
-(default $9). Optional technical repair requires both an exact `owner/repository` and
-the member's confirmation that it serves this site. From 0.3.0, `article_weekdays` and
+(default $9). Technical repair is on by default from 0.8.1 (`technical_fix`). It uses the
+repository selected on the GitHub connection, which Start here asks the founder to choose as
+the one that serves the site; a run that names `expected_repository` itself still needs
+`repository_serves_site`. Without GitHub, or without a selected repository, the step is
+skipped with that reason; a named repository without the confirmation is skipped as
+`repository_not_confirmed`, and an audit whose fixes can't be planned as `fixes_unavailable`. 0.8.0 and earlier defaulted to off and refused to start with it
+on until both repository fields were given. From 0.3.0, `article_weekdays` and
 `article_local_time` choose the weekly drafting schedule it saves (see
 [weekly drafting](organic-content-continuation.md#weekly-drafting-030)).
 
@@ -62,7 +81,7 @@ children. It pins all child definitions from the parent's atomic registry revisi
 Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
-2. After the audit, if requested, propose one technical fix. Under `organic-traffic-v6`
+2. After the audit, unless turned off, propose the technical fixes. Under `organic-traffic-v6`
    (0.6.0, the default for new runs) the step starts website.change with the latest audit's
    fixes (`source: audit`) and the system's repository; it passes no judgment-call answers,
    so the rows wait for the founder and the run opens a pull request. A recipe pinned to v5
@@ -141,9 +160,10 @@ bound repository and the exact proposed branch contents.
 Use normal `get_workflow` / `start_workflow` for either registry key. Standalone
 `organic.audit`, `organic.keyword_plan`, and saved `content.plan` remain unchanged.
 
-Existing source discovery tools are `list_technical_fix_sources`,
-`get_technical_fix_source`, and `preflight_technical_fix`. The preview itself is read-only;
-execution independently resolves and pins its own trusted binding.
+The technical fix's discovery tools (`list_technical_fix_sources`,
+`get_technical_fix_source`, `preflight_technical_fix`) are retired; `preflight_website_change`
+previews the audit's repairs for the v6 recipe. Execution independently resolves and pins its
+own trusted binding.
 
 `get_run` now includes the parent's `system.steps` facts, read only from Postgres.
 The equivalent read is:

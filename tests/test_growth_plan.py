@@ -122,9 +122,11 @@ class FakeModel:
 
     def __init__(self, *, overrides=None, unusable=()):
         self.calls, self.overrides, self.unusable = [], overrides or {}, list(unusable)
+        self.caps = set()
 
     async def __call__(self, step, system, user, schema, max_out, effort):
         self.calls.append(step)
+        self.caps.add(max_out)
         if step in self.unusable:
             self.unusable.remove(step)
             raise plan.UnusableModelResult("response was truncated")
@@ -291,6 +293,8 @@ async def test_fixture_run_produces_a_plan_setup_can_read():
     assert plan.route_for("scope") is plan.JUDGMENT_ROUTE
     assert plan.route_for("system:organic-traffic") is plan.DRAFTING_ROUTE
     assert {"facts", "profile", "scope", "table", "view"} <= set(model.calls)
+    # Every step's output cap is the same runaway guard, far below the models' 128,000.
+    assert model.caps == {plan.MAX_OUTPUT_TOKENS} == {32_000}
 
 
 async def test_code_not_the_model_decides_what_reaches_the_block():
@@ -966,6 +970,10 @@ def test_definition_pins_the_contract_and_the_assets_stay_consistent():
     # configurations, but the plan never names them.
     hidden = {item.key for item in PUBLIC_WORKFLOWS if not item.public_discovery}
     hidden.add("visibility.audit")
+    # The project-gated collector is separate from the general starter plan.
+    hidden.add("connections.collect")
+    # content.plan's planning agent runs only inside content.plan.
+    hidden.add("content.plan_research")
     assert titles == {
         key: title
         for key, title in (

@@ -21,13 +21,15 @@ from pydantic import Field, StrictBool, ValidationError
 from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
 
-from tin_lite import analytics, project_task_control, technical_fix, welcome_email
+from tin_lite import analytics, project_task_control, welcome_email
 from tin_lite.analytics import clip
 from tin_lite.auth import ClerkAuth
 from tin_lite.billing_contracts import BillingError
 from tin_lite.brand_capture import preparation as brand_capture_preparation
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
+from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
+from tin_lite.connection_collection import visible as collection_visible
 from tin_lite.content_delivery import ADAPTED_WORKFLOW_IDS, DeliverySettings
 from tin_lite.content_delivery_api import (
     SaveDelivery,
@@ -118,11 +120,9 @@ from tin_lite.run_service import (
     start_workflow_run,
 )
 from tin_lite.runtime import RuntimeServices
-from tin_lite.schedules import WorkflowSchedule, require_saveable_schedule
+from tin_lite.schedules import WorkflowSchedule, monthly_words, require_saveable_schedule
 from tin_lite.settings import Settings
-from tin_lite.technical_fix_api import TechnicalFixSelection
 from tin_lite.technical_fix_live import live_service
-from tin_lite.technical_fix_sources import TechnicalFixError, TechnicalFixSources
 from tin_lite.workflow_inputs import (
     WorkflowInputError,
     client_input_schema,
@@ -412,6 +412,9 @@ def _project_task_result(run: Any, entries: list[Any] | None = None) -> dict[str
 def _mcp_integration_view(
     definition: Any, connection: Any | None, *, configured: bool
 ) -> dict[str, Any]:
+    from tin_lite.integrations import connection_readiness
+
+    readiness = connection_readiness(connection)
     return {
         "key": definition.key,
         "name": definition.name,
@@ -423,6 +426,9 @@ def _mcp_integration_view(
         "configured": configured,
         "connection_id": str(connection.id) if connection is not None else None,
         "status": connection.status if connection is not None else "available",
+        # Connected and the site, repository or project it works on chosen.
+        "ready": readiness["ready"],
+        "next_action": None if connection is None else readiness["next_action"],
         "external_account_label": (
             connection.external_account_label if connection is not None else None
         ),
@@ -587,7 +593,9 @@ guess in one line; nothing blocks on it.
 Onboarding, part 1: call get_started(project_id) and follow it. Tell the founder you will read the
 codebase for a minute or two, then start Tin's plan. Answer everything yourself, from the
 codebase, your session and the project's rules: the form fields, the notes, the timezone, the
-hard no's its rules imply. Two things you guess rather than ask: how the founder sees this project
+hard no's its rules imply. Leave settings Tin keeps itself, such as the GitHub repository's name,
+out of the notes and any workflow's context: a copy goes stale when the repository moves. Two
+things you guess rather than ask: how the founder sees this project
 (main: every week, some money, results within a month; side: a few hours most weeks, money only
 where it clearly pays, results within a quarter; fun: when they feel like it, no budget, no
 deadline) and what they most want in the next couple of months (paying customers, signups,
@@ -642,11 +650,12 @@ Unknown repository details are a reason to ask which repository serves the site,
 useful access. Ask for mailbox access only for selected work that needs it. Explain
 delivery_destination: reports, review queue, and whether notifications are enabled. Offer only
 supported delivery channels. Say each connection takes about a minute in the browser
-and GitHub also asks which repository; for the ones they allow, call
+and GitHub and Search Console also ask which repository or site; for the ones they allow, call
 start_integration_connections with every provider at once (one page, one visit;
 start_integration_connection for a single one), open the link in their browser yourself when your
 shell allows it (the result's open_command), otherwise paste it, and confirm each with
-get_integration; note each they decline with their reason.
+get_integration until it shows `ready` (follow its next_action otherwise); note each they
+decline with their reason.
 Then call record_onboarding_picks once with the run_id, the systems (or ["suggested"]), the
 control and every connection they decided (connected, or not_now with the reason); it ticks the
 plan for you. Then approve_workflow_run; it refuses until the picks are recorded. Say Tin now
@@ -936,6 +945,8 @@ def _schedule_words(schedule: Any) -> str:
     data = schedule.model_dump() if hasattr(schedule, "model_dump") else dict(schedule)
     if data.get("cadence") == "daily":
         return f"every day at {data.get('local_time', '09:00')}"
+    if data.get("cadence") == "monthly":
+        return f"{monthly_words(data)} at {data.get('local_time', '09:00')}"
     days = ", ".join(str(d).capitalize() for d in data.get("weekdays") or [])
     return f"{days or 'weekly'} at {data.get('local_time', '09:00')}"
 
@@ -1240,7 +1251,9 @@ def create_mcp_app(
         they confirm: a site path ending in {slug}, such as /answers/{slug}. Later approvals
         tell the adaptation to publish at that route, adding a minimal route once if the site
         has none. With delivery set to commit to main, Tin merges a pull request that adds the
-        page at this route when GitHub reports it clean. Reuse request_id when retrying.
+        page at this route once the repository's required checks pass. An approved page that
+        waited for this route publishes after retry_content_delivery. Reuse request_id when
+        retrying.
         """
         from tin_lite.page_routes import PageRouteService
         from tin_lite.project_files import ProjectFileError
@@ -1358,7 +1371,7 @@ def create_mcp_app(
         project_id: str,
         expected_repository: str,
         repository_serves_site: StrictBool,
-        source: Literal["audit", "planned", "blog_index"] = "audit",
+        source: Literal["audit", "planned"] = "audit",
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         protected_paths: list[str] | None = None,
@@ -1368,8 +1381,7 @@ def create_mcp_app(
         Decisions. No run, paid compute, branch or pull request is created.
 
         source audit: the technical fixes the latest audit found. planned: the redirects and
-        noindex changes page decisions and the site architecture plan made. blog_index: the
-        newest content.blog_index plan, one change applied as it is.
+        noindex changes page decisions made.
 
         plan.repairs is what the next run makes, decisions_needed the judgment calls, and
         plan.left_out the rest (copy, manual steps such as deleting a page, declined rows,
@@ -1480,8 +1492,8 @@ def create_mcp_app(
 
         Does not approve a draft, change article bytes, merge, or publish. It runs no model,
         except for an answer page or public article whose adaptation could not start (for
-        example, too few credits): then it tries that metered adaptation again. Read
-        get_run.content_delivery for status and the confirmed PR link.
+        example, too few credits, or no chosen route yet): then it tries that metered
+        adaptation again. Read get_run.content_delivery for status and the confirmed PR link.
         """
         token = await caller()
         project = _mcp_uuid(project_id, field="project_id")
@@ -1496,118 +1508,8 @@ def create_mcp_app(
         except (LookupError, ValueError) as exc:
             raise ToolError(str(exc)) from exc
 
-    async def technical_fix_service(project_id: str, tool_name: str):
-        token = await caller()
-        parsed = _mcp_uuid(project_id, field="project_id")
-        await require_project(parsed, token, tool_name=tool_name)
-        services = runtime()
-        # The catalog's repair policy decides what the preview covers.
-        policy = technical_fix.current_policy()
-        return parsed, TechnicalFixSources(
-            database=services.database,
-            storage=services.storage,
-            integrations=services.integrations,
-            supported_checks=technical_fix.supported_checks(policy),
-            batch=technical_fix.batches(policy),
-        )
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def list_technical_fix_sources(project_id: str, offset: int = 0) -> dict[str, Any]:
-        """List successful audit references. Inspect a source to check finding eligibility."""
-        parsed, preparation = await technical_fix_service(project_id, "list_technical_fix_sources")
-        try:
-            return await preparation.list_sources(project_id=parsed, offset=offset)
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def get_technical_fix_source(project_id: str, audit_run_id: str) -> dict[str, Any]:
-        """Verify an exact audit and inspect repair availability. Does not start compute.
-
-        findings contains technical findings with source_eligible and ineligible_reason.
-        excluded_findings identifies content recommendations and their suggested next action.
-        Only source_eligible technical findings may be selected for organic.technical_fix.
-        """
-        parsed, preparation = await technical_fix_service(project_id, "get_technical_fix_source")
-        try:
-            return await preparation.inspect(
-                project_id=parsed, audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id")
-            )
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
-
-    @server.tool(annotations=ToolAnnotations(read_only_hint=True))
-    async def preflight_technical_fix(
-        project_id: str,
-        audit_run_id: str,
-        audit_revision: str,
-        expected_repository: str,
-        repository_serves_site: StrictBool,
-        finding_id: str = "",
-        decisions: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Read-only repair preview. No run, paid compute, branch or PR is created.
-
-        Under the current policy one technical fix repairs every fixable finding of the audit
-        in one PR. The preview sorts them: plan.repairs (in the PR), decisions_needed (judgment
-        calls), and plan.left_out (copy for the content workflows, manual steps, already fine).
-        Answer each decisions_needed item yourself from the codebase and what you know about
-        the product; ask the founder only the ones you're unsure of. Pass the answers as
-        decisions (["finding_id=choice", ...]) here to check them, then to start_workflow.
-        finding_id narrows the preview to one finding. repository_serves_site records a
-        member's assertion; the run pins its own binding. repository_warnings names files
-        Tin can't read (a source file over 2 MB, a link, a submodule): a run stops on them.
-        """
-        parsed, preparation = await technical_fix_service(project_id, "preflight_technical_fix")
-        if preparation.batch_mode:
-            try:
-                preview = await preparation.batch(
-                    project_id=parsed,
-                    audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id"),
-                    audit_revision=audit_revision,
-                    expected_repository=expected_repository,
-                    repository_serves_site=repository_serves_site,
-                    finding_ids=[finding_id] if finding_id else [],
-                    decisions=decisions or [],
-                    check_repository=True,
-                )
-            except TechnicalFixError as exc:
-                raise ToolError(f"{exc.code}: {exc}") from exc
-            summary = preview["summary"]
-            relay = [
-                f"Tin can fix {summary['fixable']} of this audit's findings in one pull request."
-            ]
-            if summary.get("decisions_needed"):
-                relay.append(
-                    f"{summary['decisions_needed']} more depend on a judgment call; answer "
-                    "them before starting."
-                )
-            if summary.get("copy"):
-                relay.append(
-                    f"{summary['copy']} are copy (titles, descriptions, content), left to the "
-                    "content workflows."
-                )
-            if summary.get("manual"):
-                relay.append(f"{summary['manual']} are manual steps outside the repository.")
-            relay.extend(preview.get("repository_warnings", []))
-            return {**preview, **_founder_words(relay=relay)}
-        try:
-            selection = TechnicalFixSelection(
-                audit_run_id=_mcp_uuid(audit_run_id, field="audit_run_id"),
-                audit_revision=audit_revision,
-                finding_id=finding_id,
-                expected_repository=expected_repository,
-                repository_serves_site=repository_serves_site,
-            )
-            return await preparation.preflight(
-                project_id=parsed, check_repository=True, **selection.model_dump()
-            )
-        except ValidationError as exc:
-            raise ToolError(
-                "invalid_selection: Choose an exact audit finding and repository."
-            ) from exc
-        except TechnicalFixError as exc:
-            raise ToolError(f"{exc.code}: {exc}") from exc
+    # organic.technical_fix is retired for new work; website.change (source audit) previews
+    # and records the same repairs with preflight_website_change.
 
     @server.tool()
     async def list_projects() -> list[dict[str, Any]]:
@@ -2028,7 +1930,8 @@ def create_mcp_app(
         workflows = [
             workflow
             for workflow in await services.database.list_workflows(project_id=parsed_project_id)
-            if workflow.status.value == "active"
+            if collection_visible(settings, workflow, parsed_project_id)
+            and workflow.status.value == "active"
             and (workflow.definition or {}).get("public_discovery", True)
             and (
                 workflow.project_id is None
@@ -2527,11 +2430,14 @@ def create_mcp_app(
         request_id: str,
         schedule: WorkflowSchedule | None = None,
     ) -> dict[str, Any]:
-        """Save reusable workflow inputs and an optional daily or weekly schedule.
+        """Save reusable workflow inputs and an optional daily, weekly or monthly schedule.
 
         schedule is {"cadence": "weekly", "weekdays": ["monday"], "local_time": "09:00",
-        "timezone": "America/New_York"} or {"cadence": "daily", "local_time": "09:00",
-        "timezone": "..."}; the workflow's schedule_modes must allow the cadence.
+        "timezone": "America/New_York"}, {"cadence": "daily", "local_time": "09:00",
+        "timezone": "..."} or {"cadence": "monthly", "day_of_month": 1, "local_time": "09:00",
+        "timezone": "..."}. A monthly schedule runs on day_of_month (1-28) of every month, or
+        only in `months` (1-12; [1, 4, 7, 10] is quarterly). The workflow's schedule_modes must
+        allow the cadence.
 
         A saved schedule also runs once right away, so the founder sees a result now rather
         than at the first slot; `first_run` has that run's id and status, or why it could not
@@ -2567,11 +2473,17 @@ def create_mcp_app(
             normalized_name = _mcp_project_workflow_name(name)
             parsed_schedule = _mcp_schedule(workflow.definition, schedule)
             require_saveable_schedule(parsed_schedule)
+            if workflow.executor == "connections.collect":
+                from tin_lite.connection_collection_connection import default_inputs
+
+                inputs = await default_inputs(services.database, parsed_project_id, inputs or {})
             normalized_inputs = normalize_workflow_inputs(
                 schema=schema,
                 project_id=parsed_project_id,
                 inputs=inputs,
             )
+            if workflow.executor == "connections.collect":
+                normalized_inputs = validate_collection_inputs(parsed_project_id, normalized_inputs)
             configured = await services.database.create_project_workflow(
                 project_id=parsed_project_id,
                 workflow_id=workflow.id,
@@ -2715,6 +2627,8 @@ def create_mcp_app(
                 project_id=parsed_project_id,
                 inputs=inputs,
             )
+            if getattr(workflow, "executor", None) == "connections.collect":
+                normalized_inputs = validate_collection_inputs(parsed_project_id, normalized_inputs)
             normalized_schedule = (
                 parsed_schedule.model_dump(mode="json") if parsed_schedule is not None else None
             )
@@ -3733,6 +3647,7 @@ def create_mcp_app(
         Send the complete new text of one or both files, not a patch. Tin checks them with the
         capture's own validators, replaces the proposal files and keeps the run waiting. Only
         that run's proposal files, only before the founder decides. Reuse request_id to retry.
+        `note` is a one-line summary of the change; Tin shortens a longer one to 500 characters.
         This never approves: the founder still approves or discards it in Decisions.
         """
         from tin_lite.capture_revisions import CaptureRevisions, review_view
@@ -3775,8 +3690,8 @@ def create_mcp_app(
         run: Any, chosen: dict[str, Any], actor: str
     ) -> tuple[list[str], dict[str, Any] | None]:
         """What the founder hears when approval starts a metered adaptation of the page."""
-        from tin_lite.content_delivery import about_usd, chosen_mode
-        from tin_lite.content_delivery_api import delivery_cost
+        from tin_lite.content_delivery import chosen_mode
+        from tin_lite.content_delivery_api import cost_about, delivery_cost
 
         cost = await delivery_cost(
             runtime=runtime(),
@@ -3785,30 +3700,26 @@ def create_mcp_app(
             actor=actor,
             repository=chosen["settings"]["repository"],
         )
-        about = about_usd(cost["estimated_usd"]) if cost else None
+        about = cost_about(cost)
         words = [
             "Approved. Tin is adapting the page to the site's own format in a separate run"
-            + (f", up to {about}, charged on actual usage." if about else ".")
+            + (f", {about}, charged on actual usage." if about else ".")
         ]
         route = chosen.get("route")
-        if chosen_mode(chosen) == "github_commit":
+        if not route:
             words.append(
-                "Tin merges its pull request into main when it adds only the page, or the page "
-                f"at your chosen route {route}, and GitHub reports it clean; otherwise the pull "
-                "request stays open and get_run says why."
-                if route
-                else "Tin merges its pull request into main when it adds only the page and "
-                "GitHub reports it clean; otherwise the pull request stays open and get_run "
-                "says why."
+                "No one has chosen where these pages live on the site yet, and Tin does not "
+                "guess, so the adaptation waits. Ask the founder now, with ask_the_founder, "
+                "save their answer with save_page_route, then call retry_content_delivery."
+            )
+        elif chosen_mode(chosen) == "github_commit":
+            words.append(
+                f"Tin merges its pull request into main once the repository's required checks "
+                f"pass, when it adds only the page at your chosen route {route}; a protected "
+                "page, or anything else, leaves the pull request open and get_run says why."
             )
         else:
             words.append("It opens a pull request; merge it when you like.")
-        if not route:
-            words.append(
-                "No one has chosen where these pages live on the site yet, so this adaptation "
-                "picks a route itself. Ask the founder now, with ask_the_founder, so later "
-                "pages use the route they choose."
-            )
         return words, cost
 
     @server.tool()
@@ -3854,17 +3765,21 @@ def create_mcp_app(
         """Approve one review-gated workflow artifact for an accessible Tin project.
 
         For a content draft (answer page, article, content program draft) `delivery` says how
-        the approved draft ships: github_pr opens a pull request, github_commit publishes to the
-        default branch now, none keeps it in Tin; `remember` makes it the program's default.
-        Without `delivery` the program's setting applies. Tell the founder the result's
-        `relay` in your words.
+        the approved draft ships: github_pr opens a pull request, github_commit asks Tin to
+        merge it, none keeps it in Tin; `remember` makes it the program's default. Without
+        `delivery` the program's setting applies; a page outside a saved workflow stays in
+        Tin, like none. Tell the founder the result's `relay` in your words.
 
-        An answer page or public article with a GitHub repository is not committed as-is:
-        approving with github_pr or github_commit starts a separately metered adaptation
-        (content.deliver, charged on actual usage; `delivery_cost` is its configured
-        preview) that fits the page into the site's own format and opens a pull request.
-        With github_commit, Tin then merges that pull request itself when it adds only the
-        page and GitHub reports it clean; otherwise it stays open and get_run says why.
+        A planned article, answer page or public article with a GitHub repository is not
+        committed as-is: approving with github_pr or github_commit starts a separately
+        metered adaptation (website.change, charged on actual usage; `delivery_cost` is its
+        configured preview) that fits the page into the site's own format and opens a pull
+        request: an answer page or public article at the route the founder chose, a planned
+        article at the address its plan item names. With github_commit, Tin then merges that
+        pull request once the site's build (its deploy preview, else its CI) and the
+        repository's required checks pass, unless the page is
+        protected; otherwise it stays open and get_run says why. A page refresh changes
+        exactly its approved lines instead.
         get_run.delivery_preview shows what Publish does before you approve.
 
         For reviewed project documents, first get_workflow_review, read both proposed files,
@@ -4256,31 +4171,7 @@ def create_mcp_app(
             else {}
         )
         draft_preparation = {}
-        if (
-            parsed_project_id is not None
-            and workflow.key == "content.deliver"
-            and workflow.project_id is None
-        ):
-            from tin_lite.content_repository_delivery import discover
-
-            draft_preparation = {
-                "preparation": {
-                    **await discover(runtime().database, parsed_project_id),
-                    "instruction": "Choose an approved article, answer page or public article "
-                    "by title from preparation.articles in this response. If empty, ask the "
-                    "user to review an existing draft in "
-                    "Decisions first; do not generate another article just to deliver it. "
-                    "Use get_run to check the selected approval, and get_integration(infra.github) "
-                    "to confirm the website repository; never infer it from the product name. "
-                    "Start content.deliver with source_run_id and expected_repository "
-                    "through the ordinary quote/start flow. Do not approve an existing draft "
-                    "merely to test delivery. No format choice is needed. "
-                    "This adapts the approved copy, not a new draft, and opens an unmerged PR. "
-                    "If delivery fails, retry_content_delivery reconciles a saved patch without "
-                    "another model purchase; reuse request_id for ambiguous starts. "
-                    "WordPress/CMS publication is not part of this GitHub workflow.",
-                }
-            }
+        # content.deliver is retired for new work: website.change's preparation covers pages.
         if (
             parsed_project_id is not None
             and workflow.key == "website.change"
@@ -4321,10 +4212,10 @@ def create_mcp_app(
                     "pages in preparation.protected_paths, the PR waits for the founder. To "
                     "protect more pages, such as ones another app shares, ask the founder and "
                     "call set_protected_paths. Never approve a draft just to publish it. For "
-                    "the technical fixes the latest audit found (source audit), the URL "
-                    "changes page decisions and the site plan made (planned) or the blog index "
-                    "plan (blog_index), call preflight_website_change first, then start "
-                    "website.change with that source, repository_serves_site and any answered "
+                    "the technical fixes the latest audit found (source audit) or the URL "
+                    "changes page decisions made (planned), call preflight_website_change "
+                    "first, then start website.change with that source, "
+                    "repository_serves_site and any answered "
                     "decisions; changes the founder approved (in Decisions, or "
                     "approve_website_change) publish, the rest open a PR. Deleting a page stays "
                     "with the founder.",
@@ -4781,7 +4672,9 @@ def create_mcp_app(
                 connections.get(definition.key),
                 configured=service.is_configured(definition.key),
             )
-            for definition in service.definitions(connections.values())
+            for definition in service.definitions(
+                connections.values(), project_id=parsed_project_id
+            )
         ]
 
     @server.tool()
@@ -4807,7 +4700,11 @@ def create_mcp_app(
 
     @server.tool()
     async def get_integration(project_id: str, provider_key: str) -> dict[str, Any]:
-        """Read one project integration and its granted Tin capabilities."""
+        """Read one project integration and its granted Tin capabilities.
+
+        `ready` is true once it is connected and its Search Console property, repository or
+        PostHog project is chosen; until then `next_action` says what the founder does.
+        """
         values = await list_integrations(project_id)
         value = next((item for item in values if item["key"] == provider_key), None)
         if value is None:

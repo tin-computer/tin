@@ -11,6 +11,14 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy, WorkflowIDReusePolicy
 from temporalio.exceptions import ApplicationError, WorkflowAlreadyStartedError
 
+# One compute activity must outlive its sandbox: procedures may declare up to 7,200 s
+# (procedures.MAX_SANDBOX_TIMEOUT_SECONDS) and design/task sandboxes use the configured
+# TIN_LITE_SANDBOX_TIMEOUT, at most 7,200 s. Heartbeats still detect a lost worker in
+# 20 s, and a retry recovers a checkpoint; it never buys the model work again. Changing
+# activity timeouts changes no workflow command, so recorded histories still replay.
+COMPUTE_START_TO_CLOSE = timedelta(hours=3)
+COMPUTE_SCHEDULE_TO_CLOSE = timedelta(hours=6)
+
 
 async def execute_project_codex(
     run_id: str,
@@ -91,7 +99,8 @@ async def execute_codex_slice(payload: dict[str, str], *, cancellable: bool = Fa
         await workflow.execute_activity(
             "execute_code_workflow",
             run_id,
-            start_to_close_timeout=timedelta(minutes=4),
+            # Above a package's 900-second window plus sandbox setup and result storage.
+            start_to_close_timeout=timedelta(minutes=20),
             heartbeat_timeout=timedelta(seconds=20),
             retry_policy=RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(seconds=10)),
             **options,
@@ -101,8 +110,8 @@ async def execute_codex_slice(payload: dict[str, str], *, cancellable: bool = Fa
         return await workflow.execute_activity(
             "run_project_task_turn",
             {"run_id": run_id, "turn_number": payload["turn_number"]},
-            start_to_close_timeout=timedelta(hours=2),
-            schedule_to_close_timeout=timedelta(hours=4),
+            start_to_close_timeout=COMPUTE_START_TO_CLOSE,
+            schedule_to_close_timeout=COMPUTE_SCHEDULE_TO_CLOSE,
             heartbeat_timeout=timedelta(seconds=20),
             retry_policy=RetryPolicy(maximum_attempts=3, maximum_interval=timedelta(seconds=10)),
             **options,
@@ -119,8 +128,8 @@ async def execute_codex_slice(payload: dict[str, str], *, cancellable: bool = Fa
     await workflow.execute_activity(
         "persist_design_artifact" if kind == "design" else "persist_codex_procedure_artifact",
         run_id,
-        start_to_close_timeout=timedelta(minutes=20) if kind == "design" else timedelta(hours=2),
-        schedule_to_close_timeout=timedelta(minutes=40) if kind == "design" else timedelta(hours=4),
+        start_to_close_timeout=COMPUTE_START_TO_CLOSE,
+        schedule_to_close_timeout=COMPUTE_SCHEDULE_TO_CLOSE,
         heartbeat_timeout=timedelta(seconds=20),
         retry_policy=RetryPolicy(
             maximum_attempts=5 if kind == "design" else 3,

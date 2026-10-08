@@ -176,9 +176,9 @@ INPUTS = {
 }
 
 
-async def snapshot(monkeypatch, inputs=INPUTS, files=None, **overrides):
+async def snapshot(monkeypatch, inputs=INPUTS, files=None, connections=None, **overrides):
     module = load(KEY, monkeypatch)
-    ctx = context(files=files, services=providers(**overrides))
+    ctx = context(files=files, services=providers(**overrides), connections=connections)
     result = await module.run(ctx, dict(inputs))
     spec = validate_code_definition(definition(KEY))
     validate_code_result(json.dumps(result).encode(), spec)
@@ -197,6 +197,11 @@ def test_manifest_fits_the_code_contract_and_the_eight_call_limit():
     spec = validate_code_definition(definition(KEY))
     assert spec.output_path == "analytics/traffic-snapshot.json"
     assert spec.model_routes == ()  # numbers only, no model
+    # Search Console is required; PostHog is optional, so a site without it still runs.
+    required = {
+        r["provider_key"]: r["required"] for r in definition(KEY)["integration_requirements"]
+    }
+    assert required == {"analytics.gsc": True, "analytics.posthog": False}
     services = definition(KEY)["code"]["services"]
     assert {name: b["max_calls"] for name, b in services.items()} == {"gsc": 4, "posthog": 4}
     assert sum(binding["max_calls"] for binding in services.values()) <= 8
@@ -347,7 +352,8 @@ async def test_sessions_are_counted_by_posthog_session_not_by_person(monkeypatch
         assert "NOT match(" in query and "northpine\\\\.example" in query  # team exclusion
         assert len(query.encode()) <= 8000 and query.rstrip().split()[-2] == "LIMIT"
     for step in ("P1", "P2", "P4"):
-        assert f"= '{SITE}'" in queries[step]  # host scope on every pageview read
+        # Host scope on every pageview read, in both spellings: page keys drop www.
+        assert f"IN ('{SITE}', 'www.{SITE}')" in queries[step]
 
 
 async def test_worst_case_queries_fit_posthogs_8000_byte_limit(monkeypatch):
@@ -466,6 +472,49 @@ async def test_unusable_posthog_rows_leave_visits_unmeasured(monkeypatch):
     assert "Landing pages are unknown this week." in readout(data)
 
 
+@pytest.mark.parametrize("state", ["not_connected", "needs_attention"])
+async def test_without_posthog_the_snapshot_is_search_only(monkeypatch, state):
+    data, ctx = await snapshot(monkeypatch, connections={"posthog": state})
+    # Only Search Console is read, and a missing optional connection is not a partial run.
+    assert [c["step"] for c in ctx.services.calls] == ["G1", "G2", "G3", "G4"]
+    assert [c["step"] for c in data["calls"]] == ["G1", "G2", "G3", "G4"]
+    assert data["status"] == "complete" and data["status_reasons"] == []
+    assert data["definitions"]["sources"] == {"search_console": "connected", "posthog": state}
+    totals = data["totals"]
+    assert totals["search"]["current"][:2] == [280, 2800]
+    assert totals["visits"]["current"]["sessions"] is None  # unknown, never zero
+    assert totals["signups"]["current"] is None and totals["reading"]["reads"] is None
+    home = by_page(data)[f"{SITE}/"]
+    assert home["search"]["branded_clicks"] == 120
+    assert home["visits"]["current"]["sessions"] is None
+    assert home["signups"]["first_touch"] == [None, None]
+    text = readout(data)
+    assert text.startswith("# Search this week")
+    assert "PostHog is not read." in text and "## Search" in text
+    for heading in ("## Where people came from", "## Content", "## Landing pages", "## Paid"):
+        assert heading not in text
+    assert "signed up" not in text and "Signups are unknown" not in text
+    if state == "not_connected":
+        assert "PostHog is not connected, so this readout covers search only" in text
+    else:
+        assert "PostHog needs attention in Integrations" in text
+
+
+async def test_without_posthog_a_falling_page_still_routes_to_content_refresh(monkeypatch):
+    current = gsc([page("/", 150, 1500, 2.0), page("/blog/invoice-template", 30, 1200)])
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"}, G2=current)
+    text = readout(data)
+    assert "**Refresh a falling page.** Evidence: /blog/invoice-template: 30" in text
+    assert "Measure AI visibility again" not in text  # AI referrals come from PostHog
+
+
+async def test_without_posthog_no_search_data_keeps_the_previous_snapshot(monkeypatch):
+    failed = ValueError("Search Console refused the read")
+    overrides = {step: failed for step in ("G1", "G2", "G3", "G4")}
+    with pytest.raises(RuntimeError, match="previous snapshot stays"):
+        await snapshot(monkeypatch, connections={"posthog": "not_connected"}, **overrides)
+
+
 async def test_contract_errors_fail_the_run(monkeypatch):
     error = ValueError("The service request differs from its declared contract: bad argument.")
     with pytest.raises(ValueError, match="declared contract"):
@@ -525,3 +574,176 @@ async def test_qualification_cases_pass_on_their_fixtures(monkeypatch):
         result = await module.run(context(services=providers(**overrides)), dict(case.inputs))
         report = assess_output(case, status="succeeded", content=result["content"].encode())
         assert report["status"] == "passed", (case.id, report["checks"])
+
+
+def weekly_daily(totals, last=LAST, days=363):
+    """Daily rows whose seven-day weeks, newest first, sum to `totals`; earlier days get 10."""
+    rows = []
+    for i in range(days):
+        week, offset = divmod(i, 7)
+        if week < len(totals):
+            clicks = totals[week] // 7 + (totals[week] % 7 if offset == 0 else 0)
+        else:
+            clicks = 10
+        rows.append(
+            {
+                "keys": [str(last - dt.timedelta(days=i))],
+                "clicks": clicks,
+                "impressions": clicks * 12,
+                "position": 9.0,
+            }
+        )
+    return gsc(rows)
+
+
+async def test_a_realistic_query_read_fits_the_binding_and_completes(monkeypatch):
+    """500 page × search rows overflowed the old 64000-byte bound on every real run."""
+    from tin_lite.integrations import _fit_search_console_rows
+
+    module = load(KEY, monkeypatch)
+    long_paths = [f"/blog/how-to-edit-text-in-images-without-photoshop-part-{i}" for i in range(30)]
+    rows = [
+        {
+            "keys": [f"https://www.{SITE}{path}", f"edit text in image without photoshop {j}"],
+            "clicks": 1,
+            "impressions": 20,
+            "ctr": 0.05,
+            "position": 12.333333333333334,
+        }
+        for path in long_paths
+        for j in range(15)
+    ]
+    bound = definition(KEY)["code"]["services"]["gsc"]["max_response_bytes"]
+    payload = {"rows": rows, "responseAggregationType": "byPage"}
+    fitted = _fit_search_console_rows(
+        payload, max_response_bytes=bound, start_row=0, clamped=False, sent_limit=module.G4_ROWS
+    )
+    assert "truncated" not in fitted and len(fitted["rows"]) == 450
+    old = _fit_search_console_rows(
+        payload, max_response_bytes=64000, start_row=0, clamped=False, sent_limit=500
+    )
+    assert old["truncated"] and len(old["rows"]) < 450  # what production saw
+    # A row ran about 200 bytes: the full G4 page fits the bound.
+    assert module.G4_ROWS * 220 <= bound
+
+    current = gsc([page(path, 15, 300, 6.0) for path in long_paths])
+    data, ctx = await snapshot(
+        monkeypatch, connections={"posthog": "not_connected"}, G2=current, G4=fitted
+    )
+    g4 = next(c for c in ctx.services.calls if c["step"] == "G4")
+    assert g4["arguments"]["row_limit"] == module.G4_ROWS
+    assert {c["step"]: c["outcome"] for c in data["calls"]}["G4"] == "ok"
+    assert data["status"] == "complete"
+    assert data["totals"]["search"]["hidden_clicks"] is not None
+
+
+async def test_the_query_read_matches_each_page_in_both_host_spellings(monkeypatch):
+    _, ctx = await snapshot(monkeypatch)
+    g4 = next(c for c in ctx.services.calls if c["step"] == "G4")
+    expression = g4["arguments"]["dimension_filters"][0]["expression"]
+    match = re.compile(expression)
+    assert match.search(f"https://www.{SITE}/")
+    assert match.search(f"https://{SITE}/?ref=newsletter")
+    assert match.search(f"https://{SITE}/pricing/")
+    # Anchored: the home page no longer pulls in every URL on the site.
+    assert not match.search(f"https://{SITE}/pricing-old")
+    assert not match.search(f"https://{SITE}/careers")
+
+
+async def test_week_to_week_swings_are_not_called_a_change(monkeypatch):
+    """A site whose weeks swing widely: 790 against 636 is ordinary for it, not a change."""
+    swings = [790, 636, 962, 773, 553, 582, 641, 597, 529, 700, 680, 720]
+    data, _ = await snapshot(
+        monkeypatch, connections={"posthog": "not_connected"}, G1=weekly_daily(swings)
+    )
+    text = readout(data)
+    assert "790 search clicks this week against 636" in text
+    assert "within normal variation" in text
+    assert "more than normal weekly variation" not in text
+    assert "search clicks 790 vs 636: dispersion φ = " in text and "11 earlier weeks" in text
+    assert data["growth"]["calls"]["search clicks"] == "within normal variation"
+
+
+async def test_a_real_jump_is_still_called_in_plain_words(monkeypatch):
+    """A small site: 76 against 26 after weeks of about 25 is a change."""
+    jump = [76, 26, 22, 28, 25, 12, 20, 24, 22, 26, 23, 25]
+    data, _ = await snapshot(
+        monkeypatch, connections={"posthog": "not_connected"}, G1=weekly_daily(jump)
+    )
+    text = readout(data)
+    head = text.split("\n")[2]
+    assert "up 192%, more than normal weekly variation" in head
+    assert "adjusted p" not in text and "change (up)" not in text
+    assert "Beyond normal variation: search clicks 76 vs 26 (up 192%" in head
+    assert "p < 0.001 after Holm" in text  # the p-value stays in the data notes
+    assert data["growth"]["calls"]["search clicks"] == "change (up)"  # stored state
+
+
+async def test_without_four_earlier_weeks_the_test_says_so(monkeypatch):
+    data, _ = await snapshot(
+        monkeypatch, connections={"posthog": "not_connected"}, G1=weekly_daily([90, 40], days=20)
+    )
+    assert "fewer than 4 earlier weeks; φ = 1" in readout(data)
+
+
+async def test_no_decision_reads_as_a_sentence(monkeypatch):
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"})
+    head = readout(data).split("\n")[2]
+    assert head.endswith("Nothing needs a decision this week.")
+    assert "0 things" not in readout(data)
+
+
+async def test_partial_months_are_marked(monkeypatch):
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"})
+    months = {m["month"]: m for m in data["search_months"]}
+    assert months["2026-09"]["partial"] == "end"
+    assert months["2026-09"]["from"] == "2026-09-01" and months["2026-09"]["to"] == "2026-09-26"
+    assert months["2026-08"]["partial"] is None and months["2026-08"]["days"] == 31
+    assert "2026-09 260 clicks (1 Sep–26 Sep, 26 days so far)" in readout(data)
+    assert "2026-08 310 clicks," in readout(data)
+    module = load(KEY, monkeypatch)
+    assert module.month_end("2028-02") == dt.date(2028, 2, 29)
+    assert module.month_end("2026-12") == dt.date(2026, 12, 31)
+
+
+async def test_the_www_spelling_is_the_same_page_not_a_new_one(monkeypatch):
+    current = gsc(
+        [
+            page("/", 150, 1500, 2.0),
+            {"keys": [f"https://www.{SITE}/"], "clicks": 1, "impressions": 2, "position": 3.0},
+            page("/blog/invoice-template", 100, 1200),
+        ]
+    )
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"}, G2=current)
+    pages = by_page(data)
+    assert f"www.{SITE}/" not in pages
+    home = pages[f"{SITE}/"]
+    assert home["search"]["current"][:2] == [151, 1502]
+    assert home["variants"] == 2 and "new_in_search" not in home["flags"]
+    assert f"www.{SITE}" not in readout(data)
+
+
+async def test_a_spaced_or_dotted_brand_search_counts_as_branded(monkeypatch):
+    queries = gsc(
+        [
+            query("/", "north pine.example", 50, 400),
+            query("/", "North-Pine invoices", 30, 300),
+            query("/", "invoice app", 10, 300),
+        ]
+    )
+    data, _ = await snapshot(monkeypatch, connections={"posthog": "not_connected"}, G4=queries)
+    home = by_page(data)[f"{SITE}/"]
+    assert home["search"]["branded_clicks"] == 80
+    assert data["definitions"]["brand_compact"] == ["northpine"]
+    # A plain-word input term matches the same way; a regular expression still works.
+    plain = {"website_hosts": [SITE], "brand_terms": ["North Pine"]}
+    data, _ = await snapshot(
+        monkeypatch, inputs=plain, connections={"posthog": "not_connected"}, G4=queries
+    )
+    assert by_page(data)[f"{SITE}/"]["search"]["branded_clicks"] == 80
+    pattern = {"website_hosts": [SITE], "brand_terms": [r"north\s?pine"]}
+    data, _ = await snapshot(
+        monkeypatch, inputs=pattern, connections={"posthog": "not_connected"}, G4=queries
+    )
+    assert data["definitions"]["brand_compact"] == []
+    assert by_page(data)[f"{SITE}/"]["search"]["branded_clicks"] == 50

@@ -42,6 +42,8 @@
     <script src="/assets/pierre-trees.js?v={{ASSET_VERSION}}" defer></script>
     <script src="/assets/diagram-loader.js?v={{ASSET_VERSION}}" defer></script>
     <script src="/assets/diagram-viewport.js?v={{ASSET_VERSION}}" defer></script>
+    <script src="/assets/workflow-spine.js?v={{ASSET_VERSION}}" defer></script>
+    <script src="/assets/system-week.js?v={{ASSET_VERSION}}" defer></script>
     <script src="/assets/markdown-viewer.js?v={{ASSET_VERSION}}" defer></script>
     <script src="/assets/delimited-viewer.js?v={{ASSET_VERSION}}" defer></script>
     <script src="/assets/json-viewer.js?v={{ASSET_VERSION}}" defer></script>
@@ -219,6 +221,7 @@
           <p id="integration-project-copy">Connections belong to one Tin project.</p>
         </header>
         <div id="integration-project-options" class="integration-project-options" role="radiogroup" aria-label="Tin project"></div>
+        <p id="integration-project-error" class="integration-setup-prompt integration-project-error" role="alert" hidden></p>
         <footer>
           <button class="button-quiet" type="button" data-cancel-integration-project>Cancel</button>
           <button class="button" type="submit" data-confirm-integration-project>Continue</button>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -53,6 +54,7 @@ from tin_lite.integrations import (
     parse_integration_requirements,
     registered_integrations,
 )
+from tin_lite.repository_limits import snapshot_reader
 
 PROJECT_ID = UUID("00000000-0000-4000-8000-0000000000aa")
 RUN_ID = UUID("00000000-0000-4000-8000-0000000000bb")
@@ -541,6 +543,11 @@ async def test_search_console_bound_clamps_trims_and_points_to_the_next_page() -
         assert page["rows"] == rows[: len(page["rows"])]
         assert 200 < len(page["rows"]) < sent[-1]["rowLimit"]
         assert page["next_start_row"] == len(page["rows"])
+
+        # The largest binding still asks Google for no more than the rows it can return,
+        # and never past Search Console's own 25,000-row maximum.
+        await read(dimensions=("query", "page"), row_limit=25_000, max_response_bytes=1_000_000)
+        assert sent[-1]["rowLimit"] == 1_000_000 // GSC_MIN_ROW_BYTES < 25_000
 
         following = await read(
             dimensions=("query", "page"),
@@ -1671,6 +1678,41 @@ def bundle_args(key: str = "run-9:procedure-repository") -> dict:
     return {"project_id": PROJECT_ID, "run_id": RUN_ID, "execution_key": key}
 
 
+async def test_only_two_repository_snapshots_are_built_at_once(monkeypatch):
+    # Snapshots are built on the switchboard's small disk; a third waits for a slot, and each
+    # archive stays in its temporary file rather than in memory.
+    files = {"README.md": b"# Site\n"}
+    github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], github_tarball(files))
+    async with repository_service(monkeypatch, github) as service:
+        inside, peak, release = 0, 0, asyncio.Event()
+        download = service._github_tarball
+
+        async def slow(*args, **kwargs):
+            nonlocal inside, peak
+            inside += 1
+            peak = max(peak, inside)
+            try:
+                await release.wait()
+                return await download(*args, **kwargs)
+            finally:
+                inside -= 1
+
+        monkeypatch.setattr(service, "_github_tarball", slow)
+        runs = [
+            asyncio.create_task(service.github_repository_bundle(**bundle_args(f"run-{n}:repo")))
+            for n in range(3)
+        ]
+        await asyncio.sleep(0.1)
+        assert inside == 2
+        release.set()
+        bundles = await asyncio.gather(*runs)
+    assert peak == 2
+    for bundle in bundles:
+        assert not isinstance(bundle.archive, bytes)
+        with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
+            assert archive.extractfile("README.md").read() == files["README.md"]
+
+
 @pytest.mark.asyncio
 async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path) -> None:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -1749,7 +1791,7 @@ async def test_github_repository_bundle_is_pinned_bounded_and_tokenless(tmp_path
     assert bundle.head_sha == head_sha
     assert bundle.file_count == 2
     assert bundle.complete is False  # The excluded symlink prevents a complete build proof.
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == [".github/workflows/ci.yml", "src/index.html"]
         assert archive.extractfile("src/index.html").read() == files["src/index.html"]
     # One tarball download; the signed codeload URL never receives the installation token.
@@ -2936,7 +2978,7 @@ async def test_github_commit_adapter_writes_several_files_as_one_commit(tmp_path
         (50, 1, True),  # At the (lowered) file cap.
         (51, 0, False),
         (40, 2_000_000, True),  # 80 MB of eligible files.
-        (51, 2_000_000, False),  # Over the 100 MB byte cap.
+        (45, 2_400_000, False),  # Over the (lowered) 100 MB byte cap.
     ],
 )
 async def test_repository_bundle_bounds_apply_to_every_workspace(
@@ -2945,10 +2987,11 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
     from tin_lite import integrations
 
     assert (integrations.REPOSITORY_MAX_FILES, integrations.REPOSITORY_MAX_BYTES) == (
-        20_000,
-        100_000_000,
+        100_000,
+        250_000_000,
     )
     monkeypatch.setattr(integrations, "REPOSITORY_MAX_FILES", 50)
+    monkeypatch.setattr(integrations, "REPOSITORY_MAX_BYTES", 100_000_000)
     content = b"x" * file_bytes
     files = {f"src/file-{index}.txt": content for index in range(file_count)}
     tree = [tree_entry(path, content) for path in files]
@@ -2958,7 +3001,7 @@ async def test_repository_bundle_bounds_apply_to_every_workspace(
             bundle = await service.github_repository_bundle(**bundle_args())
             assert bundle.file_count == file_count and bundle.complete
             assert not github.paths("/git/blobs/")
-            with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+            with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
                 members = archive.getmembers()
                 assert len(members) == file_count
                 assert sum(member.size for member in members) == file_count * file_bytes
@@ -2979,7 +3022,7 @@ async def test_repository_bundle_reads_export_ignored_and_rewritten_files_by_blo
     github = RepositoryGitHub(tree, tarball, blobs=blobs)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert {name: archive.extractfile(name).read() for name in archive.getnames()} == files
     assert len(github.paths("/git/blobs/")) == 2
 
@@ -3043,7 +3086,7 @@ async def test_repository_bundle_ignores_members_outside_the_pinned_tree(monkeyp
     github = RepositoryGitHub([tree_entry("README.md", files["README.md"])], tarball)
     async with repository_service(monkeypatch, github) as service:
         bundle = await service.github_repository_bundle(**bundle_args())
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == ["README.md"]
 
 
@@ -3052,12 +3095,13 @@ def large(path: str, size: int) -> dict:
     return {**tree_entry(path, path.encode()), "size": size}
 
 
-# tin-web's three files over 2 MB stopped technical fix runs 43b99efd and 721f6a8d and
-# refresh aaffdb5a; none of them can hold what a fix edits.
+# tin-web's three files over the old 2 MB limit stopped technical fix runs 43b99efd and
+# 721f6a8d and refresh aaffdb5a; none of them can hold what a fix edits. Sizes are raised
+# past today's 10 MB limit so the snapshot still leaves them out.
 SITE_MEDIA = [
-    large("public/euphony/assets/main-LKI_ICf3.js", 2_678_607),
-    large("public/scan-mocks/seaweedindex.com.png", 3_787_015),
-    large("public/opensource/hero.mp4", 3_378_075),
+    large("public/euphony/assets/main-LKI_ICf3.js", 12_678_607),
+    large("public/scan-mocks/seaweedindex.com.png", 13_787_015),
+    large("public/opensource/hero.mp4", 13_378_075),
 ]
 
 
@@ -3105,7 +3149,7 @@ async def test_repository_bundle_leaves_out_large_media_and_stays_complete(monke
         "public/scan-mocks/seaweedindex.com.png": "image",
         "public/opensource/hero.mp4": "video",
     }
-    with tarfile.open(fileobj=io.BytesIO(bundle.archive), mode="r:gz") as archive:
+    with tarfile.open(fileobj=snapshot_reader(bundle.archive), mode="r:gz") as archive:
         assert archive.getnames() == ["app/page.tsx", "public/robots.txt"]
     # The read's own receipt says exactly what was left out, and why.
     summary = receipt.response_summary
@@ -3126,7 +3170,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
     tree = [
         tree_entry("app/page.tsx", files["app/page.tsx"]),
         *SITE_MEDIA,
-        large("src/data/posts.json", 2_400_000),
+        large("src/data/posts.json", 12_400_000),
         {"type": "commit", "mode": "160000", "path": "content", "sha": "c" * 40},
     ]
     github = RepositoryGitHub(tree, github_tarball(files))
@@ -3135,7 +3179,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
         summary = service._database.call_receipts["run-9:procedure-repository"].response_summary
     assert bundle.complete is False
     assert bundle.missing == (
-        {"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},
+        {"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},
         {"path": "content", "size": None, "reason": "submodule"},
     )
     assert len(bundle.skipped) == 3
@@ -3145,7 +3189,7 @@ async def test_a_large_source_file_still_makes_the_snapshot_incomplete(monkeypat
     from tin_lite.repository_limits import describe_omissions
 
     assert describe_omissions(bundle.missing) == (
-        "src/data/posts.json (2.4 MB, over the 2 MB limit for files Tin reads); "
+        "src/data/posts.json (12.4 MB, over the 10 MB limit for files Tin reads); "
         "content (a Git submodule)"
     )
 
@@ -3156,7 +3200,7 @@ async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
     tree = [
         tree_entry("app/page.tsx", b"export default 1;\n"),
         *SITE_MEDIA,
-        large("src/data/posts.json", 2_400_000),
+        large("src/data/posts.json", 12_400_000),
     ]
     github = RepositoryGitHub(tree, b"")
     async with repository_service(monkeypatch, github) as service:
@@ -3170,7 +3214,7 @@ async def test_preflight_lists_only_the_files_a_run_would_stop_on(monkeypatch):
         stale = GitHubRepositoryBinding(uuid4(), 42, 7, "example-org/site", "main", "a" * 40)
         with pytest.raises(IntegrationAuthorizationError, match="connection changed"):
             await service.github_repository_missing_files(project_id=PROJECT_ID, binding=stale)
-    assert missing == ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
+    assert missing == ({"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},)
     # One tree read: nothing is downloaded and nothing is receipted.
     assert not github.paths("/tarball/") and not service._database.call_receipts
 
@@ -3966,3 +4010,98 @@ async def test_disconnect_google_ads_is_authoritative_when_google_is_down() -> N
     service.google_ads._sleep = no_sleep
     assert await service.disconnect(project_id=PROJECT_ID, provider_key=ADS_PROVIDER) is True
     assert (PROJECT_ID, ADS_PROVIDER) not in database.connections
+
+
+@pytest.mark.parametrize(
+    ("provider", "configuration", "site_url", "ready", "reason"),
+    [
+        ("analytics.gsc", {"selected_site_url": None}, None, False, "selection_required"),
+        ("analytics.gsc", {"selected_site_url": "sc-domain:acme.example"}, None, True, None),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:acme.example"},
+            "https://www.acme.example/",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "https://acme.example/"},
+            "https://acme.example",
+            True,
+            None,
+        ),
+        (
+            "analytics.gsc",
+            {"selected_site_url": "sc-domain:other.example"},
+            "https://acme.example",
+            False,
+            "property_mismatch",
+        ),
+        ("infra.github", {}, None, False, "selection_required"),
+        ("infra.github", {"selected_repository": "acme/site"}, None, True, None),
+        ("analytics.posthog", {}, None, False, "selection_required"),
+        ("workspace.google", {}, "https://acme.example", True, None),
+    ],
+)
+def test_connection_readiness_needs_the_chosen_resource(
+    provider, configuration, site_url, ready, reason
+) -> None:
+    from tin_lite.integrations import connection_readiness
+
+    connection = SimpleNamespace(
+        provider_key=provider, status="connected", configuration=configuration
+    )
+    result = connection_readiness(connection, site_url=site_url)
+    assert (result["ready"], result["reason"]) == (ready, reason)
+    assert (result["next_action"] is None) is ready
+
+
+def test_connection_readiness_of_a_missing_or_broken_connection() -> None:
+    from tin_lite.integrations import connection_readiness
+
+    assert connection_readiness(None)["reason"] == "not_connected"
+    broken = SimpleNamespace(
+        provider_key="analytics.gsc",
+        status="needs_attention",
+        configuration={"selected_site_url": "sc-domain:acme.example"},
+    )
+    assert connection_readiness(broken)["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_disconnecting_google_deletes_the_credential_without_revoking_the_shared_grant() -> (
+    None
+):
+    database = FakeIntegrationDatabase()
+    seen: list[str] = []
+
+    async def google(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.path)
+        if request.url.path == "/token":
+            return httpx.Response(
+                200,
+                json={
+                    "refresh_token": "refresh-secret",
+                    "scope": "https://www.googleapis.com/auth/webmasters.readonly",
+                },
+            )
+        raise AssertionError(f"unexpected provider request {request.url}")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(google)) as client:
+        service = IntegrationService(
+            database=database,  # type: ignore[arg-type]
+            settings=settings(),  # type: ignore[arg-type]
+            client=client,
+        )
+        started = await service.start_connect(
+            project_id=PROJECT_ID, provider_key=GSC_PROVIDER, clerk_user_id=USER_ID
+        )
+        state = parse_qs(urlsplit(started.authorization_url).query)["state"][0]
+        await service.complete_google(state=state, code="one-time-code", clerk_user_id=USER_ID)
+        seen.clear()
+        assert await service.disconnect(project_id=PROJECT_ID, provider_key=GSC_PROVIDER)
+
+    # Revoking any token would end the founder's grant for every project on that account.
+    assert seen == []
+    assert (PROJECT_ID, GSC_PROVIDER) not in database.connections

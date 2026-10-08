@@ -69,6 +69,48 @@ class TemporalStartError(RuntimeError):
         self.run_id = run_id
 
 
+# Workflows retired for new work, with where the work goes instead.
+RETIRED = {
+    # website.change (source audit) runs the same repair with a founder decision per fix.
+    technical_fix.KEY: (
+        "organic.technical_fix is retired. Fix an audit's findings with website.change: "
+        "call preflight_website_change (source audit), let the founder approve the changes, "
+        "then start website.change with source audit."
+    ),
+    # Its triggers repeated the audit's orphan and competing-page checks, and nothing read
+    # its page tree, URL rules or navigation; page decisions plan redirects and noindex.
+    "organic.site_architecture": (
+        "organic.site_architecture is retired. The organic audit reports orphaned, deep and "
+        "competing pages, and page decisions (organic.content_efficacy) plan the redirects "
+        "and noindex changes website.change makes with source planned."
+    ),
+    # website.change adds each new article to the site's own index.
+    "content.blog_index": (
+        "content.blog_index is retired. website.change adds each published article to the "
+        "site's own index, and the organic audit reports posts nothing links to."
+    ),
+    # website.change (source content_draft) adapts the same approved page, with protected
+    # pages and the required-checks merge rule; approvals start it.
+    "content.deliver": (
+        "content.deliver is retired. Put an approved page on the site with website.change: "
+        "start it with source content_draft, source_run_id and expected_repository."
+    ),
+}
+RETIRED_WEBSITE_SOURCES = {
+    "blog_index": (
+        "website.change no longer builds blog index plans: content.blog_index is retired. "
+        "Use source audit or planned."
+    ),
+}
+
+
+def retired_for_new_work(key: str, inputs: dict[str, Any] | None) -> str | None:
+    """Why a new run of this workflow (or website.change source) is refused, if it is."""
+    if key == organic_system.WEBSITE_KEY:
+        return RETIRED_WEBSITE_SOURCES.get(str((inputs or {}).get("source") or ""))
+    return RETIRED.get(key)
+
+
 async def start_workflow_run(
     *,
     runtime: RuntimeServices,
@@ -91,6 +133,7 @@ async def start_workflow_run(
     _billing_parent_run_id: UUID | None = None,
     _review_transition: dict[str, Any] | None = None,
     _organic_parent_run_id: UUID | None = None,
+    _system_step: bool = False,
     _approval_delivery: bool = False,
     _x_publication: bool = False,
     _x_feedback: bool = False,
@@ -121,6 +164,18 @@ async def start_workflow_run(
             # already-selected revision. create_run still checks actor, inputs and lineage.
             if definition_commit_sha is None:
                 definition_commit_sha = existing.definition_commit_sha
+    retired = retired_for_new_work(workflow.key, input_payload)
+    if (
+        retired
+        and existing is None
+        and retry_of_run_id is None
+        and project_workflow_id is None
+        and _organic_parent_run_id is None
+        and not _system_step
+    ):
+        # Retries, saved schedules and older organic system runs (`_system_step`: a pinned
+        # recipe's own step) keep what they pinned.
+        raise WorkflowInputError(retired)
     workflow = await resolve_execution_contract(
         storage=getattr(runtime, "storage", None),
         workflow=workflow,
@@ -153,16 +208,55 @@ async def start_workflow_run(
         from tin_lite.private_workflows import require_private_execution
 
         require_private_execution(settings, workflow, project_id)
+    if workflow.executor == "connections.collect":
+        from tin_lite.connection_collection import enabled
+
+        if not enabled(settings, project_id):
+            raise WorkflowExecutorUnavailableError(
+                "Connection collection is unavailable on this project."
+            )
     if workflow.executor == "social.x_revise" and not _x_feedback:
         raise WorkflowInputError("Read the X draft and use request_workflow_changes to revise it.")
     if workflow.executor == "social.x_revise" and not getattr(settings, "luna_api_key", None):
         raise WorkflowExecutorUnavailableError("X feedback requires the native model service.")
     schema = workflow.definition["input_schema"]
+    if (
+        workflow.executor == "connections.collect"
+        and "execution" not in (input_payload or {})
+        and project_workflow_id is None
+        and retry_of_run_id is None
+    ):
+        from tin_lite.connection_collection_connection import default_inputs
+
+        if existing is not None:
+            input_payload = {
+                **(input_payload or {}),
+                "execution": existing.input.get("execution", "local_only"),
+            }
+        else:
+            input_payload = await default_inputs(runtime.database, project_id, input_payload or {})
     normalized_inputs = normalize_workflow_inputs(
         schema=schema,
         project_id=project_id,
         inputs=input_payload,
     )
+    if workflow.executor == "connections.collect":
+        from tin_lite.connection_collection import cloud_ready, validate_inputs
+
+        # Older saved configurations may contain untrimmed queries/profile URLs.
+        # Keep their pinned input exact; the collection job canonicalizes its copy.
+        validate_inputs(project_id, normalized_inputs)
+        # Cloud compute uses a separately qualified, explicitly funded contract.
+        if normalized_inputs["execution"] == "cloud_only" and not cloud_ready(settings):
+            raise WorkflowExecutorUnavailableError(
+                "Cloud collection is not available on this deployment yet. "
+                "Choose Cloud preferred or Local only to collect in Chrome, "
+                "and keep it open and awake while collecting."
+            )
+        if not await runtime.database.has_project_access(
+            project_id=project_id, clerk_user_id=started_by_clerk_user_id
+        ):
+            raise LookupError("project not found")
     if workflow.executor == "social.x_publish":
         from tin_lite.x_posts import approved_payload
 

@@ -138,8 +138,10 @@ def safe_pull_request(value):
     return {"url": value["url"], "number": number if type(number) is int else None}
 
 
-def base_for(run, *, selection=None, site=None, title=None):
-    """The page's address before delivery: the plan's destination, else a proposed slug."""
+def base_for(run, *, selection=None, site=None, title=None, route=None, slug=None):
+    """The page's address before delivery: the plan's destination, else the draft's own slug
+    (or one from its title), under the route the founder chose for such pages when there is
+    one."""
     title = title or run.artifact_title
     if run.workflow_id == DRAFT_WORKFLOW_ID:
         if not selection:
@@ -160,11 +162,13 @@ def base_for(run, *, selection=None, site=None, title=None):
         host = site_host(site)
     if not host or not title:
         return None
+    slug = slug or slug_for(title, "page")
+    routed = route_url(route.replace("{slug}", slug), host) if route else None
     return {
-        "url": f"https://{host}/{slug_for(title, 'page')}",
+        "url": routed or f"https://{host}/{slug}",
         "host": host,
         "title": title,
-        "source": "title_slug",
+        "source": "saved_route" if routed else "title_slug",
         "final": False,
     }
 
@@ -425,7 +429,28 @@ class PageUrls:
         title = await self._title(run)
         if not title:
             return None
-        return base_for(run, site=await self._site(run.project_id), title=title)
+        route = slug = None
+        if self.storage is not None:
+            from tin_lite.page_routes import PageRouteService
+
+            route = await PageRouteService(database=self.db, storage=self.storage).route_for(run)
+            slug = await self._slug(run)
+        return base_for(
+            run, site=await self._site(run.project_id), title=title, route=route, slug=slug
+        )
+
+    async def _slug(self, run):
+        """The slug the founder approves with the draft's listing, or None."""
+        from tin_lite.article_review import page_slug
+        from tin_lite.content_delivery import ContentDelivery, page_frontmatter
+
+        try:
+            _raw, article, _title = await ContentDelivery(
+                database=self.db, storage=self.storage
+            ).document_source(run)
+            return page_slug(page_frontmatter(article)[0].get("slug"))
+        except (ValueError, LookupError):
+            return None
 
     async def _approval(self, run, delivery):
         """What Publish now or Open a pull request would write, before the reviewer chooses."""
@@ -501,10 +526,17 @@ class PageUrls:
         now = now or datetime.now(UTC)
         record = (await self._load([run.id])).get(key(run.id)) or {}
         changed = False
-        if not record.get("base"):
-            base = await self._base(run)
-            if base:
-                record["base"], changed = base, True
+        base = record.get("base")
+        since = _minutes_since(record.get("base_at"), now)
+        if not base or (
+            base["source"] in {"title_slug", "saved_route"}
+            and (since is None or since >= CHECK_EVERY.total_seconds() / 60)
+        ):
+            # A proposed address follows the title and the founder's saved route, so it is read
+            # again at most every ten minutes; a plan's destination or a delivery fixes it.
+            proposed = await self._base(run)
+            if proposed:
+                record["base"], record["base_at"], changed = proposed, now.isoformat(), True
         fresh = _minutes_since(record.get("approval_at"), now)
         if delivery is not None or fresh is None or fresh >= CHECK_EVERY.total_seconds() / 60:
             # Delivery settings and the draft's title are read at most every ten minutes.

@@ -5,6 +5,7 @@
     "title": "Get featured in the newsletters and communities your buyers read",
     "description": "Finds newsletters and communities your buyers read that have a written way in, such as a featured-tool slot, reader submissions, a showcase thread or a sponsorship, verifies each one's rules, and drafts one submission per placement in your voice. Skips placements drafted in earlier runs; never submits, pays or contacts anyone.",
     "executor": "codex.procedure",
+    "system": "cold-outreach",
     "version": "2.0.0",
     "schedule_modes": ["on_demand"],
     "input_schema": {
@@ -84,6 +85,30 @@
         "path_template": "reports/outreach/newsletters/{run_id}.md",
         "media_type": "text/markdown",
         "max_bytes": 120000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Growth plan, Feature map, voice", "fact": "buyers, market, budget, hard no's"},
+          {"id": "search", "kind": "surface", "label": "Newsletters and communities", "fact": "about 30 candidates, skips earlier ones"},
+          {"id": "verify", "kind": "step", "label": "Verify each way in", "fact": "own page, active within 60 days"},
+          {"id": "pick", "kind": "step", "label": "Pick the placements", "fact": "5 by default, paid only within budget"},
+          {"id": "draft", "kind": "step", "label": "Draft one submission each", "fact": "the slot's written rules, your voice"},
+          {"id": "report", "kind": "store", "label": "Report in project Files", "fact": "reports/outreach/newsletters"},
+          {"id": "receipt", "kind": "receipt", "label": "Submissions ready to paste", "fact": "you submit, Tin pays and sends nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "search", "kind": "call"},
+          {"from": "search", "to": "verify", "kind": "call"},
+          {"from": "verify", "to": "pick", "kind": "call"},
+          {"from": "pick", "to": "draft", "kind": "call"},
+          {"from": "pick", "to": "report", "kind": "call", "label": "nothing new"},
+          {"from": "draft", "to": "report", "kind": "call"},
+          {"from": "report", "to": "receipt", "kind": "call"},
+          {"from": "report", "to": "search", "kind": "signal", "label": "next run skips these"}
+        ]
       }
     }
   }

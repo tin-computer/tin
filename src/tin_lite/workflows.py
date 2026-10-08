@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from datetime import timedelta
 
 from temporalio import workflow
@@ -26,6 +27,8 @@ from tin_lite.domain import (
     PAID_ADS_ASSESSMENT_WORKFLOW_NAME,
     PAID_ADS_LAUNCH_WORKFLOW_NAME,
     PAID_ADS_MONITOR_WORKFLOW_NAME,
+    PAYMENT_RECOVERY_DECISION_DAYS,
+    PAYMENT_RECOVERY_WORKFLOW_NAME,
     PREREQUISITE_WAIT_MEMO,
     PREREQUISITE_WAIT_MINUTES,
     PROJECT_MEMORY_WORKFLOW_NAME,
@@ -150,11 +153,12 @@ class ProjectMemoryWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "garden_project_memory",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=3),
-                schedule_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -182,11 +186,12 @@ class ScanReportWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_scan_report",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=3),
-                schedule_to_close_timeout=timedelta(minutes=10),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -314,27 +319,31 @@ class OrganicAuditWorkflow:
             )
             if self._stopped:
                 return
+            # Up to eight sequential model calls (two research attempts, then two drafts, blind
+            # readings and reviews), each may wait 10 minutes.
             count = await workflow.execute_activity(
                 "organic_prepare_panel",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=85),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             for index in range(count):
                 if self._stopped:
                     return
+                # An answer and its judgment, each may wait 10 minutes.
                 await workflow.execute_activity(
                     "organic_observe",
                     {"run_id": run_id, "index": index},
-                    start_to_close_timeout=timedelta(minutes=5),
+                    start_to_close_timeout=timedelta(minutes=25),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
             if self._stopped:
                 return
+            # A content review and two branded answers, each may wait 10 minutes.
             await workflow.execute_activity(
                 "organic_brand_checks",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=timedelta(minutes=35),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
             if workflow.patched("organic-audit-ai-engines-v1"):
@@ -400,11 +409,12 @@ class VisibilityAuditWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # Three model phases (panel, answers, adjudication), each may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_visibility_audit",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
-                schedule_to_close_timeout=timedelta(minutes=30),
+                start_to_close_timeout=timedelta(minutes=35),
+                schedule_to_close_timeout=timedelta(minutes=105),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -440,11 +450,12 @@ class AnswerPageWorkflow:
     async def run(self, run_id: str) -> None:
         try:
             await wait_for_prerequisites(run_id)
+            # A draft and one repair, each may wait 10 minutes.
             await workflow.execute_activity(
                 "draft_answer_page",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=10),
-                schedule_to_close_timeout=timedelta(minutes=20),
+                start_to_close_timeout=timedelta(minutes=25),
+                schedule_to_close_timeout=timedelta(minutes=50),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -505,11 +516,12 @@ class CharacterDesignWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # A draft, up to two repairs and a refinement, each may wait 10 minutes.
             await workflow.execute_activity(
                 "character_design",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=15),
-                schedule_to_close_timeout=timedelta(minutes=30),
+                start_to_close_timeout=timedelta(minutes=45),
+                schedule_to_close_timeout=timedelta(minutes=90),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
                     maximum_interval=timedelta(seconds=10),
@@ -804,7 +816,9 @@ async def execute_content_delivery(run_id: str) -> None:
     await workflow.execute_activity(
         "deliver_content_draft",
         run_id,
-        start_to_close_timeout=timedelta(minutes=5),
+        # A refresh downloads and rebuilds the repository snapshot (up to a 1 GB tarball and
+        # a 250 MB snapshot) on a shared-core switchboard before it commits.
+        start_to_close_timeout=timedelta(minutes=15),
         heartbeat_timeout=timedelta(seconds=20),
         retry_policy=RetryPolicy(maximum_attempts=3),
     )
@@ -824,11 +838,12 @@ class WeeklyBriefWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            # One model call that may wait 10 minutes.
             await workflow.execute_activity(
                 "generate_weekly_brief",
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
-                schedule_to_close_timeout=timedelta(minutes=15),
+                start_to_close_timeout=timedelta(minutes=12),
+                schedule_to_close_timeout=timedelta(minutes=40),
                 heartbeat_timeout=timedelta(seconds=20),
                 retry_policy=RetryPolicy(
                     maximum_attempts=3,
@@ -1101,6 +1116,79 @@ class AwesomeSubmitWorkflow:
                 raise
 
 
+PAYMENT_RECOVERY_EXPIRY_PATCH = "payment-recovery-decision-expiry"
+PAYMENT_RECOVERY_DECISION_WINDOW = timedelta(days=PAYMENT_RECOVERY_DECISION_DAYS)
+
+
+@workflow.defn(name=PAYMENT_RECOVERY_WORKFLOW_NAME)
+class PaymentRecoveryWorkflow:
+    """Read Stripe and the mailbox, draft one email per customer, then one founder approval
+    before any email is sent from the founder's Gmail. Only the run identifier enters
+    history."""
+
+    def __init__(self) -> None:
+        self._approved = False
+        self._stopped = False
+
+    @workflow.signal(name="approve")
+    async def approve(self) -> None:
+        self._approved = True
+
+    @workflow.signal(name="stop")
+    async def stop(self) -> None:
+        self._stopped = True
+
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def execute(name, *, minutes, heartbeat=None):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(minutes=minutes),
+                heartbeat_timeout=timedelta(minutes=heartbeat) if heartbeat else None,
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3, maximum_interval=timedelta(seconds=30)
+                ),
+            )
+
+        try:
+            await execute("payment_recovery_prepare", minutes=2)
+            if self._stopped:
+                return
+            await execute("payment_recovery_gather", minutes=15, heartbeat=3)
+            if self._stopped:
+                return
+            mode = await execute("payment_recovery_draft", minutes=10)
+            if mode == "review":
+                await execute("payment_recovery_request_review", minutes=2)
+                # Runs started before the expiry wait without a deadline, as they always did.
+                if workflow.patched(PAYMENT_RECOVERY_EXPIRY_PATCH):
+                    try:
+                        await workflow.wait_condition(
+                            lambda: self._approved or self._stopped,
+                            timeout=PAYMENT_RECOVERY_DECISION_WINDOW,
+                        )
+                    except TimeoutError:
+                        # Unanswered, the Decision closes unsent so the next scheduled run
+                        # can start. An approval already on its way wins: expiry refuses once
+                        # a reviewer is recorded, and the run waits for that signal instead.
+                        if not (self._approved or self._stopped):
+                            if await execute("payment_recovery_expire", minutes=2):
+                                return
+                            await workflow.wait_condition(lambda: self._approved or self._stopped)
+                else:
+                    await workflow.wait_condition(lambda: self._approved or self._stopped)
+                if self._stopped:
+                    return
+                await execute("payment_recovery_record_approval", minutes=2)
+                await execute("payment_recovery_apply", minutes=30, heartbeat=5)
+            await execute("payment_recovery_publish", minutes=5)
+        except BaseException:
+            if not self._stopped:
+                await execute("payment_recovery_failure", minutes=2)
+                raise
+
+
 @workflow.defn(name=PAID_ADS_MONITOR_WORKFLOW_NAME)
 class PaidAdsMonitorWorkflow:
     """Read, decide, apply the bounded automatic changes, save proposals, publish. The run
@@ -1169,7 +1257,9 @@ class KeywordPlanWorkflow:
             for name in ("keyword_prepare", "keyword_collect"):
                 if self._stopped:
                     return
-                await execute(name, minutes=25 if name == "keyword_collect" else 5)
+                # Screening may wait ten minutes a call: v9 runs up to four rounds of
+                # batches, each with one retry, after research.
+                await execute(name, minutes=90 if name == "keyword_collect" else 5)
             count = await execute("keyword_sample_count")
             if workflow.patched("keyword-inspect-batch-v1"):
                 # One activity inspects the samples a few at a time. Each sample keeps its own
@@ -1256,6 +1346,28 @@ class ContentPlanWorkflow:
     @workflow.run
     async def run(self, run_id: str) -> None:
         try:
+            if workflow.patched("content-plan-agent-v1"):
+                # v9 (content-editorial-v9): Tin reads the pages and publishes the brief, then
+                # the planning agent runs as a child; older contracts answer {} and go on.
+                child = await workflow.execute_activity(
+                    "content_plan_research",
+                    run_id,
+                    start_to_close_timeout=timedelta(minutes=15),
+                    retry_policy=RetryPolicy(
+                        maximum_attempts=3, maximum_interval=timedelta(seconds=10)
+                    ),
+                )
+                if (child or {}).get("temporal_workflow_id"):
+                    # The agent's own run records why it stopped; the plan names it.
+                    with contextlib.suppress(Exception):
+                        await workflow.execute_child_workflow(
+                            child["executor"],
+                            child["run_id"],
+                            id=child["temporal_workflow_id"],
+                            task_queue=workflow.info().task_queue,
+                            parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                            cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                        )
             # Up to 60 page reads (four at a time, 20 s each) and a model wait of five and a
             # half minutes must fit in one attempt; a cut-off model call cannot be bought again.
             await workflow.execute_activity(
@@ -1329,13 +1441,42 @@ class OrganicTrafficSystemWorkflow:
                 # A refresh never fails the recipe; its own run records why it stopped.
                 return
 
+        async def measure(name):
+            try:
+                child = await call("organic_system_measurement", {"run_id": run_id, "step": name})
+                if child.get("temporal_workflow_id"):
+                    await workflow.execute_child_workflow(
+                        child["executor"],
+                        child["run_id"],
+                        id=child["temporal_workflow_id"],
+                        task_queue=workflow.info().task_queue,
+                        parent_close_policy=workflow.ParentClosePolicy.ABANDON,
+                        cancellation_type=workflow.ChildWorkflowCancellationType.ABANDON,
+                    )
+            except Exception:
+                # A measurement never fails the recipe; its receipt or run records why.
+                return
+
+        async def measurement():
+            # v7: the traffic snapshot, then Page decisions, which reads it. A pinned v6 or
+            # earlier recipe answers skipped and starts nothing.
+            for name in ("snapshot", "decisions"):
+                await measure(name)
+
         try:
             await call("organic_system_prepare", run_id)
             audit = asyncio.create_task(step("audit"))
             keywords = asyncio.create_task(step("keywords"))
             await audit
             technical = asyncio.create_task(step("technical"))
+            measured = None
+            if workflow.patched("organic-measurement-v1"):
+                # After the audit, whose summary both read, and before the content plan, which
+                # reads the snapshot and the decisions.
+                measured = asyncio.create_task(measurement())
             await keywords
+            if measured is not None:
+                await measured
             await step("content")
             await technical
             if workflow.patched("organic-content-continuation-v1"):
@@ -1369,6 +1510,12 @@ class OrganicTrafficSystemWorkflow:
             raise
 
 
+# Style capture, X style and X revise make one model call that may wait up to the provider's
+# 600-second default for a 32,000-token answer; X style also reads up to three timeline pages
+# first. Activity options are not workflow commands, so this changes no history.
+MODEL_STEP_TIMEOUT = timedelta(minutes=15)
+
+
 @workflow.defn(name="style.capture")
 class StyleCaptureWorkflow:
     def __init__(self) -> None:
@@ -1385,7 +1532,9 @@ class StyleCaptureWorkflow:
                 await workflow.execute_activity(
                     step,
                     run_id,
-                    start_to_close_timeout=timedelta(minutes=5),
+                    start_to_close_timeout=MODEL_STEP_TIMEOUT
+                    if step == "style_extract"
+                    else timedelta(minutes=5),
                     retry_policy=RetryPolicy(maximum_attempts=3),
                 )
             if workflow.patched("style-capture-review-v1"):
@@ -1461,7 +1610,9 @@ class XFeedbackWorkflow:
             return await workflow.execute_activity(
                 name,
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=MODEL_STEP_TIMEOUT
+                if name == "x_feedback_generate"
+                else timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
@@ -1488,7 +1639,9 @@ class XStyleWorkflow:
             return await workflow.execute_activity(
                 name,
                 run_id,
-                start_to_close_timeout=timedelta(minutes=5),
+                start_to_close_timeout=MODEL_STEP_TIMEOUT
+                if name == "x_style_extract"
+                else timedelta(minutes=5),
                 retry_policy=RetryPolicy(maximum_attempts=3),
             )
 
@@ -1617,6 +1770,38 @@ class GrowthOnboardingWorkflow:
             raise
 
 
+@workflow.defn(name="connections.collect")
+class ConnectionCollectionWorkflow:
+    @workflow.run
+    async def run(self, run_id: str) -> None:
+        async def call(name, seconds=60):
+            return await workflow.execute_activity(
+                name,
+                run_id,
+                start_to_close_timeout=timedelta(seconds=seconds),
+                retry_policy=RetryPolicy(maximum_attempts=3),
+            )
+
+        try:
+            await call("collection_prepare")
+            # The activity reads the pinned absolute deadline. Sleep uses no worker slot.
+            bounded_history = workflow.patched("collection-bounded-wait-history-v1")
+            polls = 0
+            while not await call("collection_poll", 150):
+                await workflow.sleep(timedelta(seconds=15))
+                polls += 1
+                if bounded_history and polls >= 500:
+                    # A day waiting for Chrome must not exhaust Temporal's history limit.
+                    # Preparation recovers the same Postgres job and absolute deadlines.
+                    workflow.continue_as_new(run_id)
+            await call("collection_publish", 180)
+        except workflow.ContinueAsNewError:
+            raise
+        except BaseException:
+            await asyncio.shield(call("collection_failure"))
+            raise
+
+
 def registered_workflows() -> list[type]:
     return [
         CodeWorkflow,
@@ -1632,6 +1817,7 @@ def registered_workflows() -> list[type]:
         GrowthOnboardingPlanWorkflow,
         ScheduledDispatchWorkflow,
         ContentPlanWorkflow,
+        ConnectionCollectionWorkflow,
         DesignMdWorkflow,
         ProjectMemoryWorkflow,
         ScanReportWorkflow,
@@ -1643,6 +1829,7 @@ def registered_workflows() -> list[type]:
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
+        PaymentRecoveryWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -1656,6 +1843,7 @@ def registered_workflows() -> list[type]:
 def registered_workflow_implementations() -> dict[str, type]:
     """Explicit executor-to-implementation map used by product catalog dispatch."""
     return {
+        "connections.collect": ConnectionCollectionWorkflow,
         "workflow.code": CodeWorkflow,
         "style.capture": StyleCaptureWorkflow,
         "social.x_draft": XDraftWorkflow,
@@ -1678,6 +1866,7 @@ def registered_workflow_implementations() -> dict[str, type]:
         PAID_ADS_LAUNCH_WORKFLOW_NAME: PaidAdsLaunchWorkflow,
         PAID_ADS_MONITOR_WORKFLOW_NAME: PaidAdsMonitorWorkflow,
         AWESOME_SUBMIT_WORKFLOW_NAME: AwesomeSubmitWorkflow,
+        PAYMENT_RECOVERY_WORKFLOW_NAME: PaymentRecoveryWorkflow,
         ANSWER_PAGE_WORKFLOW_NAME: AnswerPageWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
         WEEKLY_BRIEF_WORKFLOW_NAME: WeeklyBriefWorkflow,

@@ -32,11 +32,7 @@
           "style.capture",
           "content.generate",
           "content.public_article",
-          "competitor.watch",
-          "organic.traffic_snapshot",
-          "organic.content_efficacy",
-          "content.blog_index",
-          "organic.prompt_panel"
+          "competitor.watch"
         ],
         "integrations": [
           "analytics.gsc"
@@ -69,9 +65,7 @@
         "coverage": "full",
         "workflows": [
           "organic.audit",
-          "website.change",
-          "organic.content_efficacy",
-          "organic.site_architecture"
+          "website.change"
         ],
         "integrations": [
           "infra.github",
@@ -613,6 +607,7 @@
     "social.post_batch": "Draft social posts from a weekly plan or article",
     "social.content_plan": "Plan a sustainable social week",
     "outreach.awesome_submit": "Submit to awesome lists",
+    "revenue.payment_recovery": "Recover failed payments",
     "outreach.awesome_lists": "Get your product into the awesome lists that will actually accept it",
     "growth.framework_starter": "Add a starter developers can clone",
     "outreach.community_threads": "Find threads where people ask for what you make",
@@ -623,17 +618,14 @@
     "social.x_draft": "Draft for X",
     "social.x_revise": "Revise X writing",
     "organic.traffic_snapshot": "Take a weekly traffic snapshot and growth readout",
-    "organic.content_efficacy": "Decide what each page needs",
-    "organic.site_architecture": "Plan the site's page tree and redirects",
-    "content.blog_index": "Plan the blog index",
-    "organic.prompt_panel": "Choose the buyer questions AI visibility is measured on"
+    "organic.content_efficacy": "Decide what each page needs"
   },
   "workflow_scope": {
     "social.x_revise": "Revise an existing X post or proposed writing guide from verbatim feedback. Automatically carry clear reusable writing preferences into the X guide, keeping factual corrections and one-off edits local. Started only through feedback on a saved draft; never publishes, schedules or bypasses initial guide approval.",
     "brand.capture": "Inspect a website and optional repository or source packet once. Propose missing BRAND.md and DESIGN.md together; one review adopts them. Existing documents stay unchanged. No source edits, automatic refresh or asset generation.",
     "content.deliver": "Adapt an existing approved content.generate article to the connected website repository and open an unmerged PR. Requires source_run_id and expected_repository; no new drafting or implicit approval. Reuses the normal metered Codex procedure runner. Exact Markdown source preservation is checked; repository build and rendered equivalence are separate checks, never implied. CMS and WordPress publication require future connectors.",
     "website.change": "Put approved changes on the connected website repository: an approved article, answer page or public article at the route the founder chose with its copy unchanged, or the technical fixes the latest audit found (indexing, sitemap, robots.txt, redirects, page structure, accessibility, structured data, internal links), each a change the founder approves or declines once. Approved changes publish (Tin merges the PR once the required checks pass, then checks the live site); anything else, and any change to a protected page such as /sign-in, opens a PR for the founder to merge. The coding agent answers judgment calls first; copy goes to the content workflows. Never touches dependencies or lockfiles.",
-    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Optionally proposes one technical fix as an unmerged GitHub PR. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
+    "organic.traffic_system": "Audit your website and research buyer searches, then save an editable content plan to My system and draft its first article for review. With GitHub connected, the approved article is adapted into an unmerged PR; otherwise its Markdown stays in Tin. Saves a weekly schedule that drafts the next planned article, one review at a time (article_weekdays, default Tuesday; an empty list saves none). Also runs and saves the weekly traffic snapshot and page decisions, ahead of a weekly page refresh. With GitHub connected, also opens one unmerged PR with the audit's fixes in the selected repository. Runs once per plan: running it again buys the research again. Does not send outreach, merge or publish.",
     "style.capture": "Use your coding agent to select writing samples, or add samples here. Save an editable voice guide for future content. Nothing is published.",
     "organic.technical_fix": "Older runs and schedules only: recheck an audit's findings and fix them in one unmerged pull request. New technical fixes go through website.change (source audit).",
     "content.plan": "Turn an audit and keyword research into an editable two-week to six-month roadmap with one list to write from: new articles, answer pages for buyer questions where AI answers missed the product (from the audit's AI-visibility findings), and refreshes of existing pages the audit or Page decisions marked. The newest competitor.watch report's material changes add up to three comparison or refresh items, each citing the competitor's page. Save to My system to prepare weekly batches. Does not write or publish anything.",
@@ -676,6 +668,7 @@
     "social.post_batch": "Draft X and LinkedIn posts in two manual modes. Weekly mode reads social/PLAN.md and current source notes, checks earlier batch files to avoid reusing material, and keeps earlier files unchanged. Repurpose mode reads one article file or article_text fallback. Both read current writing guidance and save a dated reviewable batch. No automatic posting, recurring schedule, rendered carousel or producer/version picker.",
     "social.content_plan": "Read current product context and optional writing guidance, then save an editable social/PLAN.md with platforms, content pillars, a weekly calendar and a time budget. Supports X and LinkedIn in this first version. Manual and reviewable; no posts or automatic schedule.",
     "outreach.awesome_submit": "After an awesome lists run (outreach.awesome_lists), reads each recommended list's current file, places the entry with code and shows every exact change; after the founder approves, forks each list and opens one pull request or issue from the founder's connected GitHub account; never submits to a list twice.",
+    "revenue.payment_recovery": "Reads the founder's Stripe for open invoices whose automatic payment failed, with each customer's plan, decline reason, payment history and latest mail, and drafts one short email per customer with Stripe's payment link; after the founder approves, re-checks each invoice and sends only the unpaid ones from the founder's Gmail; never emails twice about the same invoice; needs Stripe and Google Workspace connected.",
     "outreach.awesome_lists": "For a public product or repository, reads the growth plan and Code map, finds curated GitHub awesome lists that are alive and whose written rules the product meets, ranks them and prepares one exact entry and pull request text per list; keeps history and never re-recommends a list; never submits (Submit to awesome lists sends what the founder approves).",
     "growth.framework_starter": "For a product developers integrate (a published SDK, public API, webhooks or embed in the connected repository): opens one unmerged PR adding a small runnable starter for one framework (Next.js, FastAPI, Vite React or Express) under the repository's examples directory, calling only what the repository defines and keeping secrets server-side; says no for products with nothing to integrate and never repeats a framework; never merges, deploys, publishes a package or creates a repository.",
     "outreach.community_threads": "Finds open public threads (Reddit, Hacker News, GitHub Discussions, forums) where someone asks for what the product does, using the growth plan and Feature map, and drafts one helpful, disclosed public reply per thread in the founder's voice; skips threads from earlier runs; never posts, DMs or emails anyone.",
@@ -684,10 +677,7 @@
     "social.x_style": "Sample up to 50 of the connected account’s own public X posts, favoring recent writing, or read supplied samples. Propose an X writing guide for review before adopting it in project Files. Does not draft or publish posts.",
     "social.x_publish": "Publish one exact post and its selected images or video after explicit confirmation through Tin’s X preview. Requires a connected X account with publishing permission; the preview creates the approval_id. Cannot be started directly or scheduled. Does not generate media, reply, quote or create a thread.",
     "social.x_compose": "Read current project facts, an optional social plan and the X writing guide to draft one to six distinct standalone posts. Save editable JSON in project Files, with support for each claim and any missing assets identified. Does not publish, schedule or generate media; each post needs separate preview and confirmation.",
-    "organic.traffic_snapshot": "Weekly data file per landing page from Search Console and PostHog (both connections, read-only): clicks, impressions and top searches, sessions by channel, first-touch signups and activation, reading depth and the audit's findings, read by page decisions, the page tree and the blog index; the same file carries the weekly growth readout (channels and named AI assistants, search with a brand split, content, landing pages and first-touch activation, changes called only by an exact test with Holm's correction, each decision routed to the workflow that acts on it); no model calls.",
-    "organic.content_efficacy": "Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; website.change reads its URL changes and asks before it changes the site, and pages to refresh are listed; edits nothing itself.",
-    "organic.site_architecture": "Page tree, URL and navigation rules from live data only: the organic audit's summary (click depth, inbound links and checks per crawled page), a year of Search Console clicks, the traffic snapshot's visits and Page decisions (Search Console connection, read-only); one model call names and groups the sections; when URLs change, the exact redirects for website.change, which asks before it changes the site; follow-ups against a saved baseline; does not read the repository; changes nothing itself.",
-    "content.blog_index": "For a site with a blog in the connected repository, read without changing it: a plan with the exact files (at most five) for an index that lists every eligible post within two clicks from the post source, with categories from existing tags, an RSS feed and per-post sitemap dates, at the founder's article route; asks for the route once when none exists; opens no pull request, since website.change builds the index from the plan after the founder approves it.",
-    "organic.prompt_panel": "Writes the 36 buyer prompts AI visibility is measured on: code picks four intent families, led by the category the positioning names and weighted by the site's own Search Console searches, one model call writes the prompts plus four branded ones, and code checks every rule; the organic audit asks the newest panel that passes; no review step; never runs prompts itself."
+    "organic.traffic_snapshot": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly data file per landing page from Search Console, and PostHog when it is connected (read-only): clicks, impressions and top searches, the audit's findings and, with PostHog, sessions by channel, first-touch signups and activation and reading depth, read by page decisions, the page tree and the blog index; the same file carries the weekly growth readout (channels and named AI assistants, search with a brand split, content, landing pages and first-touch activation, changes called only by an exact test with Holm's correction, each decision routed to the workflow that acts on it; search only without PostHog); no model calls.",
+    "organic.content_efficacy": "Set up by organic.traffic_system; never add it to a plan on its own. Weekly keep, refresh, rewrite, merge or retire decision for every page in search, from the traffic snapshot, Search Console and the audit, with guards that hold a cut when paid visits, links or a safe redirect target are unknown; website.change reads its URL changes and asks before it changes the site, and pages to refresh are listed; edits nothing itself."
   }
 }

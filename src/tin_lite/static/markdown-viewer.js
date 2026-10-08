@@ -2,6 +2,11 @@
 
 (function defineTinMarkdownViewer() {
   const NUMERIC_CELL = /^[-+]?[$€£]?\d[\d,]*(?:\.\d+)?%?(?:\s+of\s+\d+)?$/i;
+  // An embed is untrusted: it runs in an opaque-origin frame that can't reach the network.
+  const EMBED_POLICY =
+    "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; " +
+    "img-src data: blob:; font-src data:; media-src data: blob:";
+  const VIDEO_FILE = /\.(?:mp4|webm|m4v|mov)(?:[?#]|$)/i;
 
   function makeElement(tagName, className, text) {
     const element = document.createElement(tagName);
@@ -114,6 +119,7 @@
 
     decorateTables(article);
     decorateImages(article);
+    decorateBundle(article, documentData, options.loadAsset);
     decorateDiagrams(article);
     const cleanupMap = buildSectionMap(article, map, mapInner);
     return () => cleanupMap();
@@ -133,28 +139,223 @@
     });
   }
 
+  function showImageFallback(image) {
+    if (!image.isConnected) return;
+    const frame = makeElement("div", "md-image-fallback");
+    frame.setAttribute("role", "img");
+    const alt = image.alt.trim();
+    const filename = image.dataset.fallbackName || "image";
+    frame.setAttribute("aria-label", alt || filename);
+    frame.innerHTML =
+      '<svg aria-hidden="true" viewBox="0 0 28 24"><rect x="1" y="1" width="26" height="22" rx="2" /><circle cx="8" cy="8" r="2.5" /><path d="M2 19L10 12L15 16L21 10L26 14" /></svg>';
+    const label = makeElement(
+      "span",
+      "",
+      [alt, filename].filter((value, index, values) => value && values.indexOf(value) === index).join(" · "),
+    );
+    frame.append(label);
+    image.replaceWith(frame);
+  }
+
   function decorateImages(article) {
-    article.querySelectorAll("img").forEach((image) => {
-      const showFallback = () => {
-        if (!image.isConnected) return;
-        const frame = makeElement("div", "md-image-fallback");
-        frame.setAttribute("role", "img");
-        const alt = image.alt.trim();
-        const filename = image.dataset.fallbackName || "image";
-        frame.setAttribute("aria-label", alt || filename);
-        frame.innerHTML =
-          '<svg aria-hidden="true" viewBox="0 0 28 24"><rect x="1" y="1" width="26" height="22" rx="2" /><circle cx="8" cy="8" r="2.5" /><path d="M2 19L10 12L15 16L21 10L26 14" /></svg>';
-        const label = makeElement(
-          "span",
-          "",
-          [alt, filename].filter((value, index, values) => value && values.indexOf(value) === index).join(" · "),
-        );
-        frame.append(label);
-        image.replaceWith(frame);
-      };
-      image.addEventListener("error", showFallback, { once: true });
-      if (image.complete && image.naturalWidth === 0) showFallback();
+    // Bundle figures have no src yet; decorateBundle loads them.
+    article.querySelectorAll("img:not(.md-asset)").forEach((image) => {
+      image.addEventListener("error", () => showImageFallback(image), { once: true });
+      if (image.complete && image.naturalWidth === 0) showImageFallback(image);
     });
+  }
+
+  // A draft's figures, embeds and videos (page bundles). Files load with the member's session
+  // through `loadAsset(path)`; nothing in the article is fetched by URL.
+  function decorateBundle(article, documentData, loadAsset) {
+    const assets = new Map((documentData.assets || []).map((item) => [item.path, item.media_type]));
+    if (documentData.asset_notes?.length) {
+      // Under the title: what the draft referred to that Tin left out, and why.
+      const notes = makeElement("p", "md-asset-notes", documentData.asset_notes.join(" "));
+      const title = article.querySelector("h1");
+      if (title) title.after(notes);
+      else article.prepend(notes);
+    }
+    article.querySelectorAll("img.md-asset").forEach((image) => {
+      wrapFigure(image);
+      const type = assets.get(image.dataset.asset);
+      if (!type || !loadAsset) {
+        showImageFallback(image);
+        return;
+      }
+      loadAsset(image.dataset.asset)
+        .then((bytes) => imageUrl(new Blob([bytes], { type })))
+        .then((url) => {
+          image.addEventListener("error", () => showImageFallback(image), { once: true });
+          image.src = url;
+        })
+        .catch(() => showImageFallback(image));
+    });
+    article.querySelectorAll("figure.md-embed").forEach((figure) => {
+      const title = figure.dataset.title || "";
+      if (!assets.has(figure.dataset.asset) || !loadAsset) {
+        figure.append(makeElement("div", "md-embed-missing", "This interactive piece isn't available."));
+        return;
+      }
+      loadAsset(figure.dataset.asset)
+        .then((bytes) => {
+          const frame = document.createElement("iframe");
+          frame.className = "md-embed-frame";
+          // Scripts run, but in an opaque origin: no Tin cookies, storage, page or network.
+          frame.setAttribute("sandbox", "allow-scripts");
+          frame.setAttribute("referrerpolicy", "no-referrer");
+          frame.title = title || "Interactive piece";
+          // The article's height is a first guess; the piece then reports its own.
+          frame.style.height = `${embedHeight(Number(figure.dataset.height) || 420)}px`;
+          frame.srcdoc = embedDocument(new TextDecoder().decode(bytes), readerTheme());
+          watchEmbed(frame);
+          figure.prepend(frame);
+          if (title) figure.append(makeElement("figcaption", "", title));
+        })
+        .catch(() => {
+          figure.append(makeElement("div", "md-embed-missing", "This interactive piece couldn't load."));
+        });
+    });
+    article.querySelectorAll("figure.md-video").forEach((figure) => {
+      const url = figure.dataset.url || "";
+      const title = figure.dataset.title || "";
+      const player = videoPlayer(url, figure.dataset.poster, title);
+      if (!player) return; // The link the server rendered stays.
+      figure.replaceChildren(player);
+      if (title) figure.append(makeElement("figcaption", "", title));
+    });
+  }
+
+  function wrapFigure(image) {
+    const parent = image.parentElement;
+    if (parent?.tagName !== "P" || parent.childNodes.length !== 1) return;
+    const figure = makeElement("figure", "md-figure");
+    parent.replaceWith(figure);
+    figure.append(image);
+    if (image.title) figure.append(makeElement("figcaption", "", image.title));
+  }
+
+  function imageUrl(blob) {
+    if (blob.type !== "image/svg+xml") return Promise.resolve(URL.createObjectURL(blob));
+    // As in Files: an SVG becomes a data URL, inert in <img> and opaque if opened directly.
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error("Tin could not load this figure."));
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function embedDocument(html, theme) {
+    const policy = `<meta http-equiv="Content-Security-Policy" content="${EMBED_POLICY}">`;
+    const head = policy + embedBridge(theme);
+    const doctype = html.match(/^\s*<!doctype[^>]*>/i);
+    return doctype ? doctype[0] + head + html.slice(doctype[0].length) : head + html;
+  }
+
+  // Runs first in every embed: it takes the reader's theme as `data-theme` on its root and
+  // reports the piece's height. The piece only ever sends a number; the reader, a theme name.
+  function embedBridge(theme) {
+    return `<script>(() => {
+  const root = document.documentElement;
+  root.dataset.theme = ${JSON.stringify(theme)};
+  addEventListener("message", (event) => {
+    const theme = event.source === parent && event.data ? event.data.tinTheme : null;
+    if (theme === "light" || theme === "dark") root.dataset.theme = theme;
+  });
+  let reported = 0;
+  const report = () => {
+    const height = Math.ceil(root.getBoundingClientRect().height);
+    if (height && height !== reported) parent.postMessage({ tinEmbedHeight: (reported = height) }, "*");
+  };
+  addEventListener("load", report);
+  new ResizeObserver(report).observe(root);
+})();</script>`;
+  }
+
+  function readerTheme() {
+    return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+  }
+
+  function embedHeight(height) {
+    return Math.min(1600, Math.max(120, Math.ceil(height)));
+  }
+
+  const embedFrames = new Set();
+
+  function watchEmbed(frame) {
+    if (!embedFrames.size) {
+      window.addEventListener("message", resizeEmbed);
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+    }
+    embedFrames.add(frame);
+  }
+
+  function resizeEmbed(event) {
+    const height = event.data?.tinEmbedHeight;
+    if (typeof height !== "number" || !Number.isFinite(height)) return;
+    for (const frame of embedFrames) {
+      if (!frame.isConnected) embedFrames.delete(frame);
+      else if (frame.contentWindow === event.source) frame.style.height = `${embedHeight(height)}px`;
+    }
+  }
+
+  const themeObserver = new MutationObserver(() => {
+    const theme = readerTheme();
+    for (const frame of embedFrames) {
+      if (!frame.isConnected) embedFrames.delete(frame);
+      else frame.contentWindow?.postMessage({ tinTheme: theme }, "*");
+    }
+  });
+
+  // Players from a short list of hosts; a video file plays in place and loads only on play.
+  function videoPlayer(url, poster, title) {
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_error) {
+      return null;
+    }
+    if (!["https:", "http:"].includes(parsed.protocol)) return null;
+    if (VIDEO_FILE.test(parsed.pathname)) {
+      const video = document.createElement("video");
+      video.className = "md-video-file";
+      video.controls = true;
+      video.preload = "none";
+      video.playsInline = true;
+      video.src = parsed.href;
+      if (poster?.startsWith("https://")) video.poster = poster;
+      return video;
+    }
+    const src = providerEmbed(parsed);
+    if (!src) return null;
+    const frame = document.createElement("iframe");
+    frame.className = "md-video-frame";
+    frame.src = src;
+    frame.title = title || "Video";
+    frame.loading = "lazy";
+    frame.setAttribute("sandbox", "allow-scripts allow-same-origin allow-presentation allow-popups");
+    frame.setAttribute("allow", "fullscreen; picture-in-picture; encrypted-media");
+    frame.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+    return frame;
+  }
+
+  function providerEmbed(url) {
+    const host = url.hostname.replace(/^www\./, "");
+    const segments = url.pathname.split("/").filter(Boolean);
+    const id = (value) => (/^[A-Za-z0-9_-]{4,64}$/.test(value || "") ? value : null);
+    if (host === "youtube.com" || host === "m.youtube.com") {
+      const video = id(url.searchParams.get("v")) || (segments[0] === "shorts" ? id(segments[1]) : null);
+      return video && `https://www.youtube-nocookie.com/embed/${video}`;
+    }
+    if (host === "youtu.be") return id(segments[0]) && `https://www.youtube-nocookie.com/embed/${segments[0]}`;
+    if (host === "vimeo.com") return /^\d+$/.test(segments[0] || "") && `https://player.vimeo.com/video/${segments[0]}`;
+    if (host === "loom.com" && segments[0] === "share") return id(segments[1]) && `https://www.loom.com/embed/${segments[1]}`;
+    if (host === "stream.mux.com" || host === "player.mux.com") {
+      const playback = id((segments[0] || "").replace(/\.m3u8$/, ""));
+      return playback && `https://player.mux.com/${playback}`;
+    }
+    return null;
   }
 
   function decorateDiagrams(article) {

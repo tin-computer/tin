@@ -25,15 +25,16 @@
           <div class="content-fields" data-github-settings ${saved.mode === "github_pr" ? "" : "hidden"}>
           ${field("Repository", input("repository", saved.repository, "Repository"))}
           <p class="system-config-note">Use the repository selected in <a href="/integrations?project=${encodeURIComponent(context.projectId)}" class="system-action">Integrations</a>. Pull-request access must be enabled.</p>
-          ${field("New article files", input("path_pattern", saved.path_pattern, "New article files"))}
-          <p class="system-config-note">For example: content/blog/{slug}.md. Markdown only; no website is published.</p>
-          <details class="content-disclosure"><summary>Site frontmatter and existing-page files</summary><div class="content-fields">
+          <p class="system-config-note">Tin adapts each approved article to your site's own format and route through website.change and opens a pull request for you to merge.</p>
+          <details class="content-disclosure"><summary>Markdown files for drafts started before site adaptation</summary><div class="content-fields">
+          ${field("Markdown file pattern", input("path_pattern", saved.path_pattern, "Markdown file pattern"))}
+          <p class="system-config-note">For example: content/blog/{slug}.md. Only drafts pinned before Tin adapted articles to your site use these.</p>
           ${field("Frontmatter for new files", `<textarea class="workflow-inline-input workflow-inline-textarea" data-frontmatter rows="4" aria-label="Frontmatter for new files">${esc(state.frontmatter)}</textarea>`)}
           <p class="system-config-note">Optional JSON fields, for example {"title":"{title}","date":"{date}"}. Existing files keep their frontmatter.</p>
           ${items.filter(item => item.action === "update_page" || saved.item_paths[item.id]).map(item => field(item.title, `<input class="workflow-inline-input" data-item-path="${esc(item.id)}" value="${esc(saved.item_paths[item.id] || "")}" placeholder="Exact repository file, such as content/docs/setup.md" aria-label="File for ${esc(item.title)}">`)).join("")}
-          <p class="system-config-note">Map each existing-page update to its actual Markdown file before drafting for PR delivery.</p>
+          <p class="system-config-note">Older drafts that update an existing page map it to its Markdown file here.</p>
           </div></details></div>
-          <p class="system-config-note">Applies to new drafts only. Their review action will say “Approve & open PR”. Existing drafts keep their original review behavior. Nothing is merged.</p>
+          <p class="system-config-note">Applies to new drafts only. Existing drafts keep their original review behavior.</p>
           <footer class="system-config-footer content-plan-actions"><button class="button-secondary" type="submit" data-save-delivery ${state.dirty ? "" : "disabled"}>Save delivery</button><button class="button-quiet" type="button" data-reload-delivery>Reload saved settings</button></footer>
           <p class="system-config-note" role="status" data-delivery-message></p>
           </form></details>
@@ -43,7 +44,7 @@
             const title = items.find(i => i.id === itemId)?.title || "Saved article";
             const repositoryAction = adapted ? `<p class="system-config-note">${esc(adapted.summary || (adapted.status === "succeeded" ? "Article PR ready" : adapted.status === "failed" ? "Article PR needs attention" : "Preparing article PR"))} · ${esc(adapted.repository)}</p>${safePR(adapted.pull_request_url) ? `<a class="system-action is-strong" href="${esc(adapted.pull_request_url)}" target="_blank" rel="noopener noreferrer">Open article PR ↗</a>` : `<button class="system-action" type="button" data-read-draft="${esc(adapted.run_id)}">View delivery →</button>${adapted.status === "failed" && adapted.has_checkpoint ? `<button class="system-action" type="button" data-retry-delivery="${esc(adapted.run_id)}">Retry</button>` : ""}`}` :
               systemDelivery ? `<p class="system-config-note">${row.status === "succeeded" ? "The organic system is preparing the article PR" : "After approval, the organic system will prepare the article PR"} · ${esc(systemDelivery.binding.repository)}. Nothing is merged.</p>` :
-              !delivery && row.status === "succeeded" && state.available_repository ? `<p class="system-config-note">Adapt the approved copy to ${esc(state.available_repository)}. Keep the Markdown original in Tin. Nothing is merged.</p><button class="system-action is-strong" type="button" data-prepare-article-pr="${esc(row.run_id)}">Prepare PR →</button>` : "";
+              !delivery && row.status === "succeeded" && state.available_repository ? `<p class="system-config-note">Adapt the approved copy to ${esc(state.available_repository)} as a pull request. Keep the Markdown original in Tin.</p><button class="system-action is-strong" type="button" data-prepare-article-pr="${esc(row.run_id)}">Prepare PR →</button>` : "";
             const retryAdaptation = adapted?.status === "failed" && !adapted.has_checkpoint && !adapted.pull_request_url && adapted.repository === state.available_repository ? `<p class="system-config-note">No saved patch. Trying again starts a new metered adaptation of the same approved article.</p><button class="system-action" type="button" data-prepare-article-pr="${esc(row.run_id)}" data-retry-adaptation="${esc(adapted.run_id)}">Retry</button>` : "";
             return `<div class="system-setting"><strong>${esc(title)}</strong><div><button class="system-action is-strong" type="button" data-read-draft="${esc(row.run_id)}">Read draft →</button>${delivery ? `<p class="system-config-note">${esc(labels[delivery.status] || "Delivery pending")} · ${esc(delivery.repository)} · ${esc(delivery.path)}</p>${pr && safePR(pr.url) ? `<a class="system-action is-strong" href="${esc(pr.url)}" target="_blank" rel="noopener noreferrer">Open PR #${esc(pr.number)} ↗</a>` : ""}${delivery.status === "failed" ? `<p class="system-config-note">${esc(delivery.error)}</p><button class="system-action" type="button" data-retry-delivery="${esc(row.run_id)}">Retry</button>` : ""}` : `<p class="system-config-note">${row.stage === "awaiting_review" ? "Awaiting review" : "Draft saved"} · Markdown in Tin</p>`}${repositoryAction}${retryAdaptation}</div></div>`;
           }).join("")}<button type="button" class="system-action" data-refresh-delivery-status>Refresh delivery status</button></div></details>` : ""}`;
@@ -78,9 +79,11 @@
           const source = b.dataset.prepareArticlePr;
           const retry = b.dataset.retryAdaptation;
           try {
-            const result = await context.api("/api/workflows/00000000-0000-4000-8000-000000000036/runs", {
-              method: "POST", headers: {"Idempotency-Key": `article-delivery:${source}:${state.available_repository}${retry ? `:${retry}` : ""}`},
-              body: JSON.stringify({project_id: context.projectId, inputs: {source_run_id: source, expected_repository: state.available_repository, direction: "", ...(retry ? {retry_run_id: retry} : {})}}),
+            // website.change (source content_draft) puts the approved page on the site; a failed
+            // adaptation with nothing delivered is replaced by a fresh one.
+            const result = await context.api("/api/workflows/00000000-0000-4000-8000-000000000045/runs", {
+              method: "POST", headers: {"Idempotency-Key": `website-change:${source}:${state.available_repository}${retry ? `:${retry}` : ""}`},
+              body: JSON.stringify({project_id: context.projectId, inputs: {source: "content_draft", source_run_id: source, expected_repository: state.available_repository}}),
             });
             const row = Object.values(drafts).find(r => r.run_id === source);
             if (row) row.repository_delivery = {run_id: result.id, status: result.status, repository: state.available_repository};

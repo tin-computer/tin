@@ -56,6 +56,7 @@ NATIVE_EXECUTORS = {
     "ads.assessment",
     "ads.launch",
     "ads.monitor",
+    "revenue.payment_recovery",
 }
 PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_draft"}
 
@@ -69,6 +70,14 @@ PARENT_EXECUTORS = {"organic.traffic_system", "growth.onboarding", "social.x_dra
 # would cost $1.92. Real runs cost far less: a production audit, keyword plan and content plan
 # together came to $0.73.
 AUDIT_MAXIMUM_USD = 2
+
+
+def audit_maximum_nanos(policy: dict | None) -> int:
+    """An audit's own ceiling: organic-audit-v15 pins its own ($4 for sixteen questions)."""
+    pinned = amount_nanos((policy or {}).get("billing_maximum_usd"))
+    return pinned if pinned is not None else AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR
+
+
 # The organic parent's spending pool beyond the founder's keyword limit: about five times what a
 # production run spent ($2.49 for audit, keyword research, content plan and one draft, with the
 # technical fix and page adaptation costing nothing that run). Every child keeps its own
@@ -77,9 +86,55 @@ AUDIT_MAXIMUM_USD = 2
 # steps spent unusually much stops its later paid steps rather than exceeding the pool.
 TRAFFIC_SYSTEM_POOL_USD = 10
 # The content plan's share inside the organic parent. Its one model call reads at most
-# 240,000 bytes of evidence plus instructions and schema and writes at most 16,000 tokens:
-# under $0.10 even at long-context rates. Standalone plans keep the $2 native ceiling.
+# 240,000 bytes of evidence plus instructions and schema (about 254,000 tokens) and writes at
+# most 32,000 tokens (content-editorial-v8; v7 wrote 16,000): $0.088 even at long-context
+# rates, under $0.10. Standalone one-call plans have a $0.25 ceiling (NATIVE_MAXIMUMS_USD).
 CONTENT_PLAN_SHARE_USD = 1
+# content.plan 1.0.0 (content-editorial-v9) buys no model call itself: its planning agent,
+# content.plan_research, is a Codex procedure child with its own $6 ceiling
+# (codex_api_pricing.PROCEDURE_MAXIMUMS), so the plan is a spending parent of that size, and
+# organic-traffic-v8's ceiling holds it (TRAFFIC_SYSTEM_V8_USD).
+CONTENT_PLAN_AGENT_USD = 6
+
+
+def agent_planner(definition) -> bool:
+    """Whether a content.plan definition plans with the agent (v9 and later)."""
+    return definition.get("executor") == "content.plan" and bool(
+        (definition.get("content_policy") or {}).get("planner")
+    )
+
+
+# Native ceilings below the $2 default, from each workflow's per-call reservations (each call
+# reserves its worst case before dispatch) rather than from its p90 (workflow_estimates).
+# content.plan's entry is its one-call version; the agent planner is CONTENT_PLAN_AGENT_USD.
+# style.capture keeps room for a full sample in a CJK script, whose escaped text reserves about
+# $2.01 on its one call; project.memory and weekly_brief keep room for quote-heavy sources.
+NATIVE_MAXIMUMS_USD = {
+    "content.plan": "0.25",
+    "creative.character": "1.50",
+    "style.capture": "2.50",
+    "social.x_style": "1",
+    "social.x_revise": "1",
+    "content.answer_page": "0.50",
+    "project.memory": "1",
+    "project.weekly_brief": "0.50",
+    "scan.report": "0.25",
+    "visibility.audit": "0.75",
+}
+# organic-traffic-v8's ceiling beyond the founder's keyword limit: its children's p90s
+# (workflow_estimates) come to about $3 without delivery or fixes, and the $12 also holds any
+# one child's own ceiling (audit $6, planning agent $6, draft $6, refresh $1). Delivery and
+# technical fixes are website.change runs with a $4 ceiling and a p90 under $1, so each adds
+# $3; a run that needs more stops its later paid steps.
+TRAFFIC_SYSTEM_V8_USD = 12
+# Versions before v8 keep the share their first page refresh had when they shipped.
+REFRESH_SHARE_BEFORE_V8_NANOS = 2_500_000_000
+TRAFFIC_SYSTEM_V8_STEP_USD = 3
+
+
+# Page decisions' share inside the organic parent (organic-traffic-v7): at most two GPT-6 Luna
+# calls of 30,000 input bytes and 2,048 output tokens each, a few cents even at the bound.
+PAGE_DECISIONS_SHARE_USD = 1
 
 
 def amount_nanos(value):
@@ -102,33 +157,49 @@ def service_terms(definition, *, inputs=None):
         return None
     inputs = inputs or {}
     maximum = 2 * NANOS_PER_DOLLAR
+    if executor in NATIVE_MAXIMUMS_USD:
+        maximum = amount_nanos(NATIVE_MAXIMUMS_USD[executor])
     kinds = ["native_model"]
-    if executor == "organic.audit":
-        maximum, kinds = AUDIT_MAXIMUM_USD * NANOS_PER_DOLLAR, ["native_model", "tool"]
+    if agent_planner(definition):
+        maximum, kinds = CONTENT_PLAN_AGENT_USD * NANOS_PER_DOLLAR, []
+    elif executor == "organic.audit":
+        maximum = audit_maximum_nanos(definition.get("audit_policy"))
+        kinds = ["native_model", "tool"]
         # organic-audit-v13 also asks its questions on six AI engines, within its own pinned
         # ceiling ($1; eight questions cost at most $0.63 at the pinned request prices).
         engines = (definition.get("audit_policy") or {}).get("ai_engines_max_cost_usd")
         if engines is not None:
             maximum += amount_nanos(engines) or 0
     elif executor == "organic.keyword_plan":
-        maximum = amount_nanos(inputs.get("max_cost_usd", 9))
+        maximum = amount_nanos(inputs.get("max_cost_usd", 2))
         kinds = ["native_model", "tool"]
     elif executor == "organic.traffic_system":
-        keywords = amount_nanos(inputs.get("keyword_max_cost_usd", 9))
+        keywords = amount_nanos(inputs.get("keyword_max_cost_usd", 2))
         maximum = keywords
-        if maximum is not None:
+        version = definition.get("organic_system_policy", {}).get("version")
+        if maximum is not None and version == "organic-traffic-v8":
+            maximum += (
+                TRAFFIC_SYSTEM_V8_USD
+                + (TRAFFIC_SYSTEM_V8_STEP_USD if inputs.get("technical_fix") else 0)
+                + (
+                    TRAFFIC_SYSTEM_V8_STEP_USD
+                    if inputs.get("content_delivery", "auto") == "auto"
+                    else 0
+                )
+            ) * NANOS_PER_DOLLAR
+        elif maximum is not None:
             maximum += (
                 AUDIT_MAXIMUM_USD
                 + CONTENT_PLAN_SHARE_USD
                 + (5 if inputs.get("technical_fix") else 0)
             ) * NANOS_PER_DOLLAR
-            version = definition.get("organic_system_policy", {}).get("version")
             if version in {
                 "organic-traffic-v2",
                 "organic-traffic-v3",
                 "organic-traffic-v4",
                 "organic-traffic-v5",
                 "organic-traffic-v6",
+                "organic-traffic-v7",
             }:
                 # One draft and, unless explicitly disabled, one repository adaptation.
                 # This is a bound, not an upfront charge or six-month reservation. Weekly
@@ -137,22 +208,29 @@ def service_terms(definition, *, inputs=None):
                     5 + (5 if inputs.get("content_delivery", "auto") == "auto" else 0)
                 ) * NANOS_PER_DOLLAR
             pool = keywords + TRAFFIC_SYSTEM_POOL_USD * NANOS_PER_DOLLAR
-            if version in {"organic-traffic-v5", "organic-traffic-v6"}:
+            if version in {
+                "organic-traffic-v5",
+                "organic-traffic-v6",
+                "organic-traffic-v7",
+            }:
                 # v5's first page refresh is a child run; later weekly refreshes are ordinary
                 # scheduled runs with their own funding. The pool grows by the refresh's own
                 # ceiling, since a production run has not measured one yet. v6 keeps v5's
                 # children; its technical and delivery steps are website.change runs, each
-                # with the same $5 procedure ceiling as the workflows they replace.
-                from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
-
-                maximum += PROCEDURE_MAXIMUMS["content-refresh.v1"]
-                pool += PROCEDURE_MAXIMUMS["content-refresh.v1"]
+                # with the same $5 procedure ceiling as the workflows they replace. The refresh
+                # share stays the $2.50 its ceiling was when these versions shipped.
+                maximum += REFRESH_SHARE_BEFORE_V8_NANOS
+                pool += REFRESH_SHARE_BEFORE_V8_NANOS
+            if version == "organic-traffic-v7":
+                # v7's first traffic snapshot (no model call) and Page decisions run as children.
+                maximum += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
+                pool += PAGE_DECISIONS_SHARE_USD * NANOS_PER_DOLLAR
             # The children's ceilings add up to more than a run spends; the pool bounds the run.
             maximum = min(maximum, pool)
         kinds = []  # The parent itself never buys a model call.
     elif executor == "social.x_draft":
         # One bounded voice capture and one composition; only actual child usage is charged.
-        maximum, kinds = 4 * NANOS_PER_DOLLAR, []
+        maximum, kinds = 1 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding":
         maximum, kinds = 10 * NANOS_PER_DOLLAR, []
     elif executor == "growth.onboarding_plan":
@@ -169,15 +247,19 @@ def service_terms(definition, *, inputs=None):
     elif executor == "ads.monitor":
         maximum = amount_nanos(inputs.get("max_cost_usd", 2))
         kinds = ["native_model", "tool"]
+    elif executor == "revenue.payment_recovery":
+        # One drafting step; Stripe and Gmail calls go through the founder's own accounts.
+        maximum, kinds = 2 * NANOS_PER_DOLLAR, ["native_model", "tool"]
     if type(maximum) is not int or maximum <= 0:
         raise BillingError("invalid_budget", "The workflow spending maximum is invalid.")
     return {
         "rate_card": CARD["id"],
         "service_pricing": deepcopy(CARD),
-        "mode": "test",
         "currency": "USD",
         "definition_sha256": digest(definition),
-        "kind": "parent" if executor in PARENT_EXECUTORS else "metered_workflow",
+        "kind": "parent"
+        if executor in PARENT_EXECUTORS or agent_planner(definition)
+        else "metered_workflow",
         "operations": kinds,
         "maximum_nanos": maximum,
         "execution_fee_nanos": 0,

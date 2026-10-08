@@ -121,7 +121,7 @@ without calling DataForSEO. It sits on the trusted worker lane (`activity_lanes.
 
 ## Calling it from the audit
 
-`organic.audit` calls it under its own pinned policy, `organic-audit-v13`, so v11 and v12 stay
+`organic.audit` calls it from its pinned policy `organic-audit-v13` on, so v11 and v12 stay
 as released (see [the audit notes](organic-audit-implementation.md)):
 
 1. After the brand checks, `organic_prepare_ai_engines` takes the audit's frozen questions,

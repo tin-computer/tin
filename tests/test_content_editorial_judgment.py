@@ -115,6 +115,41 @@ def test_invalid_judgments_cannot_publish(bad):
         validate_pair(ARTICLE, raw, context)
 
 
+def update_context():
+    context = {**sample_context(), "output_validator": content_draft.EDITORIAL_VALIDATOR}
+    context["item"] = {
+        **context["item"],
+        "action": "update_page",
+        "destination": "https://example.com/docs",
+    }
+    return context
+
+
+def test_an_unreadable_extra_page_does_not_sink_an_already_covered_judgment():
+    # Sheepdogs: the refresh's own page was read in full; the canvas homepage could not be.
+    context = update_context()
+    value = judgment(context)
+    value["compared_pages"].append(
+        {
+            "url": "https://example.com/",
+            "status": "unavailable",
+            "coverage": "The homepage returned no readable text to compare.",
+        }
+    )
+    proof = validate_pair(assessment_document(value), judgment_notes(context, value), context)
+    assert proof["outcome"] == "already_covered"
+
+
+def test_covered_without_reading_the_destination_finishes_as_insufficient_evidence():
+    # Claiming coverage from a page that couldn't be read is not evidence; the paid run
+    # still finishes, with the honest outcome instead of a crash.
+    context = update_context()
+    value = judgment(context)
+    value["compared_pages"][0]["status"] = "unavailable"
+    proof = validate_pair(assessment_document(value), judgment_notes(context, value), context)
+    assert proof["outcome"] == "insufficient_evidence"
+
+
 async def prepared(f, outcome, *, publish=True):
     run = await start(f, key=str(uuid4()))
     activities = TinActivities(
@@ -353,3 +388,25 @@ async def test_a_covered_run_saved_before_covered_by_still_names_its_page(
     sources = await f.service.discover(project_id=f.project.id, program_id=f.configured.id)
     item = next(i for i in sources["items"] if i["id"] == context["item"]["id"])
     assert item["covered"]["page"] == "https://example.com/docs"
+
+
+def test_an_update_its_destination_already_satisfies_says_no_change_is_needed():
+    from tin_lite.content_editorial_judgment import no_draft_summary
+
+    page = "https://example.com/how-to-edit-text-in-image-with-same-font"
+    update = {"title": "Same-font guide", "action": "update_page", "destination": page + "/"}
+    covered = {"outcome": "already_covered"}
+    # ImageTextEdit, 10-07: "Already covered by <the page this refresh was for>" read as if
+    # the page collided with itself.
+    assert no_draft_summary(covered, update, page) == (
+        f"No change needed: {page} already does what this update asks: Same-font guide."
+    )
+    other = "https://example.com/edit-text-in-image"
+    assert no_draft_summary(covered, update, other) == (
+        f"Already covered by {other}: Same-font guide. No article drafted."
+    )
+    new_page = {"title": "Best tools", "action": "new_page"}
+    assert no_draft_summary(covered, new_page, page).startswith(f"Already covered by {page}:")
+    assert no_draft_summary({"outcome": "insufficient_evidence"}, update, None) == (
+        "Coverage could not be established: Same-font guide. No article drafted."
+    )

@@ -97,6 +97,28 @@
       "verification": {
         "commands": ["git diff --check", "git status --short"]
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Maps, plan and past starters", "fact": "Code map, Feature map, earlier RESULT.md"},
+          {"id": "repo", "kind": "surface", "label": "GitHub repository", "fact": "finds what a developer calls first"},
+          {"id": "choose", "kind": "step", "label": "Choose the framework", "fact": "fixed code, never a starter twice"},
+          {"id": "none", "kind": "ghost", "label": "No starter to add", "fact": "receipt names why, no pull request"},
+          {"id": "write", "kind": "step", "label": "Write and check the starter", "fact": "Codex, 10 files max, secrets server side"},
+          {"id": "pr", "kind": "surface", "label": "Pull request", "fact": "unmerged, one starter directory"},
+          {"id": "receipt", "kind": "receipt", "label": "Starter receipt", "fact": "RESULT.md in reports/framework-starter"}
+        ],
+        "edges": [
+          {"from": "context", "to": "choose", "kind": "call"},
+          {"from": "repo", "to": "choose", "kind": "call"},
+          {"from": "choose", "to": "write", "kind": "call"},
+          {"from": "choose", "to": "none", "kind": "call", "label": "no fit, or done"},
+          {"from": "write", "to": "pr", "kind": "call"},
+          {"from": "pr", "to": "receipt", "kind": "call"}
+        ]
+      }
     }
   }
 }

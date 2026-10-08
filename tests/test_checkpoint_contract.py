@@ -19,9 +19,9 @@ from tin_lite.auth import AuthContext, require_user
 from tin_lite.catalog import (
     ANSWER_PAGE_WORKFLOW_ID,
     BUILTIN_WORKFLOWS,
-    COLD_OUTREACH_SYSTEM,
     DESIGN_MD_WORKFLOW_ID,
     ORGANIC_TRAFFIC_SYSTEM,
+    OUTREACH_SYSTEM,
     SCAN_REPORT_WORKFLOW_ID,
     START_HERE_SYSTEM,
     VISIBILITY_AUDIT_WORKFLOW_ID,
@@ -51,6 +51,7 @@ from tin_lite.workflows import (
     CharacterDesignWorkflow,
     CodeWorkflow,
     CodexProcedureWorkflow,
+    ConnectionCollectionWorkflow,
     ContentDraftDeliveryWorkflow,
     ContentPlanWorkflow,
     DesignMdWorkflow,
@@ -64,6 +65,7 @@ from tin_lite.workflows import (
     PaidAdsAssessmentWorkflow,
     PaidAdsLaunchWorkflow,
     PaidAdsMonitorWorkflow,
+    PaymentRecoveryWorkflow,
     ProjectMemoryWorkflow,
     ProjectTaskWorkflow,
     ScanReportWorkflow,
@@ -515,6 +517,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         GrowthOnboardingPlanWorkflow,
         ScheduledDispatchWorkflow,
         ContentPlanWorkflow,
+        ConnectionCollectionWorkflow,
         DesignMdWorkflow,
         ProjectMemoryWorkflow,
         ScanReportWorkflow,
@@ -526,6 +529,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         PaidAdsLaunchWorkflow,
         PaidAdsMonitorWorkflow,
         AwesomeSubmitWorkflow,
+        PaymentRecoveryWorkflow,
         AnswerPageWorkflow,
         CharacterDesignWorkflow,
         CodexProcedureWorkflow,
@@ -544,6 +548,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         "growth.onboarding": GrowthOnboardingWorkflow,
         "growth.onboarding_plan": GrowthOnboardingPlanWorkflow,
         "content.plan": ContentPlanWorkflow,
+        "connections.collect": ConnectionCollectionWorkflow,
         "content.design_md": DesignMdWorkflow,
         "project.memory": ProjectMemoryWorkflow,
         "scan.report": ScanReportWorkflow,
@@ -555,6 +560,7 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
         "ads.launch": PaidAdsLaunchWorkflow,
         "ads.monitor": PaidAdsMonitorWorkflow,
         "outreach.awesome_submit": AwesomeSubmitWorkflow,
+        "revenue.payment_recovery": PaymentRecoveryWorkflow,
         "content.answer_page": AnswerPageWorkflow,
         "creative.character": CharacterDesignWorkflow,
         CODEX_PROCEDURE_EXECUTOR: CodexProcedureWorkflow,
@@ -571,12 +577,18 @@ def test_workflow_registry_is_explicit_and_narrow() -> None:
 
 @pytest.mark.asyncio
 async def test_builtin_sync_keeps_the_immutable_definition_commit(monkeypatch) -> None:
-    # Include the package child published atomically with the native X parent.
+    # Include the package children published atomically with the X parent and the organic
+    # system.
+    from tin_lite.organic_system import MEASURE_STEPS
     from tin_lite.public_workflows import PUBLIC_WORKFLOWS, load_public_workflows
 
     monkeypatch.setattr(
         "tin_lite.public_workflows.PUBLIC_WORKFLOWS",
-        tuple(item for item in PUBLIC_WORKFLOWS if item.key == "social.x_compose"),
+        tuple(
+            item
+            for item in PUBLIC_WORKFLOWS
+            if item.key in {"social.x_compose", *MEASURE_STEPS.values()}
+        ),
     )
     packages = await load_public_workflows()
     _, workflow, _ = fixture_state()
@@ -677,11 +689,11 @@ def test_registry_system_assignments_are_manifest_metadata_only() -> None:
     assert definitions["site.health_improve"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["visibility.audit"]["system"] == ORGANIC_TRAFFIC_SYSTEM
     assert definitions["content.answer_page"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["outreach.email_shortlist"]["system"] == COLD_OUTREACH_SYSTEM
-    assert definitions["outreach.email_campaign"]["system"] == COLD_OUTREACH_SYSTEM
+    assert definitions["outreach.email_shortlist"]["system"] == OUTREACH_SYSTEM
+    assert definitions["outreach.email_campaign"]["system"] == OUTREACH_SYSTEM
     assert "system" not in definitions["research.deep_dive"]
     assert definitions["content.public_article"]["system"] == ORGANIC_TRAFFIC_SYSTEM
-    assert definitions["style.capture"]["system"] == ORGANIC_TRAFFIC_SYSTEM
+    assert "system" not in definitions["style.capture"]
     assert definitions["ads.assessment"]["system"] == "paid-ads"
     assert "agent_only" not in definitions["ads.assessment"]
 

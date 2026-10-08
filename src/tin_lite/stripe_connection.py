@@ -44,7 +44,7 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
 )
-from tin_lite.provider_errors import ProviderErrorDetail
+from tin_lite.provider_errors import ProviderErrorDetail, explain
 from tin_lite.provider_errors import detail as provider_error_detail
 
 STRIPE_API = "https://api.stripe.com"
@@ -53,10 +53,10 @@ STRIPE_API = "https://api.stripe.com"
 STRIPE_VERSION = "2026-08-26.dahlia"
 RESTRICTED_KEY = re.compile(r"rk_(test|live)_[A-Za-z0-9]{20,247}\Z")
 UNRESTRICTED_KEY = re.compile(r"(sk|pk)_(test|live)_")
-# Stripe's dashboard pre-selects these on its "Create restricted key" page. Account read lets
-# Tin identify the account; products back the price reads; the rest match the capabilities.
+# Stripe's dashboard pre-selects these on its "Create restricted key" page. Products back the
+# price reads; the rest match the capabilities. GET /v1/account needs a Connect permission on a
+# restricted key, so Tin never asks for it and identifies the account without it.
 DASHBOARD_PERMISSIONS = (
-    "rak_account_read",
     "rak_customer_read",
     "rak_subscription_read",
     "rak_plan_read",
@@ -97,6 +97,8 @@ RATE_REASONS = frozenset(
 # 2100-01-01T00:00:00Z; Stripe timestamps are Unix seconds.
 MAX_TIMESTAMP = 4_102_444_800
 STRIPE_ID = re.compile(r"[A-Za-z0-9_]{3,255}\Z")
+# Stripe's permission errors name the account: "... for this endpoint on account 'acct_…'".
+ACCOUNT_IN_MESSAGE = re.compile(r"\b(acct_[A-Za-z0-9]{6,64})\b")
 
 
 def create_key_url(name: str = "Tin") -> str:
@@ -200,6 +202,8 @@ def request_for(operation: str, arguments: Any) -> tuple[Operation, dict[str, An
         params["created[lte]"] = bounds["created_lte"]
     if operation == "subscriptions.list":
         params["status"] = _choice(args.get("status", "all"), "status", SUBSCRIPTION_STATUSES)
+    if operation in {"subscriptions.list", "charges.list"} and args.get("customer") is not None:
+        params["customer"] = _stripe_id(args["customer"], "customer", "cus_")
     if operation == "invoices.list":
         if args.get("status") is not None:
             params["status"] = _choice(args["status"], "status", INVOICE_STATUSES)
@@ -354,7 +358,49 @@ def project_invoice(value: dict[str, Any]) -> dict[str, Any]:
         "period_start": integer(value.get("period_start")),
         "period_end": integer(value.get("period_end")),
         "attempt_count": integer(value.get("attempt_count")),
+        "amount_remaining": integer(value.get("amount_remaining")),
+        "collection_method": text(value.get("collection_method"), 40),
+        "next_payment_attempt": integer(value.get("next_payment_attempt")),
+        "due_date": integer(value.get("due_date")),
+        "customer_email": text(value.get("customer_email"), 320),
+        "customer_name": text(value.get("customer_name")),
+        "hosted_invoice_url": _invoice_url(value.get("hosted_invoice_url")),
+        "lines": _invoice_lines(value.get("lines")),
+        "product_ids": _invoice_products(value.get("lines")),
     }
+
+
+def _invoice_url(value: Any) -> str | None:
+    """Stripe's hosted page where the customer pays this invoice; only Stripe's own host."""
+    url = text(value, 500)
+    return url if url and url.startswith("https://invoice.stripe.com/") else None
+
+
+def _invoice_products(value: Any) -> list[str]:
+    """The products this invoice bills, from its first ten lines, in line order."""
+    rows = value.get("data") if isinstance(value, dict) else None
+    found: list[str] = []
+    for row in rows[:10] if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        # Since basil a line names its price under pricing.price_details; before, under price.
+        pricing = row.get("pricing") if isinstance(row.get("pricing"), dict) else {}
+        details = pricing.get("price_details")
+        details = details if isinstance(details, dict) else {}
+        price = row.get("price") if isinstance(row.get("price"), dict) else {}
+        product = _id(details.get("product")) or _id(price.get("product"))
+        if product and product not in found:
+            found.append(product)
+    return found
+
+
+def _invoice_lines(value: Any) -> list[str]:
+    """The first few line descriptions ("1 × Pro (at $20.00 / month)"), as Stripe wrote them."""
+    rows = value.get("data") if isinstance(value, dict) else None
+    if not isinstance(rows, list):
+        return []
+    found = (text(row.get("description"), 160) for row in rows[:3] if isinstance(row, dict))
+    return [line for line in found if line]
 
 
 def project_price(value: dict[str, Any]) -> dict[str, Any]:
@@ -381,6 +427,10 @@ def project_price(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def project_charge(value: dict[str, Any]) -> dict[str, Any]:
+    outcome = value.get("outcome") if isinstance(value.get("outcome"), dict) else {}
+    method = value.get("payment_method_details")
+    method = method if isinstance(method, dict) else {}
+    card = method.get("card") if isinstance(method.get("card"), dict) else {}
     return {
         "id": text(value.get("id"), 255),
         "customer": _id(value.get("customer")),
@@ -392,6 +442,16 @@ def project_charge(value: dict[str, Any]) -> dict[str, Any]:
         "refunded": boolean(value.get("refunded")),
         "created": integer(value.get("created")),
         "failure_code": text(value.get("failure_code"), 80),
+        "failure_message": text(value.get("failure_message"), 200),
+        "outcome_reason": text(outcome.get("reason"), 80),
+        # Brand and expiry say why a card failed; card digits never leave Tin.
+        "card": {
+            "brand": text(card.get("brand"), 20),
+            "exp_month": integer(card.get("exp_month")),
+            "exp_year": integer(card.get("exp_year")),
+        }
+        if card
+        else None,
     }
 
 
@@ -401,7 +461,7 @@ OPERATIONS: dict[str, Operation] = {
     "subscriptions.list": Operation(
         "subscriptions.read",
         "/v1/subscriptions",
-        _WINDOW | {"status"},
+        _WINDOW | {"status", "customer"},
         project_subscription,
         expand="data.customer",
     ),
@@ -421,7 +481,9 @@ OPERATIONS: dict[str, Operation] = {
         project_price,
         expand="data.product",
     ),
-    "charges.list": Operation("charges.read", "/v1/charges", _WINDOW, project_charge),
+    "charges.list": Operation(
+        "charges.read", "/v1/charges", _WINDOW | {"customer"}, project_charge
+    ),
 }
 assert {op.capability for op in OPERATIONS.values()} == set(STRIPE_CAPABILITIES)
 
@@ -565,9 +627,23 @@ def _display_name(account: dict[str, Any]) -> str | None:
     return None
 
 
+def _account_from_refusal(error: StripePermissionDenied, key: str) -> str:
+    """The account a permission error names, or a stable stand-in derived from the key."""
+    message = error.provider_error.message if error.provider_error else None
+    found = ACCOUNT_IN_MESSAGE.search(message or "")
+    if found:
+        return found.group(1)
+    return "stripe_key_" + hashlib.sha256(key.encode()).hexdigest()[:24]
+
+
 async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
-    """Identify the account and probe each read; raise a founder-facing error otherwise."""
+    """Identify the account and probe each read; raise a founder-facing error otherwise.
+
+    Reading /v1/account needs a Connect permission on a restricted key, which Tin's link does not
+    ask for. Without it the account id comes from Stripe's refusal, and the account has no name.
+    """
     reader = StripeReader(client, key)
+    account: dict[str, Any] = {}
     try:
         account, _ = await reader.get("/v1/account")
     except StripeAuthenticationFailed:
@@ -575,21 +651,20 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
             "Stripe rejected this key. Copy the whole rk_… value, and check the key was not "
             "deleted or expired in Stripe."
         ) from None
-    except StripePermissionDenied:
-        raise IntegrationInputError(
-            "This key cannot read your Stripe account details. Create the key from Tin's link, "
-            "which includes Account read, or add it to the key in Stripe."
-        ) from None
+    except StripePermissionDenied as error:
+        account = {"id": _account_from_refusal(error, key)}
     except IntegrationRateLimitedError:
         raise IntegrationUpstreamError(
             "Stripe is rate-limiting requests right now; try again in a minute."
         ) from None
-    except ServiceCallRefused:
-        raise IntegrationUpstreamError("Stripe could not check the key; try again.") from None
+    except ServiceCallRefused as error:
+        raise IntegrationUpstreamError(
+            explain("Stripe could not check the key; try again.", error.provider_error)
+        ) from None
     except httpx.HTTPError:
         raise IntegrationUpstreamError("Stripe could not be reached; try again.") from None
     account_id = account.get("id")
-    if not isinstance(account_id, str) or not account_id.startswith("acct_"):
+    if not isinstance(account_id, str) or not account_id.startswith(("acct_", "stripe_key_")):
         raise IntegrationUpstreamError("Stripe did not identify the account for this key")
     readable: dict[str, bool] = {}
     for path in RESOURCE_NAMES:
@@ -600,7 +675,14 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
             readable[path] = False
         except StripeAuthenticationFailed:
             raise IntegrationInputError("Stripe rejected this key while checking it.") from None
-        except (ServiceCallRefused, httpx.HTTPError):
+        except ServiceCallRefused as error:
+            raise IntegrationUpstreamError(
+                explain(
+                    "Stripe could not finish checking the key; try again in a minute.",
+                    error.provider_error,
+                )
+            ) from None
+        except httpx.HTTPError:
             raise IntegrationUpstreamError(
                 "Stripe could not finish checking the key; try again in a minute."
             ) from None
@@ -623,7 +705,10 @@ async def inspect_key(client: httpx.AsyncClient, key: str) -> dict[str, Any]:
 
 
 def _label(configuration: dict[str, Any]) -> str:
-    name = configuration.get("account_name") or configuration.get("account_id") or "Stripe"
+    account_id = configuration.get("account_id")
+    if isinstance(account_id, str) and account_id.startswith("stripe_key_"):
+        account_id = None
+    name = configuration.get("account_name") or account_id or "Stripe"
     return name if configuration.get("livemode") else f"{name} (test mode)"
 
 

@@ -14,34 +14,52 @@ trusted context first:
   `workspace.website_change.protected_paths`.
 
 The context holds the change row (`change`: its source, stable ID, kind and site paths),
-the exact approved copy (`article`), its source identity, the destination repository,
+the approved copy (`article`, in Markdown), its source identity, the destination repository,
 the page's route (`route`), the protected paths (`protected_paths`) and whether Tin may
 publish it (`publish`). Today every change is an approved page (`change.source` is
 `content_draft`): `source_kind` says what it is, `article` (a planned article, with its
 plan `item`), `answer_page` or `public_article`. Answer pages and public articles carry
 their search listing apart from the copy in `page_metadata` (`meta_title`,
-`meta_description`). Keep the Markdown in Tin unchanged. Inspect this repository's
-instructions and existing page routes, components and typed page registries. Prepare the
-smallest coherent site change (at most five text files) and a PR.
+`meta_description`, and the approved `slug` when the draft chose one). Keep the Markdown in Tin unchanged. Inspect this repository's
+instructions and existing pages, routes, components and page registries, and prepare one
+coherent site change (at most 20 files) as a PR.
 
-Keep `article` byte-for-byte in one Markdown file, or as a complete JSON string literal
-consumed by an existing Markdown renderer. Do not transcribe its prose into JSX,
-summarize it, remove caveats or alter links. Put the listing in the site's own title and
-description fields, never into the copy. Do not add dependencies, and never touch
-`package.json` or a lockfile.
+Build the page the way this site builds its pages: a Markdown or MDX file, a component, a
+typed page registry, plain HTML or whatever else the repository uses. Convert the format
+freely and wrap it in the site's own layout, styles and components. Keep the approved
+wording: the same headings, paragraphs, lists, tables, caveats and link destinations, in
+the same order. Do not summarize it, rewrite it or add sales copy. Put the listing in the
+site's own title and description fields, never into the copy. Prefer the site's existing
+tools; add a dependency only when the page cannot be built without one, and say why in the
+PR body.
+
+Match the site's other pages of that kind: give the page the same header, footer, links
+back into the site (for example to the product), byline and dates, and structured data (such as
+JSON-LD) that they carry. Use only the fonts and files the site already loads; do not add web
+fonts or other outside resources.
+
+The approved page may carry figures and interactive pieces, listed in `assets` with each
+file's project path, and diagram, video and callout blocks in `article`. Your project-state
+checkout is at the approved revision: copy each asset from `/home/user/state/<path>` into the
+place this site keeps such files, and show it the way the site shows media. An SVG becomes an
+image or the site's figure component, with its alt text and caption. An interactive piece
+becomes an iframe or an inline component, with its script and data unchanged. Show each
+`mermaid` block with the site's own Mermaid support, or draw it as an SVG figure in the site's
+style when the site has none. Show each `tin-video` block with the site's video component or the provider's embed
+code, linking a video file rather than copying it, and each `> [!NOTE]`-style callout with
+the site's own note style, or a plain aside. Every approved asset, diagram and video has to
+appear on the page.
 
 When `route` is set, the founder chose where these pages live: publish the page at exactly
-that route, in the site's own page registry or content folder for such pages. Never put a
+that route, wherever the site keeps such pages. Never put a
 page under `content/answers/`, which is Tin's draft folder and not a page on the site.
-Never change a file that serves a path in `protected_paths` (such as /sign-in), a root
-layout, middleware, or host or build settings.
+Never change a file that serves a path in `protected_paths` (such as /sign-in). Leave
+root layouts, middleware and host or build settings alone unless the page cannot be served
+without a change there, and then say why in the PR body.
 
-When the site already renders Markdown files from a content folder, add the page there as
-one `.md` file. When no route renders such a folder but the site already depends on a
-Markdown renderer, you may add one minimal route, once, that renders `.md` files from one
-content folder with that renderer and the site's existing layout, and place the page there
-as a `.md` file. If the site has no Markdown renderer, stop and explain the missing
-prerequisite; never commit a file the site will not render.
+If the site does not serve the page's route yet, add the smallest route that fits how its
+other pages are served. The page must actually be served, not left in a folder nothing
+reads.
 
 Run available relevant checks. Never claim a full build succeeded if dependencies,
 network access, configuration or services prevent it. The mandatory Tin check is

@@ -249,7 +249,20 @@
         "created": 1774816000,
         "period_start": 1772224000,
         "period_end": 1774816000,
-        "attempt_count": 1
+        "attempt_count": 1,
+        "amount_remaining": 49000,
+        "collection_method": "charge_automatically",
+        "next_payment_attempt": 1775075200,
+        "due_date": null,
+        "customer_email": "linus@kernel.example",
+        "customer_name": "Linus T.",
+        "hosted_invoice_url": "https://invoice.stripe.com/i/acct_Fixture/test_FixtureInvoice0004",
+        "lines": [
+          "Annual support (manual)"
+        ],
+        "product_ids": [
+          "prod_FixturePro"
+        ]
       },
       {
         "id": "in_Fixture0003",
@@ -263,7 +276,16 @@
         "created": 1773088000,
         "period_start": 1770496000,
         "period_end": 1773088000,
-        "attempt_count": 4
+        "attempt_count": 4,
+        "amount_remaining": 2900,
+        "collection_method": "charge_automatically",
+        "next_payment_attempt": null,
+        "due_date": null,
+        "customer_email": null,
+        "customer_name": null,
+        "hosted_invoice_url": null,
+        "lines": [],
+        "product_ids": []
       },
       {
         "id": "in_Fixture0002",
@@ -277,7 +299,16 @@
         "created": 1770496000,
         "period_start": 1767904000,
         "period_end": 1770496000,
-        "attempt_count": 1
+        "attempt_count": 1,
+        "amount_remaining": 0,
+        "collection_method": "charge_automatically",
+        "next_payment_attempt": null,
+        "due_date": null,
+        "customer_email": null,
+        "customer_name": null,
+        "hosted_invoice_url": null,
+        "lines": [],
+        "product_ids": []
       },
       {
         "id": "in_Fixture0001",
@@ -291,7 +322,16 @@
         "created": 1763584000,
         "period_start": 1760992000,
         "period_end": 1763584000,
-        "attempt_count": 1
+        "attempt_count": 1,
+        "amount_remaining": 0,
+        "collection_method": "charge_automatically",
+        "next_payment_attempt": null,
+        "due_date": null,
+        "customer_email": null,
+        "customer_name": null,
+        "hosted_invoice_url": null,
+        "lines": [],
+        "product_ids": []
       }
     ],
     "has_more": false,
@@ -364,7 +404,14 @@
         "paid": false,
         "refunded": false,
         "created": 1773088000,
-        "failure_code": "card_declined"
+        "failure_code": "card_declined",
+        "failure_message": "Your card was declined.",
+        "outcome_reason": "insufficient_funds",
+        "card": {
+          "brand": "mastercard",
+          "exp_month": 4,
+          "exp_year": 2027
+        }
       },
       {
         "id": "ch_Fixture0002",
@@ -376,7 +423,14 @@
         "paid": true,
         "refunded": true,
         "created": 1770496000,
-        "failure_code": null
+        "failure_code": null,
+        "failure_message": null,
+        "outcome_reason": null,
+        "card": {
+          "brand": "visa",
+          "exp_month": 12,
+          "exp_year": 2030
+        }
       },
       {
         "id": "ch_Fixture0001",
@@ -388,7 +442,14 @@
         "paid": true,
         "refunded": false,
         "created": 1763584000,
-        "failure_code": null
+        "failure_code": null,
+        "failure_message": null,
+        "outcome_reason": null,
+        "card": {
+          "brand": "visa",
+          "exp_month": 12,
+          "exp_year": 2030
+        }
       }
     ],
     "has_more": false,

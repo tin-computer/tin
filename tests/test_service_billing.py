@@ -397,7 +397,7 @@ async def test_child_identity_and_step_ceiling_are_enforced(billed):
     async with f.db.pool.acquire() as conn:
         with pytest.raises(BillingError, match="step"):
             await f.billing.begin_operation(
-                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_000
+                conn, run_id=audit.id, operation_id="too-large", kind="tool", maximum=6_000_000_001
             )
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_operations") == 0
 
@@ -648,7 +648,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
 
     from tin_lite.codex_api import (
         ATTEMPT,
-        PROCEDURE_CONTRACT,
+        PROCEDURE_CONTRACT_V5,
         attempt_key,
         select_contract,
         token_hash,
@@ -673,10 +673,14 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
     run = await admit(f, "research.deep_dive", {"question": "Which clinics buy form builders?"})
     async with f.db.pool.acquire() as conn:
         included = await api_terms_for_included(f.db, run.id, conn=conn)
-    # Included work gets the v3 procedure contract and its 1 MiB request bound, not the
+    # Included work gets the v5 procedure contract and its 8 MiB request bound, not the
     # eight-request pilot contract whose 100,000-token envelope was enforced as bytes.
-    assert included["codex_contract"] == PROCEDURE_CONTRACT
-    assert included["request_maximum_input_bytes"] == 1_048_576
+    assert included["codex_contract"] == PROCEDURE_CONTRACT_V5
+    # Tin funds it with no customer session, so its request/token runaway stops remain.
+    assert "funding" not in included
+    assert included["codex_contract"]["max_requests"] == 256
+    assert included["codex_contract"]["max_observed_tokens"] == 8_000_000
+    assert included["request_maximum_input_bytes"] == 8 * 1024 * 1024
     await f.db.pool.execute(
         """UPDATE workflow_runs SET status='running', lease_active=true,
            sandbox_id='free-test', lease_owner='test' WHERE id=$1""",
@@ -694,7 +698,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
                 ),
                 settings=SimpleNamespace(codex_api_projects=set(), luna_api_key="synthetic"),
             )
-            == PROCEDURE_CONTRACT
+            == PROCEDURE_CONTRACT_V5
         )
         await f.db.start_effect(conn, execution_key=attempt_key(run.id), operation=ATTEMPT)
         await f.db.save_effect_progress(
@@ -702,7 +706,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
             execution_key=attempt_key(run.id),
             result={
                 "outcome": "running",
-                "contract": PROCEDURE_CONTRACT,
+                "contract": PROCEDURE_CONTRACT_V5,
                 "pricing": RATE_CARD,
                 "grant_sha256": token_hash(GRANT),
                 "expires_at": (datetime.now(UTC) + timedelta(minutes=5)).isoformat(),
@@ -747,7 +751,7 @@ async def test_free_onboarding_api_records_supplier_usage_without_debiting_credi
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api), base_url="https://tin.test"
         ) as client:
-            # A 150 KB request: above the old 100,000-byte envelope, within v3.
+            # A 150 KB request: above the old 100,000-byte envelope, within v5.
             large = {**BODY, "input": "x" * 150_000}
             assert (await post(client, run, large)).status_code == 200
             assert (await post(client, run, large)).status_code == 409
@@ -892,7 +896,7 @@ async def test_parallel_paid_calls_cannot_overdraw_parent(billed, monkeypatch):
     await fund(f)
     original = f.billing.terms
 
-    def small_parent(definition, project_id, inputs=None):
+    def small_parent(definition, project_id, inputs=None, **_):
         terms = original(definition, project_id, inputs)
         return {**terms, "maximum_nanos": 2_000_000_000} if terms["kind"] == "parent" else terms
 
@@ -997,5 +1001,5 @@ async def test_x_parent_and_both_children_share_one_budget(billed):
     assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
     assert (
         f.billing.terms(SPECS["social.x_draft"].definition, f.project.id)["maximum_nanos"]
-        == 4_000_000_000
+        == 1_000_000_000  # Voice capture and composition at worst about $0.81 (2026-10-08).
     )

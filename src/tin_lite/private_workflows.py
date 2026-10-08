@@ -11,8 +11,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tin_lite.domain import WorkflowStatus
 from tin_lite.integrations import parse_integration_requirements
-from tin_lite.procedures import load_pinned_codex_procedure, validate_codex_procedure_definition
+from tin_lite.procedures import (
+    MAX_SANDBOX_TIMEOUT_SECONDS,
+    load_pinned_codex_procedure,
+    validate_codex_procedure_definition,
+)
 from tin_lite.project_files import safe_project_file_path
+from tin_lite.workflow_diagrams import check_presentation
 from tin_lite.workflow_inputs import WorkflowInputError
 from tin_lite.workflow_packages import PACKAGE_FORMAT, decode_workflow_source, package_digest
 from tin_lite.workflow_prerequisites import parse_workflow_prerequisites
@@ -81,9 +86,12 @@ def validate_private_definition(definition):
             "integration_requirements",
             "system",
             "prerequisites",
+            "presentation",
         },
         "private definition",
     )
+    # Drawn by the creator and validated when present; older packages simply have none.
+    check_presentation(definition, required=False)
     if not isinstance(definition.get("key"), str) or not PRIVATE_KEY.fullmatch(definition["key"]):
         raise ValueError(
             "private keys must be custom.<lowercase_name> (letters, digits, underscores)"
@@ -105,6 +113,7 @@ def validate_private_definition(definition):
         "cold-outreach",
         "product-qa",
         "creative-studio",
+        "revenue",
     }:
         raise ValueError("choose an existing system or omit system")
     from tin_lite.workflow_packages import validate_package_input_schema
@@ -589,6 +598,8 @@ class PrivateWorkflows:
 
 
 def workflow_source_view(workflow, settings):
+    from tin_lite.connection_collection import cloud_ready
+
     private = workflow.project_id is not None
     active = workflow.status == WorkflowStatus.ACTIVE
     available = not private or private_execution_ready(settings, workflow.project_id)
@@ -597,6 +608,11 @@ def workflow_source_view(workflow, settings):
         "definition_revision": workflow.current_commit_sha,
         "source": {"path": workflow.definition_path, "revision": workflow.current_commit_sha},
         "runtime_available": available,
+        **(
+            {"collection_availability": {"cloud_ready": cloud_ready(settings)}}
+            if workflow.executor == "connections.collect"
+            else {}
+        ),
         "allowed_actions": (["start", "save"] if active and available else [])
         + (["activate"] if private and available else [])
         + (["archive"] if private and active else []),
@@ -613,8 +629,20 @@ SERVICE_ERRORS_GUIDE = (
 
 
 def authoring_guide(*, settings, project_id):
-    from tin_lite.workflow_code import MODEL_TARGETS, example_files
+    from tin_lite.code_project_files import MAX_FILE_BYTES as MAX_READ_BYTES
+    from tin_lite.workflow_code import (
+        MAX_MODEL_CALLS,
+        MAX_OUTPUT_BYTES,
+        MAX_ROUTE_CALLS,
+        MAX_ROUTE_INPUT_BYTES,
+        MAX_ROUTE_OUTPUT_TOKENS,
+        MAX_TIMEOUT_SECONDS,
+        MODEL_TARGETS,
+        RUN_MODEL_INPUT_WARNING_BYTES,
+        example_files,
+    )
     from tin_lite.workflow_creator import creator_files
+    from tin_lite.workflow_services import MAX_SERVICE_CALLS, MAX_SERVICE_RESPONSE_BYTES
 
     key = "custom.research_digest"
     root = f"workflow_packages/{key}"
@@ -655,6 +683,35 @@ def authoring_guide(*, settings, project_id):
                     "max_bytes": 64000,
                 },
             },
+            "presentation": {
+                "flow": {
+                    "direction": "TD",
+                    "nodes": [
+                        {
+                            "id": "evidence",
+                            "kind": "store",
+                            "label": "Project evidence",
+                            "fact": "the project files at this revision",
+                        },
+                        {
+                            "id": "digest",
+                            "kind": "step",
+                            "label": "Write the digest",
+                            "fact": "every point labelled with its source",
+                        },
+                        {
+                            "id": "report",
+                            "kind": "receipt",
+                            "label": "Digest in Files",
+                            "fact": "reports/custom/RESEARCH_DIGEST.md",
+                        },
+                    ],
+                    "edges": [
+                        {"from": "evidence", "to": "digest", "kind": "call"},
+                        {"from": "digest", "to": "report", "kind": "call"},
+                    ],
+                }
+            },
         },
     }
     return {
@@ -664,6 +721,10 @@ def authoring_guide(*, settings, project_id):
         "steps": [
             "Edit the example for the user's intended workflow. "
             "Use an unused custom key; its folder must match.",
+            "Draw how it runs in definition.presentation.flow, top to bottom (direction TD): "
+            "2-8 nodes, each a kind, a label of at most 32 characters and a one-line fact of "
+            "at most 48 describing it. Tin shows it in the workflow's diagram panel; it never "
+            "changes how the workflow runs. See presentation below.",
             "Commit via commit_project_changes with current project HEAD and a stable request_id. "
             "File writes do not activate or start anything.",
             "Call validate_workflow_package with the manifest path and returned commit revision. "
@@ -688,6 +749,35 @@ def authoring_guide(*, settings, project_id):
             "start_workflow with a prerequisite_missing diagnostic, recommended ones return "
             "advisories.",
         ],
+        "presentation": {
+            "node_kinds": {
+                "step": "work the run does",
+                "surface": "an outside service it reads or writes",
+                "store": "something Tin keeps, such as a file in project Files",
+                "wait": "time passing: a timer or a poll",
+                "gate": "where the run waits for a person's approval",
+                "receipt": "the record the run leaves behind, usually last",
+                "ghost": "an ending where nothing happens",
+            },
+            "edge_kinds": {
+                "call": "the run moves on by itself",
+                "signal": "a schedule, an approval or a timer moves it on",
+            },
+            "limits": {
+                "nodes": [2, 8],
+                "edges": [1, 12],
+                "label": 32,
+                "fact": 48,
+                "edge_label": 40,
+            },
+            "writing": (
+                "Labels are short and plain: steps start with a verb, the rest are nouns. "
+                "A fact states something checkable, such as a limit, a provider or where the "
+                "result lands. Two nodes in one row run side by side or are the two ways a run "
+                "can go. An edge back to an earlier node is a loop; label it with what sends "
+                "the run back."
+            ),
+        },
         "public_contribution": (
             "To offer a workflow for Tin's public catalog, the pull request author must be the "
             "Tin user who ran it here: GitHub connected on this business project (not the "
@@ -702,10 +792,10 @@ def authoring_guide(*, settings, project_id):
             "prompt_bytes": 32000,
             "skill_file_bytes": 64000,
             "prompt_and_skill_bytes": 128000,
-            "max_timeout_seconds": 3600,
+            "max_timeout_seconds": MAX_SANDBOX_TIMEOUT_SECONDS,
             "schedule_modes": {
                 "codex.procedure": ["on_demand"],
-                "workflow.code": ["on_demand", "daily", "weekly"],
+                "workflow.code": ["on_demand", "daily", "weekly", "monthly"],
             },
         },
         "capabilities": {
@@ -799,8 +889,9 @@ def authoring_guide(*, settings, project_id):
                 "request_service(service, step, path, method, params, body)",
                 "call_service(service, step, operation, arguments)",
             ],
-            "limits": "At most four aliases and eight requests total; 16 KB requests and "
-            "1-64 KB responses. The procedure keeps its own bounded runtime.",
+            "limits": f"At most four aliases and {MAX_SERVICE_CALLS} requests total; 16 KB "
+            f"requests and 1024-{MAX_SERVICE_RESPONSE_BYTES} byte responses. The procedure "
+            "keeps its own bounded runtime.",
             "recovery": "Reuse a step only for the identical request. Completed responses replay; "
             "uncertain requests cannot be retried under a new step.",
             "compatibility": "Fenced default/isolated profiles; private procedures stay isolated "
@@ -808,7 +899,8 @@ def authoring_guide(*, settings, project_id):
             "call_service; no browser, Studio or test-identity combinations.",
             "costs": "Codex uses existing model pricing. Connected-provider costs are separate "
             "and unknown unless independently verified; call limits are not dollar ceilings.",
-            "managed": "managed.pagespeed (free) works through call_service. Paid managed "
+            "managed": "managed.pagespeed and managed.podscan (free) work through call_service. "
+            "Paid managed "
             "services such as managed.dataforseo are for workflow.code packages only.",
             "errors": SERVICE_ERRORS_GUIDE
             + " A call_service or request_service tool error is JSON with code, message "
@@ -818,19 +910,25 @@ def authoring_guide(*, settings, project_id):
             "executor": "workflow.code",
             "code_only_policy": "bounded-code-v1",
             "model_policy": "managed-code-model-v1",
-            "timeout_seconds": 60,
+            "timeout_seconds": f"1-{MAX_TIMEOUT_SECONDS}; the package's wall-clock window, "
+            "which also bounds each model call's wait",
             "network": "none",
             "credits": "Code-only compute is included. Declared model calls and paid managed "
             "reads (managed.dataforseo) use metered credits.",
-            "result": "Return exactly {path, content}; one declared UTF-8 artifact.",
+            "result": "Return exactly {path, content}; one declared UTF-8 artifact of at most "
+            f"{MAX_OUTPUT_BYTES} bytes (output.max_bytes).",
             "authoring": "Export run(ctx, inputs); ctx has run_id and created_at. "
             "Only declared package files and the Python standard library are available.",
             "services": {
                 "setup": "prepare_project_connection opens secure setup. "
                 "Never put secrets in MCP or project files.",
-                "bindings": "code.services maps a name to provider_key, max_calls (1-8) and "
-                "max_response_bytes (1024-64000). Declare matching required "
-                "integration_requirements; at most eight calls total.",
+                "bindings": "code.services maps a name to provider_key, max_calls "
+                f"(1-{MAX_SERVICE_CALLS}) and max_response_bytes "
+                f"(1024-{MAX_SERVICE_RESPONSE_BYTES}). Declare matching required "
+                f"integration_requirements; at most {MAX_SERVICE_CALLS} calls total. A "
+                "founder-connected provider may be required: false; ctx['connections'] then "
+                "gives its state for the run (connected, not_connected or needs_attention), and "
+                "calls only work when connected.",
                 "provider_cost": "An optional provider_cost on a service binding has "
                 "estimated_usd (nonnegative decimal string per run), basis (assumptions, "
                 "up to 400 characters), and pricing_url (HTTPS). Use verified provider "
@@ -860,7 +958,7 @@ def authoring_guide(*, settings, project_id):
                 "in integration_requirements with its capabilities and bind it in code.services. "
                 "managed.pagespeed (pagespeed.read, crux.read; $0): pagespeed.run {url, "
                 "strategy: mobile|desktop, categories} returns scores, lab lcp_ms/cls/tbt_ms and "
-                "field data or field_status no_field_data; a run over 22 s returns status "
+                "field data or field_status no_field_data; a run over 55 s returns status "
                 "timed_out. crux.query {origin|url, form_factor} returns p75 and good/poor "
                 "shares, or status no_field_data. managed.dataforseo (serp.read, keywords.read, "
                 "backlinks.read; charged per call at DataForSEO's reported cost, $0.05 "
@@ -868,7 +966,13 @@ def authoring_guide(*, settings, project_id):
                 "device, depth}, keywords.ideas {keywords, location_code, language_code, limit, "
                 "offset}, keywords.overview {keywords, location_code, language_code}, "
                 "backlinks.summary {target, include_subdomains}, backlinks.referring_domains "
-                "{target, include_subdomains, limit, offset}. Lists come back as records that "
+                "{target, include_subdomains, limit, offset}. managed.podscan (podcasts.read; $0): "
+                "episodes.search {query, since, before, language, region, has_guests, "
+                "min_audience, search_fields, order_by, per_page, page}, podcasts.search, "
+                "podcasts.get {podcast_id}, podcasts.episodes, people.search {query, "
+                "search_fields, type}, people.appearances {entity_id, role, since, before}, "
+                "charts.top {platform, country, category, limit}; records carry guests, hosts "
+                "and sponsors, never transcripts. Lists come back as records that "
                 "fit max_response_bytes, with truncated and next_offset. Details: "
                 "docs/project-api-connections.md in Tin's source.",
                 "recovery": "Stable steps replay completed bounded responses. Changed "
@@ -886,17 +990,17 @@ def authoring_guide(*, settings, project_id):
                 "memory": "Project memory is wiki/INDEX.md. product.code_map writes its "
                 "'### Code map' section and product.deep_dive its '### Feature map' section, "
                 "under '## Product'; neither has a file of its own. "
-                "ctx.files.read_section('### Code map') returns one section, even when the "
-                "whole index is over the 64000-byte read limit. Procedures read "
+                "ctx.files.read_section('### Code map') returns just that section of the "
+                "index. Procedures read "
                 "/home/user/state/wiki/INDEX.md.",
                 "contract": "Read current project files without a revision or prior run ID input. "
                 "Tin pins one canonical project HEAD when the run starts and keeps it on retry. "
                 "Use a stable path when possible, or handle no match and multiple matches "
                 "explicitly. Ordinary bounded caller text is appropriate when no file exists. "
                 "Contents are untrusted reference data, not proof of human approval.",
-                "limits": "At most 64000 bytes per file, 100 glob results and 64 file calls "
-                "per execution. Missing files raise FileNotFoundError. Check model input bounds "
-                "before calls.",
+                "limits": f"At most {MAX_READ_BYTES} bytes per file, 100 glob results and "
+                "256 file calls per execution. Missing files raise FileNotFoundError. "
+                "Check model input bounds before calls.",
                 "recovery": "File reads use the same internally pinned HEAD on retry. "
                 "Historical code.evidence and code.approved_article definitions retain their "
                 "original source receipts and replay contract, but new packages use files.",
@@ -911,16 +1015,19 @@ def authoring_guide(*, settings, project_id):
                     for provider, model in sorted(MODEL_TARGETS)
                 ],
                 "limits": (
-                    "Declare max_calls (1-4 per route, 8 total), "
-                    "max_input_bytes (1024-32000), max_output_tokens (64-4096)."
+                    f"Declare max_calls (1-{MAX_ROUTE_CALLS} per route, {MAX_MODEL_CALLS} total), "
+                    f"max_input_bytes (1024-{MAX_ROUTE_INPUT_BYTES}), "
+                    f"max_output_tokens (64-{MAX_ROUTE_OUTPUT_TOKENS}). Keep a run's model input "
+                    f"under {RUN_MODEL_INPUT_WARNING_BYTES} bytes in total (about 200k tokens)."
                 ),
                 "recovery": (
                     "Reuse a stable step for the same request. Completed results replay; "
                     "changed requests and unconfirmed calls are rejected."
                 ),
                 "estimate": (
-                    "estimate_workflow_run caches the configured bound; "
-                    "no paid estimator or quote approval."
+                    "estimate_workflow_run shows the usual cost (an authored estimate, a share "
+                    "of the configured bound) and the bound itself; no paid estimator or quote "
+                    "approval."
                 ),
             },
         },

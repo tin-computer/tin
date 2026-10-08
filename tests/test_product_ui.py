@@ -314,16 +314,16 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert 'data-workflow-section="registry"' in script
     assert 'placeholder="Search…"' in script
     assert 'data-workflow-section="yours">My system' in script
-    assert 'data-workflow-section="registry">Add workflows' in script
+    assert 'data-workflow-section="registry">Workflows' in script
     assert "function systemMySystemHtml()" in script
-    # The week ahead (Paper SYS-V3) sits above the Scheduled cards.
-    assert "function systemWeekAheadHtml()" in script
-    assert "set up by your coding agent" in script
-    assert '<span class="is-quiet">quiet</span>' in script
-    assert "Then every week: " in script
+    # The week (Paper WK-N6) sits above the Scheduled cards; its arrows replace the pace line.
+    assert "function systemWeekHtml()" in script
+    assert "/week?${query}" in script
+    assert 'data-week-nav="-7"' in script
+    assert "window.TinSystemWeek = Object.freeze" in (static / "system-week.js").read_text()
     assert ".system-week-days {" in (static / "app.css").read_text()
+    assert "systemPaceLine" not in script
     assert 'systemWorkflowGroup("Running", runningCards)' in script
-    assert "saved ${workflowCountValue === 1" in script
     assert "function systemRunDetailHtml(run, includeClose = true)" in script
     assert "function emailCampaignRunDetail(run, detail)" in script
     assert "/api/outreach/campaigns/${encodeURIComponent(runId)}/deliveries" in script
@@ -446,8 +446,9 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert ".workflow-config-row" in stylesheet
     assert 'script.src = "/assets/diagram-renderer.js"' in diagram_loader
     assert "window.TinDiagramLoader.load()" in script
-    assert "derived from the pinned definition" in script
-    assert "data-workflow-diagram" in script
+    assert "data-show-workflow-diagram" in script
+    assert "/diagram`" in script
+    assert "has-diagram-panel" in script
     assert "data-project-diagram" in script
     assert "TinDiagramRenderer" in diagram_script
     assert "var(--diagram-edge)" in diagram_script
@@ -549,12 +550,11 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "`claude mcp add -t http tin ${mcpUrl}`" in script
     assert "codex mcp login" not in script
     assert "Copied. Run it, then ask your coding agent" in script
-    # One-page connect flow from the agent's link, and the first-run line under System.
+    # One-page connect flow from the agent's link.
     assert 'if (url.pathname.replace(/\\/$/, "") !== "/connect") return;' in script
     assert "function renderConnectRequest(requested)" in script
     assert "go back to your agent and say: connected." in script
     assert 'if (view !== "integrations") clearConnectRequest();' in script
-    assert "Set up today: ${workflowCountValue}" in script
     assert "copyAgentCommand.flipTimer = window.setTimeout(() => updateAgentRail(), 4000)" in script
     assert "27 tools · workflows, runs, files, integrations" in index
     assert "function renderDecisions()" in script

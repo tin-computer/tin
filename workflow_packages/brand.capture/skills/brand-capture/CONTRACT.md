@@ -8,11 +8,13 @@ UTF-8 Markdown. `{run_folder}` is the run's date and a short run code, such as
 New BRAND.md contains one title followed by exactly these second-level headings:
 
 1. `## Brand direction` — short audience, personality, impression and high-level voice.
-2. `## Visual style` — colors and roles, hierarchy, type families/fallbacks, composition,
-   imagery vocabulary and useful references. Label each palette value observed,
-   founder-directed or proposed. Include every token palette hex value in this section.
-3. `## Generation rules` — protected choices, permitted variation, supporting guidance and
-   exclusions. Explain what downstream marketing should actually do.
+2. `## Visual style` — colors and roles, hierarchy, type families/fallbacks with each role's
+   weight and line height, enclosure and corners, composition, imagery vocabulary, how
+   recurring subjects are drawn, and useful references. Label each palette value observed,
+   declared in code, founder-directed or proposed. Include every token palette hex value here.
+3. `## Generation rules` — protected choices (including the founder's written design rules),
+   permitted variation, supporting guidance and exclusions. Explain what downstream marketing
+   should actually do.
 4. `## Assessment and sources` — concrete findings, coverage, gaps, capture time and references.
 
 Place one `json` fenced assessment block in Assessment and sources. The following is a shape
@@ -64,7 +66,9 @@ These are illustrative colors only. Extract or justify the project's actual valu
 Optional top-level fields: direction (text), dark (a complete ink/paper/accent palette),
 type (display/body/mono family strings), shape (sharp/soft/round). A palette may additionally
 include signal; consumers can otherwise use accent. Every color is six-digit hexadecimal.
-Do not invent a dark palette from an unseen theme. Do not add unknown fields, duplicate keys,
+Never invent a dark palette. Record `dark` when the site renders a dark theme, or when the
+source declares one with ink, paper and accent roles; label source-only values declared in
+code in Visual style. Do not add unknown fields, duplicate keys,
 comments or a second block. Naming a font does not provide its files or trigger a download.
 
 `shape` is the overall corner treatment for future marketing surfaces: `sharp` for square

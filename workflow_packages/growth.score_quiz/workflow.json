@@ -150,6 +150,26 @@
         "media_type": "text/markdown",
         "max_bytes": 16000
       }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "design", "kind": "step", "label": "Design the questions and bands", "fact": "one model call, 4 to 6 questions, 3 bands"},
+          {"id": "copy", "kind": "step", "label": "Write the share and CTA lines", "fact": "one model call, no links of its own"},
+          {"id": "widget", "kind": "step", "label": "Build the widget in code", "fact": "fixed HTML and JS, model text as data"},
+          {"id": "quiz", "kind": "store", "label": "Quiz in project Files", "fact": "reports/SCORE_QUIZ.md, one paste-in block"},
+          {"id": "review", "kind": "gate", "label": "Review the quiz", "fact": "no deadline, Tin never deploys it"},
+          {"id": "receipt", "kind": "receipt", "label": "Quiz ready to embed", "fact": "no network calls, one link to your signup"}
+        ],
+        "edges": [
+          {"from": "design", "to": "copy", "kind": "call"},
+          {"from": "copy", "to": "widget", "kind": "call"},
+          {"from": "widget", "to": "quiz", "kind": "call"},
+          {"from": "quiz", "to": "review", "kind": "call"},
+          {"from": "review", "to": "receipt", "kind": "signal", "label": "approved"}
+        ]
+      }
     }
   }
 }

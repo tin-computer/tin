@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import shlex
 from collections.abc import Awaitable, Callable
 from contextlib import ExitStack, asynccontextmanager
@@ -41,6 +42,8 @@ logger = logging.getLogger(__name__)
 CONTEXT_PATH = "/home/user/.tin-lite/procedure-context.json"
 SERVICE_ERROR_EXIT = 3
 """code_runner's exit status when authored code let a forwarded service error escape."""
+CODE_BRIDGE_MAX_BYTES = 4_000_000
+"""code_runner.MAX_RPC: the largest code bridge request Tin reads from the sandbox."""
 
 
 def _being_deleted(exc: SandboxException) -> bool:
@@ -152,7 +155,8 @@ class SandboxProcedureInput(SandboxRunInput):
     output_max_bytes: int
     run_tools_url: str | None = None
     run_tools_grant: str | None = None
-    workspace_archive: bytes | None = None
+    # The repository snapshot: its temporary file, or bytes.
+    workspace_archive: Any = None
     workspace_evidence: bytes | None = None
     browser: bool = False
     studio: bool = False
@@ -271,7 +275,9 @@ class E2BRuntime:
                 "deny_out": lambda context: [context.all_traffic],
             }
         if code_only:
-            if profile is None or not profile.isolated or not 1 <= timeout <= 60:
+            from tin_lite.workflow_code import MAX_TIMEOUT_SECONDS
+
+            if profile is None or not profile.isolated or not 1 <= timeout <= MAX_TIMEOUT_SECONDS:
                 raise ValueError("code execution requires a bounded isolated profile")
             network = {"deny_out": lambda context: [context.all_traffic]}
         metadata = {"execution_key": execution_key, "run_id": run_id, "template": template}
@@ -325,7 +331,7 @@ class E2BRuntime:
                     raw = await sandbox.files.read(
                         "/root/tin-code/request.json", format="bytes", user="root"
                     )
-                    if len(raw) > 128_000:
+                    if len(raw) > CODE_BRIDGE_MAX_BYTES:
                         raise CodeModelError("invalid_model_request")
                     try:
                         response = {"result": await model_call(json.loads(raw))}
@@ -585,6 +591,11 @@ class E2BRuntime:
                 envs["TIN_PROCEDURE_COMPANION_MAX_BYTES"] = str(
                     run_input.context["output"]["companion_max_bytes"]
                 )
+        assets = run_input.context.get("output", {}).get("assets")
+        if assets:
+            envs["TIN_PROCEDURE_ASSETS_FOLDER"] = str(assets["folder"])
+            envs["TIN_PROCEDURE_ASSETS_MAX_FILES"] = str(assets["max_files"])
+            envs["TIN_PROCEDURE_ASSETS_MAX_BYTES"] = str(assets["max_bytes"])
         envs["TIN_PROCEDURE_OUTPUT_MAX_BYTES"] = str(run_input.output_max_bytes)
         envs["TIN_PROCEDURE_RESULT_KIND"] = run_input.result_kind
         if run_input.project_revision is not None:
@@ -650,6 +661,12 @@ class E2BRuntime:
                 )
                 if ready.stdout.strip() != "TIN_PROCEDURE_COMPANION_V1":
                     raise RuntimeError("Sandbox image lacks companion document support")
+            if assets:
+                ready = await sandbox.commands.run(
+                    "/opt/tin-lite/run-procedure --check-assets", timeout=15
+                )
+                if ready.stdout.strip() != "TIN_PROCEDURE_ASSETS_V1":
+                    raise RuntimeError("Sandbox image lacks article assets support")
             if run_input.isolated:
                 if run_input.usage_sink is None:
                     raise ValueError("isolated procedures require their own profile and usage sink")
@@ -668,6 +685,7 @@ class E2BRuntime:
                         "tin-codex-api-v2": 2,
                         "tin-codex-api-v3": 3,
                         "tin-codex-api-v4": 4,
+                        "tin-codex-api-v5": 5,
                     }.get(protocol, 1)
                     ready = await sandbox.commands.run(
                         "python3 /opt/tin-lite/codex_api_config.py "
@@ -679,9 +697,13 @@ class E2BRuntime:
                         raise RuntimeError("isolated sandbox lacks the Codex API protocol")
             await sandbox.files.write(CONTEXT_PATH, context)
             if run_input.workspace_archive is not None:
+                archive = run_input.workspace_archive
+                if not isinstance(archive, bytes):
+                    # The snapshot's temporary file streams to the sandbox in chunks instead
+                    # of being read into memory (snapshots reach hundreds of MB).
+                    archive.seek(0)
                 await sandbox.files.write(
-                    "/home/user/.tin-lite/procedure-workspace.tar.gz",
-                    run_input.workspace_archive,
+                    "/home/user/.tin-lite/procedure-workspace.tar.gz", archive
                 )
                 envs["TIN_PROCEDURE_WORKSPACE_ARCHIVE"] = (
                     "/home/user/.tin-lite/procedure-workspace.tar.gz"
@@ -1144,7 +1166,15 @@ def _run_secrets(run_input: SandboxRunInput) -> tuple[str, ...]:
     return tuple(dict.fromkeys((*values, *(value for value in run_input.redact if value))))
 
 
+# Codex names the files it wrote by their sandbox paths, often as Markdown links. Founders know
+# them by their project path, and a sandbox link leads nowhere.
+SANDBOX_LINK = re.compile(r"\[([^\]\n]+)\]\(/home/user/(?:project|state)/([^)\s]+)\)")
+SANDBOX_PATH = re.compile(r"/home/user/(?:project|state)/")
+
+
 def _redact(value: str, secrets: tuple[str, ...]) -> str:
+    """Sandbox text as founders read it: secrets removed, files named by their project path."""
+    value = SANDBOX_PATH.sub("", SANDBOX_LINK.sub(r"\1 (\2)", value))
     return redact_text(value, secrets)[0]
 
 

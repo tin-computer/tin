@@ -6,7 +6,7 @@
     "description": "Use current project context to make an editable social content plan with pillars, a weekly calendar, and a routine sized to available time.",
     "version": "1.0.0",
     "executor": "workflow.code",
-    "system": "organic-traffic",
+    "system": "x",
     "schedule_modes": ["on_demand"],
     "human_review": {
       "eligible": true,
@@ -47,6 +47,28 @@
         "path": "social/PLAN.md",
         "media_type": "text/markdown",
         "max_bytes": 12000
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Product context in Files", "fact": "first of 5 files, plus the style guide"},
+          {"id": "draft", "kind": "step", "label": "Draft pillars and a week", "fact": "one model call, a slot per hour, up to 6"},
+          {"id": "validate", "kind": "step", "label": "Check the plan in code", "fact": "shares total 100, distinct days"},
+          {"id": "plan", "kind": "store", "label": "Plan in project Files", "fact": "social/PLAN.md, under 12 KB"},
+          {"id": "failed", "kind": "ghost", "label": "No plan saved", "fact": "a failed check fails the run, no retry"},
+          {"id": "review", "kind": "gate", "label": "Review the social plan", "fact": "no deadline, Tin posts nothing"},
+          {"id": "receipt", "kind": "receipt", "label": "Weekly social plan", "fact": "slots are prompts, Tin schedules nothing"}
+        ],
+        "edges": [
+          {"from": "context", "to": "draft", "kind": "call"},
+          {"from": "draft", "to": "validate", "kind": "call"},
+          {"from": "validate", "to": "plan", "kind": "call", "label": "passes"},
+          {"from": "validate", "to": "failed", "kind": "call", "label": "a check fails"},
+          {"from": "plan", "to": "review", "kind": "call"},
+          {"from": "review", "to": "receipt", "kind": "signal", "label": "approved"}
+        ]
       }
     }
   }

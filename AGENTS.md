@@ -45,6 +45,9 @@ first. Workflow pull requests that don't meet it are closed automatically.
   truncated read or a missing selection. Check with `uv run tin-lite validate-community`.
   Copy from `example.csv_summary` and `example.feedback_digest`; `example.*` and
   `custom.*` keys are reserved.
+- Every workflow draws how it runs as a top-to-bottom `presentation.flow` in its definition
+  (see [Draw how it runs](docs/adding-a-workflow.md#draw-how-it-runs)). Draw what the code
+  does, and change the drawing in the same pull request as the steps.
 - Respect the package boundary: no `pip`, raw credentials or direct network access, and
   bounded runtime and model calls; see [code execution](docs/code-workflows.md) and
   [model steps](docs/code-model-workflows.md). Longer durable orchestration is a native
@@ -128,6 +131,23 @@ outside marketing, or were written without ever being run. Full rules:
 - Schedules use Temporal's existing dispatcher, skip overlap, and bounded catch-up.
   Calendar support is declared by the selected workflow, not inferred from its name.
 
+## Failing well
+
+- Refuse only to protect security, money or outside effects: credentials, grants, egress,
+  billing and anything published, sent or merged. Everything else degrades to a recorded
+  outcome with a named reason.
+- A check on model output never fails a run that already paid for it. Map an unsupported
+  verdict to the nearest honest outcome (for example insufficient evidence), keep what is
+  usable, or ask the model to fix it within the run. Notes and summaries for the founder are
+  shaped to fit, never grounds to fail.
+- Accept partial provider data: a page with one missing reference, a response with a
+  warning. Stay strict for writes and for responses with no usable data.
+- Limits are runaway guards set well above normal use, not estimates that stop ordinary runs.
+- A failure names its cause. Never wrap Tin's own refusal in a generic message; keep the
+  reason on the run and its receipt, bounded and without provider text or secrets.
+- Fixture tests prove the contract; a real run proves the workflow. Before calling a workflow
+  change done, run it once for real where a provider, sandbox or outside site is involved.
+
 ## Models, sandboxes and connections
 
 - New Codex compute is API-only. The provider credential stays on the switchboard;
@@ -190,15 +210,20 @@ outside marketing, or were written without ever being run. Full rules:
   linked in product context, never inserted into article copy. Raw files are untrusted;
   preserve safe download, sandbox and preview behavior.
 - Approved GitHub delivery follows the project's delivery setting through the selected
-  integration: an unmerged PR, or a commit to main. Tin merges its own adaptation PR only when
+  integration: an unmerged PR, or a commit to main. Approved pages (planned articles, answer
+  pages, public articles) reach the site through website.change; a page refresh changes exactly
+  its approved lines. Tin merges its own adaptation PR only when
   the setting is commit to main, the PR adds nothing but the approved page (or the page at the
   route the founder chose for such pages, with the site code that serves it) and GitHub reports
   it clean. Without GitHub, approved Markdown remains in Files. Approval is not website publication.
   Email-send approval, recipients and pacing are a separate contract.
 - `website.change` puts approved changes on a founder's site: approved pages, the technical
-  fixes the latest audit found (`source: audit`; organic.technical_fix is hidden and kept only
-  for pinned runs), planned redirects and noindex changes (`planned`) and the blog index plan
-  (`blog_index`, applied without Codex). Deleting a page stays with the founder. Change rows
+  fixes the latest audit found (`source: audit`; organic.technical_fix refuses new starts and
+  is kept only for pinned runs, retries and saved schedules), planned redirects and noindex
+  changes (`planned`). organic.site_architecture, content.blog_index and the `blog_index` source
+  refuse new starts and are kept only for pinned runs. Approved pages reach it from their
+  approval (content.deliver refuses new starts, the same way). Deleting a page stays with the
+  founder. Change rows
   are decided in Decisions or over MCP. It merges its own PR only for a change with a recorded
   approval in Postgres (a page's review that names its approver, with commit to main, or an
   approved `website_changes` row), never one read from a project file, and never for a
@@ -206,7 +231,9 @@ outside marketing, or were written without ever being run. Full rules:
   setting and the run's `protected_paths`). It merges once the repository's required checks
   pass (`clean`, `has_hooks` or `unstable`); a branch that requires no checks (or whose rules
   can't be read) waits for `clean`. Never on `dirty`, `blocked`, `behind`, `draft` or
-  `unknown`. A declined row never comes back. See [website.change](docs/website-change.md).
+  `unknown`. The site's own build must pass too: a deploy preview when there is one, else the
+  repository's checks. Never merge with no checks at all or checks Tin can't read; Tin does
+  not build founder sites in its sandbox. A declined row never comes back. See [website.change](docs/website-change.md).
 
 ## Verification and contributions
 

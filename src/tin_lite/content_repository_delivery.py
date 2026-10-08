@@ -3,19 +3,21 @@
 The page is immutable input, not an invitation to draft again. Admission, usage,
 execution isolation, checkpoints and GitHub effects remain the existing contracts.
 Sources are approved planned articles (content.generate), answer pages and public
-articles. An approval can start this procedure itself (see ContentDelivery.adapt); when
+articles. An approval used to start this procedure itself (see ContentDelivery.adapt); when
 the founder's delivery setting commits to main, Tin then merges the pull request, but
 only one that adds nothing except the approved page, once GitHub reports it clean.
 
 website.change (website_change.py) adapts pages with this same machinery: source pinning,
-the exact-copy proof, the saved patch, recovery and the merge loop. Its runs keep their pinned
+the page check, the saved patch, recovery and the merge loop. Its runs keep their pinned
 source under the same receipt key, and their own policy decides whether Tin merges (see
 publish_after_pull_request): website.change merges once the repository's required checks
-pass. content.deliver's own rules are unchanged.
+pass. content.deliver's own rules are unchanged; it is retired for new work, and every new
+approval starts website.change. Its existing runs, retries and saved schedules keep it.
 """
 
 import asyncio
 import hashlib
+import html
 import json
 import re
 from dataclasses import asdict
@@ -49,6 +51,13 @@ MERGE_OPERATION = "content_repository_delivery_merge_v1"
 # delivery activity allows five minutes; this leaves room for the merge call itself.
 MERGE_WAIT_SECONDS = 210
 MERGE_POLL_SECONDS = 15
+# website.change waits for the site's own build: a deploy preview (Vercel, Netlify and the
+# like) or the repository's CI. Previews often take several minutes; the delivery activity
+# allows fifteen.
+BUILD_WAIT_SECONDS = 600
+# How long a pull request may show no checks at all before Tin decides nothing builds it:
+# a deploy preview posts its status a few seconds to a minute after the PR opens.
+NO_CHECKS_GRACE_SECONDS = 90
 # GitHub's mergeable_state values that let Tin merge. `clean`: every check passed.
 # `has_hooks`: the same, with pre-receive hooks. content.deliver merges only on these.
 MERGE_READY = frozenset({"clean", "has_hooks"})
@@ -167,7 +176,8 @@ def binding_from(source):
 
 
 async def adaptation_facts(database, run_ids):
-    """Saved receipts of content.deliver runs, keyed by run; one Postgres read."""
+    """Saved receipts of adaptation runs (website.change, content.deliver), keyed by run; one
+    Postgres read."""
     if not run_ids:
         return {}
     from tin_lite.content_programs import decoded
@@ -505,7 +515,7 @@ async def recover_delivery(*, database, storage, integrations, run):
                 expected_base_sha=binding.head_sha,
                 expected_binding=binding,
                 allow_unrelated_base_advance=True,
-                blocking_paths=frozenset({proof["article_path"]}),
+                blocking_paths=blocking_paths(proof),
             )
             result = {**asdict(result), **proof}
             async with conn.transaction():
@@ -538,49 +548,57 @@ async def recover_delivery(*, database, storage, integrations, run):
 async def start_approved_adaptation(*, runtime, settings, run, intent):
     """Admit and dispatch the adaptation an approval asked for, as the approver.
 
-    The ordinary run service does the rest: source pinning, one metered procedure session
-    charged on its actual usage, and an idempotent Temporal start under one start key.
+    Every approved page goes to the site through website.change; content.deliver is retired
+    for new work. The ordinary run service does the rest: source pinning, one metered
+    procedure session charged on its actual usage, and an idempotent Temporal start under
+    one start key.
     """
     from tin_lite.page_routes import direction
     from tin_lite.run_service import start_workflow_run
 
-    if intent.get("via") == "website.change":
-        # A content.generate answer page goes to the site through website.change.
-        workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
+    key = adaptation_start_key(run.id)
+    started_by = intent.get("chosen_by") or run.started_by_clerk_user_id
+    trigger_source = intent.get("trigger_source") or "manual"
+    existing = await runtime.database.get_run_by_start_key(
+        project_id=run.project_id, start_idempotency_key=key
+    )
+    if existing is not None and existing.workflow_id == WORKFLOW_ID:
+        # A start that content.deliver admitted before its retirement, retried: return it.
+        workflow = await runtime.database.get_workflow(WORKFLOW_ID)
         if workflow is None:
-            raise LookupError("website.change is not installed on this Tin.")
+            raise LookupError("Page adaptation is not installed on this Tin.")
+        route = intent.get("route")
         return await start_workflow_run(
             runtime=runtime,
             settings=settings,
             workflow=workflow,
             project_id=run.project_id,
-            started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
-            start_idempotency_key=adaptation_start_key(run.id),
+            started_by_clerk_user_id=started_by,
+            start_idempotency_key=key,
             input_payload={
-                "source": "content_draft",
                 "source_run_id": str(run.id),
                 "expected_repository": intent["settings"]["repository"],
+                "direction": direction(route) if route else "",
             },
-            trigger_source=intent.get("trigger_source") or "manual",
+            trigger_source=trigger_source,
+            _approval_delivery=True,
         )
-    workflow = await runtime.database.get_workflow(WORKFLOW_ID)
+    workflow = await runtime.database.get_workflow(WEBSITE_CHANGE_ID)
     if workflow is None:
-        raise LookupError("Page adaptation is not installed on this Tin.")
-    route = intent.get("route")
+        raise LookupError("website.change is not installed on this Tin.")
     return await start_workflow_run(
         runtime=runtime,
         settings=settings,
         workflow=workflow,
         project_id=run.project_id,
-        started_by_clerk_user_id=intent.get("chosen_by") or run.started_by_clerk_user_id,
-        start_idempotency_key=adaptation_start_key(run.id),
+        started_by_clerk_user_id=started_by,
+        start_idempotency_key=key,
         input_payload={
+            "source": "content_draft",
             "source_run_id": str(run.id),
             "expected_repository": intent["settings"]["repository"],
-            "direction": direction(route) if route else "",
         },
-        trigger_source=intent.get("trigger_source") or "manual",
-        _approval_delivery=True,
+        trigger_source=trigger_source,
     )
 
 
@@ -613,8 +631,8 @@ async def saved_manifest(database, storage, run):
 
 
 # Settings that reach every page, whatever folder they sit in.
-# Dependency and package-manager files. A page delivery never changes them (validate_copy),
-# and they reach every page, wherever they sit.
+# Dependency and package-manager files. They reach every page, wherever they sit, so a patch
+# that changes one always waits for the founder's review.
 DEPENDENCY_FILES = frozenset(
     {
         "package.json",
@@ -726,11 +744,13 @@ def merge_rule(manifest, proof, route):
     `page_only`: the approved page alone, the change the Markdown publisher commits today.
     `chosen_route`: the page plus the site code that serves it, when the founder chose where
     these pages live, the PR puts the page at that route and every other file sits in that
-    route's own folder. The copy proof, the five-file limit and the dependency ban still
-    hold; any other site change stays a PR.
+    route's own folder. Neither applies when Tin can't confirm the page keeps the approved
+    wording; any other site change stays a PR.
     """
     from tin_lite.page_routes import matches
 
+    if "not_confirmed" in {proof.get("copy_check"), proof.get("figure_check")}:
+        return None
     if page_only(manifest, proof):
         return "page_only"
     if (
@@ -813,6 +833,20 @@ async def publish_after_pull_request(
             )
             if hold:
                 result = {**base, "status": "left_open", "reason": hold}
+            elif proof["copy_check"] == "not_confirmed":
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": "Tin couldn't confirm the page keeps the approved wording word for "
+                    "word, so it waits for your review.",
+                }
+            elif proof.get("figure_check") == "not_confirmed":
+                result = {
+                    **base,
+                    "status": "left_open",
+                    "reason": "Tin couldn't confirm every approved figure, interactive piece, "
+                    "diagram and video is on the page, so it waits for your review.",
+                }
             elif rule is None:
                 result = {
                     **base,
@@ -914,6 +948,8 @@ async def _merge_when_clean(
     binding = binding_from(source)
     rule = {}
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
+    # website.change (the required-checks rule) also waits for the site's own build.
+    build_check = "unstable" in ready
     if "unstable" in ready:
         required = await required_checks(integrations, run, binding)
         if required:
@@ -939,8 +975,72 @@ async def _merge_when_clean(
         ready=ready,
         record_state=record_state,
         reason=reason,
+        build_check=build_check,
     )
     return {**result, **rule}
+
+
+async def build_verdict(integrations, run, binding, sha, *, waited):
+    """Whether the site's own build passed on this commit: ("merge", facts), ("wait", why it
+    is still waiting) or ("stop", why the PR stays open).
+
+    The build is a deploy preview when the repository has one (Vercel, Netlify, ...), else the
+    checks it runs. A repository with no checks at all has nothing that builds the change,
+    so Tin never merges there; nor where it can't read the checks.
+    """
+    try:
+        found = await integrations.github_commit_checks(
+            project_id=run.project_id, repository=binding.repository, sha=sha
+        )
+    except Exception:
+        found = {"readable": False, "checks": []}
+    if found.get("truncated"):
+        return "stop", (
+            "It has more checks than Tin reads at once, so Tin can't tell whether your site "
+            "still builds and left the PR open for you."
+        )
+    if not found.get("readable"):
+        return "stop", (
+            "Tin can't see this repository's checks, so it can't tell whether your site still "
+            "builds. Accept the updated Tin GitHub App permissions (read-only Checks and Commit "
+            "statuses) so Tin can wait for them. The PR stays open for you to merge."
+        )
+    checks = found.get("checks") or []
+    previews = [check for check in checks if check.get("preview")]
+    failed = [check for check in previews if check.get("state") == "failure"]
+    if failed:
+        return "stop", f"Your {failed[0]['name']} preview build failed, so Tin left it open."
+    if not checks:
+        if waited < NO_CHECKS_GRACE_SECONDS:
+            return "wait", "No check had reported on it yet, so Tin left it open."
+        return "stop", (
+            "Nothing builds this repository's pull requests (no CI and no deploy preview), so "
+            "Tin can't tell whether your site still builds and left the PR open for you."
+        )
+    pending = [check for check in previews if check.get("state") != "success"]
+    if pending:
+        return "wait", (
+            f"Your {pending[0]['name']} preview was still building after ten minutes, so Tin "
+            "left it open."
+        )
+    if not previews:
+        # No preview: the repository's checks are the build, every one of them, required or
+        # not (GitHub's rules above let an optional check fail).
+        broken = [check for check in checks if check.get("state") == "failure"]
+        if broken:
+            return "stop", f"Its {broken[0]['name']} check failed, so Tin left it open."
+        running = [check for check in checks if check.get("state") != "success"]
+        if running:
+            return "wait", (
+                f"Its {running[0]['name']} check was still running after ten minutes, so Tin "
+                "left it open."
+            )
+    return "merge", {
+        "build_check": {
+            "preview": previews[0]["name"] if previews else None,
+            "checks": len(checks),
+        }
+    }
 
 
 async def required_checks(integrations, run, binding):
@@ -970,8 +1070,11 @@ async def _merge_loop(
     ready,
     record_state,
     reason,
+    build_check=False,
 ):
-    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
+    started = clock().timestamp()
+    deadline = started + (BUILD_WAIT_SECONDS if build_check else MERGE_WAIT_SECONDS)
+    build = {}
     while True:
         state = await integrations.github_pull_request_merge_state(
             project_id=run.project_id, repository=binding.repository, number=number
@@ -996,7 +1099,22 @@ async def _merge_loop(
         stop = MERGE_STOPS.get(state.get("mergeable_state"))
         if stop:
             return {"status": "left_open", "reason": stop}
-        if state.get("mergeable") is True and state.get("mergeable_state") in ready:
+        ready_now = state.get("mergeable") is True and state.get("mergeable_state") in ready
+        if ready_now and build_check:
+            verdict, detail = await build_verdict(
+                integrations,
+                run,
+                binding,
+                state["head_sha"],
+                waited=clock().timestamp() - started,
+            )
+            if verdict == "stop":
+                return {"status": "left_open", "reason": detail}
+            if verdict == "wait":
+                ready_now, reason = False, detail
+            else:
+                build = detail
+        if ready_now:
             from tin_lite.integrations import IntegrationAuthorizationError
 
             try:
@@ -1026,6 +1144,7 @@ async def _merge_loop(
                     "merged_at": clock().isoformat(),
                     "merged_by": "tin",
                     **({"mergeable_state": state["mergeable_state"]} if record_state else {}),
+                    **build,
                 }
             return {"status": "left_open", "reason": merged.get("reason") or reason}
         if state.get("mergeable_state") == "blocked":
@@ -1039,12 +1158,15 @@ async def _merge_loop(
 
 
 def validate_copy(manifest, source):
-    """Prove lossless article storage, not that a site's renderer displays every byte.
+    """Find the page in the patch and say how closely it keeps the approved wording.
 
-    A Markdown site stores the reviewed body directly. Component-based sites retain
-    it as a JSON string literal consumed by their existing Markdown renderer. The
-    adapter may not introduce a renderer dependency or rewrite the prose as JSX.
-    Actual rendering/build checks are separate and must never be implied by this proof.
+    The page takes whatever form the site uses: a Markdown or MDX file, a component, a typed
+    page registry or plain HTML. A pull request is the founder's to review, so neither the
+    page's format nor its wording refuses one; only the pinned source and repository do.
+    `copy_check` decides whether Tin may merge on its own (merge_rule): it may when the
+    article is stored exactly (`exact_source_preserved`) or every paragraph reads word for
+    word in the page (`wording_preserved`), never when `not_confirmed`. Rendering and build
+    checks are separate and never implied.
     """
     article = source["article"]
     if hashlib.sha256(article.encode()).hexdigest() != source["article_sha256"]:
@@ -1054,55 +1176,135 @@ def validate_copy(manifest, source):
         or manifest["head_sha"] != source["binding"]["head_sha"]
     ):
         raise ValueError("The repository differs from the pinned delivery source.")
-    matches = []
+    # Embed, video and diagram blocks are figures, not prose; a figure line has no words.
+    prose = FIGURE_FENCE.sub("\n\n", article)
+    paragraphs = [words for block in re.split(r"\n\s*\n", prose) if (words := _words(block))]
+    exact, worded, closest = [], [], (0, None)
     for item in manifest["files"]:
         path, text = item["path"], item["content"]
-        if path.rsplit("/", 1)[-1] in DEPENDENCY_FILES:
-            raise ValueError("Article delivery cannot change dependencies.")
-        if path.endswith((".md", ".mdx")):
-            body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
-            if body.lstrip("\n") == article:
-                matches.append(path)
-        elif path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
-            # Decode complete JSON string tokens, not fragment matches in escaped
-            # prose. This proves source storage, not runtime consumption/rendering.
-            for token in re.findall(
-                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
-            ):
-                if json.loads(token) == article:
-                    matches.append(path)
-                    break
-    if len(matches) != 1:
-        raise ValueError(
-            "Keep the approved article unchanged in exactly one Markdown file "
-            "or JSON string consumed by the site's Markdown renderer."
-        )
+        if _stores_exactly(path, text, article):
+            exact.append(path)
+            continue
+        page = f" {' '.join(_words(text))} "
+        found = sum(f" {' '.join(words)} " in page for words in paragraphs)
+        if paragraphs and found == len(paragraphs):
+            worded.append(path)
+        elif found > closest[0]:
+            closest = (found, path)
+    if len(exact) == 1:
+        path, check = exact[0], "exact_source_preserved"
+    elif not exact and len(worded) == 1:
+        path, check = worded[0], "wording_preserved"
+    else:
+        path, check = (exact or worded or [closest[1]])[0], "not_confirmed"
     from tin_lite.page_urls import public_route
 
     route = public_route(manifest.get("body"))
+    figures = figure_check(manifest, source)
     return {
-        "article_path": matches[0],
+        "article_path": path,
         "article_sha256": source["article_sha256"],
-        "copy_check": "exact_source_preserved",
+        "copy_check": check,
+        **({"figure_check": figures} if figures else {}),
         "build_check": "not_verified_by_tin",
         **({"public_route": route} if route else {}),
     }
 
 
-def validate_patch(manifest, source):
-    """The exact-copy proof, plus website.change's own rules when the source is a change row.
+VIDEO_BLOCK = re.compile(r"^(`{3,}|~{3,})[ \t]*tin-video\b(.*?)^\1[ \t]*$", re.M | re.S)
+MERMAID_BLOCK = re.compile(r"^(?:`{3,}|~{3,})[ \t]*mermaid\b", re.M)
 
-    A content.deliver source has no change row, so its patch is checked exactly as before.
+
+def figure_check(manifest, source):
+    """Whether every approved figure, embed, diagram and video is on the page, or None.
+
+    An approved file must arrive byte for byte (the same checksum), a video by its address or
+    its last path segment (the provider's ID), and each diagram as an SVG or the site's own
+    Mermaid support. Like copy_check this decides only Tin's own merge, never the PR.
     """
-    proof = validate_copy(manifest, source)
-    if source.get("change"):
-        from tin_lite.website_change import check_patch
+    article = source["article"]
+    assets = source.get("assets") or []
+    videos = [
+        match.group(1).strip()
+        for block in VIDEO_BLOCK.finditer(article)
+        if (match := re.search(r"(?m)^\s*url\s*:\s*(\S+)", block.group(2)))
+    ]
+    diagrams = len(MERMAID_BLOCK.findall(article))
+    if not (assets or videos or diagrams):
+        return None
+    files = manifest.get("files") or []
+    digests = {hashlib.sha256(item["content"].encode()).hexdigest() for item in files}
+    text = "\n".join(item["content"] for item in files)
+    # Diagrams arrive as new SVG files (not the approved figures' copies) or inline SVG.
+    approved = {asset["sha256"] for asset in assets}
+    drawn = sum(
+        (hashlib.sha256(item["content"].encode()).hexdigest() not in approved)
+        if item["path"].endswith(".svg")
+        else item["content"].count("<svg")
+        for item in files
+    )
+    confirmed = (
+        all(asset["sha256"] in digests for asset in assets)
+        and all(_video_shown(url, text) for url in videos)
+        and (drawn >= diagrams or "mermaid" in text.casefold())
+    )
+    return "confirmed" if confirmed else "not_confirmed"
 
-        check_patch(manifest, source, proof)
-    return proof
+
+def _video_shown(url, text):
+    from urllib.parse import parse_qs, urlsplit
+
+    if url in text:
+        return True
+    parts = urlsplit(url)
+    ids = [parts.path.rstrip("/").rsplit("/", 1)[-1], *parse_qs(parts.query).get("v", [])]
+    return any(len(value) >= 4 and value in text for value in ids)
+
+
+FIGURE_FENCE = re.compile(
+    r"^(`{3,}|~{3,})[ \t]*(?:tin-embed|tin-video|mermaid)\b.*?^\1[ \t]*$", re.M | re.S
+)
+
+
+def _stores_exactly(path, text, article):
+    """The article byte for byte: a Markdown body, or one complete JSON string token."""
+    if path.endswith((".md", ".mdx")):
+        body = re.sub(r"\A---\r?\n.*?\r?\n---\r?\n", "", text, count=1, flags=re.S)
+        return body.lstrip("\n") == article
+    if path.endswith((".tsx", ".jsx", ".js", ".ts", ".astro", ".vue", ".svelte", ".json")):
+        # Complete JSON string tokens, not fragment matches in escaped prose.
+        return any(
+            json.loads(token) == article
+            for token in re.findall(
+                r'"(?:[^"\\\x00-\x1f]|\\(?:["\\/bfnrt]|u[0-9a-fA-F]{4}))*"', text
+            )
+        )
+    return False
+
+
+def _words(text):
+    """The words a reader sees, in order: no markup, link targets, scripts or styles."""
+    text = re.sub(r"<(script|style)\b.*?</\1\s*>|<!--.*?-->", " ", text, flags=re.S | re.I)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*\)|\]\([^)]*\)", " ", text)
+    text = html.unescape(re.sub(r"</?[A-Za-z!][^>]*>", " ", text))
+    return re.findall(r"[^\W_]+", text.casefold())
+
+
+def blocking_paths(proof):
+    """The page's own path, the one file another open PR must not also add; None when the
+    patch has no recognizable page, so every file blocks as for any other PR."""
+    return frozenset({proof["article_path"]}) if proof.get("article_path") else None
+
+
+def validate_patch(manifest, source):
+    """The page check for content.deliver and website.change alike. The procedure's own file
+    and byte caps bound the patch; website_change.hold_reason decides a website merge."""
+    return validate_copy(manifest, source)
 
 
 async def delivery_history(executor, *, project_id, source_ids):
+    """Each page's latest adaptation, by website.change or (before its retirement)
+    content.deliver."""
     if not source_ids:
         return {}
     rows = await executor.fetch(
@@ -1112,7 +1314,7 @@ async def delivery_history(executor, *, project_id, source_ids):
         "recovery.result AS recovery, checkpoint.result AS checkpoint "
         "FROM workflow_runs r JOIN effect_receipts s "
         "ON s.execution_key='content-delivery:' || r.id::text || ':source' "
-        "AND s.operation=$3 AND s.status='completed' "
+        "AND s.operation = ANY($3::text[]) AND s.status='completed' "
         "LEFT JOIN effect_receipts p "
         "ON p.execution_key=r.id::text || ':procedure_canonical_commit' "
         "AND p.status='completed' "
@@ -1121,12 +1323,13 @@ async def delivery_history(executor, *, project_id, source_ids):
         "AND recovery.status='completed' "
         "LEFT JOIN effect_receipts checkpoint "
         "ON checkpoint.execution_key=r.id::text || ':procedure_artifact_persist' "
-        "AND checkpoint.status='completed' WHERE r.project_id=$1 AND r.workflow_id=$2 "
+        "AND checkpoint.status='completed' WHERE r.project_id=$1 "
+        "AND r.workflow_id = ANY($2::uuid[]) "
         "AND s.result->>'source_run_id'=ANY($4::text[]) "
         "ORDER BY s.result->>'source_run_id', r.created_at DESC, r.id DESC",
         project_id,
-        WORKFLOW_ID,
-        OPERATION,
+        list(ADAPTER_WORKFLOW_IDS),
+        list(SOURCE_OPERATIONS.values()),
         list(source_ids),
     )
     from tin_lite.content_programs import decoded

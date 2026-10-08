@@ -30,7 +30,7 @@ async function setup(browser, base, connected = true) {
     return route.fulfill({json: {id: "saved-x", workflow_id: workflow.id, workflow_key: workflow.key, inputs: body.inputs, input_schema: workflow.definition.input_schema, status: "active", name: body.name, schedule: body.schedule, settings_revision: 1}});
   });
   await opened.page.reload();
-  await opened.page.getByRole("button", {name: "Add workflows", exact: true}).click();
+  await opened.page.getByRole("button", {name: "Workflows", exact: true}).click();
   return {...opened, writes};
 }
 

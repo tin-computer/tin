@@ -42,7 +42,7 @@ CHOICE_WORKFLOW_IDS = frozenset(
 )
 REPOSITORY_MODES = frozenset({"github_pr", "github_commit"})
 APPROVAL_CHOICES = ("github_pr", "github_commit", "none")
-# Approved pages that Tin adapts into the site's own format (content.deliver) instead of
+# Approved pages that Tin adapts into the site's own format (website.change) instead of
 # committing their Markdown as it is, when Codex API execution is on for the project.
 ADAPTED_WORKFLOW_IDS = frozenset({PUBLIC_ARTICLE_WORKFLOW_ID, ANSWER_PAGE_WORKFLOW_ID})
 ADAPTER = "repository"
@@ -105,7 +105,7 @@ def chosen_mode(intent):
 
 
 def adaptation_start_key(run_id):
-    """The start key of the one content.deliver run an approval may start."""
+    """The start key of the one adaptation run (website.change) an approval may start."""
     return f"approval-delivery:{UUID(str(run_id))}"
 
 
@@ -160,14 +160,13 @@ def adaptation_refusal(exc):
 def publish_sentence(mode, *, route_missing=False):
     """What Publish does for an adapted page, in the founder's words.
 
-    Tin merges a pull request that adds only the page, or the page and the route the founder
-    chose for these pages. Until a route is chosen, a commit-to-main setting still leaves the
-    first pull request open.
+    website.change puts the page on the site at the route the founder chose for these pages,
+    and never guesses one: until a route is chosen, the adaptation waits for it.
     """
-    if route_missing and mode == "github_commit":
+    if route_missing:
         return (
-            "Tin adapts it to your site and opens a pull request, "
-            "since you have not chosen where these pages live yet"
+            "Tin adapts it to your site once you choose where these pages live; "
+            "your coding agent can save that route"
         )
     if mode == "github_commit":
         return "Tin adapts it to your site and commits it to main"
@@ -545,9 +544,8 @@ class ContentDelivery:
         if settings.mode == "draft_only":
             return None
         kind = item_kind(selected["item"])
-        # A refresh edits the page's own source, and an answer page is adapted to the site at
-        # its route: neither has a Markdown destination path.
-        path = None if kind != content_draft.ARTICLE else destination(settings, selected)[0]
+        # A refresh edits the page's own source; an article or answer page is adapted to the
+        # site through website.change. None of them has a Markdown destination path.
         if self.integrations is None:
             raise ValueError("Connect GitHub before drafting for repository delivery.")
         binding = await self.integrations.github_repository_binding(
@@ -558,12 +556,10 @@ class ContentDelivery:
                 {"kind": REFRESH_KIND}
                 if kind == content_draft.REFRESH
                 else {"adapter": ADAPTER, "via": WEBSITE_CHANGE}
-                if kind == content_draft.ANSWER
-                else {}
             ),
             "settings": settings.model_dump(),
             "settings_revision": configured["revision"],
-            "path": path,
+            "path": None,
             **({"route": selected.get("page_route")} if kind == content_draft.ANSWER else {}),
             "repository_id": binding.repository_id,
             "connection_id": str(binding.connection_id),
@@ -617,8 +613,9 @@ class ContentDelivery:
         """Record the reviewer's delivery pick for one document; optionally keep it.
 
         `adapt` (the caller checked `adaptable`) sends an answer page or public article
-        through content.deliver instead of the Markdown publisher; `mode` still says
-        whether its pull request stays open or Tin merges it.
+        through website.change instead of the Markdown publisher, as every content.generate
+        article and answer page goes; `mode` still says whether its pull request stays open or
+        Tin merges it.
         """
         if run.workflow_id not in CHOICE_WORKFLOW_IDS:
             raise ValueError("This run does not publish to a repository.")
@@ -669,6 +666,27 @@ class ContentDelivery:
                         "chosen_by": actor,
                     },
                 )
+        if run.workflow_id == DRAFT_WORKFLOW_ID and mode in REPOSITORY_MODES:
+            # A planned article goes to the site through website.change, like an answer page;
+            # `mode` says whether its pull request stays open or Tin merges it.
+            return await self.choose_adaptation(
+                run=run,
+                mode=mode,
+                remember=remember,
+                actor=actor,
+                trigger_source=trigger_source,
+            )
+        if mode == "none" and run.workflow_id != DRAFT_WORKFLOW_ID and not run.project_workflow_id:
+            # Keeping a one-off page in Tin leaves nothing to configure or remember.
+            return await self.record_choice(
+                run,
+                {
+                    "settings": DeliverySettings().model_dump(),
+                    "settings_revision": None,
+                    "path": None,
+                    "chosen_by": actor,
+                },
+            )
         program_id, selected = await self.program_for(run)
         configured = await self.settings(project_id=run.project_id, program_id=program_id)
         base = DeliverySettings.model_validate(configured["settings"])
@@ -768,7 +786,7 @@ class ContentDelivery:
         answer = await self.plan_kind(run) == content_draft.ANSWER
         record = {
             "adapter": ADAPTER,
-            **({"via": WEBSITE_CHANGE} if answer else {}),
+            "via": WEBSITE_CHANGE,
             "settings": chosen.model_dump(),
             "settings_revision": configured["revision"] if configured else None,
             "path": None,
@@ -1191,7 +1209,7 @@ class ContentDelivery:
         return output
 
     async def adapt(self, run_id, *, start):
-        """Start the one content.deliver run an adapted page's approval asks for.
+        """Start the one website.change run an adapted page's approval asks for.
 
         `start(run, intent)` admits and dispatches it (the ordinary run service, billing and
         Temporal start). The start receipt shares the Markdown publisher's key under another
@@ -1256,7 +1274,7 @@ class ContentDelivery:
             raise LookupError("Draft not found.")
         intent = await self.intent(run)
         if not intent or adapted(intent):
-            # An adapted page ships through content.deliver (see adapt), never as plain Markdown.
+            # An adapted page ships through website.change (see adapt), never as plain Markdown.
             return
         if run.workflow_id == DRAFT_WORKFLOW_ID:
             from tin_lite.content_editorial_judgment import NO_DRAFT, saved

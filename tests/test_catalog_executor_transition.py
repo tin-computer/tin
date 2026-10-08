@@ -4,7 +4,7 @@ import pytest
 from test_checkpoint_contract import fixture_state
 from test_procedure_publication import publication_db as publication_db
 
-from tin_lite import growth_plan
+from tin_lite import growth_plan, organic_system
 from tin_lite.catalog import (
     BUILTIN_WORKFLOWS,
     EXECUTOR_TRANSITIONS,
@@ -12,6 +12,7 @@ from tin_lite.catalog import (
     sync_builtin_workflows,
 )
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR
+from tin_lite.public_workflows import PUBLIC_WORKFLOWS
 from tin_lite.system_wiki import SystemWikiRef
 
 WIKI = SystemWikiRef("wiki/system", "growth/project-scanning.md", "w" * 40)
@@ -29,7 +30,9 @@ class PublishedCatalog:
         pass
 
     async def get_workflow(self, workflow_id):
-        builtin = next(item for item in BUILTIN_WORKFLOWS if item.id == workflow_id)
+        builtin = next(
+            item for item in (*BUILTIN_WORKFLOWS, *PUBLIC_WORKFLOWS) if item.id == workflow_id
+        )
         return replace(
             self.workflow,
             id=workflow_id,
@@ -48,7 +51,13 @@ class Storage:
 
 
 async def test_the_plan_moves_from_the_codex_procedure_and_nothing_else_may(monkeypatch):
-    monkeypatch.setattr("tin_lite.public_workflows.PUBLIC_WORKFLOWS", ())
+    # The organic system pins its two measurement packages; no other package is needed.
+    monkeypatch.setattr(
+        "tin_lite.public_workflows.PUBLIC_WORKFLOWS",
+        tuple(
+            item for item in PUBLIC_WORKFLOWS if item.key in organic_system.MEASURE_STEPS.values()
+        ),
+    )
     # Executor migration is a native-only fixture; the X parent needs its code package.
     monkeypatch.setattr(
         "tin_lite.catalog.BUILTIN_WORKFLOWS",

@@ -1,6 +1,6 @@
 """The fixed system's delivery intent, shared with review and admission.
 
-No new publisher: approved copy still travels through content.deliver.
+No new publisher: approved copy travels through website.change (content.deliver on v5 pins).
 """
 
 from dataclasses import asdict

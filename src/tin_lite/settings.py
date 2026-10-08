@@ -5,9 +5,10 @@ from base64 import urlsafe_b64decode
 from binascii import Error as Base64Error
 from functools import cached_property
 from pathlib import Path
+from typing import Literal
 from urllib.parse import quote
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,7 +61,8 @@ class Settings(BaseSettings):
     posthog_host: str = Field(default="https://us.i.posthog.com", alias="TIN_LITE_POSTHOG_HOST")
     luna_model: str = Field(default="gpt-6-luna", alias="TIN_LITE_LUNA_MODEL")
     luna_base_url: str = Field(default="https://api.openai.com/v1", alias="TIN_LITE_LUNA_BASE_URL")
-    luna_timeout_seconds: float = Field(default=90, alias="TIN_LITE_LUNA_TIMEOUT")
+    # How long a model client waits for one response unless a caller sets its own wait.
+    luna_timeout_seconds: float = Field(default=600, alias="TIN_LITE_LUNA_TIMEOUT")
     anthropic_api_key: SecretStr | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     anthropic_workspace_id: str | None = Field(default=None, alias="ANTHROPIC_WORKSPACE_ID")
     gemini_api_key: SecretStr | None = Field(default=None, alias="GEMINI_API_KEY")
@@ -69,7 +71,11 @@ class Settings(BaseSettings):
     # Browser sign-ups see a locked dashboard until their coding agent sets up the first
     # workflow. Off once browser onboarding exists, or for a test account.
     browser_lock_enabled: bool = Field(default=True, alias="TIN_LITE_BROWSER_LOCK_ENABLED")
+    # Starts new paid work and Stripe top-ups. Off pauses them; reads and reconciliation stay.
+    # The name predates live payments: it is the paid-work switch in either Stripe mode.
     billing_test_enabled: bool = Field(default=False, alias="TIN_LITE_BILLING_TEST_ENABLED")
+    # Which Stripe mode Tin's own top-ups use. The key prefix and every Stripe object must match.
+    stripe_mode: Literal["test", "live"] = Field(default="test", alias="TIN_LITE_STRIPE_MODE")
     billing_hosted_defaults_enabled: bool = Field(
         default=False, alias="TIN_LITE_BILLING_HOSTED_DEFAULTS_ENABLED"
     )
@@ -104,6 +110,8 @@ class Settings(BaseSettings):
     )
     # Optional Google API key for PageSpeed Insights. Without it, speed is reported as unknown.
     pagespeed_api_key: SecretStr | None = Field(default=None, alias="TIN_LITE_PAGESPEED_API_KEY")
+    # Optional Podscan API key for managed.podscan (podcast search for guest booking).
+    podscan_api_key: SecretStr | None = Field(default=None, alias="TIN_LITE_PODSCAN_API_KEY")
     keyword_plan_max_cost_usd: float = Field(
         default=0, ge=0, le=25, allow_inf_nan=False, alias="TIN_LITE_KEYWORD_PLAN_MAX_COST_USD"
     )
@@ -201,6 +209,32 @@ class Settings(BaseSettings):
     e2b_studio_api_template: str = Field(
         default="tin-lite-codex-studio-api", alias="TIN_LITE_E2B_STUDIO_API_TEMPLATE"
     )
+    connection_collection_projects_raw: str = Field(
+        default="", alias="TIN_LITE_CONNECTION_COLLECTION_PROJECTS"
+    )
+    linkedin_extension_ids_raw: str = Field(default="", alias="TIN_LITE_LINKEDIN_EXTENSION_IDS")
+    linkedin_e2b_api_key: SecretStr | None = Field(
+        default=None, alias="TIN_LITE_LINKEDIN_E2B_API_KEY"
+    )
+    linkedin_cloud_template: str | None = Field(default=None, alias="TIN_LITE_LINKEDIN_TEMPLATE")
+    linkedin_cloud_enabled: bool = Field(
+        default=False,
+        alias="TIN_LITE_LINKEDIN_CLOUD_ENABLED",
+        validation_alias=AliasChoices(
+            "TIN_LITE_LINKEDIN_CLOUD_ENABLED", "TIN_LITE_LINKEDIN_CLOUD_QUALIFIED"
+        ),
+    )
+
+    @property
+    def connection_collection_projects(self) -> tuple[str, ...]:
+        return tuple(
+            v.strip() for v in self.connection_collection_projects_raw.split(",") if v.strip()
+        )
+
+    @property
+    def linkedin_extension_ids(self) -> tuple[str, ...]:
+        return tuple(v.strip() for v in self.linkedin_extension_ids_raw.split(",") if v.strip())
+
     private_workflow_projects_raw: str = Field(
         default="", alias="TIN_LITE_PRIVATE_WORKFLOW_PROJECTS"
     )
@@ -234,7 +268,7 @@ class Settings(BaseSettings):
     proxy_grant_dir: Path | None = Field(default=None, alias="TIN_LITE_PROXY_GRANT_DIR")
 
     egress_allow_hosts_raw: str = Field(default="", alias="TIN_LITE_EGRESS_ALLOW_HOSTS")
-    sandbox_timeout_seconds: int = Field(default=900, alias="TIN_LITE_SANDBOX_TIMEOUT")
+    sandbox_timeout_seconds: int = Field(default=1800, alias="TIN_LITE_SANDBOX_TIMEOUT")
 
     @model_validator(mode="after")
     def secure_forward_proxy(self) -> Settings:
@@ -244,8 +278,8 @@ class Settings(BaseSettings):
             validate_proxy_url(self.forward_proxy_url.get_secret_value())
             if self.proxy_grant_dir is None or not self.proxy_grant_dir.is_absolute():
                 raise ValueError("TIN_LITE_PROXY_GRANT_DIR must be an absolute directory path")
-            if not 1 <= self.sandbox_timeout_seconds <= 3600:
-                raise ValueError("proxied sandboxes require a timeout between 1 and 3600 seconds")
+            if not 1 <= self.sandbox_timeout_seconds <= 7200:
+                raise ValueError("proxied sandboxes require a timeout between 1 and 7200 seconds")
         return self
 
     @field_validator("app_url", "legacy_public_url")
@@ -322,8 +356,12 @@ class Settings(BaseSettings):
         if self.private_workflows_open and not self.billing_enabled:
             raise ValueError("Open private workflows require billing enabled")
         if self.billing_test_enabled and self.stripe_secret_key is not None:
-            if not self.stripe_secret_key.get_secret_value().startswith(("sk_test_", "rk_test_")):
-                raise ValueError("Tin billing currently accepts Stripe test keys only")
+            prefixes = (f"sk_{self.stripe_mode}_", f"rk_{self.stripe_mode}_")
+            if not self.stripe_secret_key.get_secret_value().startswith(prefixes):
+                raise ValueError(
+                    f"STRIPE_SECRET_KEY is not a {self.stripe_mode}-mode key; "
+                    "TIN_LITE_STRIPE_MODE and the key must match"
+                )
         if "OPENAI_API_KEY" in os.environ or "CODEX_API_KEY" in os.environ:
             raise ValueError(
                 "OPENAI_API_KEY and CODEX_API_KEY are forbidden; Luna uses its explicit "

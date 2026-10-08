@@ -160,7 +160,7 @@ async def test_an_unreadable_repository_ends_the_run_failed_with_the_reason(
     f = await technical_fixture(publication_db, monkeypatch)
     bundle = f.integrations.github_repository_bundle.return_value
     bundle.complete = False
-    bundle.missing = ({"path": "src/data/posts.json", "size": 2_400_000, "reason": "too_large"},)
+    bundle.missing = ({"path": "src/data/posts.json", "size": 12_400_000, "reason": "too_large"},)
     assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
     assert await f.execution.prepare(f.run, policy=technical_contract.POLICY) is True
     saved = await prepared_result(f.db, f.run.id)
@@ -170,8 +170,8 @@ async def test_an_unreadable_repository_ends_the_run_failed_with_the_reason(
     run = await f.db.get_run(f.run.id)
     assert run.status.value == "failed"
     assert run.error_message == (
-        "Tin couldn't read every file in the repository: src/data/posts.json (2.4 MB, over "
-        "the 2 MB limit for files Tin reads). No change proposed."
+        "Tin couldn't read every file in the repository: src/data/posts.json (12.4 MB, over "
+        "the 10 MB limit for files Tin reads). No change proposed."
     )
     assert run.artifact_path == f"reports/technical-fix/{run.id}/RESULT.md"
     assert f.storage.repo.writes == 1
@@ -328,10 +328,31 @@ async def parent_fixture(db, monkeypatch):
             "e" * 40,
             json.dumps(definition),
         )
+    # v7's measurement packages, whose manifests sit in their own folders.
+    from tin_lite.public_workflows import load_public_workflows
+
+    packages = {}
+    for package in await load_public_workflows():
+        if package.key not in organic_system.MEASURE_STEPS.values():
+            continue
+        packages.update(package.files)
+        await db.pool.execute(
+            "INSERT INTO workflows (id,key,title,executor,definition_repo_id,definition_path,"
+            "current_commit_sha,version_label,definition) "
+            "VALUES ($1,$2,$2,$3,'registry/workflows',$4,$5,'1',$6::jsonb)",
+            uuid4(),
+            package.key,
+            package.executor,
+            package.definition_path,
+            "e" * 40,
+            json.dumps(package.definition),
+        )
     monkeypatch.setattr(db, "has_project_access", AsyncMock(return_value=True))
 
     async def read(**kwargs):
         assert kwargs["commit_sha"] == run.definition_commit_sha
+        if kwargs["path"] in packages:
+            return packages[kwargs["path"]]
         return json.dumps(definitions[kwargs["path"][10:-5]]).encode()
 
     monkeypatch.setattr(storage, "read_canonical_artifact", read)
@@ -369,7 +390,8 @@ async def test_parent_prepares_one_pinned_run_per_step_without_temporal_dispatch
     technical = await f.activities.organic_system_step(
         {"run_id": str(f.run.id), "step": "technical"}
     )
-    assert technical == {"status": "skipped", "reason": "not_requested"}
+    # Fixes are on by default; without a succeeded audit there is nothing to fix from.
+    assert technical == {"status": "blocked", "reason": "audit_unavailable"}
     content = await f.activities.organic_system_step({"run_id": str(f.run.id), "step": "content"})
     assert content == {"status": "blocked", "reason": "research_unavailable"}
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 3

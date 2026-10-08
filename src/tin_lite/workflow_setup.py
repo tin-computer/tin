@@ -95,7 +95,11 @@ async def code_readiness(
         except ValueError as exc:
             issues.append(str(exc))
     terms = (
-        configured_terms(model_terms(workflow.definition), workflow.definition, inputs)
+        configured_terms(
+            {**model_terms(workflow.definition), "mode": getattr(settings, "stripe_mode", "test")},
+            workflow.definition,
+            inputs,
+        )
         if spec.metered
         else None
     )
@@ -105,9 +109,10 @@ async def code_readiness(
         [s for s in spec.services if not managed_services.is_managed(s.provider_key)],
     )
     estimate = {
-        "estimated_usd": usd(terms["maximum_nanos"]) if terms else "0.00",
+        "estimated_usd": usd(terms["estimate"]["amount_nanos"]) if terms else "0.00",
+        "maximum_usd": usd(terms["maximum_nanos"]) if terms else "0.00",
         "approval_required": False,
-        "basis": "conservative_configured_bound" if terms else "included_bounded_compute",
+        "basis": terms["estimate"]["basis"] if terms else "included_bounded_compute",
         "policy_id": terms["estimate"]["id"] if terms else "bounded-code-v1",
         "external_provider_cost": (
             "not_applicable"
@@ -151,7 +156,7 @@ async def code_readiness(
         "can_run": not issues,
         "can_schedule": not issues
         and not schedule_issues
-        and bool(set(workflow.definition["schedule_modes"]) & {"daily", "weekly"}),
+        and bool(set(workflow.definition["schedule_modes"]) & {"daily", "weekly", "monthly"}),
         "estimate": estimate,
     }
 

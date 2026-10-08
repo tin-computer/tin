@@ -5,12 +5,13 @@ import logging
 import mimetypes
 import re
 import secrets
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from html import escape
 from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 from urllib.parse import quote
 from uuid import UUID, uuid4
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from fastapi.exceptions import RequestValidationError
@@ -24,6 +25,9 @@ from tin_lite.billing_contracts import BillingError
 from tin_lite.campaign_revisions import request_email_campaign_revision
 from tin_lite.capture_revisions import ProposalFile
 from tin_lite.codex_api_relay import router as codex_api_router
+from tin_lite.connection_collection import validate_inputs as validate_collection_inputs
+from tin_lite.connection_collection import visible as collection_visible
+from tin_lite.connection_collection_api import router as collection_router
 from tin_lite.content_delivery_api import router as content_delivery_router
 from tin_lite.content_draft_api import router as content_draft_router
 from tin_lite.content_program_api import router as content_program_router
@@ -46,6 +50,7 @@ from tin_lite.domain import (
     Workspace,
 )
 from tin_lite.growth_onboarding import KEY as GROWTH_ONBOARDING_KEY
+from tin_lite.growth_onboarding import expectation as workflow_expectation
 from tin_lite.growth_onboarding_control import OnboardingPickError, ensure_onboarding_approvable
 from tin_lite.integrations import (
     ADS_PROVIDER,
@@ -114,6 +119,7 @@ from tin_lite.run_service import (
     start_workflow_run as dispatch_workflow_run,
 )
 from tin_lite.schedules import WorkflowSchedule, next_run_after
+from tin_lite.system_week import upcoming_occurrences, week_window
 from tin_lite.technical_fix_api import router as technical_fix_router
 from tin_lite.technical_fix_api import system_router as organic_system_router
 from tin_lite.website_change_api import router as website_change_router
@@ -150,12 +156,15 @@ router.include_router(content_delivery_router)
 router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
+
+router.include_router(collection_router)
 router.include_router(public_catalog_router)
 router.include_router(website_change_router)
 router.include_router(protected_paths_router)
 logger = logging.getLogger(__name__)
 AUTHENTICATED_USER = Depends(require_user)
 SEARCH_PATHS = Query(default=None, max_length=100)
+WEEK_START = Query(description="The first of seven local days, usually a Monday.")
 
 
 @router.post("/api/events/lock-page", status_code=204)
@@ -412,9 +421,11 @@ ASSET_VERSION = hashlib.sha256(
             "output-comparison.css",
             "output-comparison.js",
             "pierre-trees.js",
+            "system-week.js",
             "theme.js",
             "tin-favicon.svg",
             "viewer-page.js",
+            "workflow-spine.js",
         )
     )
 ).hexdigest()[:12]
@@ -776,12 +787,15 @@ class WorkflowView(BaseModel):
     forked_from_commit_sha: str | None
     saved: bool = False
     project_workflow_count: int = 0
+    last_run_id: UUID | None = None
+    last_run_at: datetime | None = None
     scope: str = "builtin"
     source: dict = Field(default_factory=dict)
     definition_revision: str | None = None
     input_schema: dict = Field(default_factory=dict)
     allowed_actions: list[str] = Field(default_factory=list)
     runtime_available: bool = True
+    collection_availability: dict | None = None
     prerequisites: list = Field(default_factory=list)
     readiness: dict | None = None
 
@@ -834,6 +848,7 @@ class ProjectWorkflowView(BaseModel):
     workflow_key: str
     workflow_title: str
     workflow_description: str
+    workflow_drawn: bool = False
     version_label: str
     definition_commit_sha: str
     name: str
@@ -872,6 +887,37 @@ class ProjectSystemView(BaseModel):
     timezone: str
     last_mcp_used_at: datetime | None = None
     last_mcp_tool_name: str | None = None
+
+
+class WeekRunView(BaseModel):
+    id: UUID
+    project_workflow_id: UUID | None
+    workflow_key: str
+    workflow_title: str
+    status: RunStatus
+    trigger_source: str
+    at: datetime
+    finished_at: datetime | None
+    title: str | None
+    summary: str | None
+    progress_current: int | None
+    progress_total: int | None
+
+
+class WeekOccurrenceView(BaseModel):
+    project_workflow_id: UUID
+    name: str
+    workflow_key: str
+    at: datetime
+    state: Literal["planned", "paused", "held", "skipped"]
+    lands: str
+
+
+class ProjectWeekView(BaseModel):
+    start: date
+    timezone: str
+    runs: list[WeekRunView]
+    occurrences: list[WeekOccurrenceView]
 
 
 class DecisionView(BaseModel):
@@ -930,7 +976,8 @@ class ProposalRevisionRequest(BaseModel):
     review_token: str = Field(min_length=64, max_length=64)
     request_id: UUID
     files: list[ProposalFile] = Field(min_length=1, max_length=2)
-    note: str = Field(default="", max_length=500)
+    # Shortened to the history's length by the service, never refused for it.
+    note: str = Field(default="", max_length=20_000)
     client: Literal["claude_code", "codex", "api"] | None = None
 
 
@@ -1121,6 +1168,13 @@ class MarkdownHeadingView(BaseModel):
     title: str
 
 
+class MarkdownAssetView(BaseModel):
+    """A figure or embed the reader loads from the project at the document's revision."""
+
+    path: str
+    media_type: str
+
+
 class MarkdownDocumentView(BaseModel):
     markdown: str
     html: str
@@ -1135,6 +1189,57 @@ class MarkdownDocumentView(BaseModel):
     size_bytes: int | None = None
     related_documents: list[dict[str, str]] = Field(default_factory=list)
     sha256: str | None = None
+    assets: list[MarkdownAssetView] = Field(default_factory=list)
+    # Files the draft referred to that Tin left out, each with its reason.
+    asset_notes: list[str] = Field(default_factory=list)
+
+
+async def _run_document_assets(database, run, path, source):
+    """A draft's kept figures and embeds, from its published checkpoint, and what was left out."""
+    from tin_lite import page_assets
+
+    if source != "canonical" or not path.endswith(".md") or run.executor != "codex.procedure":
+        return [], [], None
+    published = await database.get_effect(f"{run.id}:procedure_canonical_commit")
+    checkpoint = (
+        (published.result or {}).get("checkpoint")
+        if published is not None and published.status == "completed"
+        else None
+    )
+    persisted = await database.get_effect(f"{run.id}:procedure_artifact_persist")
+    dropped = ((persisted.result or {}) if persisted is not None else {}).get("dropped_assets")
+    notes = [
+        f"{item['path'].rsplit('/', 1)[-1]} was left out: {item['reason']}."
+        for item in dropped or []
+    ]
+    assets = [
+        MarkdownAssetView(path=item["artifact_path"], media_type=item["media_type"])
+        for item in (checkpoint or {}).get("assets") or []
+    ]
+    return assets, notes, page_assets.folder(path) if assets or notes else None
+
+
+async def _file_document_assets(storage, project, path, revision, markdown):
+    """The figures and embeds a Markdown file in the project refers to that exist there."""
+    from tin_lite import page_assets
+
+    if not path.endswith(".md"):
+        return [], None
+    referenced = page_assets.referenced(markdown, path)
+    if not referenced:
+        return [], None
+    try:
+        present = set(
+            await storage.list_canonical_files_at(repo_id=project.state_repo_id, revision=revision)
+        )
+    except LookupError:
+        return [], None
+    assets = [
+        MarkdownAssetView(path=item, media_type=page_assets.media_type(item))
+        for item in referenced
+        if item in present
+    ]
+    return assets, page_assets.folder(path)
 
 
 class ProjectFileView(BaseModel):
@@ -1657,7 +1762,7 @@ async def list_project_integrations(
             connections.get(definition.key),
             configured=service.is_configured(definition.key),
         )
-        for definition in service.definitions(connections.values())
+        for definition in service.definitions(connections.values(), project_id=project_id)
     ]
 
 
@@ -2199,7 +2304,8 @@ async def list_workflows(
         item
         for item in workflows
         # Agent-only workflows (start here) run through the MCP; the catalog does not list them.
-        if not (item.definition or {}).get("agent_only")
+        if collection_visible(request.app.state.settings, item, project_id)
+        and not (item.definition or {}).get("agent_only")
         and (item.definition or {}).get("public_discovery", True)
         and (
             item.project_id is None
@@ -2721,7 +2827,7 @@ async def get_project_file_document(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
             detail="project file is not Markdown",
         )
-    _, content = await _read_project_file(
+    project, content = await _read_project_file(
         project_id=project_id,
         path=path,
         revision=revision,
@@ -2735,7 +2841,10 @@ async def get_project_file_document(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Markdown project file is not UTF-8",
         ) from exc
-    document = render_markdown(markdown)
+    assets, folder = await _file_document_assets(
+        request.app.state.runtime.storage, project, path, revision, markdown
+    )
+    document = render_markdown(markdown, asset_folder=folder)
     source_query = f"path={quote(path, safe='')}&revision={revision}"
     response.headers["X-Tin-File-Source"] = "code.storage"
     response.headers["X-Tin-File-Revision"] = revision
@@ -2753,6 +2862,7 @@ async def get_project_file_document(
         path=path,
         revision=revision,
         size_bytes=len(content),
+        assets=assets,
     )
 
 
@@ -2772,6 +2882,55 @@ async def list_project_workflows(
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return [ProjectWorkflowView.model_validate(item) for item in configured]
+
+
+class SavedWorkflowDiagramView(BaseModel):
+    flow: dict[str, Any] | None
+    version: str | None
+    pinned_version: str | None
+    exact: bool
+
+
+@router.get(
+    "/api/projects/{project_id}/workflows/{project_workflow_id}/diagram",
+    response_model=SavedWorkflowDiagramView,
+)
+async def get_project_workflow_diagram(
+    project_id: UUID,
+    project_workflow_id: UUID,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> SavedWorkflowDiagramView:
+    """How a saved workflow runs: its pinned revision's drawing, else today's, marked."""
+    from tin_lite.workflow_definitions import resolve_execution_contract
+    from tin_lite.workflow_diagrams import diagram_for_saved_workflow
+
+    await _require_project_access(project_id, request, user)
+    database = request.app.state.runtime.database
+    configured = await database.get_project_workflow(project_workflow_id)
+    if configured is None or configured.project_id != project_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="project workflow not found"
+        )
+    workflow = await database.get_workflow(configured.workflow_id)
+    if workflow is None or workflow.project_id not in (None, project_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="workflow not found")
+    pinned = None
+    try:
+        pinned = (
+            await resolve_execution_contract(
+                storage=getattr(request.app.state.runtime, "storage", None),
+                workflow=workflow,
+                project_id=project_id,
+                revision=configured.definition_commit_sha,
+            )
+        ).definition
+    except (LookupError, ValueError):
+        # An unreadable pin still gets today's drawing, marked as not exact.
+        pinned = None
+    return SavedWorkflowDiagramView.model_validate(
+        diagram_for_saved_workflow(current=workflow.definition, pinned=pinned)
+    )
 
 
 class WorkflowSetupRequest(BaseModel):
@@ -2818,6 +2977,64 @@ async def get_project_system(
     )
     response.headers["X-Tin-Read-Source"] = "postgres"
     return ProjectSystemView.model_validate(summary)
+
+
+@router.get("/api/projects/{project_id}/week", response_model=ProjectWeekView)
+async def get_project_week(
+    project_id: UUID,
+    request: Request,
+    response: Response,
+    start: date = WEEK_START,
+    timezone: str = Query(default="UTC", min_length=1, max_length=100),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> ProjectWeekView:
+    """A week of the System calendar in the viewer's time zone: runs, then what is to come."""
+    await _require_project_access(project_id, request, user)
+    try:
+        begin, end = week_window(start, timezone)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="timezone must be an IANA name") from exc
+    database = request.app.state.runtime.database
+    runs = await database.list_runs_between(project_id=project_id, start=begin, end=end)
+    configured = await database.list_project_workflows(project_id=project_id)
+    by_id = {item.id: item for item in configured}
+    occurrences = upcoming_occurrences(configured, start=begin, end=end, now=datetime.now(UTC))
+    response.headers["X-Tin-Read-Source"] = "postgres"
+    return ProjectWeekView(
+        start=start,
+        timezone=timezone,
+        runs=[
+            WeekRunView(
+                id=run.id,
+                project_workflow_id=run.project_workflow_id,
+                workflow_key=key,
+                workflow_title=title,
+                status=run.status,
+                trigger_source=run.trigger_source,
+                at=run.started_at or run.created_at,
+                finished_at=run.finished_at,
+                title=run.artifact_title,
+                summary=run.result_summary,
+                progress_current=run.progress_current,
+                progress_total=run.progress_total,
+            )
+            for run, key, title in runs
+        ],
+        occurrences=[
+            WeekOccurrenceView(
+                project_workflow_id=item.project_workflow_id,
+                name=by_id[item.project_workflow_id].name,
+                workflow_key=by_id[item.project_workflow_id].workflow_key,
+                at=item.at,
+                state=item.state,
+                # "Files, the audit report" -> "Files": where the result appears.
+                lands=workflow_expectation(by_id[item.project_workflow_id].workflow_key)[
+                    "lands"
+                ].split(",")[0],
+            )
+            for item in occurrences
+        ],
+    )
 
 
 @router.get(
@@ -2948,11 +3165,18 @@ async def create_project_workflow(
         )
     try:
         _ensure_workflow_schedule_allowed(workflow.definition, payload.schedule)
+        supplied_inputs = payload.inputs
+        if workflow.executor == "connections.collect":
+            from tin_lite.connection_collection_connection import default_inputs
+
+            supplied_inputs = await default_inputs(database, project_id, supplied_inputs)
         inputs = normalize_workflow_inputs(
             schema=schema,
             project_id=project_id,
-            inputs=payload.inputs,
+            inputs=supplied_inputs,
         )
+        if workflow.executor == "connections.collect":
+            inputs = validate_collection_inputs(project_id, inputs)
         configured = await database.create_project_workflow(
             project_id=project_id,
             workflow_id=workflow.id,
@@ -3014,6 +3238,8 @@ async def update_project_workflow(
             project_id=project_id,
             inputs=payload.inputs,
         )
+        if workflow.executor == "connections.collect":
+            inputs = validate_collection_inputs(project_id, inputs)
         schedule = payload.schedule.model_dump(mode="json") if payload.schedule else None
         changed_fields = _changed_project_workflow_fields(
             existing=existing,
@@ -4469,7 +4695,10 @@ async def get_artifact_document(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail="Markdown artifact is not UTF-8",
         ) from exc
-    document = render_markdown(markdown)
+    assets, asset_notes, folder = await _run_document_assets(
+        request.app.state.runtime.database, run, output.path, source
+    )
+    document = render_markdown(markdown, asset_folder=folder)
     response.headers["X-Tin-Artifact-Source"] = "code.storage"
     response.headers["X-Tin-Output-Kind"] = source
     response.headers["X-Tin-Output-Revision"] = output.revision
@@ -4491,6 +4720,8 @@ async def get_artifact_document(
         headings=[
             MarkdownHeadingView(id=heading.id, title=heading.title) for heading in document.headings
         ],
+        assets=assets,
+        asset_notes=asset_notes,
     )
 
 

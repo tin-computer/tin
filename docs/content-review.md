@@ -15,6 +15,16 @@ the next roadmap item.
   separate artifact and viewer action, never text or a link embedded in public copy.
 - Approval is bound to the current reviewed revision. An old approval cannot approve
   a newer draft. Only the final approved copy is eligible for configured delivery.
+- An article (content.public_article 1.9.0, content.generate 1.10.0 articles) may carry
+  figures, diagrams, interactive pieces, videos and callouts. From content.public_article 1.10.0
+  and content.generate 1.11.0 they follow the brand guide, and from 1.13.0 and 1.14.0 the site's
+  theming (light and dark, or light only); from 1.11.0
+  and 1.12.0 the drafting agent chooses each diagram's form, and from 1.12.0 and 1.13.0 it looks at
+  each figure in light and dark before finishing. The reader shows them as
+  they'll ship: SVG figures as images, embeds in a sandboxed frame with no network or
+  access to Tin, videos from YouTube, Vimeo, Loom or Mux (a video file loads only on
+  play), and a note under the title for any file Tin left out. The Decisions card says
+  what the draft carries, for example "With 2 figures and 1 interactive piece."
 - A failed revision needs explicit retry. Feedback is not discarded by generic retry,
   and a stopped revision closes its waiting review ancestry.
 - Discard turns down anything waiting in Decisions: the run ends as declined, nothing it
@@ -39,6 +49,14 @@ command, funds the successor and supersedes the old review. The durable command
 outbox bridges dispatch; Temporal carries command/run identifiers, not feedback or
 article contents. Preserve historical adapter/output contracts and exact-version
 guards. Do not infer approval from a generated no-draft assessment.
+
+An article draft whose definition declares `output.assets` may carry figures and embeds in
+its assets folder (`<article>.assets/`, `src/tin_lite/page_assets.py`). The article declares
+them: Tin keeps only the files it refers to, leaves out a missing, oversized or unsafe one
+with its reason (never a failed run), and records each kept file's checksum with the
+checkpoint. The review token binds that list with the article, approved-page consumers
+re-check it, and a revision copies the files it keeps into its own folder. Drafts without
+assets keep their exact token and contract.
 
 The shared implementation lives in `src/tin_lite/workflow_reviews.py`,
 `workflow_review_store.py`, `workflow_review_dispatch.py` and `article_review.py`.

@@ -59,3 +59,19 @@ Record exactly which deployment and tests passed below before claiming completio
   packaged application with synthetic HTTP; the signed-in in-app browser was unavailable.
 - Live article-PR acceptance remains pending a suitable explicit repository/content path.
   Never assume the connected repository hosts a particular website; verify ownership and paths.
+
+## Page bundles
+
+An approved article may carry figures, interactive pieces, diagrams, videos and callouts
+([review](content-review.md)). content.deliver 1.7.0 and website.change 1.6.0 put them on the
+site in its own form:
+
+- The approved source lists each asset's project path and checksum; a delivery run with assets
+  checks out the approved revision (`procedure_project_revision`) and copies the files from
+  `/home/user/state`. Mermaid blocks use the site's own Mermaid support, or Codex draws them as
+  SVG figures in the site's style; Tin's diagram renderer is not involved.
+- `figure_check` sits beside `copy_check`: each approved file must arrive byte for byte (same
+  checksum), each video by its address or ID, each diagram as a new SVG or the site's Mermaid
+  support. `not_confirmed` only holds Tin's own merge; the pull request still opens.
+- One pull request or commit may hold up to 30 files and 2 MB (`PULL_REQUEST_MAX_*`), and a
+  saved patch is read back up to 4 MB. Procedures that declare nothing keep 512 KB.

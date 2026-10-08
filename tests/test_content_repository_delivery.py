@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 from copy import deepcopy
 from uuid import uuid4
@@ -13,8 +14,15 @@ from tin_lite import content_repository_delivery as delivery
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.organic_audit import canonical_json
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import start_workflow_run
+from tin_lite.run_service import RETIRED, start_workflow_run
 from tin_lite.workflow_inputs import WorkflowInputError
+
+
+@pytest.fixture(autouse=True)
+def pinned_content_deliver(monkeypatch):
+    # content.deliver refuses new starts (test_content_deliver_retired); these tests start it
+    # directly to exercise the machinery its existing runs, retries and v5 pins still use.
+    monkeypatch.delitem(RETIRED, delivery.KEY)
 
 
 def test_repository_workspaces_share_the_gateway_bounds():
@@ -130,23 +138,18 @@ async def test_approval_and_project_boundary_before_dispatch(publication_db, mon
     )
 
 
-async def test_article_delivered_by_its_approval_choice_is_not_adapted_again(
+async def test_an_article_approved_for_a_pull_request_is_adapted_not_published_as_markdown(
     publication_db, monkeypatch
 ):
     f = await prepared(publication_db, monkeypatch, approved=False)
-    # No pinned delivery: the reviewer picks a PR for this one article at approval.
-    await f.delivery.choose(run=f.source, mode="github_pr", actor=ACTOR)
+    # No pinned delivery: the reviewer picks a PR for this one article at approval. A planned
+    # article goes to the site through website.change, like an answer page.
+    chosen = await f.delivery.choose(run=f.source, mode="github_pr", actor=ACTOR)
+    assert chosen["adapter"] == "repository" and chosen["via"] == "website.change"
+    assert chosen["path"] is None and chosen["settings"]["mode"] == "github_pr"
     f.source = await approve(f, f.source)
-    await f.delivery.deliver(f.source.id)
-    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
-    facts = await f.service.programs.facts(f.configured.id)
-    assert facts["drafts"][f.context["item"]["id"]]["delivery"]["pull_request"]["number"] == 42
-    with pytest.raises(WorkflowInputError, match="already has automatic delivery"):
-        await deliver_start(f)
-    f.runtime.integrations.github_create_pull_request.assert_awaited_once()
-    assert not await f.db.pool.fetchval(
-        "SELECT id FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
-    )
+    await f.delivery.deliver(f.source.id)  # The Markdown publisher leaves it alone.
+    f.runtime.integrations.github_create_pull_request.assert_not_called()
 
 
 async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypatch):
@@ -160,7 +163,9 @@ async def test_concurrent_starts_do_not_purchase_twice(publication_db, monkeypat
     assert sum(isinstance(r, WorkflowInputError) for r in results) == 1
 
 
-async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db, monkeypatch):
+async def test_the_page_takes_any_form_and_its_wording_decides_the_merge(
+    publication_db, monkeypatch
+):
     f = await prepared(publication_db, monkeypatch)
     run = await deliver_start(f)
     source = await delivery.saved_source(f.db, run.id)
@@ -177,14 +182,27 @@ async def test_exact_markdown_or_component_copy_not_edited_prose(publication_db,
     )
     manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": component}]
     assert delivery.validate_copy(manifest, source)["copy_check"] == "exact_source_preserved"
+    # Prose transcribed into JSX or HTML keeps the approved wording too.
+    paragraphs = [block for block in source["article"].split("\n\n") if block.strip()]
+    markup = "".join(f"<p className='lede'>{html.escape(p.lstrip('# '))}</p>" for p in paragraphs)
+    manifest["files"] = [{"path": "web/src/app/blog/article/page.tsx", "content": markup}]
+    assert delivery.validate_copy(manifest, source) == {
+        **delivery.validate_copy(manifest, source),
+        "article_path": "web/src/app/blog/article/page.tsx",
+        "copy_check": "wording_preserved",
+    }
+    # Changed wording or a dependency change opens the PR all the same: nothing is refused,
+    # and merge_rule keeps an unconfirmed page for the founder.
     altered = deepcopy(manifest)
-    altered["files"][0]["content"] = component.replace("mechanism", "trick")
-    with pytest.raises(ValueError, match="unchanged"):
-        delivery.validate_copy(altered, source)
+    altered["files"][0]["content"] = markup.replace("mechanism", "trick")
+    proof = delivery.validate_copy(altered, source)
+    assert proof["copy_check"] == "not_confirmed"
+    assert proof["article_path"] == "web/src/app/blog/article/page.tsx"
+    assert delivery.merge_rule(altered, proof, "/blog/{slug}") is None
     altered = deepcopy(manifest)
     altered["files"].append({"path": "package.json", "content": "{}"})
-    with pytest.raises(ValueError, match="dependencies"):
-        delivery.validate_copy(altered, source)
+    assert delivery.validate_copy(altered, source)["copy_check"] == "wording_preserved"
+    # Only the pinned source and repository are refused.
     with pytest.raises(ValueError, match="pinned"):
         delivery.validate_copy({**manifest, "repository": "other/site"}, source)
 
@@ -197,9 +215,8 @@ async def test_mcp_contract_and_http_start_share_source_guard(publication_db, mo
             "get_workflow", {"project_id": str(f.project.id), "workflow_key": delivery.KEY}
         )
     )
-    assert "Do not approve" in contract["preparation"]["instruction"]
-    assert "preparation.articles" in contract["preparation"]["instruction"]
-    assert "get_content_draft_sources" not in contract["preparation"]["instruction"]
+    # Retired for new work: no preparation steers an agent to start it.
+    assert "preparation" not in contract
     assert contract["id"] == str(delivery.WORKFLOW_ID)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app(f)), base_url="https://tin.test"
@@ -412,8 +429,8 @@ async def test_delivery_funds_one_api_session_without_quote_approval(publication
         await f.db.pool.fetchval("SELECT terms FROM billing_run_budgets WHERE run_id=$1", run.id)
     )
     assert terms["kind"] == "codex_api" and terms["funding"] == "procedure_session_v1"
-    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v4"
-    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 5_000_000_000
+    assert terms["codex_contract"]["protocol"] == "tin-codex-api-v5"
+    assert await f.db.pool.fetchval("SELECT reserved_nanos FROM billing_accounts") == 10_000_000_000
     assert await f.db.pool.fetchval("SELECT count(*) FROM billing_quotes") == 0
 
 

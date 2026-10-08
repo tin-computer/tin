@@ -26,7 +26,7 @@ from tin_lite.workflow_prerequisites import PrerequisiteError
 from tin_lite.writing_style import STYLE_PATH
 
 
-async def fixture(db, monkeypatch, *, editorial=False, clean=False, judgment=False):
+async def fixture(db, monkeypatch, *, editorial=False, clean=False, judgment=False, assets=False):
     db, storage, project, configured, planner, model, create = await setup(
         db, monkeypatch, editorial=editorial
     )
@@ -45,8 +45,15 @@ async def fixture(db, monkeypatch, *, editorial=False, clean=False, judgment=Fal
                 output_validator=(
                     content_draft.CLEAN_VALIDATOR if clean else content_draft.VALIDATOR
                 ),
+                # Historical contracts had no assets folder.
+                output_assets=None,
             ),
         )
+    if assets:
+        from tin_lite.page_assets import AssetPolicy
+
+        policy = AssetPolicy(max_files=12, max_bytes=2_000_000)
+        spec = replace(spec, procedure=replace(spec.procedure, output_assets=policy))
     definition, resources = spec.definition_and_resource_files()
     await db.upsert_registry_workflow(
         workflow_id=spec.id,

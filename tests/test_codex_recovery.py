@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import hashlib
 import json
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from tin_lite.codex_api import (
     attempt_key,
     run_api_attempt,
 )
-from tin_lite.domain import SideEffectConflictError, StaleGenerationError
+from tin_lite.domain import MEMORY_INDEX_PATH, SideEffectConflictError, StaleGenerationError
 from tin_lite.e2b_runtime import (
     _INTERRUPTED_OUTPUT_READER,
     E2BRuntime,
@@ -458,15 +459,19 @@ def test_frozen_reader_skips_old_missing_oversize_and_linked_files(tmp_path, mak
     assert read() == b""
 
 
-@pytest.mark.parametrize("outside_change", [False, True])
-async def test_partial_code_map_keeps_its_section_contract(publication_db, outside_change):
+# Codex rewrote the architecture notes along with its own code map section.
+REWRITTEN = _index(CODE_MAP.replace("Files opened: 40", "Files opened: 41")).replace(
+    b"Durable architecture facts.", b"Unrelated memory overwritten."
+)
+SPLICED = BASE_INDEX.replace("Files opened: 40", "Files opened: 41").encode()
+
+
+@pytest.mark.parametrize("missing_section", [False, True])
+async def test_partial_code_map_keeps_only_its_own_section(publication_db, missing_section):
     db = publication_db
     _, _, run, _ = await activity_fixture(db)
     storage = PartialStorage()
     await db.pool.execute("UPDATE workflow_runs SET retained_output=NULL WHERE id=$1", run.id)
-    content = _index(CODE_MAP.replace("Files opened: 40", "Files opened: 41"))
-    if outside_change:
-        content = content.replace(b"Durable architecture facts.", b"Unrelated memory overwritten.")
     async with db.pool.acquire() as conn:
         kwargs = dict(
             db=db,
@@ -476,15 +481,73 @@ async def test_partial_code_map_keeps_its_section_contract(publication_db, outsi
             project=await db.get_project(run.project_id),
             spec=_spec(CODE_SECTION),
             base=BASE_INDEX.encode(),
-            content=content,
+            content=_index() if missing_section else REWRITTEN,
         )
-        if outside_change:
-            with pytest.raises(ValueError):
+        if missing_section:
+            with pytest.raises(ValueError, match="no ### Code map section"):
                 await retain(**kwargs)
         else:
             await retain(**kwargs)
-    assert storage.repo.writes == (0 if outside_change else 1)
+    assert storage.repo.writes == (0 if missing_section else 1)
     assert storage.repo.head == run.expected_head_sha
+    if not missing_section:
+        draft = storage.repo.branches[f"interrupted-procedures/{run.id}/{run.generation}"]
+        assert storage.repo.trees[draft][MEMORY_INDEX_PATH][1] == SPLICED
+
+
+class SectionRepo(PartialRepo):
+    """Ephemeral checkpoints land on their own branches; publication moves the head."""
+
+    def create_commit(self, **options):
+        if not options.get("ephemeral"):
+            return HistoryRepo.create_commit(self, **options)
+        repo, files = self, {}
+
+        class Builder:
+            def add_file(self, path, content):
+                files[path] = content
+                return self
+
+            async def send(self):
+                head = repo.head
+                revision = repo.edit(files)
+                repo.head = head
+                repo.branches[options["target_branch"]] = revision
+                return {"commit_sha": revision}
+
+        return Builder()
+
+
+async def test_a_code_map_that_rewrote_other_memory_publishes_only_its_section(publication_db):
+    db = publication_db
+    activities, _, run, _ = await activity_fixture(db)
+    storage = activities._storage = PartialStorage()
+    storage.repo = SectionRepo()
+    spec = _spec(CODE_SECTION, workflow_key="product.code_map")
+
+    async def pinned(requested_id):
+        return SimpleNamespace(key=spec.workflow_key, title="Code map", project_id=None), spec
+
+    activities._pinned_codex_procedure = pinned
+    base = run.expected_head_sha
+    storage.repo.trees[base][MEMORY_INDEX_PATH] = ("100644", BASE_INDEX.encode())
+    sandbox = storage.repo.edit({MEMORY_INDEX_PATH: REWRITTEN}, parent=base)
+    storage.repo.head = base
+    storage.repo.branches[run.ephemeral_branch] = sandbox
+    persist = f"{run.id}:procedure_artifact_persist"
+    staged = f"memory-sections/{run.id}/{run.generation}"
+    await db.pool.execute("UPDATE workflow_runs SET retained_output=NULL WHERE id=$1", run.id)
+    for _ in range(2):  # A second recovery re-assembles the same bytes and stages nothing new.
+        await db.pool.execute("DELETE FROM effect_receipts WHERE execution_key=$1", persist)
+        await activities.persist_codex_procedure_artifact(str(run.id))
+        checkpoint = (await db.get_effect(persist)).result["checkpoint"]
+        assert checkpoint["ephemeral_commit_sha"] == storage.repo.branches[staged]
+        assert checkpoint["sha256"] == hashlib.sha256(SPLICED).hexdigest()
+    assert len(storage.repo.commits) == 3  # base, the sandbox's output, Tin's index
+    await activities.commit_codex_procedure_artifact(str(run.id))
+    assert storage.repo.writes == 1
+    assert storage.repo.trees[storage.repo.head][MEMORY_INDEX_PATH][1] == SPLICED
+    assert storage.repo.trees[sandbox][MEMORY_INDEX_PATH][1] == REWRITTEN
 
 
 @pytest.mark.parametrize("salvage_fails", [False, True])
@@ -497,8 +560,8 @@ async def test_runtime_revokes_freezes_captures_then_kills_even_on_capture_error
         async def run(self, command, **kwargs):
             if command.endswith("isolated-procedure check"):
                 return SimpleNamespace(stdout="TIN_ISOLATION_READY_V1")
-            if command.endswith("codex_api_config.py --check-v4"):
-                return SimpleNamespace(stdout="TIN_CODEX_API_READY_V4")
+            if command.endswith("codex_api_config.py --check-v5"):
+                return SimpleNamespace(stdout="TIN_CODEX_API_READY_V5")
             if command == "/opt/tin-lite/run-procedure":
                 return SimpleNamespace(wait=AsyncMock(side_effect=RuntimeError("original failure")))
             if command.endswith("isolated-procedure freeze"):

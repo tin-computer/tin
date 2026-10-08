@@ -47,7 +47,8 @@ schema version explicitly. No new table, executor, model route, UI, or consumer 
 
 ## Contract
 
-- Native, on-demand `organic.keyword_plan`; independent from `organic.audit`, MCP-first.
+- Native `organic.keyword_plan`, on demand or (from 0.7.1) on a monthly schedule, such as
+  quarterly with `months: [1, 4, 7, 10]`; independent from `organic.audit`, MCP-first.
 - Required: exact HTTPS website origin, English-language buyer context, and one supported
   market (US, GB, CA, AU). Optional seeds, competitor hosts, exact audit run, and Search Console.
 - An explicit per-run dollar limit is bounded by the switchboard ceiling, which defaults to
@@ -160,6 +161,59 @@ review, instructions and schemas and changes only screening:
   research and screens again.
 - Runs pinned to v2-v6 keep one screening call with their 5,000-token cap and fail as before;
   their failure now says the call stopped at its output limit when that is what happened.
+
+## Policy v8: screening caps as runaway guards — October 2, 2026
+
+v7 is deployed, so it stays as it is. Its caps were sized like expected answer lengths, but a
+cap only stops a run: billing charges the tokens a call actually used. In runs a59cded8 and
+de1a4d3e the screening call stopped at exactly 5,000 output tokens after 3,500-4,200 tokens of
+reasoning. New definitions pin `keyword-plan-v8` (catalog `organic.keyword_plan` 0.8.0). It is
+v7 with larger screening caps and nothing else:
+
+- Batches stay at 50 candidates. First attempts get 32,000 output tokens and the one retry
+  64,000, more than six times the largest screening output seen in production and still half
+  of GPT-6 Luna's 128,000. Reasoning effort is left to the model, as before.
+- Reservations follow the caps: $0.03 per first attempt and $0.045 per retry (worst cases
+  $0.0265 and $0.0425 at standard-band rates). A full run reserves at most $2.00, exactly the
+  $2 floor, so the floor, the catalog's default and the organic system's keyword limit are
+  unchanged. Arithmetic is in
+  [workflow billing coverage](workflow-billing-coverage.md#ceilings-sized-to-measured-cost--september-29-2026).
+- Seeds (2,000 tokens) and review (24,000 tokens) keep their caps: raising either to 32,000
+  would lift the worst case above the $2 floor.
+- Screening now waits up to 600 seconds per call (it was 240), for every policy: waiting
+  longer never changes a request. `keyword_collect` may run for 60 minutes (it was 25), enough
+  for two rounds of three batches that each need a retry at the full wait.
+- Runs pinned to v2-v7 send exactly the requests they did.
+
+## Policy v9: screen before selecting — October 6, 2026
+
+A review of all 36 production runs found no new failures but three faults in what the
+succeeded runs produced. New definitions pin `keyword-plan-v9` (catalog
+`organic.keyword_plan` 0.9.0); runs pinned to v2-v8 send exactly the requests they did.
+
+- **Competitors.** Discovery returned general platforms (youtube.com, facebook.com,
+  reddit.com, linkedin.com) in most runs and namesakes or lookalikes for small sites
+  (the same name on another TLD). Each got an equal share of the candidate slots. v9 asks
+  Competitors Domain for 20 domains instead of 5 and drops general platforms (matched on the
+  domain's first label), the target's namesakes, and domains sharing fewer than three ranked
+  keywords. It keeps the first three, as before. Dropped domains stay in `evidence.json` with
+  their reason. Without a credible competitor no footprint is bought.
+- **Screening before selection.** Candidates were capped at 300 in provider order before
+  screening, so one run kept 2 direct keywords of 817 collected and left 517 unscreened. v9
+  screens up to 600 collected keywords (one per source in turn, as before), then reviews 300
+  chosen direct first, then adjacent, then the rest. Coverage records `screened`,
+  `buyer_fit` across everything screened and `selected_buyer_fit`.
+- **Priorities.** 22 of 69 high-priority groups had no measured demand in any member. The
+  review now sees `measured_demand` per candidate (provider volume or Search Console
+  impressions above zero) and may rate a group high only when a member has it. A high group
+  without it is published as medium and the report says how many were lowered. The run never
+  fails over this.
+
+Twelve screening batches fit the $2 floor because their caps follow the largest output seen
+in production (2,320 tokens per 50 keywords): 12,000 tokens, then 24,000 on the one retry,
+with a 52,000-byte request bound. That reserves $0.014 per batch and $0.02 per retry. A full
+run's worst case is $1.958. `keyword_collect` may run for 90 minutes: four rounds of three
+batches, each with a retry at the full wait.
 
 ## Concurrent lookups — September 29, 2026
 

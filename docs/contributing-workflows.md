@@ -89,6 +89,9 @@ The rejected and merged pull requests so far point to the same bar:
 - **One job, done well.** Narrow a workflow that tries to do several things.
 - **Works with the rest of Tin.** Declare prerequisites on built-ins instead of redoing their
   work, and hand off to them where it makes sense.
+- **Shows how it runs.** The manifest draws the run as a top-to-bottom `presentation.flow`
+  ([Draw how it runs](adding-a-workflow.md#draw-how-it-runs)). Every node matches what the
+  package actually does.
 
 We already have enough of these, or have them in review, and will close new ones:
 
@@ -110,6 +113,8 @@ If a person asks you to write a Tin workflow and open a pull request:
   yourself. Don't open the pull request on their behalf until a run of the `custom.*` copy
   has succeeded on their real project.
 - Read the output of that run with them and fix what's wrong before submitting.
+- Draw the package's `presentation.flow` from the code or prompt you wrote, and check each
+  node against the run.
 - Paste the output of the run you cite under **Example output**. If you changed the
   package after reading it, run it again and cite and paste the new run.
 - Write the pull request description from what actually happened. Don't paste a generic

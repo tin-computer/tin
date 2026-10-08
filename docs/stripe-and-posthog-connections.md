@@ -21,7 +21,8 @@ founder's setup, so you can explain it. The code lives in
 Packages built on these connections: [`outreach.paying_segment`](../workflow_packages/outreach.paying_segment/main.py)
 (code, Stripe), [`product.analytics_brief`](product-analytics-brief.md) (procedure, PostHog)
 and the [`example.posthog_funnel`](../workflow_packages/example.posthog_funnel/workflow.json)
-authoring example.
+authoring example. The native [`revenue.payment_recovery`](payment-recovery.md) calls the same
+Stripe operations directly from its activities.
 
 ## Founder setup
 
@@ -31,19 +32,22 @@ authoring example.
    page with Tin's read permissions already selected:
 
    ```text
-   https://dashboard.stripe.com/apikeys/create?name=Tin&permissions[]=rak_account_read
-     &permissions[]=rak_customer_read&permissions[]=rak_subscription_read
-     &permissions[]=rak_plan_read&permissions[]=rak_product_read
-     &permissions[]=rak_invoice_read&permissions[]=rak_charge_read
+   https://dashboard.stripe.com/apikeys/create?name=Tin&permissions[]=rak_customer_read
+     &permissions[]=rak_subscription_read&permissions[]=rak_plan_read
+     &permissions[]=rak_product_read&permissions[]=rak_invoice_read
+     &permissions[]=rak_charge_read
    ```
 
-   Account read identifies the account. The others back the capabilities below.
+   Each one backs a capability below. Tin asks for no account permission: on a restricted key
+   `GET /v1/account` needs a Connect permission, which a read-only key should not carry.
 2. The founder creates the key in Stripe and pastes the `rk_live_…` or `rk_test_…` value into
    the password field on Tin's page. Tin refuses secret (`sk_`) and publishable (`pk_`) keys:
    a full secret key is never stored. Keys go only into that page, never into chat or MCP;
    MCP `start_integration_connection` returns the setup link instead.
-3. Tin calls `GET /v1/account` for the account ID and display name, then reads one record
-   from each resource to find which reads the key allows. A 403 on one resource means that
+3. Tin calls `GET /v1/account` for the account ID and display name. When the key may not read
+   it (the usual case), Tin takes the account ID from Stripe's 403 message, or a stand-in
+   derived from the key when the message names none, and the card shows no account name. Tin
+   then reads one record from each resource to find which reads the key allows. A 403 on one resource means that
    capability is not granted; a 401 rejects the key. The key is stored encrypted.
 4. A `rk_test_` key is labelled **test mode** on the card ("Test mode · sandbox data only")
    and in the connection label. Packages see `livemode: false` in every response.
@@ -132,11 +136,11 @@ the start of that day for `created_gte`, its last second for `created_lte`.
 
 | Operation | Arguments | Record fields |
 | --- | --- | --- |
-| `subscriptions.list` | `status` (`all` (default), `active`, `past_due`, `unpaid`, `canceled`, `incomplete`, `incomplete_expired`, `trialing`, `paused`, `ended`), `created_gte`, `created_lte` | `id`, `status`, `created`, `start_date`, `current_period_end`, `cancel_at_period_end`, `canceled_at`, `ended_at`, `trial_start`, `trial_end`, `cancellation_details{reason, feedback}`, `livemode`, `metadata`, `discount_ids`, `coupon_id`, `items[{price_id, product_id, unit_amount, currency, interval, interval_count, quantity}]` (at most 20), `customer{id, email, name, email_domain, country, created, metadata}` |
+| `subscriptions.list` | `status` (`all` (default), `active`, `past_due`, `unpaid`, `canceled`, `incomplete`, `incomplete_expired`, `trialing`, `paused`, `ended`), `customer` (`cus_…`), `created_gte`, `created_lte` | `id`, `status`, `created`, `start_date`, `current_period_end`, `cancel_at_period_end`, `canceled_at`, `ended_at`, `trial_start`, `trial_end`, `cancellation_details{reason, feedback}`, `livemode`, `metadata`, `discount_ids`, `coupon_id`, `items[{price_id, product_id, unit_amount, currency, interval, interval_count, quantity}]` (at most 20), `customer{id, email, name, email_domain, country, created, metadata}` |
 | `customers.list` | `created_gte`, `created_lte`, `email` (one exact address) | `id`, `email`, `name`, `email_domain`, `country`, `created`, `metadata`, `currency`, `delinquent` |
-| `invoices.list` | `status` (`draft`, `open`, `paid`, `uncollectible`, `void`), `customer` (`cus_…`), `subscription` (`sub_…`), `created_gte`, `created_lte` | `id`, `customer`, `subscription`, `status`, `billing_reason`, `amount_due`, `amount_paid`, `currency`, `created`, `period_start`, `period_end`, `attempt_count` |
+| `invoices.list` | `status` (`draft`, `open`, `paid`, `uncollectible`, `void`), `customer` (`cus_…`), `subscription` (`sub_…`), `created_gte`, `created_lte` | `id`, `customer`, `subscription`, `status`, `billing_reason`, `amount_due`, `amount_paid`, `amount_remaining`, `currency`, `created`, `period_start`, `period_end`, `attempt_count`, `collection_method`, `next_payment_attempt`, `due_date`, `customer_email`, `customer_name`, `hosted_invoice_url` (only on `https://invoice.stripe.com/`), `lines` (up to three line descriptions), `product_ids` (products billed on the first ten lines) |
 | `prices.list` | `active` (true/false) | `id`, `product{id, name}`, `unit_amount`, `currency`, `type`, `recurring{interval, interval_count}` (null for one-time prices), `active`, `nickname` |
-| `charges.list` | `created_gte`, `created_lte` | `id`, `customer`, `amount`, `amount_refunded`, `currency`, `status`, `paid`, `refunded`, `created`, `failure_code` |
+| `charges.list` | `customer` (`cus_…`), `created_gte`, `created_lte` | `id`, `customer`, `amount`, `amount_refunded`, `currency`, `status`, `paid`, `refunded`, `created`, `failure_code`, `failure_message`, `outcome_reason` (the bank's decline code), `card{brand, exp_month, exp_year}` (never card digits) |
 
 Amounts are in the currency's minor unit, as Stripe returns them. Timestamps are Unix seconds.
 A deleted customer is `{id, deleted: true}`. `metadata` keeps at most 20 string entries (keys
@@ -181,7 +185,7 @@ project's hourly PostHog query budget.
 
 ## Paging and fitting
 
-Each binding declares `max_response_bytes` (1024–64000). Tin measures a response as its
+Each binding declares `max_response_bytes` (1024–1000000). Tin measures a response as its
 serialized JSON, the way the gateway returns it, and keeps the **leading** records that fit.
 
 List operations (both providers) return:
@@ -206,11 +210,12 @@ and eight calls read about 690; a customer record is roughly 250 bytes.
 
 ## Bounds
 
-- At most four service bindings and **eight calls** in total per run, shared across bindings.
+- At most four service bindings and **32 calls** in total per run, shared across bindings.
   A refused call counts; a call refused as a contract error does not.
-- `max_response_bytes` 1024–64000 per binding. Arguments at most 16 KB of JSON.
+- `max_response_bytes` 1024–1000000 per binding. Arguments at most 16 KB of JSON.
 - Tin reads at most 8 MB from Stripe or PostHog for one call before projecting it.
-- Code packages keep the 60-second compute window; procedures keep their declared timeout.
+- Code packages keep their declared compute window (`timeout_seconds`, at most 900) and Tin
+  waits at most 60 seconds for one call; procedures keep their declared timeout.
 - Stable step IDs replay completed responses after a restart; a changed request under the
   same step conflicts. See [recovery](project-api-connections.md#recovery-and-costs).
 
@@ -273,8 +278,9 @@ errors so a package bug fails the run.
 
 ## Privacy
 
-Stripe customer records, including the customer expanded into each subscription, return the
-customer's **full email address and name**. They exist so a workflow can group customers (for
+Stripe customer records, including the customer expanded into each subscription, and invoices
+(`customer_email`, `customer_name`) return the customer's **full email address and name**.
+An invoice's `hosted_invoice_url` is that customer's payment page; treat it like their address. They exist so a workflow can group customers (for
 example by email domain) or match them, not so it can publish them. Keep them out of reports
 unless the workflow's purpose requires it and its description says so. Customer and
 subscription `metadata` can contain anything the founder's checkout wrote there; treat it as
@@ -345,6 +351,14 @@ call_service(service="analytics", step="signups", operation="query.hogql",
              arguments={"name": "signups by day",
                         "query": "SELECT toDate(timestamp) AS day, count() AS signups FROM events WHERE event = 'signed_up' AND timestamp >= '2026-09-01' GROUP BY day ORDER BY day LIMIT 31"})
 ```
+
+A code workflow may mark a connected provider `"required": false` when it still has a useful
+result without it; `organic.traffic_snapshot` does this for PostHog. The run then starts without
+the connection, and Tin pins the binding's state for the run in `ctx["connections"]`, such as
+`{"posthog": "not_connected"}` (or `connected`, `needs_attention`). A call to a binding that is
+not `connected` raises a `ValueError` with code `not_connected` and sends nothing; a connection
+made mid-run applies from the next run. Tin-held (`managed.*`) and custom API services, and
+procedure bindings, stay required.
 
 Both manifests are excerpts; the full packages above validate with
 `uv run tin-lite validate-community`. Private `custom.*` copies may bind these connections too.

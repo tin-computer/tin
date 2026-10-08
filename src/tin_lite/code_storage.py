@@ -37,6 +37,8 @@ _TASK_DIFF_MAX_BYTES = 1_000_000
 # Text outputs stay under the comparison limit; a declared binary output (the demo video) is
 # only ever read whole, never diffed.
 _PUBLICATION_TEXT_MAX_BYTES = 1_000_000
+# A pull-request patch saved as JSON may reach twice its procedure's 2 MB ceiling.
+_CHECKPOINT_TEXT_MAX_BYTES = 4_000_000
 _PUBLICATION_BINARY_MAX_BYTES = 16_000_000
 _BINARY_MEDIA_TYPES = frozenset({"video/mp4"})
 # Reads addressed by a full commit SHA are immutable, so one process keeps a bounded copy.
@@ -384,8 +386,8 @@ class CodeStorage:
             not _is_commit_sha(commit_sha)
             or not safe_project_file_path(path)
             or type(max_bytes) is not int
-            # 64,000 for an ordinary read; the memory index may hold up to 100,000.
-            or not 1 <= max_bytes <= 100_000
+            # A code workflow reads files up to the same bound publication compares.
+            or not 1 <= max_bytes <= _PUBLICATION_TEXT_MAX_BYTES
         ):
             raise ValueError("project file read requires a safe path and bounded revision")
         key = ("code_project_file", repo_id, commit_sha, path)
@@ -513,7 +515,7 @@ class CodeStorage:
     ) -> bytes:
         if not _is_commit_sha(revision) or not _safe_repo_path(path):
             raise ValueError("procedure checkpoint requires an immutable revision and safe path")
-        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _PUBLICATION_TEXT_MAX_BYTES
+        max_bytes = _PUBLICATION_BINARY_MAX_BYTES if binary else _CHECKPOINT_TEXT_MAX_BYTES
         key = ("checkpoint", repo_id, revision, path, max_bytes)
         if (cached := self._pinned.get(key)) is not None:
             return cached
@@ -539,10 +541,14 @@ class CodeStorage:
         from uuid import UUID
 
         from tin_lite.domain import (
+            CODEX_PROCEDURE_EXECUTOR,
             GROWTH_ONBOARDING_PLAN_PATH,
             GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
+            MEMORY_INDEX_PATH,
         )
+        from tin_lite.memory import MAX_MEMORY_BYTES
         from tin_lite.project_files import safe_project_file_path
+        from tin_lite.workflow_code import MAX_OUTPUT_BYTES
         from tin_lite.writing_style import STYLE_PATH
 
         code = executor == "workflow.code"
@@ -554,10 +560,15 @@ class CodeStorage:
                 and path.split("/")[0]
                 not in {".tin-lite", "procedures", "registry", "workflow_packages"}
             )
-            limit, target = 64_000, f"procedures/{run_id}/{generation}"
+            limit, target = MAX_OUTPUT_BYTES, f"procedures/{run_id}/{generation}"
         elif executor == GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME:
             valid_path = path == GROWTH_ONBOARDING_PLAN_PATH
             limit, target = 40_000, f"native-plan/{run_id}/{generation}"
+        elif executor == CODEX_PROCEDURE_EXECUTOR:
+            # A section-owning procedure's index, re-assembled by Tin from the pinned base and
+            # the procedure's own section. The sandbox's checkpoint keeps the raw output.
+            valid_path = path == MEMORY_INDEX_PATH
+            limit, target = MAX_MEMORY_BYTES, f"memory-sections/{run_id}/{generation}"
         elif executor == "social.x_style":
             valid_path = path == ".agents/skills/x-writing-style/SKILL.md"
             limit, target = 24_000, f"native-x-style/{run_id}/{generation}"
@@ -570,6 +581,7 @@ class CodeStorage:
                 "style.capture",
                 "social.x_style",
                 "workflow.code",
+                CODEX_PROCEDURE_EXECUTOR,
                 GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME,
             }
             or str(UUID(run_id)) != run_id
@@ -620,7 +632,7 @@ class CodeStorage:
     async def _checkpoint_contents(self, repo_id, checkpoint, content):
         checkpoint.validate_content(content)
         files = {checkpoint.artifact_path: content}
-        for item in checkpoint.companions:
+        for item in (*checkpoint.companions, *checkpoint.assets):
             raw = await self.read_procedure_checkpoint(
                 repo_id=repo_id, revision=item.ephemeral_commit_sha, path=item.artifact_path
             )

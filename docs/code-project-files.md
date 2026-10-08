@@ -44,8 +44,8 @@ read the connected GitHub repository or another project's files. Package resourc
 available through ordinary Python reads in the package directory; `code.files` still lists
 the executable package's own resources, not its project data dependencies.
 
-Each read is limited to 64,000 bytes. Globbing returns at most 100 matches and refuses a
-larger result rather than silently dropping paths. A code execution permits at most 64 file
+Each read is limited to 1,000,000 bytes. Globbing returns at most 100 matches and refuses a
+larger result rather than silently dropping paths. A code execution permits at most 256 file
 requests, separately from its model and service limits. Paths must be safe regular files;
 symlinks, parent traversal and protected credential paths are rejected. Binary reads are
 supported within the same bound; they do not increase the workflow's text-output or model
@@ -63,9 +63,9 @@ own: `product.code_map` writes the `### Code map` section and `product.deep_dive
 `### Feature map` section of `wiki/INDEX.md`, under `## Product`. Read one with
 `ctx.files.read_section(heading)`. It returns the section from its heading line (which may
 carry the writer's parenthetical, such as `### Code map (verified 2026-09-04, ...)`) up to the
-next heading, exactly as the writer bounds it. It works when the whole index is larger than
-the 64,000-byte read limit (the index may hold up to 100,000 bytes); the section itself must
-fit that limit.
+next heading, exactly as the writer bounds it. It reads the index at its own size bound
+(the index may hold up to 700,000 bytes) and returns only the section, which must fit the
+1,000,000-byte read limit.
 
 Some packages were written to read the Code map from `product/code-map.md`. When the project
 has no such file, that read returns the `### Code map` section, so they find what

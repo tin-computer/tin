@@ -79,9 +79,9 @@ window.TinBilling = (() => {
         if (current !== sequence || !form.isConnected || !isCurrent()) return;
         if (cost.estimated_usd == null) return;
         label.textContent = cost.estimated_usd === "0.00" ? "No workflow charge" :
-          cost.estimate?.basis === "conservative_configured_bound" ?
-          `Maximum charge: $${cost.maximum_usd} per run · actual usage is charged` :
-          `${payload.project_workflow_id ? "Saved estimate" : "Estimated cost"}: up to $${cost.estimated_usd} per run · actual usage is charged`;
+          !cost.maximum_usd || cost.estimated_usd === cost.maximum_usd ?
+          `Maximum charge: $${cost.maximum_usd || cost.estimated_usd} per run · actual usage is charged` :
+          `Usually about $${cost.estimated_usd} per run, never more than $${cost.maximum_usd} · actual usage is charged`;
         label.title = cost.notice || "";
         label.hidden = false;
       } catch {
@@ -126,7 +126,7 @@ window.TinBilling = (() => {
     function render(data, payments) {
       const invoices = payments.filter((p) => safeLink(p.invoice_url, "invoice.stripe.com"));
       root.innerHTML = `<header class="workspace-header billing-heading"><h1>${data.is_admin ? "Billing" : "Spending"}</h1>
-        <span>${escape(workspaceName)} · Test mode</span></header>
+        <span>${escape(workspaceName)}${data.mode === "test" ? " · Test mode" : ""}</span></header>
         <div class="billing-balance"><div class="billing-balance-facts"><span class="billing-label">${data.is_admin ? "Available" : "Spent this month"}</span>
           <div class="billing-amount">${dollars(data.is_admin ? data.available_usd : data.spent_this_month_usd)}</div>
           ${data.is_admin ? "" : `<p>${escape(projectName)}</p>`}
@@ -136,7 +136,7 @@ window.TinBilling = (() => {
           <div class="billing-presets">${[10,25,100].map((n) => `<button type="button" data-amount="${n}">$${n}</button>`).join("")}</div>
           <input id="billing-amount" name="amount" type="number" min="${data.topup_min_cents / 100}" max="${data.topup_max_cents / 100}" step="0.01" value="10" required aria-describedby="billing-topup-help">
           <button class="billing-primary" type="submit">Add $10.00</button>
-          <small id="billing-topup-help">Checkout with Stripe · Test mode</small><p class="billing-error" role="alert"></p></form>` : ""}</div>
+          <small id="billing-topup-help">Checkout with Stripe${data.mode === "test" ? " · Test mode" : ""}</small><p class="billing-error" role="alert"></p></form>` : ""}</div>
         ${data.is_admin ? `<div class="billing-account"><div class="billing-account-row"><strong>Invoices</strong><span>${invoices.length ? `${invoices.length} available` : "None yet"}</span>
           ${invoices.length ? '<button data-invoices>View invoices →</button>' : ""}</div><div class="billing-account-row"><strong>Billing admin</strong><span>You</span></div></div>` : ""}
         <section><h2>Project limits</h2><div class="billing-table"><div class="billing-policy-head"><span>Project</span><span>Monthly limit</span><span>Per run</span><span></span></div>

@@ -65,6 +65,26 @@ async def system_fixture(
             version_label=spec.version_label,
             definition=definition,
         )
+    # v7's weekly measurement packages, published in the same registry revision.
+    from tin_lite.public_workflows import load_public_workflows
+
+    for package in await load_public_workflows():
+        if package.key not in organic_system.MEASURE_STEPS.values():
+            continue
+        definitions[package.key] = package.definition
+        resources.update(package.files)
+        await db.upsert_registry_workflow(
+            workflow_id=package.id,
+            key=package.key,
+            title=package.definition["title"],
+            description=package.definition["description"],
+            executor=package.executor,
+            definition_repo_id="registry/workflows",
+            definition_path=package.definition_path,
+            current_commit_sha="e" * 40,
+            version_label=package.definition["version"],
+            definition=package.definition,
+        )
     read = f.storage.read_canonical_artifact
 
     async def read_resource(**kw):
@@ -109,9 +129,14 @@ async def system_fixture(
             "policy": policy or organic_system.REFRESH_POLICY,
             "definitions": {
                 step: definitions[key]
-                for step, key in organic_system.policy_steps(
-                    policy or organic_system.REFRESH_POLICY
-                ).items()
+                for step, key in {
+                    **organic_system.policy_steps(policy or organic_system.REFRESH_POLICY),
+                    **(
+                        organic_system.MEASURE_STEPS
+                        if organic_system.measures_pages(policy)
+                        else {}
+                    ),
+                }.items()
             },
             "input_sha256": digest(inputs),
             "content_delivery": intent,
@@ -291,12 +316,12 @@ async def test_explicit_draft_only_does_not_touch_github():
 def test_new_parent_cost_bounds_leave_historical_definition_unchanged():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     historical = {**definition, "organic_system_policy": organic_system.LEGACY_POLICY}
-    # A saved $9 keyword limit, plus audit $2 and content plan $1; drafts add $5 each and the
-    # first page refresh $2.50 ($24.50 of children); the pool caps the drafting recipe at the
-    # keyword limit plus $10 plus the refresh's $2.50 ($21.50).
-    assert service_terms(historical)["maximum_nanos"] == 12_000_000_000
-    assert service_terms(definition)["maximum_nanos"] == 21_500_000_000
+    # Without a saved keyword limit, the schema's $2 default (the fallback was a stale $9),
+    # plus audit $2 and content plan $1. v8 adds its calibrated $12, plus $3 for the delivery
+    # unless drafts stay in Tin.
+    assert service_terms(historical)["maximum_nanos"] == 5_000_000_000
+    assert service_terms(definition)["maximum_nanos"] == 17_000_000_000
     assert (
         service_terms(definition, inputs={"content_delivery": "draft_only"})["maximum_nanos"]
-        == 19_500_000_000
+        == 14_000_000_000
     )

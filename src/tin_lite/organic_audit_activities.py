@@ -30,16 +30,20 @@ from tin_lite.organic_audit import (
     V10_AUDIT_POLICY,
     V11_AUDIT_POLICY,
     V12_AUDIT_POLICY,
+    V13_AUDIT_POLICY,
+    V14_AUDIT_POLICY,
     audit_paths,
     audit_policy,
     build_documents,
     bundle_sha256,
+    crawl_respects_sitemap,
     digest,
     grounded_preparation,
     in_scope_url,
     normalize_pages,
     panel_repetitions,
     question_results,
+    sitemap_page_urls,
     summary_paths,
 )
 from tin_lite.organic_audit_ai import (
@@ -325,6 +329,8 @@ class OrganicAuditActivities:
                 V10_AUDIT_POLICY,
                 V11_AUDIT_POLICY,
                 V12_AUDIT_POLICY,
+                V13_AUDIT_POLICY,
+                V14_AUDIT_POLICY,
                 AUDIT_POLICY,
             )
             or definition.get("audit_instructions") != ai_contract(pinned_policy["version"])
@@ -350,6 +356,8 @@ class OrganicAuditActivities:
                 V10_AUDIT_POLICY,
                 V11_AUDIT_POLICY,
                 V12_AUDIT_POLICY,
+                V13_AUDIT_POLICY,
+                V14_AUDIT_POLICY,
                 AUDIT_POLICY,
             ):
                 raise ValueError("Audit completion requires the current compatible policy")
@@ -583,6 +591,29 @@ class OrganicAuditActivities:
 
         await self._paid(run_id, "search_console_previous", previous, "0", previous_pages)
 
+    async def _respects_sitemap(self, run_id: str, scope: dict) -> bool:
+        """What the crawl request sends as respect_sitemap, from saved receipts only."""
+        files = None
+        if audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
+            "follow_links_without_sitemap"
+        ):
+            files = await self._result(run_id, "site_files")
+        return crawl_respects_sitemap(scope, files)
+
+    async def _crawl_mode(self, run_id: str, scope: dict) -> dict:
+        """From v14 the crawl says whether the provider followed the sitemap or links, and why."""
+        if not audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"])).get(
+            "follow_links_without_sitemap"
+        ):
+            return {}
+        if await self._respects_sitemap(run_id, scope):
+            return {"mode": "sitemap", "note": "The provider followed the site's sitemap."}
+        return {
+            "mode": "links",
+            "note": "No sitemap URL on this site was found, so the provider followed links "
+            "from the homepage up to the page cap.",
+        }
+
     async def _site_evidence(self, run_id: str, scope: dict) -> dict:
         """robots.txt, sitemaps and the page selection, each saved once before the crawl."""
         from tin_lite.organic_audit_site import select_pages
@@ -607,12 +638,7 @@ class OrganicAuditActivities:
                 if search.get("status") == "completed"
                 else []
             )
-            sitemap = [
-                row["loc"]
-                for row in (files.get("sitemaps") or {}).get("urls", [])
-                if urlsplit(row["loc"]).scheme == "https"
-                and in_scope_url(row["loc"], scope["host"], aliases=hosts)
-            ]
+            sitemap = sitemap_page_urls(files, scope)
             plan = select_pages(
                 home=scope["url"],
                 sitemap_urls=sitemap,
@@ -729,11 +755,14 @@ class OrganicAuditActivities:
         policy = audit_policy(scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]))
         if policy.get("check_applicability"):
             await self._search_console_evidence(run_id, scope)
-        options = {"respect_sitemap": True} if policy.get("respect_sitemap") else {}
+        options = {}
         site_checks = policy.get("site_checks") and not scope.get("completion")
         if site_checks:
             plan = await self._site_evidence(run_id, scope)
             options.update(max_pages=scope["page_cap"], priority_urls=plan["priority_urls"])
+        if policy.get("respect_sitemap"):
+            # From saved site files only, so recover() rebuilds the request it submitted.
+            options["respect_sitemap"] = await self._respects_sitemap(run_id, scope)
         request = self.provider.crawl_request(
             host=scope["host"], tag=f"tin-organic-{run_id}", **options
         )
@@ -904,11 +933,13 @@ class OrganicAuditActivities:
         if scope.get("page_cap"):
             options["limit"] = scope["page_cap"]
         raw_pages = await self.provider.pages(task_id, **options)
+        mode = await self._crawl_mode(run_id, scope)
         pages = normalize_pages(
             raw_pages,
             scope["host"],
             aliases=hosts,
             policy_version=scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]),
+            respect_sitemap=await self._respects_sitemap(run_id, scope),
         )
         status = (
             "completed"
@@ -923,7 +954,11 @@ class OrganicAuditActivities:
                 "pages": pages,
                 "summary": summary,
                 "task_id": task_id,
-                "note": "Static HTML only; no JavaScript or resource rendering.",
+                "note": " ".join(
+                    ["Static HTML only; no JavaScript or resource rendering."]
+                    + ([mode["note"]] if mode else [])
+                ),
+                **({"crawl_mode": mode["mode"]} if mode else {}),
                 **(
                     {
                         "collection": {
@@ -966,7 +1001,7 @@ class OrganicAuditActivities:
             return
         submission = await self._result(run_id, "crawl_submit")
         stopped = False
-        pages = []
+        pages, mode = [], {}
         if self.provider and submission and submission["status"] == "completed":
             try:
                 await self.provider.stop(submission["value"]["task_id"])
@@ -974,6 +1009,7 @@ class OrganicAuditActivities:
             except DataForSEOError:
                 pass
             scope = await self._result(run_id, "scope")
+            mode = await self._crawl_mode(run_id, scope)
             try:
                 pages = normalize_pages(
                     await self.provider.pages(
@@ -990,6 +1026,7 @@ class OrganicAuditActivities:
                     scope["host"],
                     aliases=audit_hosts(scope),
                     policy_version=scope.get("policy_version", LEGACY_AUDIT_POLICY["version"]),
+                    respect_sitemap=await self._respects_sitemap(run_id, scope),
                 )
             except (DataForSEOError, ValueError):
                 pass
@@ -999,7 +1036,11 @@ class OrganicAuditActivities:
             {
                 "status": "partial",
                 "pages": pages,
-                "note": "Crawl collection reached its time or retry limit.",
+                "note": " ".join(
+                    ["Crawl collection reached its time or retry limit."]
+                    + ([mode["note"]] if mode else [])
+                ),
+                **({"crawl_mode": mode["mode"]} if mode else {}),
                 "provider_stop_confirmed": stopped,
             },
         )

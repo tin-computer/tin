@@ -93,7 +93,12 @@ token stops. The controller's observed-token stop is recorded as `token_limit` f
 own usage frame. The relay logs each rejection with run, operation, status and reason
 code (a 422 contract rejection names `operation_not_allowed`, `request_too_large` or
 `contract_mismatch`), and only the status of an upstream rejection. It never logs request or provider
-bodies. The controller also prints each agent narration line (not the structured result)
+bodies. The first rejection of a running attempt is also stored on its attempt receipt in
+Postgres as `relay_rejection` (`status`, a reason code such as `context_bound` for an
+over-size request, the 422 codes above, `request_limit`, `token_limit`, `upstream_rejected`
+with `upstream_status`, `stream_unconfirmed` or `relay_timeout`, the operation and the time).
+Later refusals do not replace it, and the run's failure message names the code and status.
+The controller also prints each agent narration line (not the structured result)
 as a bounded `TIN_CODEX_PROGRESS` frame. The switchboard redacts run secrets and projects
 the latest line to the run's `progress_summary` in Postgres, unless product code owns the
 run's progress steps. It never enters Temporal. Payment-card runs skip it, as they skip
@@ -127,10 +132,36 @@ wrote a report. Their open-egress `browser_api` image and 1800-second timeout ar
 unchanged; runs admitted earlier keep v3.
 [Model limits](https://developers.openai.com/api/docs/models/gpt-6-sol).
 
+### Contract v5: a bounded context and $10 sessions (October 2, 2026)
+
+New admissions pin **`tin-codex-api-v5`**. It keeps v4's 128,000 output tokens per response
+and 8 MiB requests, but the controller declares a 256,000-token context window and compacts
+from 200,000 tokens. A request therefore stays near 200,000 tokens of context in ordinary
+use, below the 272,000-token long-context price band; one large tool result can still exceed
+it until the next compaction. Session-funded procedures (`SESSION_CONTRACT`) have no request
+or lifetime-token stop, as in v4. Codex work that is not session-funded pins the same shape
+with runaway stops (`PROCEDURE_CONTRACT_V5`): 256 requests and 8,000,000 observed tokens,
+four times the most seen on v3 (64 requests, 2.04M tokens). That covers included Start here
+setup children, other parent children, Studio, diagrams/video (whose images fit in any 8 MiB
+v5 request, so the separate v3 diagram text bound is not carried over), `content.design_md`
+and `project.task`. Their funding is unchanged: included work stays Tin-funded with no
+customer reservation, and the others reserve per request. A v5 request reserves $1.93: its
+256,000-token context as cache writes, 128,000 output tokens and one search call.
+
+The default ceiling of a root Codex run is $10 for new admissions ($5 before; a child inside
+a parent budget keeps $5, since parent pools were composed from $5 children); explicit smaller
+ceilings such as `content-refresh.v1`'s $2.50 are unchanged. Runs and quotes admitted before
+v5 keep v1-v4 and $5: a still-valid quote issued before v5 is admitted with exactly the terms
+it showed. The controller image reads v5's window from its own protocol table, so deploying v5
+needs rebuilt isolated, browser API and Studio API templates that answer
+`codex_api_config.py --check-v5`; the runtime refuses to start a v5 run on an older image.
+The opt-in `bounded_context` isolation probe forces the real CLI through v5 compaction.
+Keep a v4-capable image for runs already pinned to v4.
+
 Every contract named `gpt-6-astra` until 2026-09-23. Runs admitted before then keep
 that pin; new runs use `gpt-6-sol`.
 
-Tin authorizes the existing $5 session maximum once, internally holding those credits
+Tin authorizes the session maximum ($10 from v5, $5 for v4) once, internally holding those credits
 until settlement. Each request checks the run grant, project membership, current spending
 policy and remaining budget, and records a durable intent. It does not predict prompt
 cost, repeatedly price prior receipts or fund the shared wallet again. One request may
@@ -139,7 +170,7 @@ usage updates the existing operation and run total. Settlement charges once, rou
 once, releases unused authority and preserves existing uncertain-usage reconciliation.
 Compaction is an ordinary paid response in this same session.
 
-The $5 maximum is a **hard customer-charge ceiling and a soft supplier-spend stop**.
+The session maximum is a **hard customer-charge ceiling and a soft supplier-spend stop**.
 A response admitted before the stop may exceed the remaining budget; Tin records and
 absorbs the excess, then refuses further calls. This exposure can be material: 128,000
 output tokens alone cost $6.40 at the pinned standard rate, or $9.60 in its long-context
@@ -147,7 +178,7 @@ band, before input/search charges. There is no claim of an absolute supplier inv
 cap. An interruption cannot undo already-accepted provider work. Changing this tradeoff
 requires an explicit provider/operating policy, not an invented precise token estimate.
 
-Only newly admitted ordinary root procedures select v4. Existing budgets and valid
+When v4 shipped, only newly admitted ordinary root procedures selected it. Existing budgets and valid
 quotes retain their auth, model, price and runtime pins. Included onboarding and its
 children, other parent children, Studio, diagrams/video, design tasks, interactive
 tasks and managed model steps keep their existing contracts. No data migration or

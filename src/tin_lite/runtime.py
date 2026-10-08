@@ -14,6 +14,7 @@ from tin_lite import (
     growth_plan,
     paid_ads,
     paid_ads_launch,
+    payment_recovery,
     style_capture,
     x_feedback,
 )
@@ -58,6 +59,7 @@ from tin_lite.output_resolution import OutputResolutionService
 from tin_lite.paid_ads_activities import PaidAdsActivities
 from tin_lite.paid_ads_launch_activities import PaidAdsLaunchActivities
 from tin_lite.paid_ads_monitor_activities import PaidAdsMonitorActivities
+from tin_lite.payment_recovery_activities import PaymentRecoveryActivities
 from tin_lite.project_files import ProjectFileService
 from tin_lite.scan import ScanReporter
 from tin_lite.settings import Settings
@@ -139,6 +141,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             *growth_plan.ROUTES,
             *paid_ads.ROUTES,
             *paid_ads_launch.ROUTES,
+            *payment_recovery.ROUTES,
             ModelRoute(
                 key=content_plan.ROUTE_KEY,
                 provider=ProviderName.OPENAI,
@@ -247,7 +250,11 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         integrations=integrations,
     )
     content_planner = ContentPlanActivities(
-        database=database, storage=storage, settings=settings, router=model_router
+        database=database,
+        storage=storage,
+        settings=settings,
+        router=model_router,
+        integrations=integrations,
     )
     character_designer = (
         CharacterDesigner(router=model_router) if settings.luna_api_key is not None else None
@@ -318,10 +325,32 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
     awesome_submit_activities = AwesomeSubmitActivities(
         database=database, storage=storage, integrations=integrations
     )
-    from tin_lite.code_activities import CodeActivities
+    from tin_lite.activity_lanes import COLLECTION_ACTIVITIES, collection_task_queue
 
+    payment_recovery_activities = PaymentRecoveryActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        router=model_router,
+        integrations=integrations,
+    )
+    from tin_lite.code_activities import CodeActivities
+    from tin_lite.connection_collection_activities import CollectionActivities
+    from tin_lite.linkedin_cloud import LinkedInCloud
+
+    collection = CollectionActivities(
+        database=database,
+        storage=storage,
+        settings=settings,
+        cloud=LinkedInCloud(database, settings),
+        cipher=integrations._cipher,
+    )
     code = CodeActivities(common=activity_instance, model_router=model_router)
     activities = [
+        collection.prepare,
+        collection.poll,
+        collection.publish,
+        collection.failure,
         code.execute,
         code.publish,
         code.review,
@@ -384,6 +413,15 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         awesome_submit_activities.apply,
         awesome_submit_activities.publish,
         awesome_submit_activities.failure,
+        payment_recovery_activities.prepare,
+        payment_recovery_activities.gather,
+        payment_recovery_activities.draft,
+        payment_recovery_activities.request_review,
+        payment_recovery_activities.record_approval,
+        payment_recovery_activities.apply,
+        payment_recovery_activities.publish,
+        payment_recovery_activities.expire,
+        payment_recovery_activities.failure,
         organic_system.organic_system_prepare,
         organic_system.organic_system_step,
         organic_system.organic_system_step_failure,
@@ -392,6 +430,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         organic_system.organic_system_failure,
         organic_system.organic_system_weekly_articles,
         organic_system.organic_system_refresh,
+        organic_system.organic_system_measurement,
         organic_system.organic_system_weekly_articles_failure,
         onboarding.growth_onboarding_prepare,
         onboarding.growth_onboarding_step,
@@ -405,6 +444,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         characters.character_approval,
         characters.character_project,
         characters.character_failure,
+        content_planner.content_plan_research,
         content_planner.content_plan_execute,
         content_planner.content_plan_failure,
         keywords.keyword_prepare,
@@ -484,10 +524,17 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
         activity_instance.project_task_failure,
     ]
     by_name = {activity._Definition.must_from_callable(fn).name: fn for fn in activities}
-    if set(by_name) != CODEX_ACTIVITIES | TRUSTED_ACTIVITIES:
+    if set(by_name) != CODEX_ACTIVITIES | TRUSTED_ACTIVITIES | COLLECTION_ACTIVITIES:
         raise RuntimeError("Every registered activity needs an explicit worker lane")
     graceful_shutdown = timedelta(seconds=settings.worker_graceful_shutdown_seconds)
     worker = WorkerGroup(
+        Worker(
+            temporal,
+            task_queue=collection_task_queue(settings.task_queue),
+            max_concurrent_activities=2,
+            graceful_shutdown_timeout=graceful_shutdown,
+            activities=[by_name[name] for name in sorted(COLLECTION_ACTIVITIES)],
+        ),
         Worker(
             temporal,
             task_queue=settings.task_queue,
@@ -498,7 +545,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             graceful_shutdown_timeout=graceful_shutdown,
             workflows=registered_workflows(),
             workflow_runner=workflow_runner(),
-            activities=activities,
+            activities=[fn for name, fn in by_name.items() if name not in COLLECTION_ACTIVITIES],
             interceptors=[ActivityLaneInterceptor()],
         ),
         Worker(

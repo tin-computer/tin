@@ -27,15 +27,26 @@ from test_procedure_publication import publication_db as publication_db
 from tin_lite import content_repository_delivery as delivery
 from tin_lite import website_change
 from tin_lite.catalog import BUILTIN_WORKFLOWS
+from tin_lite.content_delivery import adaptation_start_key
+from tin_lite.documents import render_markdown
 from tin_lite.organic_audit import canonical_json
 from tin_lite.page_routes import PATH as ROUTES_PATH
 from tin_lite.procedures import procedure_checkpoint_path
-from tin_lite.run_service import start_workflow_run
+from tin_lite.run_service import RETIRED, start_workflow_run
 from tin_lite.website_change import ChangeRow, WebsiteChangeConflict
 from tin_lite.workflow_inputs import WorkflowInputError
 
 ROUTE = "/blog/{slug}"
 PAGE_URL = "https://example.com/blog/reliable-ai-work"
+
+
+PREVIEW_PASSED = {
+    "readable": True,
+    "checks": [
+        {"name": "build", "state": "success", "preview": False},
+        {"name": "Vercel", "state": "success", "preview": True},
+    ],
+}
 
 
 async def fixture(db, monkeypatch):
@@ -70,6 +81,8 @@ async def fixture(db, monkeypatch):
     f.runtime.integrations.github_required_status_checks = AsyncMock(
         return_value={"readable": True, "contexts": ["build"]}
     )
+    # The site's own build: its Vercel preview passed, unless a test says otherwise.
+    f.runtime.integrations.github_commit_checks = AsyncMock(return_value=PREVIEW_PASSED)
     return f
 
 
@@ -260,6 +273,10 @@ async def test_a_pre_approved_page_publishes_directly(publication_db, monkeypatc
         "SELECT run_id FROM activity_events WHERE event_type='website_change_merged'"
     )
     assert {row["run_id"] for row in events} == {run.id, page.id}
+    # Activity lists the outcome once, on the change run; the page's own history keeps its copy.
+    feed = await f.db.list_product_activity(project_id=f.project.id)
+    merged = [event for event in feed if event.event_type == "website_change_merged"]
+    assert [event.run_id for event in merged] == [run.id]
     status = await f.delivery.status(run)
     assert status["merged"] is True and status["pull_request"]["url"] == PR_URL
     assert status["change_id"] == website_change.page_change_id(page.id)
@@ -553,25 +570,24 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
 ):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    page = await approved_for_main(f)
-    run = await start(f, page)
-    source = await delivery.saved_source(f.db, run.id)
-    # Tin's own draft folder is never a page on the site.
-    answers = manifest_for(
-        f, source, page_path="content/answers/reliable-ai-work.md", public_url=PAGE_URL
+    integrations = mergeable(f)
+    # Tin's own draft folder is never a page on the site: the PR opens, the merge waits.
+    run = await made(
+        f, await start(f, await approved_for_main(f)), page_path="content/answers/reliable.md"
     )
-    with pytest.raises(ValueError, match=r"page registry at /blog/\{slug\}"):
-        delivery.validate_patch(answers, source)
-    # Nor may a website change touch dependencies.
-    lockfile = manifest_for(
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open" and "Tin's draft folder" in merge["reason"]
+    # So does a change to dependencies, which reach every page.
+    run = await made(
         f,
-        source,
-        page_path="content/blog/reliable-ai-work.md",
-        public_url=PAGE_URL,
+        await start(f, await approved_for_main(f)),
         extra_files=({"path": "bun.lock", "content": "x\n"},),
     )
-    with pytest.raises(ValueError, match="cannot change dependencies"):
-        delivery.validate_patch(lockfile, source)
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open" and "bun.lock" in merge["reason"]
+    integrations.github_merge_pull_request.assert_not_called()
+    run = await start(f, await approved_for_main(f))
+    source = await delivery.saved_source(f.db, run.id)
     # A typed page registry keeps the copy as one JSON string, served at the chosen route.
     registry = (
         "export const blogPages = [\n  {\n    slug: 'reliable-ai-work',\n"
@@ -609,6 +625,46 @@ async def test_answer_pages_go_to_the_registry_route_never_content_answers(
     )
 
 
+async def test_a_static_html_site_gets_its_page_as_html(publication_db, monkeypatch):
+    # website.change a5828bd7 on sheepdogs.io: a static site in client/public/ that renders no
+    # Markdown. The page is HTML in the site's own layout, and the wording decides the merge.
+    f = await fixture(publication_db, monkeypatch)
+    choose_route(f)
+    integrations = mergeable(f)
+    run = await start(f, await approved_for_main(f))
+    source = await delivery.saved_source(f.db, run.id)
+    page = (
+        "<!doctype html><html><head><title>Reliable AI work</title><style>p{margin:0}</style>"
+        "</head><body><nav><a href='/'>Home</a></nav><main>"
+        f"{render_markdown(source['article']).html}</main></body></html>"
+    )
+    run = await made(
+        f, run, page_path="client/public/blog/reliable-ai-work/index.html", content=page
+    )
+    manifest = await delivery.saved_manifest(f.db, f.storage, run)
+    proof = delivery.validate_patch(manifest, source)
+    assert proof["copy_check"] == "wording_preserved"
+    assert proof["article_path"] == "client/public/blog/reliable-ai-work/index.html"
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged" and merge["merge_rule"] == "chosen_route"
+    # Changed wording still opens the PR; only the merge waits for the founder.
+    integrations.github_merge_pull_request.reset_mock()
+    run = await made(
+        f,
+        await start(f, await approved_for_main(f)),
+        page_path="client/public/blog/reliable-ai-work-2/index.html",
+        public_url="https://example.com/blog/reliable-ai-work-2",
+        content=page.replace("receipts", "logs"),
+    )
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "left_open"
+    assert merge["reason"] == (
+        "Tin couldn't confirm the page keeps the approved wording word for word, so it waits "
+        "for your review."
+    )
+    integrations.github_merge_pull_request.assert_not_called()
+
+
 # content.deliver keeps working as it did; the two never adapt one page twice.
 
 
@@ -616,24 +672,42 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
     f = await fixture(publication_db, monkeypatch)
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == delivery.KEY)
     definition, files = spec.definition_and_resource_files()
-    digest = hashlib.sha256(canonical_json(definition))
+    # The drawing is display-only; a run never reads it.
+    pinned = {k: v for k, v in definition.items() if k != "presentation"}
+    digest = hashlib.sha256(canonical_json(pinned))
     for path in sorted(files):
         digest.update(path.encode())
         digest.update(files[path])
-    # The definition and procedure files pinned runs point to are byte-for-byte main's 1.3.0.
-    assert spec.version_label == "1.3.0"
+    # The definition and procedure files new runs pin: 1.4.0 builds the page in the site's own
+    # format (1.3.0 kept it as Markdown or a JSON string); 1.5.0 matches the site's other pages
+    # and adds no outside fonts; 1.6.0 uses the slug the founder approved with the draft;
+    # 1.7.0 carries the page's figures, embeds, diagrams and videos (30 files, 2 MB); 1.8.0 shows
+    # Mermaid with the site's own support or as a figure Codex draws, not Tin's renderer; 1.9.0
+    # never moves another page to make room and adds no code that enforces the approved copy.
+    # Its retirement for new work only hides it from discovery (public_discovery: false).
+    assert spec.version_label == "1.9.0"
+    assert definition["public_discovery"] is False
     assert digest.hexdigest() == (
-        "078e681833686005fec18b779b83d6ed7cd621b078af512699962d597050b555"
+        "139899f36ea09f0437c399b39151a89399ea594af36a4d8db106fc008ed53849"
     )
-    # An approval-started content.deliver run pins no change row and keeps its own rules:
-    # a pull-request setting never merges, and nothing records a merge for it.
+    # A content.deliver run an approval started before its retirement pins no change row and
+    # keeps its own rules: a pull-request setting never merges, and nothing records a merge.
     page = await answer_page(f)
     await f.delivery.choose(run=page, mode="github_pr", actor=ACTOR, adapt=True)
     page = await approve_answer_page(f, page)
-    await f.activities.deliver_content_draft(str(page.id))
-    child = await f.db.pool.fetchval(
-        "SELECT id FROM workflow_runs WHERE workflow_id=$1", delivery.WORKFLOW_ID
-    )
+    monkeypatch.delitem(RETIRED, delivery.KEY)
+    child = (
+        await start_workflow_run(
+            runtime=f.runtime,
+            settings=f.settings,
+            workflow=f.content_deliver,
+            project_id=f.project.id,
+            started_by_clerk_user_id=ACTOR,
+            start_idempotency_key=adaptation_start_key(page.id),
+            input_payload={"source_run_id": str(page.id), "expected_repository": "owner/site"},
+            _approval_delivery=True,
+        )
+    ).id
     source = await delivery.saved_source(f.db, child)
     assert "change" not in source and "publish" not in source
     assert (await f.db.get_effect(delivery.source_key(child))).operation == delivery.OPERATION
@@ -648,14 +722,25 @@ async def test_content_deliver_pinned_runs_are_unchanged(publication_db, monkeyp
 async def test_one_page_is_never_adapted_by_both_workflows(publication_db, monkeypatch):
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
-    # The approval started content.deliver: website.change refuses the same page.
+    # The approval starts website.change (content.deliver is retired for new work); a second
+    # website.change refuses the same page.
     page = await answer_page(f)
     await f.delivery.choose(run=page, mode="github_commit", actor=ACTOR, adapt=True)
     page = await approve_answer_page(f, page)
     await f.activities.deliver_content_draft(str(page.id))
+    started = await f.db.get_run_by_start_key(
+        project_id=f.project.id, start_idempotency_key=adaptation_start_key(page.id)
+    )
+    assert started.workflow_id == delivery.WEBSITE_CHANGE_ID
     with pytest.raises(WorkflowInputError, match="still working"):
         await start(f, page)
-    # website.change started first: content.deliver refuses the same page.
+    # A content.deliver run admitted before the retirement still holds its page, and a pinned
+    # content.deliver (a retry or v5 system run) refuses a page website.change holds.
+    monkeypatch.delitem(RETIRED, delivery.KEY)
+    pinned = await approved_for_main(f)
+    await start(f, pinned, workflow=f.content_deliver)
+    with pytest.raises(WorkflowInputError, match="still working"):
+        await start(f, pinned)
     other = await approved_for_main(f)
     await start(f, other)
     with pytest.raises(WorkflowInputError, match="still working"):
@@ -949,6 +1034,7 @@ async def test_without_required_checks_an_unstable_pull_request_waits_for_every_
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     integrations = f.runtime.integrations
     if required == "none":
         integrations.github_required_status_checks.return_value = {
@@ -988,6 +1074,7 @@ async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkey
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     page = await approved_for_main(f)
     run = await made(f, await start(f, page))
     integrations = mergeable(f)
@@ -998,3 +1085,130 @@ async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkey
     integrations.github_merge_pull_request.assert_not_called()
     assert merge["status"] == "left_open" and "mergeable_state" not in merge
     assert merge["reason"] == NEVER_MERGE[verdict]
+
+
+# The site's own build (10/8): a deploy preview, or the repository's checks. Nothing that
+# builds the change, or checks Tin can't read, never merges.
+
+
+def checks(*items, readable=True):
+    return {
+        "readable": readable,
+        "checks": [{"name": n, "state": s, "preview": p} for n, s, p in items],
+    }
+
+
+async def approved_change(f, monkeypatch):
+    choose_route(f)
+    run = await made(f, await start(f, await approved_for_main(f)))
+    return run, mergeable(f)
+
+
+async def test_a_passing_preview_lets_tin_merge_and_is_recorded(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    # The preview is still building on the first look, then passes.
+    integrations.github_commit_checks = AsyncMock(
+        side_effect=[
+            checks(("build", "success", False), ("Vercel", "pending", True)),
+            checks(("build", "success", False), ("Vercel", "success", True)),
+        ]
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_awaited_once()
+    assert merge["status"] == "merged"
+    assert merge["build_check"] == {"preview": "Vercel", "checks": 2}
+    sha = integrations.github_commit_checks.call_args.kwargs["sha"]
+    assert sha == "a" * 40  # The head GitHub reported, the one Tin merges.
+
+
+async def test_a_failed_preview_leaves_the_pull_request_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("Vercel – site", "failure", True))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge == {
+        **merge,
+        "status": "left_open",
+        "reason": "Your Vercel – site preview build failed, so Tin left it open.",
+    }
+
+
+async def test_ci_alone_counts_as_the_build(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(("build", "success", False)))
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged"
+    assert merge["build_check"] == {"preview": None, "checks": 1}
+
+
+async def test_a_repository_with_no_checks_is_never_merged(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    monkeypatch.setattr(delivery, "NO_CHECKS_GRACE_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    # GitHub calls a pull request with no checks "clean" at once; that proves nothing.
+    integrations.github_commit_checks = AsyncMock(return_value=checks())
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert merge["reason"].startswith("Nothing builds this repository's pull requests")
+
+
+async def test_checks_tin_cannot_read_never_merge(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(readable=False))
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert "Accept the updated Tin GitHub App permissions" in merge["reason"]
+
+
+async def test_a_preview_still_building_at_the_deadline_leaves_it_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(("Vercel", "pending", True)))
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert merge["reason"].startswith("Your Vercel preview was still building")
+
+
+async def test_without_a_preview_every_check_must_pass(publication_db, monkeypatch):
+    # The branch requires only "build"; an optional check that fails is still the site's build
+    # when there is no preview.
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("next build", "failure", False))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"] == "Its next build check failed, so Tin left it open."
+    # Still running at the deadline: open, never merged.
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("next build", "pending", False))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"].startswith("Its next build check was still running")
+
+
+async def test_checks_beyond_one_page_never_merge(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(
+        return_value={"readable": False, "checks": [], "truncated": True}
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"].startswith("It has more checks than Tin reads at once")

@@ -16,7 +16,11 @@ new pages.
    Console evidence, then chooses one page:
    - It considers pages the audit flagged with `search.low_ctr` or `search.near_page_one`, plus
      `search.decay` and `aeo.answer_structure` when the audit reports them.
-   - It picks the page with the most impressions at stake. (content.plan's refresh candidates
+   - With a current Page decisions file (`content/efficacy.md`, from organic.content_efficacy,
+     which the traffic system runs weekly an hour before the refresh), it takes the first page
+     the file marks for a refresh, in the file's order, and never a page the file keeps,
+     merges or retires.
+   - Otherwise it picks the page with the most impressions at stake. (content.plan's refresh candidates
      and content.generate's refresh items rank by realistic upside instead: pages near the top
      results first, pages beyond position 30 last. See
      [one content.generate](one-content-generate.md).)
@@ -55,9 +59,9 @@ new pages.
      file changed.
    - If a text is not in the source verbatim (a title built from a template, for example) or
      appears in several places, delivery stops and says which text and why. It never guesses.
-   - Tin searches source files up to 512 KB. Images, video, fonts and built bundles over 2 MB
+   - Tin searches source files up to 512 KB. Images, video, fonts and built bundles over 10 MB
      are left out of the snapshot and don't matter here. Any other file Tin couldn't read (a
-     source or data file over 2 MB, a link, a submodule) stops delivery, and the reason names
+     source or data file over 10 MB, a link, a submodule) stops delivery, and the reason names
      it, because the page's text could live there.
    - Several changed files land as one commit, so a failure never leaves main half changed.
    - A retry after a failed delivery reads the current head when the failed attempt opened no

@@ -118,8 +118,9 @@ on the connection. Where supported, configuring `Idempotency-Key` or `X-Idempote
 sends a stable Tin-derived operation ID. This does not promise universal exactly-once writes.
 No live external-write acceptance is claimed by this slice.
 
-Up to four service bindings and eight total calls share the existing 60-second compute window.
-Requests are at most 16 KB; each response is bounded to 1–64 KB. Sandboxes remain networkless
+Up to four service bindings and 32 total calls share the package's compute window (at most
+900 seconds); Tin waits at most 60 seconds for any one call. Requests are at most 16 KB; each
+response is bounded to 1,024–1,000,000 bytes. Sandboxes remain networkless
 and credential-free. Only the trusted activity invokes the gateway through the existing
 protected E2B controller channel and checks the run, membership, lease and fencing tuple.
 
@@ -150,8 +151,8 @@ MCP. Procedure bindings accept the metadata, but procedure cost displays are not
 
 `max_response_bytes` is measured on the serialized JSON the step receives, and it is what
 bounds result size in practice. A Search Console row costs roughly 110–250 bytes depending on
-its dimensions, so a 64000-byte binding holds about 250–550 rows, far fewer than the provider's
-25000-row maximum. `search_analytics.read` accepts:
+its dimensions, so a 64000-byte binding holds about 250–550 rows and a 1,000,000-byte binding
+about 4,000–9,000, still under the provider's 25000-row maximum. `search_analytics.read` accepts:
 
 - `start_date`, `end_date` (YYYY-MM-DD, at most 366 days apart), `dimensions` (up to three of
   `date`, `query`, `page`, `country`, `device`, `searchAppearance`) and `row_limit` (1–25000).
@@ -182,8 +183,8 @@ call_service(service="search", step="read_panel", operation="search_analytics.re
 `request_service` returns `{status, data}`. `call_service` uses the registered operation's
 response shape. Keep stable step IDs; a completed request replays, a changed request conflicts,
 and an uncertain request blocks automatic retries even under a different step. All service
-aliases share the existing maximum of eight requests, with per-alias allowances and bounded
-responses. Procedures retain their own declared timeout; the code executor's 60-second total
+aliases share the existing maximum of 32 requests, with per-alias allowances and bounded
+responses. Procedures retain their own declared timeout; a code package's `timeout_seconds`
 window does not apply to them.
 
 Services require a fenced `default` or `isolated` procedure profile. Private procedures remain
@@ -256,8 +257,8 @@ shape. Attio and Clay adapters are not included.
 
 ## Services Tin holds the key for
 
-Two services need no founder connection: Tin holds the key, pays the vendor and passes the
-cost through credits. Declare the provider in `integration_requirements` with its capabilities,
+Three services need no founder connection: Tin holds the key and pays the vendor. DataForSEO
+reads pass their cost through credits; PageSpeed Insights, CrUX and Podscan are free to runs. Declare the provider in `integration_requirements` with its capabilities,
 bind it once in `code.services`, and call it with `ctx.services.call`, like any adapter above.
 
 ```json
@@ -307,6 +308,19 @@ serp = await ctx.services.call(
 | `managed.dataforseo` | `keywords.overview` (`keywords.read`) | `keywords` (1-50); market as above | the same records plus 12 `monthly` volumes | $0.012 + $0.00012 per keyword |
 | `managed.dataforseo` | `backlinks.summary` (`backlinks.read`) | `target` (a domain such as `example.com`, or an absolute page URL); `include_subdomains` (default true) | rank, backlinks, spam score, referring domains/IPs/pages, broken links | $0.024 + $0.000036 per row |
 | `managed.dataforseo` | `backlinks.referring_domains` (`backlinks.read`) | `target`; `include_subdomains`; `limit` 1-100 (default 20); `offset` | `records` (domain, rank, backlinks, spam score, first seen, lost date), highest rank first, `next_offset` | $0.024 + $0.000036 per row |
+| `managed.podscan` | `episodes.search` (`podcasts.read`) | `query`; `since`/`before`; `language`; `region`; `has_guests`; `min_audience`; `search_fields` (`transcription`, `title`, `description`); `order_by`; `per_page` 1-50; `page` 1-20 | episode `records` with guests (name, company, occupation), hosts, sponsors, `is_branded`, a `match` snippet and the show's audience numbers; never transcripts | $0 |
+| `managed.podscan` | `podcasts.search` (`podcasts.read`) | `query`; `language`; `region`; `has_guests`; `min_audience`; `active_since`; `search_fields`; `order_by`; `per_page`; `page` | show `records`: reach score, audience estimate, Apple and Spotify rating counts, `last_posted` | $0 |
+| `managed.podscan` | `podcasts.get`, `podcasts.episodes` (`podcasts.read`) | `podcast_id`; for episodes `per_page`, `page` | one show in full (description, style, website, social links, unverified `listed_email`), or its newest episodes with guests | $0 |
+| `managed.podscan` | `people.search`, `people.appearances` (`podcasts.read`) | `query` and `search_fields` (`name`, `company`, `occupation`, `industry`); or `entity_id`, `role`, `since`/`before` | people with company, occupation and appearance counts; or a person's episodes with their shows | $0 |
+| `managed.podscan` | `charts.top` (`podcasts.read`) | `platform` `apple` or `spotify`; `country`; `category` slug; `limit` | ranked shows with `podcast_id` | $0 |
+
+Podscan reads are free to runs because Tin pays Podscan a flat subscription; a binding's
+`max_calls` is the guard. Podscan's own rate limit comes back as a rate-limit error: wait and
+call again under a new step. A timeout or Podscan failure returns `status: "unavailable"` and
+an unknown id `status: "not_found"`, both answers rather than errors. Podscan splits one
+person across several entity records and its `audience_size` is an estimate, so packages
+merge people by company and compare audiences only within a niche; `listed_email` is never a
+verified pitch address. Procedures may bind it.
 
 Every DataForSEO response carries `cost_usd`, the cost DataForSEO reported for that call.
 Prices are DataForSEO's list prices as of September 2026 (after the July 2026 update); the
@@ -325,7 +339,7 @@ usually $0, and later steps can still call. A read Tin can't confirm (a server e
 oversized, malformed or mismatched answer) stays unconfirmed: billing reconciles it rather than
 counting it free, Tin doesn't repeat it, and the run's later service calls stop with a named error. Paid managed services are for `workflow.code`
 packages only; a Codex procedure's session budget funds its own model calls, so procedures
-may bind `managed.pagespeed` but not `managed.dataforseo`.
+may bind `managed.pagespeed` and `managed.podscan` but not `managed.dataforseo`.
 
 **Responses and limits.** Tin cuts each response to what a report needs, never the provider's
 raw payload: a Lighthouse report of hundreds of kilobytes comes back as under 1 KB. List operations
@@ -335,10 +349,10 @@ and `keywords.overview`, ask for less (a smaller `depth`, fewer keywords) instea
 endpoints are exposed; DataForSEO's task_post endpoints, such as the OnPage crawl, stay in
 native executors.
 
-**Slow and missing data.** A Lighthouse run takes 10-30 seconds. Tin waits 22 seconds, under
-the gateway's 25-second limit, then returns `{"status": "timed_out"}` as a completed result:
+**Slow and missing data.** A Lighthouse run takes 10-30 seconds. Tin waits 55 seconds, under
+the gateway's 60-second limit, then returns `{"status": "timed_out"}` as a completed result:
 the step replays that answer, and a new step can try again. Give each strategy its own step;
-with the 60-second code window, plan for two PageSpeed runs per package run. CrUX has no
+size the package's `timeout_seconds` for the runs it makes, since each may wait up to 55 seconds. CrUX has no
 record for most small sites. `crux.query` then returns `status: "no_field_data"`, a metric
 without enough traffic is `null`, and `pagespeed.run` says `field_status: "no_field_data"`.
 Report that as missing; never show it as zero. A page Lighthouse cannot load returns

@@ -13,7 +13,7 @@ from test_procedure_publication import publication_db as publication_db
 
 from tin_lite import content_draft
 from tin_lite.activities import TinActivities
-from tin_lite.article_review import validate_article, validate_changes
+from tin_lite.article_review import change_summary, validate_article, validate_notes
 from tin_lite.catalog import BUILTIN_WORKFLOWS
 from tin_lite.content_draft_sources import ContentDraftSources
 from tin_lite.mcp_server import _review_summary
@@ -370,12 +370,17 @@ def test_copy_and_notes_are_different_contracts():
     validate_article(article)
     with pytest.raises(ValueError, match="process notes"):
         validate_article(article + b"\n## What changed\nWe revised this.\n")
-    validate_changes(
-        b"# Generation notes\n\n## What changed\nShorter opening.\n"
-        b"\n## Feedback not followed\nNone.\n"
-    )
-    with pytest.raises(ValueError, match="Feedback not followed"):
-        validate_changes(b"# Generation notes\n\n## What changed\nShorter opening.\n")
+    # Revision notes are for the founder: a missing, repeated or long section never fails the
+    # paid revision; the review shows what it can.
+    for notes in (
+        b"# Generation notes\n\n## What changed\nShorter opening.\n",
+        b"# Generation notes\n\nRevised as asked.\n",
+        b"# Generation notes\n\n## Feedback not followed\n" + b"x" * 3000 + b"\n",
+    ):
+        validate_notes(notes, revision=True)
+    assert change_summary(b"# Generation notes\n\nRevised as asked.\n") is None
+    with pytest.raises(ValueError, match="bounded Generation notes"):
+        validate_notes(b"Not notes at all", revision=True)
 
 
 async def test_failed_revision_retry_retains_copy_and_can_stop_chain(publication_db, monkeypatch):

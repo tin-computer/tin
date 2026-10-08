@@ -344,6 +344,22 @@ def _identity_instruction(context: dict) -> str:
     )
 
 
+def _assets_instruction(output: dict[str, Any]) -> str:
+    """The one exception to "modify no other project file": the article's assets folder."""
+    assets = output.get("assets")
+    if not isinstance(assets, dict):
+        return ""
+    folder = str(assets["folder"])
+    name = folder.rsplit("/", 1)[-1]
+    return (
+        f" The article may also use figures and embeds: write them as files directly in "
+        f"`{STATE_DIR / folder}` (SVG images, or self-contained HTML files for interactive "
+        f"pieces), at most {assets['max_files']} files and {assets['max_bytes']} bytes "
+        f"together, and refer to each one from the article as `./{name}/<file name>`. Tin "
+        "keeps only the files the article refers to."
+    )
+
+
 def _result_instruction(output: dict[str, Any], output_kind: str, output_path: object) -> str:
     if output_kind != "project.artifact":
         text = (
@@ -382,12 +398,14 @@ def _result_instruction(output: dict[str, Any], output_kind: str, output_path: o
                 f"the structured judgment only to `{companion}` "
                 f"(at most {output['companion_max_bytes']} bytes). Modify no other project file. "
                 "Do not force an article when current coverage already satisfies the brief."
+                + _assets_instruction(output)
             )
         return (
             f"Write the public article only to `{absolute}`. Write internal generation notes "
             f"only to `{companion}` (at most {output['companion_max_bytes']} bytes). "
             "Modify no other project file. Do not put notes or source frontmatter in the article. "
             "Do not merely describe the artifacts in your final response."
+            + _assets_instruction(output)
         )
     workspace_note = ""
     if STATE_DIR != WORKSPACE:
@@ -425,6 +443,25 @@ def _pull_request_text(result, output):
         if not isinstance(body, str) or not body.strip():
             body = result.get("message")
     return title, body
+
+
+def _text(value):
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _result_text(result, output):
+    """Summary, message, pull-request title and body, each filled from the others when the
+    model left it empty. The run already paid for its work; an empty note for the founder or
+    an empty PR title never discards a finished patch. Only a result with no text at all
+    fails (as no summary)."""
+    title, body = (_text(value) for value in _pull_request_text(result, output))
+    summary, message = _text(result.get("summary")), _text(result.get("message"))
+    summary = summary or title or message[:1000] or body[:1000]
+    message = message or body or summary
+    if output.get("kind") == "github.pull_request" or "title" in result or "body" in result:
+        title = title or summary[:200]
+        body = body or message
+    return summary, message, title, body
 
 
 def _content_draft_instruction(context):
@@ -750,8 +787,12 @@ def execute() -> int:
             usage = CodexUsage(thread_id=thread_id, turn_id=turn_id)
             if os.environ.get("TIN_CODEX_API_URL"):
                 contract = json.loads(os.environ.get("TIN_CODEX_API_CONTRACT", "{}"))
+                # v5 names its own lifetime-token stop; its session form has none.
+                v5_limit = contract.get("max_observed_tokens")
                 usage.limit = (
-                    None
+                    (v5_limit if type(v5_limit) is int and v5_limit > 0 else None)
+                    if contract.get("protocol") == "tin-codex-api-v5"
+                    else None
                     if contract.get("protocol") == "tin-codex-api-v4"
                     else 2_000_000
                     if contract.get("protocol") in {"tin-codex-api-v2", "tin-codex-api-v3"}
@@ -856,13 +897,9 @@ def execute() -> int:
         result = json.loads(last_agent_message)
         if not isinstance(result, dict):
             raise RuntimeError("Codex procedure result is invalid")
-        summary = result.get("summary")
-        message = result.get("message")
-        if not isinstance(summary, str) or not summary.strip():
+        summary, message, title, body = _result_text(result, context.get("output", {}))
+        if not summary:
             raise RuntimeError("Codex procedure result has no summary")
-        if not isinstance(message, str) or not message.strip():
-            raise RuntimeError("Codex procedure result has no message")
-        title, body = _pull_request_text(result, context.get("output", {}))
         if output_kind == "github.pull_request" and (
             not isinstance(title, str)
             or not title.strip()

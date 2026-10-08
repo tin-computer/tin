@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from pydantic import Field
 
 from tin_lite import content_plan as legacy
+from tin_lite import content_plan_agent as agent
 from tin_lite.content_plan_sources import MAX_SITE_PAGES, SITE_PAGES_BYTES
 from tin_lite.organic_audit import canonical_json, digest
 
@@ -245,6 +246,37 @@ not plan another page about those competitors.
 )
 MODEL_SCHEMA = TypedPortfolio.model_json_schema()
 
+# v8 (content.plan 0.9.0): v7 with a 32,000-token output cap instead of 16,000. GPT-6 Luna
+# counts reasoning against the cap, and a cap only stops a run: billing charges the tokens
+# a call used. Instructions, schema and every other bound are v7's.
+V7_POLICY, V7_INSTRUCTIONS = POLICY, INSTRUCTIONS
+POLICY = {**V7_POLICY, "version": "content-editorial-v8", "max_output_tokens": 32_000}
+
+# v9 (content.plan 1.0.0): a planning agent, not one model call. The Codex procedure
+# content.plan_research reads the brief Tin publishes and the project's files, searches where a
+# choice depends on what ranks, and writes a portfolio in priority order; Tin keeps the usable
+# items and fills every week up to its capacity (content_plan_agent). The page inventory, site
+# page list, signals and competitor rows are v8's; no native model call is made, so the model
+# route and output cap are unused.
+V8_POLICY, V8_INSTRUCTIONS, V8_SCHEMA = POLICY, INSTRUCTIONS, MODEL_SCHEMA
+POLICY = {
+    **V8_POLICY,
+    "version": "content-editorial-v9",
+    "planner": agent.RESEARCH_KEY,
+    "portfolio": agent.SCHEMA,
+    "portfolio_validator": agent.VALIDATOR,
+    "fill": "every-week-v1",
+    "competitors": "merged-v1",
+}
+INSTRUCTIONS = """The planning agent (content.plan_research) writes the portfolio; this contract
+says what Tin does with it. Tin keeps each usable proposal in the agent's order and leaves out,
+with a named reason, a new page the site already has, an item Page decisions rules out, an
+update of a page Tin does not know on the site and a repeated title or page. It then fills the
+editable weeks in that order, each up to its capacity, and lists what did not fit as backlog.
+Every item stays needs_verification; its format and evidence strength travel with it.
+"""
+MODEL_SCHEMA = agent.PORTFOLIO_JSON_SCHEMA
+
 
 # A brief that tells the writer how to position the product ("Position Tin narrowly as ...",
 # "frame it as ...", "Positioning: ..."). Search positions ("average position 8") do not match.
@@ -269,25 +301,29 @@ def without_positioning(text):
 def contract(definition):
     """Never reinterpret a saved v1 program or accept an edited execution policy.
 
-    `TYPED` says whether the contract's opportunities carry a kind (v7 and later).
+    `TYPED` says whether the contract's opportunities carry a kind (v7 and later). v7 and v8
+    differ only in their output cap. `AGENT` (v9) says a planning agent writes the portfolio.
     """
 
-    def pinned(policy, instructions, schema, typed=False):
+    def pinned(policy, instructions, schema, typed=False, agent_planner=False):
         return SimpleNamespace(
             POLICY=policy,
             INSTRUCTIONS=instructions,
             MODEL_SCHEMA=schema,
             ROUTE_KEY=ROUTE_KEY,
             TYPED=typed,
+            AGENT=agent_planner,
         )
 
-    current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True)
+    current = pinned(POLICY, INSTRUCTIONS, MODEL_SCHEMA, typed=True, agent_planner=True)
+    v8 = pinned(V8_POLICY, V8_INSTRUCTIONS, V8_SCHEMA, typed=True)
+    v7 = pinned(V7_POLICY, V7_INSTRUCTIONS, V8_SCHEMA, typed=True)
     v2 = pinned(V2_POLICY, V2_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v3 = pinned(V3_POLICY, V3_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v4 = pinned(V4_POLICY, V4_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v5 = pinned(V5_POLICY, V5_INSTRUCTIONS, PORTFOLIO_SCHEMA)
     v6 = pinned(V6_POLICY, V6_INSTRUCTIONS, PORTFOLIO_SCHEMA)
-    for module in (legacy, v2, v3, v4, v5, v6, current):
+    for module in (legacy, v2, v3, v4, v5, v6, v7, v8, current):
         if (
             definition.get("key") == legacy.KEY
             and definition.get("executor") == legacy.KEY
@@ -776,6 +812,68 @@ def shape_by_signals(opportunities, signals, observed, *, retained):
     }
 
 
+def decision_refreshes(context, plan, *, targeted, titles, cap=MAX_PAGE_DECISION_ITEMS):
+    """The refresh items for pages the newest Page decisions marks for a refresh, in the file's
+    order, at most `cap`: one per page not in `targeted` (paths) whose title is not in `titles`.
+    """
+    signals = (context["research"] or {}).get("site_signals") or {}
+    decisions = signals.get("page_decisions") or {}
+    if decisions.get("status") != "used" or not decisions["refresh"]:
+        return []
+    from tin_lite.content_plan_sources import EFFICACY_PATH, EFFICACY_SOURCE_PREFIX
+
+    rows = {row["source_id"] for row in (context["research"] or {}).get("rows", [])}
+    refresh_rows = {
+        row["data"]["path"]: row["source_id"]
+        for row in (context["research"] or {}).get("rows", [])
+        if row["source_id"].startswith(REFRESH_SOURCE_PREFIX)
+    }
+    targeted, titles, items = set(targeted), set(titles), []
+    for path, row in decisions["refresh"].items():
+        if len(items) >= cap:
+            break
+        source = EFFICACY_SOURCE_PREFIX + digest(path)[:20]
+        url = f"https://{plan['host']}{path}"
+        title = f"Refresh {path}"[:180]
+        if (
+            path in targeted
+            or source not in rows
+            or not clean_url(url, plan["host"])
+            or " ".join(title.casefold().split()) in titles
+        ):
+            continue
+        reason = row["reason"] or "the page is due for a refresh"
+        items.append(
+            {
+                "id": "page-decision-" + digest([path, plan["program_id"]])[:12],
+                "title": title,
+                "brief": (
+                    f"Page decisions ({EFFICACY_PATH}, {decisions['generated']}) marked {path} "
+                    f"for a refresh: {reason} Bring the title, meta description, H1 and opening "
+                    "answer in line with the searches this page should win, and keep every fact "
+                    "it already states."
+                )[:1800],
+                "intent": f"Searchers who land on {path} find what they searched for at once."[
+                    :500
+                ],
+                "action": "update_page",
+                "destination": url,
+                "source_ids": [source] + ([refresh_rows[path]] if path in refresh_rows else []),
+                "verification": [
+                    f"Read {url} as it reads today before changing anything."[:500],
+                    f"Check each change against the page decision: {reason}"[:500],
+                ],
+                "readiness": "needs_verification",
+                "kind": legacy.REFRESH,
+                "source": legacy.CONTENT_EFFICACY,
+                "evidence": url,
+            }
+        )
+        targeted.add(path)
+        titles.add(" ".join(title.casefold().split()))
+    return items
+
+
 def page_decision_items(context, plan, *, cap=MAX_PAGE_DECISION_ITEMS):
     """Refresh items for the pages the newest Page decisions marks for a refresh (v7).
 
@@ -789,63 +887,21 @@ def page_decision_items(context, plan, *, cap=MAX_PAGE_DECISION_ITEMS):
     decisions = signals.get("page_decisions") or {}
     if decisions.get("status") != "used" or not decisions["refresh"]:
         return plan, []
-    from tin_lite.content_plan_sources import EFFICACY_PATH, EFFICACY_SOURCE_PREFIX
-
-    rows = {row["source_id"] for row in (context["research"] or {}).get("rows", [])}
-    refresh_rows = {
-        row["data"]["path"]: row["source_id"]
-        for row in (context["research"] or {}).get("rows", [])
-        if row["source_id"].startswith(REFRESH_SOURCE_PREFIX)
-    }
     plan = deepcopy(plan)
     items = [item for batch in plan["batches"] for item in batch["items"]]
-    targeted = {page_path(i["destination"]) for i in items if i["destination"]}
-    titles = {" ".join(i["title"].casefold().split()) for i in items}
     editable = [b for b in plan["batches"] if b["id"] in context["editable"]]
     added = []
-    for path, row in decisions["refresh"].items():
-        if len(added) >= cap:
-            break
-        source = EFFICACY_SOURCE_PREFIX + digest(path)[:20]
-        url = f"https://{plan['host']}{path}"
-        title = f"Refresh {path}"[:180]
-        if (
-            path in targeted
-            or source not in rows
-            or not clean_url(url, plan["host"])
-            or " ".join(title.casefold().split()) in titles
-        ):
-            continue
+    for item in decision_refreshes(
+        context,
+        plan,
+        targeted={page_path(i["destination"]) for i in items if i["destination"]},
+        titles={" ".join(i["title"].casefold().split()) for i in items},
+        cap=cap,
+    ):
         batch = next((b for b in editable if len(b["items"]) < context["capacity"]), None)
         if batch is None:
             break
-        reason = row["reason"] or "the page is due for a refresh"
-        item = {
-            "id": "page-decision-" + digest([path, plan["program_id"]])[:12],
-            "title": title,
-            "brief": (
-                f"Page decisions ({EFFICACY_PATH}, {decisions['generated']}) marked {path} for a "
-                f"refresh: {reason} Bring the title, meta description, H1 and opening answer in "
-                "line with the searches this page should win, and keep every fact it already "
-                "states."
-            )[:1800],
-            "intent": f"Searchers who land on {path} find what they searched for at once."[:500],
-            "action": "update_page",
-            "destination": url,
-            "source_ids": [source] + ([refresh_rows[path]] if path in refresh_rows else []),
-            "verification": [
-                f"Read {url} as it reads today before changing anything."[:500],
-                f"Check each change against the page decision: {reason}"[:500],
-            ],
-            "readiness": "needs_verification",
-            "kind": legacy.REFRESH,
-            "source": legacy.CONTENT_EFFICACY,
-            "evidence": url,
-        }
         batch["items"].append(item)
-        items.append(item)
-        targeted.add(path)
-        titles.add(" ".join(title.casefold().split()))
         added.append(item["id"])
     plan = legacy.validate_change(context["plan"], plan, editable=set(context["editable"]))
     return plan, added

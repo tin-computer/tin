@@ -12,6 +12,7 @@ from test_adapted_page_delivery import (
     children,
     clean,
     fixture,
+    pinned_content_deliver,  # noqa: F401  (autouse: the merge tests adapt with content.deliver)
 )
 from test_private_workflows import ACTOR, mcp, structured
 from test_procedure_publication import publication_db as publication_db
@@ -255,14 +256,13 @@ async def test_approval_pins_the_route_and_tells_the_adaptation(publication_db, 
     await f.delivery.choose(run=run, mode="github_commit", actor=ACTOR, adapt=True)
     run = await approve_answer_page(f, run)
     await f.activities.deliver_content_draft(str(run.id))
-    child = await f.db.get_run((await children(f, run))[0]["id"])
-    assert child.input["direction"] == direction("/guides/{slug}")
-    source = await delivery.saved_source(f.db, child.id)
-    assert source["approval"] == {
-        "mode": "github_commit",
-        "requested_by": ACTOR,
-        "route": "/guides/{slug}",
-    }
+    started = (await children(f, run))[0]
+    # The approval starts website.change, which publishes at the route pinned at approval.
+    assert started["workflow_id"] == delivery.WEBSITE_CHANGE_ID
+    source = await delivery.saved_source(f.db, started["id"])
+    assert source["route"] == "/guides/{slug}"
+    assert source["change"]["approval"]["by"] == ACTOR
+    assert source["publish"]["mode"] == "direct"
 
 
 async def test_a_pull_request_that_adds_the_chosen_route_merges_when_clean(

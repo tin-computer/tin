@@ -14,12 +14,13 @@ from tin_lite.organic_audit import audit_policy, canonical_json, digest, questio
 from tin_lite.organic_audit_ai import (
     AuditValidationError,
     BuyerPanel,
-    PanelReview,
     PanelValidation,
     apply_review,
+    panel_models,
     payload,
     validate_panel,
 )
+from tin_lite.organic_audit_report import query_rows
 from tin_lite.organic_audit_scope import audit_hosts
 
 
@@ -42,10 +43,10 @@ def research_sources(research, host, *, aliases=()):
     return result
 
 
-def grounded_panel(draft, research, host, *, aliases=()):
+def grounded_panel(draft, research, host, *, aliases=(), model=BuyerPanel, max_jobs=3):
     sources = research_sources(research, host, aliases=aliases)
     try:
-        proposal = BuyerPanel.model_validate_json(draft["text"])
+        proposal = model.model_validate_json(draft["text"])
     except ValueError:
         raise AuditValidationError("panel_questions_invalid") from None
     if proposal.host not in (host, *aliases) or proposal.site_type == "unsupported":
@@ -62,7 +63,13 @@ def grounded_panel(draft, research, host, *, aliases=()):
         ):
             raise AuditValidationError("panel_questions_invalid")
     try:
-        return validate_panel({**draft, "sources": sources, "citations": []}, host, aliases=aliases)
+        return validate_panel(
+            {**draft, "sources": sources, "citations": []},
+            host,
+            aliases=aliases,
+            model=model,
+            max_jobs=max_jobs,
+        )
     except ValueError:
         raise AuditValidationError("panel_questions_invalid") from None
 
@@ -102,6 +109,27 @@ async def interpret_questions(activities, run_id, questions, scope, suffix):
             ).decode()
         },
     }
+
+
+def search_queries(saved: dict | None, hosts, limit: int) -> list[dict]:
+    """The site's most-searched queries from this run's Search Console read, for the draft.
+
+    Impressions are summed over the pages a query reached. A query that names the site
+    (its host label, with or without spaces) is a search for the site, not a buyer job.
+    """
+    labels = {
+        label
+        for host in hosts
+        for label in [re.sub(r"[^a-z0-9]", "", host.removeprefix("www.").split(".")[0].lower())]
+        if len(label) >= 3
+    }
+    totals: dict[str, int] = {}
+    for row in query_rows(saved):
+        squashed = re.sub(r"[^a-z0-9]", "", row["query"].lower())
+        if squashed and not any(label in squashed for label in labels):
+            totals[row["query"]] = totals.get(row["query"], 0) + int(row["impressions"])
+    ranked = sorted(totals.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    return [{"query": query[:120], "impressions": impressions} for query, impressions in ranked]
 
 
 def limit_panel(panel: dict, *, max_jobs: int, repetitions: int, unsearched: bool = False) -> dict:
@@ -299,6 +327,7 @@ async def prepare_panel(activities, run_id):
         saved = await activities._save(run_id, "panel", {"status": "completed", **prompts})
         return saved["planned_observations"]
     aliases = audit_hosts(scope)[1:]
+    draft_model, review_model, max_jobs = panel_models(policy_version)
     reason, research, research_stage = None, None, None
     attempts = []
     await activities.db.project_run_progress(
@@ -362,6 +391,14 @@ async def prepare_panel(activities, run_id):
             "observed_source_urls": research_sources(value, scope["host"], aliases=aliases),
             **({"verified_site_hosts": list(audit_hosts(scope))} if aliases else {}),
         }
+        if policy.get("search_console_questions"):
+            searches = search_queries(
+                await activities._result(run_id, "search_console_queries"),
+                audit_hosts(scope),
+                policy["search_console_questions"],
+            )
+            if searches:
+                evidence["search_console_queries"] = searches
         await activities.db.project_run_progress(
             run_id=UUID(run_id),
             mode="steps",
@@ -378,7 +415,7 @@ async def prepare_panel(activities, run_id):
                 payload(
                     stage="panel",
                     data={**evidence, "correction": feedback},
-                    schema=BuyerPanel,
+                    schema=draft_model,
                     market=scope["market"],
                     search=False,
                     policy_version=policy_version,
@@ -391,7 +428,12 @@ async def prepare_panel(activities, run_id):
             if draft["status"] == "completed":
                 try:
                     candidate = grounded_panel(
-                        draft["value"], value, scope["host"], aliases=aliases
+                        draft["value"],
+                        value,
+                        scope["host"],
+                        aliases=aliases,
+                        model=draft_model,
+                        max_jobs=max_jobs,
                     )
                     if policy.get("max_panel_jobs"):
                         candidate = limit_panel(
@@ -430,7 +472,7 @@ async def prepare_panel(activities, run_id):
                         payload(
                             stage="validate",
                             data=review_data,
-                            schema=PanelReview if per_question else PanelValidation,
+                            schema=review_model if per_question else PanelValidation,
                             market=scope["market"],
                             search=False,
                             policy_version=policy_version,
@@ -440,7 +482,7 @@ async def prepare_panel(activities, run_id):
                     if judgment["status"] == "completed" and per_question:
                         panel, reason = apply_review(
                             candidate,
-                            PanelReview.model_validate_json(judgment["value"]["text"]),
+                            review_model.model_validate_json(judgment["value"]["text"]),
                             min_questions=per_question,
                         )
                     elif judgment["status"] == "completed":

@@ -72,9 +72,11 @@ def matches(pattern: str, address: str | None) -> bool:
 def direction(pattern: str) -> str:
     """The adaptation's routing instruction for a route the founder chose."""
     return (
-        f"The founder chose where these pages live: {pattern}. Make {{slug}} three to five "
-        "lowercase, hyphenated words from the title that name its main search term, without "
-        "filler words such as the, a, of or how. Publish the page at exactly that route and "
+        f"The founder chose where these pages live: {pattern}. Use the slug the founder "
+        "approved with the page (`page_metadata.slug`) for {slug} when it is given. Otherwise "
+        "make {slug} three to five lowercase, hyphenated words from the title that name its "
+        "main search term, without filler words such as the, a, of or how. Publish the page "
+        "at exactly that route and "
         "give it on the Public URL line. If the site has no route that renders pages there "
         "yet, add one minimal route for exactly that pattern."
     )

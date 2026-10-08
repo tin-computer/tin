@@ -21,6 +21,7 @@ from tin_lite.integrations import (
     ServiceCallRefused,
     ServiceResponseTooLarge,
     check_google_arguments,
+    parse_integration_requirements,
 )
 from tin_lite.project_connections import (
     CUSTOM_KEY,
@@ -34,6 +35,8 @@ from tin_lite.provider_errors import explain
 logger = logging.getLogger(__name__)
 
 OPERATION = "code_service_call_v1"
+# The state of a run's optional connections, pinned at its first execution.
+CONNECTIONS = "code_service_connections_v1"
 # Adding an adapter operation is an explicit reviewed mapping, never getattr on author input.
 OPERATIONS = {
     ("analytics.gsc", "sites.list"): ("sites.list", frozenset()),
@@ -85,7 +88,7 @@ ARGUMENT_CHECKS = {
     **{provider: managed_services.check_arguments for provider in managed_services.DEFINITIONS},
 }
 # Tin's own wait for any one provider call; managed Google reads stop a few seconds sooner.
-CALL_SECONDS = 25
+CALL_SECONDS = 60
 # Tin's sentence plus the provider's own message (itself cut to 1,500 characters).
 MESSAGE_LIMIT = 2000
 
@@ -131,6 +134,20 @@ def _too_large(service):
     )
 
 
+def optional_services(workflow, spec):
+    """The bindings whose integration requirement is optional in the pinned definition."""
+    optional = {
+        r.provider_key
+        for r in parse_integration_requirements(workflow.definition.get("integration_requirements"))
+        if not r.required
+    }
+    return [s for s in spec.services if s.provider_key in optional]
+
+
+def _connections_key(run):
+    return f"{run.id}:code-service-connections"
+
+
 class CodeServices:
     def __init__(
         self,
@@ -147,6 +164,37 @@ class CodeServices:
         self.client, self.resolver = client, resolver
         # Tin-held provider keys come from the switchboard's settings, never the package.
         self.managed = managed or managed_services.ManagedServices(settings)
+
+    async def connections(self, *, conn, run, workflow, spec):
+        """Each optional binding's state for this run: connected, not_connected or
+        needs_attention. The first execution pins it, so a retry sees the same answer and a
+        connection made mid-run waits for the next run. The code reads it as ctx["connections"].
+        """
+        optional = optional_services(workflow, spec)
+        if not optional:
+            return {}
+        key = _connections_key(run)
+        saved = await self.db.get_effect(key, conn=conn)
+        if saved and saved.status == "completed":
+            return dict((saved.result or {}).get("connections") or {})
+        states = {}
+        for service in optional:
+            requirement = IntegrationRequirement(service.provider_key, service.capabilities)
+            try:
+                await self.integrations.ensure_requirements(
+                    project_id=run.project_id, requirements=(requirement,)
+                )
+                states[service.name] = "connected"
+            except IntegrationError:
+                connection = await self.db.get_integration_connection(
+                    project_id=run.project_id, provider_key=service.provider_key
+                )
+                states[service.name] = "not_connected" if connection is None else "needs_attention"
+        await self.db.start_effect(conn, execution_key=key, operation=CONNECTIONS)
+        await self.db.complete_effect(
+            conn, execution_key=key, result={"version": 1, "connections": states}
+        )
+        return states
 
     async def call(self, *, conn, run, workflow, spec, payload):
         try:
@@ -192,6 +240,15 @@ class CodeServices:
             raise CodeServiceError(
                 "The service request differs from its declared contract."
             ) from None
+        if service in optional_services(workflow, spec):
+            saved = await self.db.get_effect(_connections_key(run), conn=conn)
+            pinned = ((saved.result or {}).get("connections") or {}) if saved else {}
+            if pinned.get(service.name) != "connected":
+                raise CodeServiceError(
+                    f"The optional {service.name} connection is not available to this run; "
+                    "no request was made.",
+                    code="not_connected",
+                )
         fingerprint = digest(
             {
                 "definition": run.definition_commit_sha,

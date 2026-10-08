@@ -98,9 +98,17 @@ def test_typed_items_round_trip_and_keep_their_shape_rules():
 def test_v7_contract_is_typed_and_older_contracts_keep_their_schema():
     definition = next(w.definition for w in BUILTIN_WORKFLOWS if w.key == legacy.KEY)
     current = editorial.contract(definition)
-    assert current.TYPED and current.POLICY["version"] == "content-editorial-v7"
+    assert current.TYPED and current.AGENT
+    assert current.POLICY["version"] == "content-editorial-v9"
     assert definition["content_schema"] == editorial.MODEL_SCHEMA
-    opportunity = editorial.MODEL_SCHEMA["$defs"]["TypedOpportunity"]
+    v8 = deepcopy(definition)
+    v8.update(
+        content_policy=editorial.V8_POLICY,
+        content_instructions=editorial.V8_INSTRUCTIONS,
+        content_schema=editorial.V8_SCHEMA,
+    )
+    assert editorial.contract(v8).TYPED and not editorial.contract(v8).AGENT
+    opportunity = editorial.V8_SCHEMA["$defs"]["TypedOpportunity"]
     assert "kind" in opportunity["required"]
     v6 = deepcopy(definition)
     v6.update(
@@ -110,6 +118,19 @@ def test_v7_contract_is_typed_and_older_contracts_keep_their_schema():
     )
     assert not editorial.contract(v6).TYPED
     assert "kind" not in editorial.PORTFOLIO_SCHEMA["$defs"]["Opportunity"]["properties"]
+    # v8 is v7 with a larger output cap; a definition pinned to v7 keeps its 16,000 tokens.
+    assert {
+        k: v for k, v in editorial.V8_POLICY.items() if k not in {"version", "max_output_tokens"}
+    } == {k: v for k, v in editorial.V7_POLICY.items() if k not in {"version", "max_output_tokens"}}
+    assert editorial.V8_POLICY["max_output_tokens"] == 32_000
+    assert editorial.V7_POLICY["version"] == "content-editorial-v7"
+    assert editorial.V7_POLICY["max_output_tokens"] == 16_000
+    assert editorial.V7_INSTRUCTIONS == editorial.V8_INSTRUCTIONS
+    v7 = deepcopy(v8)
+    v7.update(content_policy=editorial.V7_POLICY)
+    pinned = editorial.contract(v7)
+    assert pinned.TYPED and pinned.POLICY is editorial.V7_POLICY
+    assert pinned.MODEL_SCHEMA == editorial.V8_SCHEMA
     # An untyped run binds the untyped schema, even when kinds are offered.
     untyped = editorial.bound_schema(pages(), {"s001": "keyword:k1"}, kinds={"article"})
     assert "kind" not in untyped["$defs"]["Opportunity"]["properties"]
@@ -119,7 +140,7 @@ def test_the_plan_offers_only_the_kinds_its_evidence_supports():
     assert plan_kinds(context()["research"]) == {"article"}
     assert plan_kinds(typed_context()["research"]) == {"article", "answer", "refresh"}
     schema = editorial.bound_schema(
-        pages(), {"s001": "keyword:k1"}, schema=editorial.MODEL_SCHEMA, kinds={"article"}
+        pages(), {"s001": "keyword:k1"}, schema=editorial.V8_SCHEMA, kinds={"article"}
     )
     assert schema["$defs"]["TypedOpportunity"]["properties"]["kind"]["enum"] == ["article"]
     with pytest.raises(jsonschema.ValidationError):

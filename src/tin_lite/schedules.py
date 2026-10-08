@@ -6,7 +6,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    field_validator,
+    model_serializer,
+    model_validator,
+)
 from temporalio.client import (
     Client,
     Schedule,
@@ -33,6 +42,35 @@ WEEKDAYS = (
     "saturday",
     "sunday",
 )
+# A monthly schedule runs on a day every month has, so it never skips a short month.
+LAST_MONTHLY_DAY = 28
+
+
+MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def monthly_words(schedule: dict) -> str:
+    """'the 1st of every month' or 'the 15th of January, April, July and October'."""
+    day = int(schedule.get("day_of_month") or 1)
+    suffix = "th" if 10 <= day % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(day % 10, "th")
+    names = [MONTH_NAMES[month - 1] for month in schedule.get("months") or []]
+    if not names:
+        return f"the {day}{suffix} of every month"
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+    return f"the {day}{suffix} of {listed}"
 
 
 class ScheduledWorkflowSkip(RuntimeError):
@@ -42,7 +80,7 @@ class ScheduledWorkflowSkip(RuntimeError):
 class WorkflowSchedule(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    cadence: Literal["daily", "weekly"]
+    cadence: Literal["daily", "weekly", "monthly"]
     weekdays: list[
         Literal[
             "monday",
@@ -54,6 +92,10 @@ class WorkflowSchedule(BaseModel):
             "sunday",
         ]
     ] = Field(default_factory=list, max_length=7)
+    # Monthly only: the day of the month, and the months it runs in (empty: every month).
+    # Four months such as [1, 4, 7, 10] make a quarterly schedule.
+    day_of_month: int | None = Field(default=None, ge=1, le=LAST_MONTHLY_DAY)
+    months: list[int] = Field(default_factory=list, max_length=12)
     local_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
     timezone: str = Field(min_length=1, max_length=100)
     start_at: AwareDatetime | None = None
@@ -73,11 +115,28 @@ class WorkflowSchedule(BaseModel):
         if self.start_at and self.end_at and self.end_at <= self.start_at:
             raise ValueError("schedule end must be after its start")
         self.weekdays = list(dict.fromkeys(self.weekdays))
+        if any(not 1 <= month <= 12 for month in self.months):
+            raise ValueError("months must be numbers from 1 to 12")
+        self.months = sorted(set(self.months))
         if self.cadence == "weekly" and not self.weekdays:
             raise ValueError("weekly schedules require at least one weekday")
-        if self.cadence == "daily" and self.weekdays:
-            raise ValueError("daily schedules do not accept weekdays")
+        if self.cadence != "weekly" and self.weekdays:
+            raise ValueError(f"{self.cadence} schedules do not accept weekdays")
+        if self.cadence == "monthly" and self.day_of_month is None:
+            raise ValueError("monthly schedules require a day_of_month from 1 to 28")
+        if self.cadence != "monthly" and (self.day_of_month is not None or self.months):
+            raise ValueError(f"{self.cadence} schedules do not accept day_of_month or months")
         return self
+
+    @model_serializer(mode="wrap")
+    def _omit_unused_monthly_fields(self, handler: SerializerFunctionWrapHandler) -> dict:
+        # Daily and weekly schedules keep the exact stored shape they had before monthly
+        # existed, so saved rows, receipts and an earlier release read them unchanged.
+        data = handler(self)
+        if self.cadence != "monthly":
+            data.pop("day_of_month", None)
+            data.pop("months", None)
+        return data
 
 
 # Names that load from a zoneinfo directory but are not IANA zones a schedule can use:
@@ -151,14 +210,22 @@ def _days_in_month(month: int, year: int) -> int:
 
 
 def _temporal_next(
-    zone: ZoneInfo, hour: int, minute: int, weekdays: set[int] | None, after: datetime
+    zone: ZoneInfo,
+    hour: int,
+    minute: int,
+    weekdays: set[int] | None,
+    after: datetime,
+    *,
+    days: set[int] | None = None,
+    months: set[int] | None = None,
 ) -> datetime:
     """Port of Temporal's compiledCalendar.next (service/worker/scheduler/calendar.go).
 
     Temporal walks local calendar fields and places them with Go's time.Date, so across a
     DST change it fires a repeated time once or twice and skips or shifts a missing one,
     depending on the zone. Following the same steps keeps next_run_at and skip-once on the
-    occurrence Temporal actually dispatches. `weekdays` uses Python's Monday=0 numbering.
+    occurrence Temporal actually dispatches. `weekdays` uses Python's Monday=0 numbering;
+    `days` (day of month) and `months` (1-12) default to every one, as in Temporal.
     """
     zero, hour_step = timedelta(0), timedelta(hours=1)
     ts = after.astimezone(zone)
@@ -186,9 +253,17 @@ def _temporal_next(
         if y > after.year + 2:
             raise RuntimeError("schedule has no next occurrence")
         restart = False
-        while (
-            weekdays is not None
-            and _go_date(zone, y, mo, d, h, m, s).astimezone(zone).weekday() not in weekdays
+        while months is not None and mo not in months:
+            mo, d, h, m, s, dst_offset = mo + 1, 1, 0, 0, 0, zero
+            if mo > 12:
+                restart = True
+                break
+        while not restart and (
+            (days is not None and d not in days)
+            or (
+                weekdays is not None
+                and _go_date(zone, y, mo, d, h, m, s).astimezone(zone).weekday() not in weekdays
+            )
         ):
             d, h, m, s, dst_offset = d + 1, 0, 0, 0, zero
             if d > _days_in_month(mo, y):
@@ -223,7 +298,16 @@ def next_run_after(schedule: WorkflowSchedule, after: datetime | None = None) ->
     weekdays = (
         {WEEKDAYS.index(day) for day in schedule.weekdays} if schedule.cadence == "weekly" else None
     )
-    candidate = _temporal_next(ZoneInfo(schedule.timezone), hour, minute, weekdays, threshold)
+    monthly = schedule.cadence == "monthly"
+    candidate = _temporal_next(
+        ZoneInfo(schedule.timezone),
+        hour,
+        minute,
+        weekdays,
+        threshold,
+        days={schedule.day_of_month} if monthly and schedule.day_of_month else None,
+        months=set(schedule.months) if monthly and schedule.months else None,
+    )
     if schedule.end_at and candidate >= schedule.end_at:
         return None
     return candidate
@@ -351,6 +435,11 @@ class TemporalScheduleService:
             if schedule.cadence == "weekly"
             else [ScheduleRange(0, 6, 1)]
         )
+        monthly = {}
+        if schedule.cadence == "monthly" and schedule.day_of_month:
+            monthly["day_of_month"] = [ScheduleRange(schedule.day_of_month)]
+            if schedule.months:
+                monthly["month"] = [ScheduleRange(month) for month in schedule.months]
         return Schedule(
             action=ScheduleActionStartWorkflow(
                 "tin.scheduled_dispatch",
@@ -366,6 +455,7 @@ class TemporalScheduleService:
                         minute=[ScheduleRange(minute)],
                         hour=[ScheduleRange(hour)],
                         day_of_week=day_ranges,
+                        **monthly,
                     )
                 ],
                 time_zone_name=schedule.timezone,
