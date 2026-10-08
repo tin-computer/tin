@@ -351,3 +351,50 @@ def test_public_article_is_hidden_from_new_recommendations_but_retains_its_contr
     state = tin_state(settings=_Settings(), workflows=WORKFLOWS, connections=[])
     assert workflow.key not in _rows(state)
     assert next(w for w in BUILTIN_WORKFLOWS if w.id == workflow.id).executor == workflow.executor
+
+
+def test_hidden_code_workflows_keep_a_valid_definition():
+    """Hiding a workflow.code package (public_discovery: false) must not break its definition."""
+    from tin_lite.public_workflows import PUBLIC_WORKFLOWS
+    from tin_lite.workflow_code import validate_code_definition
+
+    hidden = [
+        d
+        for d in (
+            *(w.definition for w in BUILTIN_WORKFLOWS),
+            *(w.definition for w in PUBLIC_WORKFLOWS),
+        )
+        if d.get("executor") == "workflow.code" and d.get("public_discovery") is False
+    ]
+    assert {d["key"] for d in hidden} >= {"organic.prompt_panel", "organic.site_architecture"}
+    for definition in hidden:
+        validate_code_definition(definition)
+
+
+async def test_a_definition_tin_cannot_price_is_left_out_without_a_founder_reason(billed):
+    from dataclasses import replace
+
+    from tin_lite.onboarding import UNPRICED, billing_restrictions
+    from tin_lite.public_workflows import PUBLIC_WORKFLOWS
+
+    f = billed
+    entry = next(w for w in PUBLIC_WORKFLOWS if w.key == "organic.site_architecture")
+    hidden = replace(
+        WORKFLOWS[0],
+        id=entry.id,
+        key=entry.key,
+        executor=entry.executor,
+        definition=entry.definition,
+    )
+    # A discoverable workflow whose definition billing cannot price.
+    offered = {k: v for k, v in hidden.definition.items() if k != "public_discovery"}
+    broken = replace(hidden, id=uuid4(), definition={**offered, "unexpected": True})
+    blocked = await billing_restrictions(
+        database=f.db, project_id=f.project.id, workflows=[hidden, broken]
+    )
+    assert hidden.id not in blocked
+    assert blocked == {broken.id: {"code": UNPRICED}}
+    state = tin_state(
+        settings=_Settings(), workflows=[broken], connections=[], billing_restrictions=blocked
+    )
+    assert broken.key not in _rows(state)

@@ -152,8 +152,12 @@ def validate_code_definition(definition) -> CodeSpec:
         "prerequisites",
         "integration_requirements",
         "presentation",
+        # Catalog visibility for built-ins hidden from new setups; private packages refuse it.
+        "public_discovery",
     }:
         raise ValueError("unsupported code workflow fields or capabilities")
+    if type(definition.get("public_discovery", False)) is not bool:
+        raise ValueError("public_discovery must be boolean")
     check_presentation(definition, required=False)
     if definition.get("kind", "workflow") != "workflow":
         raise ValueError("code packages define workflows")
