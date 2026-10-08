@@ -262,6 +262,9 @@ class Settings(BaseSettings):
     private_fonts_stylesheet_url: str | None = Field(
         default=None, alias="TIN_LITE_PRIVATE_FONTS_STYLESHEET_URL"
     )
+    # Hosted-only traffic-analysis sensor (human vs automated/agent traffic). Unset
+    # for self-hosts, so the packaged pages load no third-party script.
+    traffic_sensor_site: str | None = Field(default=None, alias="TIN_LITE_TRAFFIC_SENSOR_SITE")
     # Temporary inbound compatibility during an origin migration, never advertised.
     legacy_public_url: str | None = Field(default=None, alias="TIN_LITE_LEGACY_PUBLIC_URL")
     forward_proxy_url: SecretStr | None = Field(default=None, alias="TIN_LITE_PROXY_URL")
@@ -314,6 +317,13 @@ class Settings(BaseSettings):
         ):
             raise ValueError("Private font stylesheet must be a credential-free HTTPS URL")
         return value
+
+    @field_validator("traffic_sensor_site")
+    @classmethod
+    def validate_traffic_sensor_site(cls, value: str | None) -> str | None:
+        from tin_lite.traffic_sensor import validate_traffic_sensor_site
+
+        return validate_traffic_sensor_site(value)
 
     @property
     def private_workflow_projects(self):
