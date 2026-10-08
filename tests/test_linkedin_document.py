@@ -178,6 +178,19 @@ def test_stylesheet_visibility_keeps_alternative_badges_and_hidden_cards_out():
     assert len(search_results(Document(html, [css]), 1)["people"]) == 2
 
 
+@pytest.mark.parametrize(
+    "css",
+    [
+        ".uncertain {display:none} .uncertain {display:block}",
+        ".uncertain {display:none} @media (min-width: 800px) {.uncertain {display:block}}",
+    ],
+)
+def test_conflicting_or_responsive_visibility_is_not_guessed(css):
+    html = results().replace("<ul>", '<ul class="uncertain">')
+    with pytest.raises(CollectionError, match="unsupported_search_contract"):
+        search_results(Document(html, [css]), 1)
+
+
 def test_hidden_next_needs_a_complete_numbered_final_pager():
     html = document(
         card(1) + "<div><button>Previous</button><button>1</button>"

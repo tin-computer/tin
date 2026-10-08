@@ -59,6 +59,10 @@ class Node:
             yield node
             node = node.parent
 
+    def require_known_visibility(self):
+        if any(n.uncertain_visibility for n in [self, *self.ancestors()]):
+            raise CollectionError("unsupported_search_contract")
+
     @property
     def excluded(self):
         return any(
@@ -99,14 +103,18 @@ class Document(HTMLParser):
     def apply_styles(self, styles):
         # Only unconditional atomic visibility declarations are supported. Class names
         # come from the page's own stylesheet, never a pinned provider-generated name.
-        rules = []
+        rules, conditional = [], set()
 
-        def collect(items, depth=0):
+        def collect(items, depth=0, uncertain=False):
             if depth > 8:
                 raise CollectionError("unsupported_search_contract")
             for item in items:
-                if item.type == "at-rule" and item.lower_at_keyword == "layer" and item.content:
-                    collect(tinycss2.parse_blocks_contents(item.content), depth + 1)
+                if item.type == "at-rule" and item.content:
+                    collect(
+                        tinycss2.parse_blocks_contents(item.content),
+                        depth + 1,
+                        uncertain or item.lower_at_keyword != "layer",
+                    )
                 elif item.type == "qualified-rule":
                     selector = tinycss2.serialize(item.prelude).strip()
                     match = re.fullmatch(r"\.([A-Za-z_][A-Za-z0-9_-]*)", selector)
@@ -118,6 +126,9 @@ class Document(HTMLParser):
                             "visibility",
                             "opacity",
                         }:
+                            if uncertain:
+                                conditional.add(match[1])
+                                continue
                             rules.append(
                                 (
                                     match[1],
@@ -133,16 +144,24 @@ class Document(HTMLParser):
             by_class.setdefault(class_name, {}).setdefault(prop, set()).add(value)
         for node in self.root.nodes(include_hidden=True):
             declarations = {}
-            for class_name in node.attrs.get("class", "").split():
+            classes = node.attrs.get("class", "").split()
+            for class_name in classes:
                 for prop, values in by_class.get(class_name, {}).items():
                     declarations.setdefault(prop, set()).update(values)
-            # Conflicting utilities remain ambiguous; do not choose a hidden value.
+            node.uncertain_visibility = bool(conditional.intersection(classes)) or any(
+                len(values) > 1 for values in declarations.values()
+            )
+            # Never guess which responsive or conflicting visibility rule applies.
             hidden = declarations.get("display") == {"none"}
             node.visibility_hidden = declarations.get("visibility") == {"hidden"} or bool(
                 re.search(r"visibility\s*:\s*hidden", node.attrs.get("style", ""))
             )
             hidden |= node.visibility_hidden or declarations.get("opacity") == {"0"}
-            node.hidden = node.hidden or hidden or bool(node.parent and node.parent.hidden)
+            node.hidden = (
+                node.hidden
+                or (hidden and not node.uncertain_visibility)
+                or bool(node.parent and node.parent.hidden)
+            )
             node.__dict__.pop("text", None)
 
     def handle_starttag(self, tag, attrs):
@@ -188,6 +207,7 @@ def relationship(node):
             if isinstance(child, str):
                 match = re.fullmatch(r"[·•]?\s*([123](?:st|nd|rd))\+?", clean(child))
                 if match:
+                    item.require_known_visibility()
                     found.append(match[1])
     return found
 
@@ -196,9 +216,11 @@ def link_profile(node, *, allow_navigation=False):
     if node.tag != "a" or (node.excluded and not allow_navigation):
         return None
     try:
-        return profile_url(urljoin("https://www.linkedin.com", node.attrs.get("href", "")))
+        url = profile_url(urljoin("https://www.linkedin.com", node.attrs.get("href", "")))
     except (CollectionError, ValueError):
         return None
+    node.require_known_visibility()
+    return url
 
 
 def verify_document(document):
@@ -361,6 +383,7 @@ def search_results(document, page):
 
     if len(current) != 1 or number(current[0]) != [str(page)]:
         raise CollectionError("unsupported_search_contract")
+    current[0].require_known_visibility()
     next_buttons = [
         n
         for n in controls
@@ -368,6 +391,7 @@ def search_results(document, page):
     ]
     if len(next_buttons) == 1:
         next_button = next_buttons[0]
+        next_button.require_known_visibility()
         more = (
             "disabled" not in next_button.attrs and next_button.attrs.get("aria-disabled") != "true"
         )
