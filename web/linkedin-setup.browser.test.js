@@ -43,9 +43,13 @@ for (const named of [true, false]) test(named ? "LinkedIn guides installation, c
       window.addEventListener("message",event=>{
         const req=event.data;if(req?.source!=="tin.dashboard.collection.v3"||!window.extensionAvailable)return;
         window.extensionMessages.push(req.type);
+        if(req.type==="DISCOVER" && window.bridgeFailure){
+          window.postMessage({source:"tin.linkedin.collection.v3",id:req.id,ok:false,error:"extension_unavailable"},location.origin);return;
+        }
         let payload={};
         if(req.type==="DISCOVER")payload={version:"0.4.1",protocol:4,project_id:window.extensionProject,account:window.linkedInSignedIn?account:null,reason:window.setupFailure || (!window.linkedInSignedIn?"open_linkedin_tab":""),cloud_available:true,session_available:window.cloudReady};
         if(req.type==="PAIR"){window.extensionProject="project-one";payload={connected:true,project_id:"project-one"};}
+        if(req.type==="WAKE" && window.breakBridgeOnWake)window.bridgeFailure=true;
         if(req.type==="WAKE")setTimeout(()=>{if(!window.setupFailure)window.cloudReady=true;},500);
         window.postMessage({source:"tin.linkedin.collection.v3",id:req.id,ok:true,payload},location.origin);
       });
@@ -101,6 +105,10 @@ for (const named of [true, false]) test(named ? "LinkedIn guides installation, c
     await dialog.getByText("Tin could not prepare LinkedIn search. Keep LinkedIn open and try again.").waitFor();
     assert.equal(await dialog.isVisible(),true,"a saved preference is not reported as finished cloud setup");
     assert.equal(await dialog.getByRole("button",{name:"Try again",exact:true}).isEnabled(),true);
+    await page.evaluate(()=>{window.setupFailure="";window.breakBridgeOnWake=true;});
+    await dialog.getByRole("button",{name:"Try again",exact:true}).click();
+    await dialog.getByText("Install or update the Tin extension, then refresh this Tin tab.").waitFor();
+    assert.equal(await dialog.getByText("Cloud setup did not finish. Keep LinkedIn open and try again.").count(),0);
     assert.deepEqual(errors,[]);
   } finally {await browser.close();await new Promise(resolve=>server.close(resolve));}
 });
