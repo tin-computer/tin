@@ -144,7 +144,8 @@ class GrowthPlanActivities:
             await self.progress(
                 run.id, "read", 1, "Read the site, project memory and what Tin can run"
             )
-        except ValueError:
+        except ValueError as exc:
+            activity.logger.warning("growth plan %s could not be prepared: %s", run_id, exc)
             raise ApplicationError(
                 "The growth plan could not be prepared. Check the inputs and try again.",
                 non_retryable=True,

@@ -9,6 +9,7 @@ it: `tin_operator` (service availability; never a founder credential task),
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import UUID
 
@@ -40,6 +41,9 @@ from tin_lite.paid_ads import KEY as PAID_ADS_KEY
 from tin_lite.workflow_inputs import client_input_schema
 from tin_lite.workflow_prerequisites import project_readiness
 
+logger = logging.getLogger(__name__)
+# A definition billing could not price: left out of the plan without a founder-facing reason.
+UNPRICED = "unpriced_definition"
 ONBOARDING_WORKFLOW_KEYS = frozenset({GROWTH_ONBOARDING_PLAN_WORKFLOW_NAME, "growth.onboarding"})
 
 
@@ -77,6 +81,8 @@ def tin_state(
             continue
         definition = workflow.definition or {}
         if not definition.get("public_discovery", True):
+            continue
+        if ((billing_restrictions or {}).get(workflow.id) or {}).get("code") == UNPRICED:
             continue
         requirements = parse_integration_requirements(definition.get("integration_requirements"))
         required_providers = sorted({item.provider_key for item in requirements if item.required})
@@ -235,4 +241,9 @@ async def billing_restrictions(*, database, project_id, workflows):
             billing.terms(workflow.definition, project_id)
         except BillingError as exc:
             blocked[workflow.id] = {"code": exc.code, "message": str(exc)}
+        except ValueError:
+            # One definition Tin cannot price must not take the whole plan down with it. The
+            # cause stays in the log; the plan quietly leaves the workflow out.
+            logger.exception("Could not price %s for project %s", workflow.key, project_id)
+            blocked[workflow.id] = {"code": UNPRICED}
     return blocked
