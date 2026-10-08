@@ -3690,8 +3690,8 @@ def create_mcp_app(
         run: Any, chosen: dict[str, Any], actor: str
     ) -> tuple[list[str], dict[str, Any] | None]:
         """What the founder hears when approval starts a metered adaptation of the page."""
-        from tin_lite.content_delivery import about_usd, chosen_mode
-        from tin_lite.content_delivery_api import delivery_cost
+        from tin_lite.content_delivery import chosen_mode
+        from tin_lite.content_delivery_api import cost_about, delivery_cost
 
         cost = await delivery_cost(
             runtime=runtime(),
@@ -3700,10 +3700,10 @@ def create_mcp_app(
             actor=actor,
             repository=chosen["settings"]["repository"],
         )
-        about = about_usd(cost["estimated_usd"]) if cost else None
+        about = cost_about(cost)
         words = [
             "Approved. Tin is adapting the page to the site's own format in a separate run"
-            + (f", up to {about}, charged on actual usage." if about else ".")
+            + (f", {about}, charged on actual usage." if about else ".")
         ]
         route = chosen.get("route")
         if not route:

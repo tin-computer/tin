@@ -78,6 +78,16 @@ from one partial audit. More precise estimates can be added to the same policy
 once representative executions support them. This is separate from releasing
 unused per-call liability, which does not depend on estimate accuracy.
 
+`calibrated-p90-v1` replaces that bound with each workflow's 90th-percentile cost per run,
+authored in `src/tin_lite/workflow_estimates.py` (per workflow key, with defaults for Codex
+procedures, native model workflows and `workflow.code` packages; a traffic system sums the
+children its run starts). The estimate is never above the ceiling and is never learned at
+runtime. Admission checks it against credits and the project's per-run and monthly limits,
+and a per-call run in progress sets it aside; each paid call still reserves against the
+ceiling, which stays the hard stop. A Codex session budget holds its whole ceiling when it
+starts, so it is still admitted at the ceiling. Quotes issued under
+`configured-cost-bound-v1` and budgets already admitted keep their pinned estimate.
+
 `POST /api/projects/{id}/billing/estimate` and MCP `estimate_workflow_run` return
 the same preview without creating quotes, budgets or runs. Existing `/quotes`
 and `quote_workflow_run` remain optional compatibility interfaces. Configuration

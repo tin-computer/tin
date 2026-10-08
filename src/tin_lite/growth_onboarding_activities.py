@@ -725,11 +725,14 @@ class GrowthOnboardingActivities:
         }
 
     async def _schedule_costs(self, run, setup):
-        """Each saved schedule's most runs in a month and per-run maximum, as admission
-        prices them, plus the weekly articles an organic traffic system started here will save.
+        """Each saved schedule's most runs in a month, per-run maximum and the amount admission
+        checks (its estimate, or its whole session budget), plus the weekly articles an organic
+        traffic system started here will save.
 
         A schedule whose price cannot be read is left out; this only informs the handoff.
         """
+        from tin_lite.workflow_costs import admitted_amount
+
         billing = getattr(self.db, "billing", None)
         costs = []
 
@@ -743,7 +746,7 @@ class GrowthOnboardingActivities:
                     "title": title,
                     "runs": runs_per_month(schedule),
                     "maximum_nanos": maximum,
-                    "estimate_nanos": terms.get("estimate", {}).get("amount_nanos", maximum),
+                    "estimate_nanos": admitted_amount(terms),
                 }
             )
 

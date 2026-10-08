@@ -319,7 +319,8 @@ async def test_a_session_ceiling_is_ten_dollars_only_where_the_project_can_cover
     q = await quote(f)
     # The preview shows what admission pins.
     assert q["terms"]["maximum_nanos"] == ceiling
-    assert q["terms"]["estimate"]["amount_nanos"] == ceiling
+    # The estimate is the usual cost, never above the ceiling; the session holds the ceiling.
+    assert 0 < q["terms"]["estimate"]["amount_nanos"] <= ceiling
     run = await start(f, q)
     budget = await f.db.pool.fetchrow(
         "SELECT maximum_nanos FROM billing_run_budgets WHERE run_id=$1", run.id
@@ -334,7 +335,7 @@ async def test_a_project_that_cannot_cover_five_dollars_is_refused_as_before(bil
     spend(f, monkeypatch, wallet=7 * NANOS_PER_DOLLAR)
     q = await quote(f)
     assert q["terms"]["maximum_nanos"] == BEFORE_V5_MAXIMUM
-    with pytest.raises(BillingError, match=r"estimated at up to \$5\.00"):
+    with pytest.raises(BillingError, match=r"holds its \$5\.00 maximum while it runs"):
         await start(f, q)
 
 

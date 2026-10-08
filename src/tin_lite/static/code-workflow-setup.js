@@ -43,7 +43,9 @@
       const estimate = data.estimate;
       paragraph(estimate.basis === "included_bounded_compute"
         ? "Included compute · 0 Tin credits"
-        : `Estimated Tin model cost: up to $${estimate.estimated_usd} per run`);
+        : estimate.estimated_usd === estimate.maximum_usd || !estimate.maximum_usd
+          ? `Estimated Tin model cost: up to $${estimate.estimated_usd} per run`
+          : `Tin model cost: usually about $${estimate.estimated_usd} per run, never more than $${estimate.maximum_usd}`);
       for (const provider of estimate.external_providers || []) {
         const label = `${provider.provider_name} API`;
         if (provider.status === "free") {

@@ -283,10 +283,11 @@ def test_the_v6_ceiling_still_covers_its_children():
     assert v6 == v5
     # v7 adds Page decisions' $1 share; the snapshot makes no model call.
     assert v7 == v6 + 1_000_000_000
-    # v8's content plan runs its planning agent: its share grows from $1 to $6.
-    assert v8 == v7 + 5_000_000_000
-    # Two website.change children (the technical step and the delivery) fit inside it.
-    assert v6 >= 2 * api_terms(website, child=True)["maximum_nanos"]
+    # v8 has its own calibrated ceiling (2026-10-08): the keyword limit + $12 + $3 for each of
+    # the technical step and the delivery.
+    assert v8 == (2 + 12 + 3 + 3) * 1_000_000_000
+    # Two website.change children (the technical step and the delivery) fit inside each.
+    assert min(v6, v8) >= 2 * api_terms(website, child=True)["maximum_nanos"]
 
 
 async def test_v7_budget_admits_its_measurement_children_only_under_their_keys(billed):

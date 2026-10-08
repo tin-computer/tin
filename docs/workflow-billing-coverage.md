@@ -347,3 +347,17 @@ against the monthly limit while it runs. New hosted projects get $100 a month (a
 weekly `content.generate` fits; a project still on the old $10 monthly limit can admit one a
 month until an admin raises it.
 
+
+## Calibrated estimates and ceilings (2026-10-08)
+
+Estimates and ceilings are now separate. Each workflow's estimate is its p90 cost per run at
+today's rates (`src/tin_lite/workflow_estimates.py`); admission checks it against credits and
+project limits, except a Codex session budget, which holds its whole ceiling. Ceilings stay
+runaway guards: about five times the estimate for Codex procedures (by validator in
+`PROCEDURE_MAXIMUMS`, else by workflow key in `PROCEDURE_KEY_MAXIMUMS`), and the per-call
+reservation floor for native workflows (`NATIVE_MAXIMUMS_USD`). Notable changes:
+`content.generate` $6 (root and child), `website.change` $4, `content.refresh` $1,
+`social.x_draft` $1, the one-call `content.plan` $0.25, and `organic.traffic_system`
+(organic-traffic-v8 only) the keyword limit + $12, + $3 with page delivery, + $3 with a
+technical fix: $20 at defaults, with an estimate of $4.90. Earlier traffic-system versions
+keep their formula. Budgets already admitted keep the ceiling and estimate they pinned.
