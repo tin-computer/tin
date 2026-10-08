@@ -943,10 +943,9 @@ async def preview(
 ) -> dict[str, Any]:
     """Record the rows a source proposes and say what the next run makes, with what to tell
     the founder (`relay`). Shared by MCP preflight_website_change and the HTTP preflight."""
-    if source == delivery.BLOG_INDEX_SOURCE:
-        from tin_lite import website_change_blog_index
-
-        found = await website_change_blog_index.plan_changes(
+    if source in delivery.PLAN_SOURCES:
+        module = website_change.patch_module(source)
+        found = await module.plan_changes(
             database=database,
             storage=storage,
             integrations=integrations,
@@ -958,7 +957,8 @@ async def preview(
             [found["note"]]
             if found.get("note")
             else [
-                "The newest blog index plan is one change you can approve or decline once in Tin.",
+                f"The newest {module.SPEC.noun} is one change you can approve or decline once "
+                "in Tin.",
                 nxt["reason"] or "",
             ]
         )

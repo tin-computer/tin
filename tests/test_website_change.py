@@ -234,6 +234,7 @@ def test_a_change_row_is_defined_once_for_every_source():
         "audit",
         "planned",
         "blog_index",
+        "feedback",
     }
     for bad, match in (
         ({"change_id": "oa_short"}, "change ID"),

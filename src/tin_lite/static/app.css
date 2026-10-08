@@ -5707,6 +5707,56 @@ p.page-url-line[hidden],
   font-size: 12px;
 }
 
+/* A copy fix: each passage before and after, then links to the threads behind it. */
+.website-change-edits,
+.website-change-quotes {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.website-change-edits li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.website-change-edits code {
+  overflow-wrap: anywhere;
+  color: var(--ink-secondary);
+  font-size: 12px;
+}
+
+.website-change-edits del,
+.website-change-edits ins {
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.website-change-edits del {
+  color: var(--ink-secondary);
+}
+
+.website-change-edits ins {
+  color: var(--ink);
+  text-decoration: none;
+}
+
+.website-change-quotes {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  font-size: 13px;
+}
+
+.website-change-quotes a {
+  color: var(--accent-deep);
+}
+
 .decision-detail-body p.website-change-protected {
   color: var(--bermellon-text);
 }

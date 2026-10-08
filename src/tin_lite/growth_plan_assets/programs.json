@@ -275,6 +275,7 @@
           "content.diagram",
           "organic.audit",
           "qa.buyer_trust",
+          "qa.feedback_to_fix",
           "growth.score_quiz"
         ],
         "integrations": [
@@ -596,6 +597,7 @@
     "competitor.watch": "Watch competitors for pricing and product changes",
     "competitor.sunset_rescue": "Catch the users of a tool that is shutting down",
     "qa.buyer_trust": "Check if a buyer would trust your checkout",
+    "qa.feedback_to_fix": "Turn what people say about your product into a copy fix",
     "outreach.paying_segment": "Find who pays and stays",
     "outreach.campus_events": "Find campus events to reach student buyers",
     "outreach.speaking_shortlist": "Find the talks and podcasts worth pitching",
@@ -657,6 +659,7 @@
     "competitor.watch": "Reread known competitors' public pricing and changelog pages weekly and report only material changes against the last watch, with at most three suggested Tin follow-ups. Never signs in, contacts competitors, publishes, or changes your pricing.",
     "competitor.sunset_rescue": "Weekly, checks the watch list, competitor-watch changes and a small web sweep for a neighboring tool that is shutting down, dropping a free plan, repricing or relicensing; verifies it from the vendor's own pages, vetoes events the product cannot honestly serve, and for at most one builds a dated migration kit (export mapped to the product, import gap, ready inputs for a migration article, importer task and thread search). Never posts, contacts anyone or lists another tool's users.",
     "qa.buyer_trust": "Check the public site and checkout a buyer sees against fixed trust rules (HTTPS, security headers, exposed files, privacy, contact, refund and total-before-pay) and hand each code fix to Improve site health and each policy or host fix to the founder; public GET requests only, never signs in, submits forms, changes the site or claims CVE coverage.",
+    "qa.feedback_to_fix": "Read public threads where people react to the product (Reddit, Hacker News, GitHub Discussions, forums) and, when at least two different people misread the same existing page copy, plan the wording fix for the founder to approve in Decisions; website.change then puts it on the site. Reports product-change requests as tasks; never replies, posts or adds claims the Feature map does not show.",
     "outreach.paying_segment": "Reads Stripe subscriptions (the Stripe connection, a read-only restricted key) and names the customer segment that keeps paying, with exact inputs for the outreach shortlist, keyword plan and ads assessment; read-only, no model calls, never starts workflows or writes to Stripe.",
     "outreach.campus_events": "For businesses whose buyers are students, finds or compares upcoming campus events, ranks them on cited evidence and drafts one permission-dependent activation; never contacts organizers or students, registers, pays or collects student data.",
     "outreach.speaking_shortlist": "Find conferences, meetups and podcasts with an open call that fit the business, verify deadlines and requirements, and draft one pitch per venue; skips venues pitched before; never submits, applies or emails.",

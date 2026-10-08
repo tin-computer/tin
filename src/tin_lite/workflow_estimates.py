@@ -66,6 +66,8 @@ ESTIMATES_USD: dict[str, str] = {
     "growth.signup_source": "0.60",
     "content.design_md": "0.60",
     "qa.buyer_trust": "0.30",
+    # Five hosted runs of its private copy cost $0.52 to $0.59.
+    "qa.feedback_to_fix": "0.75",
     "growth.framework_starter": "0.30",
     # Native workflows.
     "creative.character": "0.40",

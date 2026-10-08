@@ -1336,6 +1336,26 @@ def create_mcp_app(
             if action == "approve"
             else "Declined. Tin will not make this change, and later runs will not propose it."
         )
+        if action == "approve" and row["source"] == "feedback":
+            from tin_lite import website_change_feedback
+
+            # Nothing else applies a copy fix, so its approval starts website.change.
+            run, reason = await website_change_feedback.start_after_approval(
+                runtime=runtime(),
+                settings=settings,
+                project_id=project,
+                change=row,
+                actor=token.subject,
+            )
+            row["next"] = {"run_id": str(run.id) if run else None, "reason": reason}
+            said = (
+                "Approved. Tin started website.change, which opens the pull request with this "
+                "copy fix and merges it once the site's checks pass, unless it touches a "
+                "protected page."
+                if run
+                else f"Approved, but website.change did not start: {reason} Start it with "
+                "source feedback when that is resolved."
+            )
         return {"change": row, **_founder_words(relay=[said])}
 
     @server.tool()
@@ -1371,7 +1391,7 @@ def create_mcp_app(
         project_id: str,
         expected_repository: str,
         repository_serves_site: StrictBool,
-        source: Literal["audit", "planned"] = "audit",
+        source: Literal["audit", "planned", "feedback"] = "audit",
         finding_ids: list[str] | None = None,
         decisions: list[str] | None = None,
         protected_paths: list[str] | None = None,
@@ -1381,7 +1401,8 @@ def create_mcp_app(
         Decisions. No run, paid compute, branch or pull request is created.
 
         source audit: the technical fixes the latest audit found. planned: the redirects and
-        noindex changes page decisions made.
+        noindex changes page decisions made. feedback: the copy fix the newest Turn what
+        people say into a copy fix run planned; approving it starts website.change.
 
         plan.repairs is what the next run makes, decisions_needed the judgment calls, and
         plan.left_out the rest (copy, manual steps such as deleting a page, declined rows,

@@ -13,7 +13,9 @@ paths it touches and its approval (ChangeRow). Two sources are implemented:
 - `planned` (phase 3, website_change_planned): the redirects and noindex changes page
   decisions and the site architecture plan made, one row per change, written the same way;
 - `blog_index` (phase 3, website_change_blog_index): the newest blog index plan, one row,
-  its files applied as they are.
+  its files applied as they are;
+- `feedback` (website_change_feedback): the newest copy fix qa.feedback_to_fix planned from
+  what people said in public, one row, its files applied as they are once approved.
 
 Two modes, decided by whether the change is pre-approved to commit to main:
 
@@ -58,10 +60,13 @@ SOURCES: dict[str, tuple[str, ...]] = {
     "audit": tuple(sorted({repair.kind for repair in repair_plan.REPAIRS.values()})),
     "planned": ("redirect", "noindex"),
     "blog_index": ("index",),
+    "feedback": ("copy",),
 }
 # Sources website.change takes: an approved page, the latest audit's fixes, the URL changes
-# page decisions and the site architecture plan made, and the blog index plan.
-IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index")
+# page decisions and the site architecture plan made, the blog index plan and the copy fix.
+IMPLEMENTED_SOURCES = ("content_draft", "audit", "planned", "blog_index", "feedback")
+# Sources whose plan names its files, applied as they are (website_change_patch).
+PATCH_SOURCES = ("blog_index", "feedback")
 # Sources whose approval is a row in website_changes. A page's approval is its own review.
 RECORDED_SOURCES = tuple(source for source in SOURCES if source != "content_draft")
 DECISIONS = {"approve": "approved", "decline": "declined"}
@@ -507,6 +512,19 @@ def publish_mode(
     }
 
 
+def patch_module(source_kind: str):
+    """The module that reads, records and applies a planned patch of this source."""
+    if source_kind == "blog_index":
+        from tin_lite import website_change_blog_index
+
+        return website_change_blog_index
+    if source_kind == "feedback":
+        from tin_lite import website_change_feedback
+
+        return website_change_feedback
+    raise ValueError(f"{source_kind} is not a planned patch.")
+
+
 # Admission of the page source.
 
 
@@ -518,13 +536,11 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
     source_kind = inputs.get("source", "content_draft")
     if source_kind not in IMPLEMENTED_SOURCES:
         raise ValueError(
-            "website.change makes approved pages, audit fixes, planned URL changes and the "
-            "blog index."
+            "website.change makes approved pages, audit fixes, planned URL changes, the "
+            "blog index and copy fixes."
         )
-    if source_kind == "blog_index":
-        from tin_lite import website_change_blog_index
-
-        return await website_change_blog_index.select_source(
+    if source_kind in PATCH_SOURCES:
+        return await patch_module(source_kind).select_source(
             database=database,
             storage=storage,
             integrations=integrations,
@@ -599,10 +615,12 @@ async def select_source(*, database, storage, integrations, project_id, inputs) 
 
 async def guard_source(conn, *, project_id, inputs, source) -> None:
     """Called under create_run's project lock, in the run/budget/receipt transaction."""
-    if inputs.get("source") == "blog_index" or source.get("source") == "blog_index":
-        from tin_lite import website_change_blog_index
-
-        return await website_change_blog_index.guard_source(
+    patched = next(
+        (kind for kind in (inputs.get("source"), source.get("source")) if kind in PATCH_SOURCES),
+        None,
+    )
+    if patched:
+        return await patch_module(patched).guard_source(
             conn, project_id=project_id, inputs=inputs, source=source
         )
     if inputs.get("source") in {"audit", "planned"} or source.get("source") in {

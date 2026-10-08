@@ -11,7 +11,13 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from tin_lite import analytics_brief, article_review, blog_index_plan, content_draft
+from tin_lite import (
+    analytics_brief,
+    article_review,
+    blog_index_plan,
+    content_draft,
+    feedback_fix_plan,
+)
 from tin_lite.code_storage import CodeStorage
 from tin_lite.diagram_compositions import parse_diagram_v2
 from tin_lite.domain import CODEX_PROCEDURE_EXECUTOR, MEMORY_INDEX_PATH
@@ -94,6 +100,7 @@ PUBLIC_ARTICLE_VALIDATOR = "public-article.v2"
 ANALYTICS_BRIEF_VALIDATOR = analytics_brief.VALIDATOR
 ANALYTICS_BRIEF_PATH_TEMPLATE = "reports/analytics/{run_id}.md"
 BLOG_INDEX_PLAN_VALIDATOR = blog_index_plan.VALIDATOR
+FEEDBACK_FIX_PLAN_VALIDATOR = feedback_fix_plan.VALIDATOR
 CONTENT_REFRESH_VALIDATOR = "content-refresh.v1"
 # content.plan_research's portfolio (content_plan_agent): one validator, one run-owned path.
 CONTENT_PORTFOLIO_VALIDATOR = "content-plan-portfolio.v1"
@@ -104,6 +111,7 @@ ARTIFACT_VALIDATORS = frozenset(
         "brand-design-capture.v1",
         ANALYTICS_BRIEF_VALIDATOR,
         BLOG_INDEX_PLAN_VALIDATOR,
+        FEEDBACK_FIX_PLAN_VALIDATOR,
         *content_draft.VALIDATORS,
         PUBLIC_ARTICLE_VALIDATOR,
         CONTENT_REFRESH_VALIDATOR,
@@ -993,6 +1001,7 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
                         PUBLIC_ARTICLE_VALIDATOR,
                         CONTENT_REFRESH_VALIDATOR,
                         BLOG_INDEX_PLAN_VALIDATOR,
+                        FEEDBACK_FIX_PLAN_VALIDATOR,
                         CONTENT_PORTFOLIO_VALIDATOR,
                     }
                 ):
@@ -1055,6 +1064,13 @@ def validate_codex_procedure_definition(definition: dict[str, Any]) -> CodexProc
             or workspace_kind != GITHUB_REPOSITORY_WORKSPACE
         ):
             raise ValueError("A blog index plan is content.blog_index's run-owned PLAN.md.")
+        if output_validator == FEEDBACK_FIX_PLAN_VALIDATOR and (
+            definition.get("key") != feedback_fix_plan.WORKFLOW_KEY
+            or output_path_template != feedback_fix_plan.PATH_TEMPLATE
+            or output_media_type != "text/markdown"
+            or workspace_kind != GITHUB_REPOSITORY_WORKSPACE
+        ):
+            raise ValueError("A copy fix plan is qa.feedback_to_fix's run-owned PLAN.md.")
         if output_validator == CONTENT_PORTFOLIO_VALIDATOR and (
             definition.get("key") != "content.plan_research"
             or output_path_template != CONTENT_PORTFOLIO_PATH_TEMPLATE
@@ -1551,6 +1567,8 @@ def validate_procedure_artifact(
         analytics_brief.validate(text)
     elif spec.output_validator == BLOG_INDEX_PLAN_VALIDATOR:
         blog_index_plan.validate(text)
+    elif spec.output_validator == FEEDBACK_FIX_PLAN_VALIDATOR:
+        feedback_fix_plan.validate(text)
     elif spec.output_validator == CONTENT_PORTFOLIO_VALIDATOR:
         from tin_lite import content_plan_agent
 

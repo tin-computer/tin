@@ -1,0 +1,115 @@
+{
+  "package_format": "tin-workflow-package-v1",
+  "definition": {
+    "key": "qa.feedback_to_fix",
+    "title": "Turn what people say about your product into a copy fix",
+    "description": "Read public threads where people react to your product, keep what at least two different people say in their own words, and plan the change to the page copy that caused it, or report why not. You approve the change in Decisions and website.change puts it on your site. Never replies or posts.",
+    "version": "1.0.0",
+    "executor": "codex.procedure",
+    "system": "product-qa",
+    "schedule_modes": ["on_demand"],
+    "input_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "project_id": {"type": "string", "format": "uuid"},
+        "platforms": {
+          "type": "array",
+          "title": "Where to look",
+          "items": {
+            "type": "string",
+            "enum": ["reddit", "hacker_news", "github_discussions", "technical_forums"]
+          },
+          "maxItems": 4,
+          "default": ["reddit", "hacker_news", "github_discussions", "technical_forums"],
+          "x-tin-ui": {"order": 20}
+        },
+        "lookback_days": {
+          "type": "integer",
+          "title": "Read threads from the last (days)",
+          "minimum": 7,
+          "maximum": 365,
+          "default": 90,
+          "x-tin-ui": {"control": "counter", "order": 30}
+        }
+      },
+      "required": ["project_id"]
+    },
+    "prerequisites": [
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "reports/GROWTH_ONBOARDING_PLAN.md",
+        "producer": "growth.onboarding_plan",
+        "reason": "The growth plan names the product, its domain and hard no's such as no site changes."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": "wiki/INDEX.md",
+        "section": "### Feature map",
+        "producer": "product.deep_dive",
+        "reason": "A fix may only say what the Feature map shows the product does."
+      },
+      {
+        "kind": "artifact",
+        "level": "recommended",
+        "path": ".agents/skills/writing-style/SKILL.md",
+        "producer": "style.capture",
+        "reason": "The changed copy stays in the founder's captured voice."
+      }
+    ],
+    "integration_requirements": [
+      {
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"],
+        "required": true
+      }
+    ],
+    "procedure": {
+      "prompt_path": "PROMPT.md",
+      "skills_path": "skills",
+      "skill_files": [
+        "skills/feedback-to-fix/PLAN.md",
+        "skills/feedback-to-fix/SKILL.md",
+        "skills/feedback-to-fix/THEMES.md"
+      ],
+      "entry_skill": "feedback-to-fix",
+      "workspace": {
+        "kind": "github.repository",
+        "provider_key": "infra.github",
+        "capabilities": ["contents.read"]
+      },
+      "sandbox": {"profile": "isolated", "egress": "fenced", "timeout_seconds": 1500},
+      "output": {
+        "kind": "project.artifact",
+        "path_template": "reports/feedback-to-fix/{run_id}/PLAN.md",
+        "media_type": "text/markdown",
+        "max_bytes": 200000,
+        "validator": "feedback-fix-plan.v1"
+      }
+    },
+    "presentation": {
+      "flow": {
+        "direction": "TD",
+        "nodes": [
+          {"id": "context", "kind": "store", "label": "Plan, feature map and voice", "fact": "read from project Files"},
+          {"id": "threads", "kind": "surface", "label": "Reddit, HN, GitHub, forums", "fact": "public threads, at most 30 opened"},
+          {"id": "decide", "kind": "step", "label": "Count people per theme", "fact": "THEMES.md decides, 2 different people"},
+          {"id": "none", "kind": "ghost", "label": "Report, no change", "fact": "too few voices, or not a copy problem"},
+          {"id": "plan", "kind": "step", "label": "Plan the copy fix", "fact": "existing wording only, at most 3 files"},
+          {"id": "review", "kind": "gate", "label": "Approve in Decisions", "fact": "before and after, with the quotes"},
+          {"id": "site", "kind": "receipt", "label": "website.change opens the PR", "fact": "merges once checks pass, protected pages wait"}
+        ],
+        "edges": [
+          {"from": "context", "to": "decide", "kind": "call"},
+          {"from": "threads", "to": "decide", "kind": "call"},
+          {"from": "decide", "to": "none", "kind": "call", "label": "fewer than 2 people"},
+          {"from": "decide", "to": "plan", "kind": "call"},
+          {"from": "plan", "to": "review", "kind": "call"},
+          {"from": "review", "to": "site", "kind": "signal", "label": "approved"}
+        ]
+      }
+    }
+  }
+}

@@ -89,6 +89,9 @@ AUDIT_SOURCE = "audit"
 REPAIR_SOURCES = frozenset({AUDIT_SOURCE, "planned"})
 # A website.change run that applies the blog index plan's files as they are, without Codex.
 BLOG_INDEX_SOURCE = "blog_index"
+# The same for the copy fix qa.feedback_to_fix planned.
+FEEDBACK_SOURCE = "feedback"
+PLAN_SOURCES = frozenset({BLOG_INDEX_SOURCE, FEEDBACK_SOURCE})
 
 
 def _website_source(run):
@@ -104,8 +107,9 @@ def repairs_site(run):
 
 
 def applies_plan(run):
-    """Whether this is a website.change run that applies the blog index plan's files."""
-    return _website_source(run) == BLOG_INDEX_SOURCE
+    """Whether this is a website.change run that applies a planned patch's files: the blog
+    index plan or a copy fix."""
+    return _website_source(run) in PLAN_SOURCES
 
 
 def adapts(run):
