@@ -65,7 +65,7 @@ async def get_change(project_id: UUID, change_id: str, request: Request, user: A
 async def _decide(project_id, change_id, action, payload, request, user):
     database = await _authorized(request, project_id, user)
     try:
-        return await website_change.decide(
+        row = await website_change.decide(
             database,
             project_id=project_id,
             change_id=change_id,
@@ -78,6 +78,19 @@ async def _decide(project_id, change_id, action, payload, request, user):
         raise HTTPException(status_code=404, detail="change not found") from exc
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if action == "approve" and row["source"] == "feedback":
+        from tin_lite import website_change_feedback
+
+        # Nothing else applies a copy fix, so its approval starts website.change.
+        run, reason = await website_change_feedback.start_after_approval(
+            runtime=request.app.state.runtime,
+            settings=request.app.state.settings,
+            project_id=project_id,
+            change=row,
+            actor=user.clerk_user_id,
+        )
+        row["next"] = {"run_id": str(run.id) if run else None, "reason": reason}
+    return row
 
 
 @router.post("/{change_id}/approve")
@@ -105,10 +118,10 @@ async def decline_change(
 
 
 class TechnicalPreflight(BaseModel):
-    """What to preview: the latest audit's fixes, the planned URL changes, or the blog index."""
+    """What to preview: the latest audit's fixes, the planned URL changes, or the copy fix."""
 
     model_config = ConfigDict(extra="forbid")
-    source: Literal["audit", "planned"] = "audit"
+    source: Literal["audit", "planned", "feedback"] = "audit"
     expected_repository: str = Field(min_length=3, max_length=140)
     repository_serves_site: bool
     finding_ids: list[str] = Field(default_factory=list, max_length=30)

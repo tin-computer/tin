@@ -4965,7 +4965,7 @@ function decisionListTitle(item) {
   return String(item.title || "").replace(/^Review:\s*/, "");
 }
 
-const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index" };
+const CHANGE_SOURCES = { audit: "Audit fix", planned: "Planned URL change", blog_index: "Blog index", feedback: "Copy fix" };
 
 // What the change does, in one line: the audit's repair, the planned move, or the plan's summary.
 function websiteChangeSummary(change) {
@@ -4977,8 +4977,18 @@ function websiteChangeSummary(change) {
       : `Keep ${planned.from} out of search (noindex).`;
   }
   if (change.source === "blog_index") return detail.summary || `A blog index at ${detail.route || change.paths?.[0] || ""}.`;
+  if (change.source === "feedback") return `${detail.summary || change.title} ${detail.people || 2} different people said it in public threads.`;
   const decided = detail.decision ? ` Decision: ${detail.decision}.` : "";
   return detail.change ? `Tin ${detail.change}.${decided}` : change.title;
+}
+
+// A copy fix shows the exact wording it changes and the public quotes behind it.
+function websiteChangeEditsHtml(detail) {
+  const edits = detail?.edits || [];
+  const quotes = (detail?.quotes || []).filter((url) => /^https:\/\//.test(String(url)));
+  if (!edits.length) return "";
+  return `<ul class="website-change-edits" aria-label="Wording">${edits.map((edit) => `<li><code>${escapeHtml(edit.path)}</code><del>${escapeHtml(edit.before)}</del><ins>${escapeHtml(edit.after)}</ins></li>`).join("")}</ul>
+      ${quotes.length ? `<ul class="website-change-quotes" aria-label="What people said">${quotes.map((url, index) => `<li><a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Thread ${index + 1}</a></li>`).join("")}</ul>` : ""}`;
 }
 
 function websiteChangeDetailHtml(item) {
@@ -4993,6 +5003,7 @@ function websiteChangeDetailHtml(item) {
     <div class="decision-detail-body">
       <p class="decision-summary">${escapeHtml(websiteChangeSummary(change))}</p>
       ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
+      ${websiteChangeEditsHtml(change.detail)}
       ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
       ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
       <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your site's build and your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>

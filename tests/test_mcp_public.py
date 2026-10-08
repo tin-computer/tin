@@ -622,6 +622,7 @@ def test_reviewed_public_catalog_coverage_and_explicit_exclusions():
         "social.x_compose",
         "competitor.sunset_rescue",
         "growth.framework_starter",
+        "qa.feedback_to_fix",
         # Hidden from discovery, so hidden from the plugin too; saved configurations run.
         "organic.error_surface",
         "organic.mention_backlinks",

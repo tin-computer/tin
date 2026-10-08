@@ -4,9 +4,9 @@
 
 `website.change` is meant to become the one workflow in the organic traffic system that writes
 to the founder's website: content drafts, page decisions (URL changes) and technical fixes
-all reach the site through it, after the founder approves them. Today it makes three kinds of
-change: approved pages, the technical fixes the latest audit found and the URL changes page
-decisions made. organic.site_architecture and content.blog_index are retired for new work
+all reach the site through it, after the founder approves them. Today it makes four kinds of
+change: approved pages, the technical fixes the latest audit found, the URL changes page
+decisions made and the copy fixes Product QA planned from what people said about the product. organic.site_architecture and content.blog_index are retired for new work
 (see [Retired](#retired-the-page-tree-and-the-blog-index)). content.deliver is retired for new
 work too: every approval that adapts a page starts website.change
 ([How content.deliver relates](#how-content-deliver-relates)).
@@ -25,6 +25,8 @@ the founder, approved or not.
 - 1.2.0 adds phase 3: planned URL changes and the blog index
   ([Phase 3](#phase-3-planned-url-changes-and-the-blog-index)), and change rows get cards in
   Decisions ([Decisions](#decisions-cards)).
+- 1.9.0 adds copy fixes from public feedback
+  ([Copy fixes](#copy-fixes-from-public-feedback-source-feedback)).
 
 ## Decided (Emre, 10/1)
 
@@ -239,9 +241,9 @@ and the route-folder check treats them as site-wide wherever they sit.
 
 | Field | Meaning |
 | --- | --- |
-| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; `planned_url_changes.finding_id`'s `oa_` IDs for planned URL changes; `bi_` for a blog index plan. |
-| `source` | `content_draft`, `audit`, `planned` or `blog_index` (migration 056 renamed the unused `technical_fix` placeholder to `audit`, migration 057 `planned_url_change` to `planned`). |
-| `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`. |
+| `change_id` | Stable across runs: two letters, `_`, 20 hex digits. `pg_` for a page (a digest of its run ID); the audit's `oa_` finding IDs for repairs; `planned_url_changes.finding_id`'s `oa_` IDs for planned URL changes; `bi_` for a blog index plan; `fb_` for a copy fix. |
+| `source` | `content_draft`, `audit`, `planned`, `blog_index` or `feedback` (migration 056 renamed the unused `technical_fix` placeholder to `audit`, migration 057 `planned_url_change` to `planned`, migration 061 added `feedback`). |
+| `kind` | Per source: `page`; the site-fix-v5 repair (`html_noindex`, `sitemap_add_urls`, `merge_redirect`, …); `redirect` or `noindex`; `index`; `copy`. |
 | `title` | What the founder reads. |
 | `paths` | Site paths or route patterns it touches (`/blog/{slug}`). |
 | `content_sha256`, `content_revision` | The exact content an approval covers. |
@@ -415,14 +417,39 @@ move and is left out.
 - Never more than five files, never `package.json`, lockfiles, package-manager settings, CI,
   deploy settings or secrets, and at most 400 KB.
 
+## Copy fixes from public feedback (`source: feedback`)
+
+`qa.feedback_to_fix` (Product QA) reads public threads where people react to the product and
+counts, in code, the different people behind each point. When at least two misread the same
+existing passage, it plans the wording change in `reports/feedback-to-fix/{run_id}/PLAN.md`
+and opens nothing. Its patch block, `feedback-fix-patch/1` (`feedback_fix_plan`), has the blog
+index's keys plus `kind`, `people`, `quotes` (the quote links) and `edits` (each passage's exact
+before and after wording, which the founder reads in Decisions), and only `update`s of at most
+three existing files. The plan's validator refuses a patch whose new wording is not in its
+file, one person, a product change or a new file.
+
+- When the run publishes its plan, Tin records it as one row (`website_change_feedback.record`):
+  `fb_` plus the first 20 hex digits of the SHA-256 of the quote links and file paths, kind
+  `copy`, the changed page's route as its path, the files' SHA-256 as the content an approval
+  covers. The ID follows the people, not the wording: a reworded plan from the same quotes
+  updates the pending row, a declined fix is not proposed again until new voices join it, and
+  a newer run that plans nothing withdraws a pending one. Recording never fails the paid run;
+  the next preview records what it missed.
+- Approving the row (Decisions or `approve_website_change`) starts website.change with
+  `source: feedback`, since nothing else applies a copy fix. The approval stands when the start
+  is refused (credits, a disconnected repository); the response says why.
+- From there it is the blog index's machinery (`website_change_patch`): no Codex session, the
+  plan's files as they are, the same staleness check, protected pages and merge rule.
+
 ### Decisions cards
 
 Pending rows and open judgment calls wait in Decisions beside run reviews, in the same list
 and detail card:
 
-- A change card shows its source (Audit fix, Planned URL change, Blog index) and kind, what it
-  does in one line, its pages, the blog index's files, and "Protected: … opens a pull request
-  for you to merge" when a protected page touches it. The list endpoint reports that page
+- A change card shows its source (Audit fix, Planned URL change, Blog index, Copy fix) and
+  kind, what it does in one line, its pages, a copy fix's before and after wording with links
+  to the threads behind it, the planned files, and "Protected: … opens a pull request for you
+  to merge" when a protected page touches it. The list endpoint reports that page
   (`protected`).
 - Its button row is Decline and Approve, nothing else. Either posts to the existing
   approve/decline route with a new request ID and the `content_sha256` the card showed, so

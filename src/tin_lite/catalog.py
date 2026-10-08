@@ -831,16 +831,16 @@ BUILTIN_WORKFLOWS = (
         description="Put approved changes on your website repository: an approved article, "
         "answer page or public article, adapted to the site's own format at the route you "
         "chose with its wording kept; the technical fixes the latest audit found; the "
-        "redirects and noindex changes your page decisions and site plan made; or the blog "
-        "index plan. Each fix, planned change or plan is a change you approve or decline once "
-        "in Tin. What you approved publishes: Tin merges the pull request once your "
-        "repository's required checks pass, then checks the live site. Anything else, a page "
-        "whose wording Tin can't confirm, and any "
-        "change to a protected page such as /sign-in or one you added to the project's "
-        "protected pages, opens a pull request for you to merge. Deleting a page stays with "
-        "you.",
+        "redirects and noindex changes your page decisions and site plan made; the copy fix "
+        "planned from what people said about your product; or the blog index plan. Each fix, "
+        "planned change or plan is a change you approve or decline once in Tin. What you "
+        "approved publishes: Tin merges the pull request once your repository's required "
+        "checks pass, then checks the live site. Anything else, a page whose wording Tin "
+        "can't confirm, and any change to a protected page such as /sign-in or one you added "
+        "to the project's protected pages, opens a pull request for you to merge. Deleting a "
+        "page stays with you.",
         executor=CODEX_PROCEDURE_EXECUTOR,
-        version_label="1.8.0",
+        version_label="1.9.0",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         # Agents start it for an approved change; the catalog has no picker for change rows.
@@ -857,9 +857,10 @@ BUILTIN_WORKFLOWS = (
                     "title": "Change source",
                     "description": "content_draft: one approved page (source_run_id). audit: "
                     "the technical fixes the latest organic audit found. planned: the "
-                    "redirects and noindex changes page decisions made. blog_index: retired; "
-                    "kept for runs that pinned it. Preview audit and planned with "
-                    "preflight_website_change.",
+                    "redirects and noindex changes page decisions made. feedback: the copy "
+                    "fix the newest qa.feedback_to_fix run planned; approving it in Tin starts "
+                    "this. blog_index: retired; kept for runs that pinned it. Preview audit, "
+                    "planned and feedback with preflight_website_change.",
                 },
                 "source_run_id": {
                     "type": "string",

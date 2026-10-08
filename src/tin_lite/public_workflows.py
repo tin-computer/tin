@@ -108,6 +108,7 @@ PUBLIC_WORKFLOWS: tuple[PublicWorkflow, ...] = (
         "qa.buyer_trust",
         PublicMCPExposure("start_buyer_trust_audit", destructive=True, open_world=True),
     ),
+    PublicWorkflow(UUID("8cc1df70-ac96-44ef-a97b-4cd78cb60669"), "qa.feedback_to_fix"),
     PublicWorkflow(
         UUID("4bf8c067-1709-427d-a00f-b0b53c871751"),
         "organic.error_surface",

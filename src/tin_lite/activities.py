@@ -2843,7 +2843,7 @@ class TinActivities:
             if content_repository_delivery.repairs_site(run):
                 return await self._prepare_website_repairs(run)
             if content_repository_delivery.applies_plan(run):
-                return await self._apply_blog_index(run)
+                return await self._apply_plan(run)
             await content_repository_delivery.saved_source(self._db, run_id)
             await self._db.mark_run_running(run_id)
             await self._db.project_run_progress(
@@ -2950,28 +2950,31 @@ class TinActivities:
             )
         return handled
 
-    async def _apply_blog_index(self, run) -> bool:
-        """A website.change run with the blog index plan: no Codex session. Tin opens the pull
-        request with the plan's files, merges it under the mode rules, and reports."""
-        from tin_lite import website_change_blog_index
+    async def _apply_plan(self, run) -> bool:
+        """A website.change run with a planned patch (the blog index plan or a copy fix): no
+        Codex session. Tin opens the pull request with the plan's files, merges it under the
+        mode rules, and reports."""
+        from tin_lite import website_change
 
+        source = run.input["source"]
+        module = website_change.patch_module(source)
         await self._db.mark_run_running(run.id)
         await self._db.project_run_progress(
             run_id=run.id,
             mode="steps",
             current=1,
             total=2,
-            step="apply_blog_index",
-            summary="Opening a pull request with the blog index plan's files.",
+            step=f"apply_{source}",
+            summary=f"Opening a pull request with the {module.SPEC.noun}'s files.",
         )
         return await self._await_with_heartbeats(
-            website_change_blog_index.apply(
+            module.apply(
                 database=self._db,
                 storage=self._storage,
                 integrations=self._integrations,
                 run=run,
             ),
-            details={"stage": "website_change_blog_index"},
+            details={"stage": f"website_change_{source}"},
         )
 
     async def _prepare_content_refresh(self, run_id: UUID) -> bool:
@@ -4454,6 +4457,18 @@ class TinActivities:
             )
             raise ApplicationError(reason, type=type(exc).__name__, non_retryable=conflict) from exc
         await self._db.release_lease(run.id)
+        if procedure.output_validator == "feedback-fix-plan.v1":
+            from tin_lite import website_change_feedback
+
+            # The copy fix waits for the founder in Decisions; approving it starts
+            # website.change. Never fails the run that paid for the plan.
+            await website_change_feedback.record(
+                database=self._db,
+                storage=self._storage,
+                integrations=self._integrations,
+                run=run,
+                revision=sha,
+            )
 
     @activity.defn(name="request_codex_procedure_review")
     async def request_codex_procedure_review(self, run_id_text: str) -> bool:
@@ -4688,7 +4703,7 @@ class TinActivities:
 
         run = await self._require_run(UUID(run_id_text))
         if content_repository_delivery.applies_plan(run):
-            # The blog index run merged or left its pull request while it applied the plan.
+            # A planned patch's run merged or left its pull request while it applied the plan.
             return
         if content_repository_delivery.repairs_site(run):
             if run.status == RunStatus.SUCCEEDED:

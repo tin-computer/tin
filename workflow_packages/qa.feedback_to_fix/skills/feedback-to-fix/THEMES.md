@@ -3,8 +3,8 @@
 Group the feedback you read into themes, record each theme's facts, then call
 `choose_action(themes)` from the single Python block in this file, unchanged. It counts the
 different people behind each theme from the quotes you recorded, so a count can never be larger
-than the evidence. It decides; you implement. If it returns anything other than `patch`, change
-no files.
+than the evidence. It decides; you implement. If it returns anything other than `patch`, plan
+no change.
 
 A theme is one thing several people said about the product. Its `kind` is one of:
 
@@ -20,16 +20,19 @@ Facts for each theme, each backed by something you read:
 - `quotes`: every quote behind the theme. Each has `author` (a label you give each person in
   this run, `a1`, `a2`; never a username), `url` (the https link to the comment or thread where
   you read it) and `text` (their words, verbatim, at most 400 characters).
-- `copy_files`: the existing files in the repository whose text carries this (the hero, the
-  FAQ already on the page, the meta description). Empty when no existing copy does.
+- `targets`: the existing copy in the repository whose text carries this, each as `path`,
+  `start` and `end` lines (1-based, inclusive): the hero sentence, the FAQ answer already on the
+  page, the meta description. Name the lines of the copy itself, not the whole file. Empty when
+  no existing copy does.
 - `supported`: true only when the Feature map or the code shows the product does what the fix
   would say. When the fix would need a claim the product does not back, it is false.
 
-The code merges themes of the same kind that name the same copy file: two people who raise the
-same kind of problem on the same copy are one theme even when they suggest different fixes. Record
-each point as its own theme and name the copy files exactly, so the merge has something to match.
+The code merges themes of the same kind whose targets overlap: two people who misread the same
+sentence are one theme even when they suggest different fixes. Two people who raise the same
+kind of problem about different copy in the same file (the hero and the pricing note) are not.
+Record each point as its own theme with exact line ranges, so the merge has something to match.
 A merged theme is supported only when every theme in it is. Themes of different kinds, themes
-about different files and every `product_change` theme are never merged.
+whose copy does not overlap and every `product_change` theme are never merged.
 
 One person who says it in three comments is one person. A quote with no link, no text or a
 second "author" that is really the same person is an error in your facts, not a theme.
@@ -70,36 +73,62 @@ def _people(theme):
     return len(authors)
 
 
+def _targets(theme):
+    targets = theme.get("targets")
+    if not isinstance(targets, list):
+        raise ValueError("targets must be a list of copy line ranges")
+    for target in targets:
+        path = target.get("path") if isinstance(target, dict) else None
+        start = target.get("start") if isinstance(target, dict) else None
+        end = target.get("end") if isinstance(target, dict) else None
+        if not isinstance(path, str) or not path.strip():
+            raise ValueError("a target names the repository file")
+        if type(start) is not int or type(end) is not int or not 1 <= start <= end:
+            raise ValueError("a target names its first and last line, 1-based")
+    return targets
+
+
+def _files(theme):
+    return sorted({target["path"] for target in theme["targets"]})
+
+
+def _overlap(first, second):
+    return any(
+        a["path"] == b["path"] and a["start"] <= b["end"] and b["start"] <= a["end"]
+        for a in first["targets"]
+        for b in second["targets"]
+    )
+
+
 def _blocker(theme):
     if theme["kind"] == "product_change":
         return "it asks for a product change, which different wording cannot fix"
     if not theme["supported"]:
         return "the product does not show it does what a fix would have to say"
-    if not theme["copy_files"]:
+    if not theme["targets"]:
         return "no existing page copy in the repository carries it"
-    if len(theme["copy_files"]) > MAX_FILES:
+    if len(_files(theme)) > MAX_FILES:
         return f"fixing it would touch more than {MAX_FILES} files"
     return ""
 
 
 def _merge(themes):
-    # ponytail: one pass, so a theme that would bridge two earlier ones is not chained
+    # One pass, so a theme that would bridge two earlier ones is not chained.
     merged = []
     for theme in themes:
         target = None
-        if theme["kind"] != "product_change" and theme["copy_files"]:
+        if theme["kind"] != "product_change":
             for other in merged:
-                same_kind = other["kind"] == theme["kind"]
-                if same_kind and set(other["copy_files"]) & set(theme["copy_files"]):
+                if other["kind"] == theme["kind"] and _overlap(other, theme):
                     target = other
                     break
         if target is None:
             merged.append(
-                {**theme, "quotes": list(theme["quotes"]), "copy_files": list(theme["copy_files"])}
+                {**theme, "quotes": list(theme["quotes"]), "targets": list(theme["targets"])}
             )
             continue
         target["quotes"] += theme["quotes"]
-        target["copy_files"] += [f for f in theme["copy_files"] if f not in target["copy_files"]]
+        target["targets"] += [t for t in theme["targets"] if t not in target["targets"]]
         target["supported"] = target["supported"] and theme["supported"]
     return merged
 
@@ -119,9 +148,7 @@ def choose_action(themes):
             raise ValueError(f"kind must be one of {', '.join(KINDS)}")
         if type(theme.get("supported")) is not bool:
             raise ValueError("supported must be true or false")
-        files = theme.get("copy_files")
-        if not isinstance(files, list) or any(not isinstance(f, str) or not f for f in files):
-            raise ValueError("copy_files must be a list of file paths")
+        _targets(theme)
         _people(theme)
         valid.append(theme)
 
@@ -131,6 +158,7 @@ def choose_action(themes):
         return {
             "outcome": "insufficient_data",
             "theme": None,
+            "files": [],
             "reported": [],
             "reason": f"no theme has {MIN_AUTHORS} different people behind it yet; "
             "run again after more feedback",
@@ -139,10 +167,17 @@ def choose_action(themes):
     for theme, _ in real:
         if not _blocker(theme):
             others = [other["id"] for other, _ in real if other is not theme]
-            return {"outcome": "patch", "theme": theme["id"], "reported": others, "reason": ""}
+            return {
+                "outcome": "patch",
+                "theme": theme["id"],
+                "files": _files(theme),
+                "reported": others,
+                "reason": "",
+            }
     return {
         "outcome": "report_only",
         "theme": None,
+        "files": [],
         "reported": [theme["id"] for theme, _ in real],
         "reason": _blocker(real[0][0]),
     }

@@ -629,6 +629,11 @@ WORKFLOW_EXPECTATIONS: dict[str, dict[str, str]] = {
         "lands": "Files, reports/BUYER_TRUST.md",
         "watch": "the verdict and fixes; code fixes go to Improve site health",
     },
+    "qa.feedback_to_fix": {
+        "first": "about twenty minutes",
+        "lands": "Files, reports/feedback-to-fix/<run>/PLAN.md; a copy fix waits in Decisions",
+        "watch": "approving the copy fix puts it on your site; most runs find too few voices",
+    },
     "outreach.paying_segment": {
         "first": "a few minutes",
         "lands": "Files, reports/outreach/PAYING_SEGMENT.md",

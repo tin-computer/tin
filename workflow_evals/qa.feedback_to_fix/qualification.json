@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "assumptions": [
+    "The repository selected on GitHub holds the landing page copy the product's visitors read.",
+    "Public threads about the product exist on at least one chosen platform within the window; when they do not, insufficient data is the correct result.",
+    "A copy fix reaches visitors only after the founder approves it in Decisions and website.change merges it."
+  ],
+  "effects": [
+    "Writes the plan reports/feedback-to-fix/{run_id}/PLAN.md in this project.",
+    "For a patch, records one copy fix in Decisions; approving it starts website.change, which opens the pull request. The run itself opens none."
+  ],
+  "cost_drivers": [
+    "The number of threads and comments opened, at most 30 threads, which grows with the window and platforms chosen.",
+    "Running the repository's own lint and test commands on the scratch copy."
+  ],
+  "rubric": [
+    {"id": "verbatim", "question": "Is every quote exactly what the page says, with a link to the comment or thread it was read in?"},
+    {"id": "different_people", "question": "Does every theme the plan acts on have at least two different people behind it, counted from the quotes?"},
+    {"id": "same_copy", "question": "Do the people behind a planned theme point at the same passage, not just the same file?"},
+    {"id": "no_identities", "question": "Does the plan avoid usernames and put no one's words on the site?"},
+    {"id": "supported_copy", "question": "Does every changed sentence say only what the Feature map or the code shows the product does?"}
+  ],
+  "cases": [
+    {
+      "id": "repeated_confusion",
+      "description": "Two launch threads where different people say the first screen is confusing and ask what to start with; the repository has a hero section and a first-run screen.",
+      "inputs": {
+        "platforms": ["reddit"],
+        "lookback_days": 90
+      },
+      "expect": {
+        "contains": ["## Outcome\n\n`patch`", "## Evidence", "## The change", "## Sources read", "feedback-fix-patch.json:start", "```json feedback-to-fix"],
+        "excludes": ["`report_only`", "`insufficient_data`"]
+      }
+    },
+    {
+      "id": "same_file_different_points",
+      "description": "Boundary: one person misreads the hero tagline and another objects to the pricing note further down the same landing page file. Different copy is not one theme, so nothing is planned.",
+      "inputs": {
+        "platforms": ["reddit"]
+      },
+      "expect": {
+        "contains": ["## Outcome\n\n`insufficient_data`", "Seen once"],
+        "excludes": ["## Outcome\n\n`patch`", "feedback-fix-patch.json:start"]
+      }
+    },
+    {
+      "id": "one_voice_only",
+      "description": "Boundary: a single commenter raises three separate points across a thread. One person is not a theme, so nothing changes.",
+      "inputs": {
+        "platforms": ["reddit"]
+      },
+      "expect": {
+        "contains": ["## Outcome\n\n`insufficient_data`", "## Not changed"],
+        "excludes": ["## Outcome\n\n`patch`", "`report_only`", "feedback-fix-patch.json:start"]
+      }
+    },
+    {
+      "id": "unreachable_platform",
+      "description": "Plausible but unusable input: the chosen platform cannot be opened at all. It must say so and must not fill the plan from memory.",
+      "inputs": {
+        "platforms": ["technical_forums"],
+        "lookback_days": 7
+      },
+      "expect": {
+        "contains": ["## Outcome\n\n`insufficient_data`", "## Sources read"],
+        "excludes": ["## Outcome\n\n`patch`", "`report_only`", "## Evidence\n\n> "]
+      }
+    }
+  ]
+}
