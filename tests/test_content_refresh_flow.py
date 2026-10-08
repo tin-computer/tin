@@ -514,9 +514,10 @@ async def test_a_failed_delivery_retries_against_the_current_head(publication_db
 def test_refresh_compute_has_its_own_ceiling_about_five_times_the_estimate():
     definition = spec(refresh.KEY).definition
     assert definition["procedure"]["output"]["validator"] == refresh.VALIDATOR
-    assert PROCEDURE_MAXIMUMS[refresh.VALIDATOR] == 2_500_000_000
+    # Five times its $0.20 p90 over six runs (2026-10-08 calibration).
+    assert PROCEDURE_MAXIMUMS[refresh.VALIDATOR] == 1_000_000_000
     terms = api_terms(definition)
-    assert terms["maximum_nanos"] == 2_500_000_000
+    assert terms["maximum_nanos"] == 1_000_000_000
     assert json.dumps(terms)  # Pinned into the run as plain data.
 
 

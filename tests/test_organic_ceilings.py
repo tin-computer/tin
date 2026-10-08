@@ -107,19 +107,18 @@ def test_content_plan_share_covers_its_one_model_call():
 @pytest.mark.parametrize(
     ("inputs", "dollars"),
     [
-        # Children add up to keyword $2 + audit $2 + plan $6 (its planning agent) + draft $5 +
-        # adaptation $5 + technical fix $5 (on by default) + first refresh $2.50 + Page
-        # decisions $1 = $28.50; the pool caps the run at the keyword limit + $10 + the
-        # refresh's $2.50 + Page decisions' $1 + the planning agent's extra $5.
-        ({}, 20.5),
-        ({"technical_fix": False}, 20.5),  # $23.50 of children, still over the pool
-        ({"content_delivery": "draft_only"}, 20.5),  # $23.50 with the default technical fix
-        ({"content_delivery": "draft_only", "technical_fix": False}, 18.5),  # under the pool
+        # organic-traffic-v8 (2026-10-08 calibration): the keyword limit + $12, plus $3 for
+        # page delivery and $3 for technical fixes (both on by default); about four times the
+        # children's p90s, and above any one child's own ceiling.
+        ({}, 20),
+        ({"technical_fix": False}, 17),
+        ({"content_delivery": "draft_only"}, 17),
+        ({"content_delivery": "draft_only", "technical_fix": False}, 14),
         (
             {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
-            20.5,
+            20,
         ),
-        ({"keyword_max_cost_usd": 9}, 27.5),  # a founder's higher keyword limit raises the pool
+        ({"keyword_max_cost_usd": 9}, 27),  # a founder's higher keyword limit raises it
     ],
 )
 def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
@@ -139,17 +138,26 @@ def test_traffic_system_ceiling_uses_the_new_defaults(inputs, dollars):
     assert terms["maximum_nanos"] == int(dollars * NANOS_PER_DOLLAR)
 
 
-def test_the_pool_is_about_five_times_a_measured_run():
-    from tin_lite.codex_api_pricing import PROCEDURE_MAXIMUMS
-    from tin_lite.service_pricing import TRAFFIC_SYSTEM_POOL_USD
+def test_the_v8_ceiling_is_about_four_times_its_estimate_and_holds_every_child():
+    from tin_lite.codex_api_pricing import api_terms
+    from tin_lite.service_pricing import TRAFFIC_SYSTEM_V8_USD
+    from tin_lite.workflow_estimates import estimate_nanos
 
-    measured = Decimal("2.49")  # a production run: audit, keywords, plan and one draft
-    refresh = Decimal("0.45")  # the first page refresh, estimated at list price
-    pool = (
-        2
-        + TRAFFIC_SYSTEM_POOL_USD
-        + Decimal(PROCEDURE_MAXIMUMS["content-refresh.v1"]) / NANOS_PER_DOLLAR
-    )
-    assert Decimal("4.5") < pool / (measured + refresh) < Decimal("5.5")
-    # Every child still fits on its own: the largest single child ceiling is $5.
-    assert pool > 5
+    spec = SPECS["organic.traffic_system"]
+    inputs = {"keyword_max_cost_usd": 2, "technical_fix": True, "content_delivery": "auto"}
+    maximum = service_terms(spec.definition, inputs=inputs)["maximum_nanos"]
+    estimate = estimate_nanos(spec.definition, inputs, maximum)
+    assert (maximum, estimate) == (20 * NANOS_PER_DOLLAR, 4_900_000_000)
+    assert Decimal("3.5") < Decimal(maximum) / estimate < Decimal("4.5")
+    # Every child fits on its own, without the keyword limit: audit v15 $6, the planning
+    # agent $6, the draft $6, website.change $4 and the refresh $1.
+    children = [
+        service_terms(SPECS["organic.audit"].definition)["maximum_nanos"],
+        service_terms(SPECS["content.plan"].definition)["maximum_nanos"],
+        *(
+            api_terms(SPECS[key].definition, child=True)["maximum_nanos"]
+            for key in ("content.generate", "website.change", "content.refresh")
+        ),
+    ]
+    assert children == [n * NANOS_PER_DOLLAR for n in (6, 6, 6, 4, 1)]
+    assert all(child <= TRAFFIC_SYSTEM_V8_USD * NANOS_PER_DOLLAR for child in children)

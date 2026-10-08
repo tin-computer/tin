@@ -83,16 +83,72 @@ BEFORE_V5_MAXIMUM = 5 * NANOS_PER_DOLLAR
 # A child of a parent budget keeps $5: parent pools (e.g. the organic traffic system's) were
 # composed from $5 children, and the parent's maximum bounds the whole run anyway.
 CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
-# Session ceilings below the default, by the procedure's output contract. A page refresh
-# reads the page's current text, a few positioning files and the style guide, then writes one
-# short document: about 150,000 input and 6,000 output tokens at list price, roughly $0.45.
-# Its ceiling is about five times that. No refresh has run yet; recalibrate from measurements.
+# Session ceilings by the procedure's output contract. A page refresh reads the page's current
+# text, a few positioning files and the style guide, then writes one short document; its p90
+# over six runs was $0.20 (workflow_estimates), and its ceiling is five times that.
 PROCEDURE_MAXIMUMS = {
-    "content-refresh.v1": 2_500_000_000,
+    "content-refresh.v1": 1_000_000_000,
     # content.plan_research reads the program's research and the project's files and searches
     # before it plans up to 81 pages; a runaway guard, not an estimate.
     "content-plan-portfolio.v1": 6_000_000_000,
 }
+# Session ceilings by workflow key, for procedures whose output has no validator entry above.
+# A validator entry wins; a workflow with neither keeps the default. Like a validator entry, a
+# key entry also replaces the $5 child ceiling. Runaway guards, not estimates: about five times
+# each workflow's p90 (workflow_estimates), rounded to 3/4/5/6/8/10/12/15 and never below twice
+# the most a run has cost at today's rates. Only ceilings other than the $10 default are listed.
+PROCEDURE_KEY_MAXIMUMS: dict[str, int] = {
+    key: dollars * NANOS_PER_DOLLAR
+    for key, dollars in {
+        "product.deep_dive": 12,
+        "qa.product_audit": 12,
+        "research.deep_dive": 8,
+        "outreach.awesome_lists": 8,
+        "growth.free_tool": 8,
+        "content.generate": 6,
+        "content.public_article": 6,
+        "outreach.email_shortlist": 6,
+        "organic.mention_backlinks": 6,
+        "content.diagram": 6,
+        "qa.signup_walkthrough": 5,
+        "outreach.newsletter_placements": 5,
+        "outreach.syllabus_placement": 5,
+        "outreach.podcast_guest": 5,
+        "website.change": 4,
+        "brand.capture": 4,
+        "outreach.community_threads": 4,
+        "outreach.speaking_shortlist": 4,
+        "product.analytics_brief": 3,
+        "competitor.watch": 3,
+        "site.health_improve": 3,
+        "outreach.marketplace_listings": 3,
+        "outreach.campus_events": 3,
+        "competitor.sunset_rescue": 3,
+        "growth.signup_source": 3,
+        "content.design_md": 3,
+        "qa.buyer_trust": 3,
+        "growth.framework_starter": 3,
+    }.items()
+}
+
+
+def procedure_maximum(definition, *, before_v5=False, child=False, room=None):
+    """A procedure's ceiling: its validator's entry, else its workflow key's, else the default
+    ($10 root, $5 child, $5 for quotes issued before v5)."""
+    validator = definition.get("procedure", {}).get("output", {}).get("validator")
+    if validator in PROCEDURE_MAXIMUMS:
+        return PROCEDURE_MAXIMUMS[validator]
+    # Quotes issued before v5 were priced before key entries existed. An entry above the $10
+    # default applies, like the default, only where the project's limits and wallet can cover
+    # it; elsewhere the default's own rule keeps old behaviour.
+    entry = PROCEDURE_KEY_MAXIMUMS.get(definition.get("key"))
+    if (
+        entry is not None
+        and not before_v5
+        and (room is None or entry <= DEFAULT_MAXIMUM or room >= entry)
+    ):
+        return entry
+    return BEFORE_V5_MAXIMUM if before_v5 else CHILD_MAXIMUM if child else default_maximum(room)
 
 
 def default_maximum(room=None):
@@ -127,10 +183,7 @@ def api_terms(definition, *, session_budget=False, before_v5=False, child=False,
         "definition_sha256": digest(definition),
         "kind": "codex_api",
         "codex_auth": MODE,
-        "maximum_nanos": PROCEDURE_MAXIMUMS.get(
-            validator,
-            BEFORE_V5_MAXIMUM if before_v5 else CHILD_MAXIMUM if child else default_maximum(room),
-        ),
+        "maximum_nanos": procedure_maximum(definition, before_v5=before_v5, child=child, room=room),
         "request_maximum_nanos": REQUEST_MAXIMUM,
         "request_maximum_input_bytes": REQUEST_INPUT_ENVELOPE,
         "execution_fee_nanos": 0,

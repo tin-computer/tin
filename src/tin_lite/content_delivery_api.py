@@ -82,6 +82,19 @@ async def delivery_cost(*, runtime, settings, run, actor, repository):
     }
 
 
+def cost_about(cost):
+    """A delivery's cost as the card and chat say it: its usual cost and its ceiling, or the
+    ceiling alone when the estimate is the ceiling."""
+    from tin_lite.content_delivery import about_usd
+
+    if not cost:
+        return None
+    usual, maximum = about_usd(cost["estimated_usd"]), about_usd(cost["maximum_usd"])
+    if not maximum:
+        return None
+    return f"up to {maximum}" if usual in {None, maximum} else f"about {usual}, at most {maximum}"
+
+
 async def publish_preview(*, runtime, settings, run, actor):
     """What Publish does for a page Tin adapts to the site, before the founder presses it.
 
@@ -90,7 +103,7 @@ async def publish_preview(*, runtime, settings, run, actor):
     the delivery the founder saved (commit to main, else a pull request); `footer` is the
     card's one line, with the configured cost preview when billing is on.
     """
-    from tin_lite.content_delivery import about_usd, publish_sentence
+    from tin_lite.content_delivery import publish_sentence
 
     connection = await runtime.database.get_integration_connection(
         project_id=run.project_id, provider_key="infra.github"
@@ -129,8 +142,7 @@ async def publish_preview(*, runtime, settings, run, actor):
         else None
     )
     sentence = publish_sentence(mode, route_missing=page is not None and route is None)
-    # The preview is the configured ceiling, not a measured estimate, so it reads "up to".
-    about = about_usd(cost["estimated_usd"]) if cost else None
+    about = cost_about(cost)
     preview = {
         "adapt": True,
         "label": "Publish",
@@ -139,7 +151,7 @@ async def publish_preview(*, runtime, settings, run, actor):
         "route": route,
         "sentence": sentence,
         "cost": cost,
-        "footer": f"{sentence} · up to {about}" if about else sentence,
+        "footer": f"{sentence} · {about}" if about else sentence,
     }
     if page and route is None:
         # Before the first page of this type publishes, the coding agent asks the founder.

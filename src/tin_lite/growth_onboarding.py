@@ -950,11 +950,11 @@ def runs_per_month(schedule: dict[str, Any]) -> int:
 def spending_warnings(schedules: list[dict[str, Any]], policy: dict[str, Any] | None) -> list[str]:
     """Say when saved schedules may not fit the project's spending limits, one line each.
 
-    Admission counts a charged run at what it cost and a run still going at its full maximum.
-    A scheduled run starts only if its maximum fits the limit for scheduled runs and the
-    per-run limit, and if this month's charges plus that maximum fit the monthly limit. Each
-    schedule carries its title, its most runs in a month, and its per-run maximum and
-    estimate in nanodollars.
+    A scheduled run starts only if its maximum fits the limit for scheduled runs, and if its
+    admitted amount fits the per-run limit and, with this month's charges, the monthly limit.
+    The admitted amount is the run's estimate, or its maximum when a session budget holds it
+    whole. Each schedule carries its title, its most runs in a month, and its per-run maximum
+    and admitted amount (estimate_nanos) in nanodollars; the month projects the estimates.
     """
     if not policy:
         return []
@@ -962,9 +962,10 @@ def spending_warnings(schedules: list[dict[str, Any]], policy: dict[str, Any] | 
     standing = policy.get("schedule_max_nanos") or 0
     warnings, running = [], []
     for item in schedules:
-        maximum = item["maximum_nanos"]
+        maximum, estimate = item["maximum_nanos"], item["estimate_nanos"]
         if maximum <= 0 or item["runs"] <= 0:
             continue
+        cost = f"Each run can cost up to ${usd(maximum)}"
         if maximum > standing:
             reason, fix = (
                 (
@@ -977,32 +978,45 @@ def spending_warnings(schedules: list[dict[str, Any]], policy: dict[str, Any] | 
                     "set a limit for scheduled runs",
                 )
             )
-        elif maximum > per_run:
+        elif estimate > per_run:
             reason = f"this project's per-run limit is ${usd(per_run)}"
             fix = "raise the per-run limit"
-        elif maximum > monthly:
+            cost = _run_cost(estimate, maximum)
+        elif estimate > monthly:
             reason = f"this project's monthly limit is ${usd(monthly)}"
             fix = "raise the monthly limit"
+            cost = _run_cost(estimate, maximum)
         else:
             running.append(item)
             continue
         warnings.append(
-            f"Spending limit: {item['title']} will not run on its schedule. Each run can cost "
-            f"up to ${usd(maximum)}, and {reason}. To run it, {fix} with {RAISE_LIMITS}."
+            f"Spending limit: {item['title']} will not run on its schedule. {cost}, and "
+            f"{reason}. To run it, {fix} with {RAISE_LIMITS}."
         )
     total = sum(item["runs"] * item["estimate_nanos"] for item in running)
     if total > monthly:
         parts = [
-            f"{item['title']} can run up to {item['runs']} times a month at up to "
-            f"${usd(item['maximum_nanos'])} a run"
+            f"{item['title']} can run up to {item['runs']} times a month at "
+            + (
+                f"up to ${usd(item['maximum_nanos'])} a run"
+                if item["estimate_nanos"] >= item["maximum_nanos"]
+                else f"about ${usd(item['estimate_nanos'])} a run"
+            )
             for item in running
         ]
+        about = all(item["estimate_nanos"] >= item["maximum_nanos"] for item in running)
         warnings.append(
-            f"Spending limit: {_join(parts)}, up to ${usd(total)} a month, above this "
-            f"project's ${usd(monthly)} monthly limit, so some runs may not start. To keep "
-            f"every run, raise the monthly limit with {RAISE_LIMITS}."
+            f"Spending limit: {_join(parts)}, {'up to' if about else 'about'} ${usd(total)} a "
+            f"month, above this project's ${usd(monthly)} monthly limit, so some runs may not "
+            f"start. To keep every run, raise the monthly limit with {RAISE_LIMITS}."
         )
     return warnings
+
+
+def _run_cost(estimate: int, maximum: int) -> str:
+    if estimate >= maximum:
+        return f"Each run can cost up to ${usd(maximum)}"
+    return f"Each run usually costs about ${usd(estimate)}, never more than ${usd(maximum)}"
 
 
 def founder_message(setup: dict[str, Any], *, titles: dict[str, str]) -> str:

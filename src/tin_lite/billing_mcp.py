@@ -84,6 +84,9 @@ def register_billing_tools(server, *, runtime, settings, caller):
         Optional when discussing setup/cost. Normal starts check funds automatically;
         do not call this or ask for billing approval before every run. Use one workflow
         key/UUID or saved configuration UUID. Actual verified usage determines the charge.
+        estimated_usd is what a run usually costs (Tin's measured 90th percentile); maximum_usd
+        is the most one run can spend. Starts are checked at the estimate, except a session
+        budget, which holds its maximum while it runs. Tell the founder both, kept apart.
         """
         return await cost_preview(
             project_id, workflow_id, project_workflow_id, inputs, preview_only=True

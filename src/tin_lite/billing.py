@@ -17,7 +17,14 @@ from tin_lite.billing_contracts import (
     usd,
 )
 from tin_lite.codex_api import api_enabled as codex_api_enabled
-from tin_lite.workflow_costs import configured_terms, incremental, liability, session_funded
+from tin_lite.workflow_costs import (
+    BOUND_POLICY,
+    admitted_amount,
+    configured_terms,
+    incremental,
+    liability,
+    session_funded,
+)
 from tin_lite.workflow_definitions import resolve_execution_contract
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
@@ -93,20 +100,37 @@ def run_room(policy, usage, credits) -> int:
     return room
 
 
-def project_limit_message(policy, estimate, usage) -> str | None:
-    """Name the one project limit that blocks admission, or None when none does."""
+def cost_words(terms) -> str:
+    """How a run's cost reads to the founder: its usual cost and its ceiling, kept apart, or
+    the amount held up front when a session budget holds its whole ceiling."""
+    maximum = terms["maximum_nanos"]
+    estimate = terms.get("estimate", {}).get("amount_nanos", maximum)
+    if estimate >= maximum:
+        return f"This workflow can cost up to ${usd(maximum)}"
+    if not incremental(terms):
+        return (
+            f"This workflow usually costs about ${usd(estimate)}, and it holds its "
+            f"${usd(maximum)} maximum while it runs"
+        )
+    return f"This workflow usually costs about ${usd(estimate)}, never more than ${usd(maximum)}"
+
+
+def project_limit_message(policy, amount, usage, *, terms=None) -> str | None:
+    """Name the one project limit that blocks admission, or None when none does.
+
+    `amount` is what admission checks (admitted_amount); `terms` words it for the founder.
+    """
     if not policy:
         return "This project has no spending policy yet." + LIMIT_HINT
-    if estimate > policy["per_run_nanos"]:
+    words = cost_words(terms) if terms else f"This workflow can cost up to ${usd(amount)}"
+    if amount > policy["per_run_nanos"]:
         return (
-            f"This workflow is estimated at up to ${usd(estimate)}; "
-            f"the project's per-run limit is ${usd(policy['per_run_nanos'])}." + LIMIT_HINT
+            f"{words}; the project's per-run limit is ${usd(policy['per_run_nanos'])}." + LIMIT_HINT
         )
-    if usage["exposure"] + estimate > policy["monthly_nanos"]:
+    if usage["exposure"] + amount > policy["monthly_nanos"]:
         return (
-            f"This workflow is estimated at up to ${usd(estimate)}, which would exceed "
-            f"this month's ${usd(policy['monthly_nanos'])} project limit "
-            f"(${usd(usage['exposure'])} already committed)." + LIMIT_HINT
+            f"{words}, which would exceed this month's ${usd(policy['monthly_nanos'])} project "
+            f"limit (${usd(usage['exposure'])} already committed)." + LIMIT_HINT
         )
     return None
 
@@ -617,10 +641,7 @@ class BillingService:
             "estimate": terms.get("estimate"),
             "approval_required": False,
             "rate_card": terms["rate_card"],
-            "notice": (
-                "Configured spending maximum, not a measured estimate. "
-                "Only actual verified usage is charged."
-            ),
+            "notice": f"{cost_words(terms)}. Only actual verified usage is charged.",
         }
         if preview_only:
             return preview
@@ -850,6 +871,11 @@ class BillingService:
             # Previously issued quotes preserve their whole-run funding contract.
             if quoted_terms and "funding" not in quoted_terms:
                 expected = {k: v for k, v in terms.items() if k not in {"funding", "estimate"}}
+            # A quote issued before calibrated estimates keeps its estimate at the ceiling.
+            elif quoted_terms and quoted_terms.get("estimate", {}).get("policy") == BOUND_POLICY:
+                expected = configured_terms(
+                    terms, definition, object_value(run["input"]), policy=BOUND_POLICY
+                )
             else:
                 expected = terms
             if quote and (
@@ -874,15 +900,16 @@ class BillingService:
             if quoted_terms:
                 terms = quoted_terms
         maximum = terms["maximum_nanos"]
-        estimate = terms.get("estimate", {}).get("amount_nanos", maximum)
+        # Admission checks the estimate; the ceiling stays each paid call's hard stop.
+        amount = admitted_amount(terms)
         period = datetime.now(UTC).date().replace(day=1)
-        if limit := project_limit_message(policy, estimate, usage):
+        if limit := project_limit_message(policy, amount, usage, terms=terms):
             raise BillingError("project_limit", limit, 402)
-        if credits["available"] < estimate:
+        if credits["available"] < amount:
             set_aside = credits["set_aside"]
             raise BillingError(
                 "insufficient_funds",
-                f"This workflow is estimated at up to ${usd(estimate)}. "
+                f"{cost_words(terms)}. "
                 f"Available credits: ${usd(max(credits['available'], 0))}"
                 + (f" after ${usd(set_aside)} set aside for runs in progress" if set_aside else "")
                 + ". Add credits before starting.",

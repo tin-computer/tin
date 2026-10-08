@@ -1001,5 +1001,5 @@ async def test_x_parent_and_both_children_share_one_budget(billed):
     assert (await f.billing.run_charge(child.id, ACTOR))["included_in_parent"]
     assert (
         f.billing.terms(SPECS["social.x_draft"].definition, f.project.id)["maximum_nanos"]
-        == 4_000_000_000
+        == 1_000_000_000  # Voice capture and composition at worst about $0.81 (2026-10-08).
     )

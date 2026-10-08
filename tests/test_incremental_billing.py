@@ -18,6 +18,17 @@ from tin_lite.workflow_costs import _estimate, configured_terms
 from tin_lite.workflow_inputs import normalize_workflow_inputs
 
 
+@pytest.fixture(autouse=True)
+def estimates_at_ceiling(monkeypatch):
+    """These tests check funding mechanics with each run's estimate at its ceiling, as under
+    configured-cost-bound-v1; test_workflow_estimates covers calibrated estimates."""
+    from tin_lite import workflow_estimates
+
+    for key in ("organic.audit", "organic.keyword_plan"):
+        monkeypatch.setitem(workflow_estimates.ESTIMATES_USD, key, "1000")
+    monkeypatch.setattr(workflow_estimates, "AUDIT_V15_USD", "1000")
+
+
 async def direct(f, key="organic.audit", inputs=None, *, project_id=None, configured=None):
     workflow = await install(f, key)
     project_id = project_id or f.project.id
@@ -191,7 +202,7 @@ async def test_zero_upfront_liability_release_and_single_charge(billed):
 
 async def test_estimate_rejects_unfunded_start_without_creating_run(billed):
     f = billed
-    with pytest.raises(BillingError, match=r"estimated at up to \$6.00") as error:
+    with pytest.raises(BillingError, match=r"can cost up to \$6.00") as error:
         await direct(f)
     assert error.value.code == "insufficient_funds"
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
@@ -209,12 +220,12 @@ def test_project_limit_message_names_the_limit_that_blocks_admission():
     assert "set_project_spending_limits" in no_policy
     per_run = project_limit_message(policy, 12_500_000_000, idle)
     assert per_run.startswith(
-        "This workflow is estimated at up to $12.50; the project's per-run limit is $10.00."
+        "This workflow can cost up to $12.50; the project's per-run limit is $10.00."
     )
     assert "set_project_spending_limits" in per_run
     monthly = project_limit_message(policy, 5_000_000_000, {"exposure": 7_250_000_000})
     assert monthly.startswith(
-        "This workflow is estimated at up to $5.00, which would exceed this month's "
+        "This workflow can cost up to $5.00, which would exceed this month's "
         "$10.00 project limit ($7.25 already committed)."
     )
 
@@ -285,10 +296,9 @@ async def test_parallel_projects_cannot_spend_same_wallet(billed, monkeypatch):
     assert await f.billing.settle(unstarted.id) == 0
     # With calibrated estimates below the maximum, both start and every paid call
     # still contends for the same credits under the wallet lock.
-    import tin_lite.workflow_costs as workflow_costs
+    from tin_lite import workflow_estimates
 
-    real = workflow_costs._estimate
-    monkeypatch.setattr(workflow_costs, "_estimate", lambda *key: (real(*key)[0], key[-1] // 2))
+    monkeypatch.setitem(workflow_estimates.ESTIMATES_USD, "organic.keyword_plan", "5.00")
     runs = [
         await direct(f, "organic.keyword_plan", ten, project_id=p)
         for p in (f.project.id, sibling.id)

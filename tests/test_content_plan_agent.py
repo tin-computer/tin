@@ -390,7 +390,8 @@ def test_the_agent_plan_is_a_spending_parent_of_its_ceiling():
     assert terms["maximum_nanos"] == 6_000_000_000
     v8 = {**deepcopy(plan), "content_policy": editorial.V8_POLICY}
     assert service_terms(v8)["kind"] == "metered_workflow"
-    assert service_terms(v8)["maximum_nanos"] == 2_000_000_000
+    # One call of at most $0.088 (2026-10-08 calibration: $0.25 rather than the $2 default).
+    assert service_terms(v8)["maximum_nanos"] == 250_000_000
 
 
 class AgentStorage(Storage):

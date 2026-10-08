@@ -1025,8 +1025,9 @@ def authoring_guide(*, settings, project_id):
                     "changed requests and unconfirmed calls are rejected."
                 ),
                 "estimate": (
-                    "estimate_workflow_run caches the configured bound; "
-                    "no paid estimator or quote approval."
+                    "estimate_workflow_run shows the usual cost (an authored estimate, a share "
+                    "of the configured bound) and the bound itself; no paid estimator or quote "
+                    "approval."
                 ),
             },
         },

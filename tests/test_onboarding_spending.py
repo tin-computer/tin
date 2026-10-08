@@ -156,9 +156,10 @@ async def test_report_warns_for_saved_and_upcoming_weekly_articles(billed, monke
         ]
     }
     warning = (
+        # content.generate's own $6 session ceiling (2026-10-08), held whole by each run.
         "Spending limit: Weekly article — https://example.com/ can run up to 5 times a month at "
-        "up to $10.00 a run and Weekly article — https://blog.example/ can run up to 10 times a "
-        "month at up to $10.00 a run, up to $150.00 a month, above this project's $10.00 monthly "
+        "up to $6.00 a run and Weekly article — https://blog.example/ can run up to 10 times a "
+        "month at up to $6.00 a run, up to $90.00 a month, above this project's $10.00 monthly "
         "limit, " + ADMISSION
     )
     assert await activities._spending_warnings(run, setup) == [warning]
