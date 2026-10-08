@@ -686,12 +686,13 @@ BUILTIN_WORKFLOWS = (
             "you; without GitHub its Markdown stays in Tin. Then draft the next planned "
             "article each week, one review at a time. Before new articles, refresh one "
             "existing page now and again each week. Each week, take a traffic snapshot and "
-            "decide what every page needs before the refresh picks one. Optionally fix what "
-            "the audit found through website.change; each fix waits for your approval. "
+            "decide what every page needs before the refresh picks one. With GitHub connected, "
+            "also fix what the audit found through website.change, in one pull request for "
+            "you to merge. "
             "Never sends outreach."
         ),
         executor=organic_system.KEY,
-        version_label="0.8.0",
+        version_label="0.8.1",
         system=ORGANIC_TRAFFIC_SYSTEM,
         schedule_modes=("on_demand",),
         input_schema=organic_system.INPUT_SCHEMA,

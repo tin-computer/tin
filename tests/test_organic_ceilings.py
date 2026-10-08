@@ -108,11 +108,13 @@ def test_content_plan_share_covers_its_one_model_call():
     ("inputs", "dollars"),
     [
         # Children add up to keyword $2 + audit $2 + plan $6 (its planning agent) + draft $5 +
-        # adaptation $5 + first refresh $2.50 + Page decisions $1 = $23.50 ($28.50 with a
-        # technical fix); the pool caps the run at the keyword limit + $10 + the refresh's
-        # $2.50 + Page decisions' $1 + the planning agent's extra $5.
+        # adaptation $5 + technical fix $5 (on by default) + first refresh $2.50 + Page
+        # decisions $1 = $28.50; the pool caps the run at the keyword limit + $10 + the
+        # refresh's $2.50 + Page decisions' $1 + the planning agent's extra $5.
         ({}, 20.5),
-        ({"content_delivery": "draft_only"}, 18.5),  # $18.50 of children, under the pool
+        ({"technical_fix": False}, 20.5),  # $23.50 of children, still over the pool
+        ({"content_delivery": "draft_only"}, 20.5),  # $23.50 with the default technical fix
+        ({"content_delivery": "draft_only", "technical_fix": False}, 18.5),  # under the pool
         (
             {"technical_fix": True, "repository_serves_site": True, "expected_repository": "o/r"},
             20.5,

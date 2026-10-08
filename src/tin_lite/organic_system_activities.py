@@ -600,14 +600,30 @@ class OrganicSystemActivities:
     async def _website_audit_inputs(self, run):
         """v6's technical step: website.change with the latest audit's fixes. The preview
         records each fixable finding as a change row. The system passes no judgment-call
-        answers, so its rows wait for the founder and the run opens a pull request."""
+        answers, so its rows wait for the founder and the run opens a pull request. Without a
+        repository in the run's input it uses the one selected on GitHub."""
         from tin_lite import website_change_audit
         from tin_lite.technical_fix_sources import TechnicalFixError
 
+        repository, serves = run.input["expected_repository"], run.input["repository_serves_site"]
+        if not repository:
+            # The repository the founder selected on GitHub is the one they chose for the site
+            # (Start here asks for exactly that), the same one the article is delivered to.
+            connection = await self.db.get_integration_connection(
+                project_id=run.project_id, provider_key="infra.github"
+            )
+            if connection is None or connection.status != "connected":
+                return None, "github_not_connected"
+            repository = connection.configuration.get("selected_repository")
+            if not repository:
+                return None, "github_repository_not_selected"
+            serves = True
+        elif serves is not True:
+            return None, "repository_not_confirmed"
         inputs = {
             "source": "audit",
-            "expected_repository": run.input["expected_repository"],
-            "repository_serves_site": run.input["repository_serves_site"],
+            "expected_repository": repository,
+            "repository_serves_site": serves,
         }
         try:
             preview = await website_change_audit.plan_changes(
@@ -619,7 +635,9 @@ class OrganicSystemActivities:
                 bind=False,
             )
         except (TechnicalFixError, LookupError, ValueError):
-            return None, "audit_unavailable"
+            # The audit succeeded but its fixes can't be planned: the recipe's other steps
+            # stand, and the step says why instead of failing the run.
+            return None, "fixes_unavailable"
         if not preview["next_run"]["change_ids"]:
             return None, "no_eligible_findings"
         return inputs, None
@@ -661,6 +679,9 @@ class OrganicSystemActivities:
                         "draft_only_selected",
                         "github_not_connected",
                         "github_repository_not_selected",
+                        # A repository named in the input without the confirmation.
+                        "repository_not_confirmed",
+                        "fixes_unavailable",
                         # The draft's editorial judgment chose no article: a result, not a
                         # failure. Its reason stays on the step and in the draft run.
                         "already_covered",

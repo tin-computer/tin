@@ -6,6 +6,7 @@ pinned to v5 and earlier keep their children, receipts and report word for word.
 """
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import UUID
 
@@ -44,7 +45,7 @@ TECHNICAL = {
 def test_v6_steps_and_v5_pins_are_unchanged():
     recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
     # New runs pin v8: v7's steps and weekly measurement, with the agent-planned content plan.
-    assert recipe.version_label == "0.8.0"
+    assert recipe.version_label == "0.8.1"
     assert recipe.definition["organic_system_policy"] == organic_system.POLICY
     assert organic_system.POLICY["version"] == "organic-traffic-v8"
     assert organic_system.MEASUREMENT_POLICY["version"] == "organic-traffic-v7"
@@ -142,6 +143,108 @@ async def test_v6_technical_step_starts_website_change_with_the_audit(publicatio
     assert "decisions" not in inputs
     # Nothing left to fix is a skipped step, not a failed one.
     assert await f.system._child_inputs(f.parent, "technical") == (None, "no_eligible_findings")
+
+
+def audit_preview(monkeypatch):
+    """A succeeded audit with one fixable finding; returns the previews the step asked for."""
+    monkeypatch.setattr(
+        "tin_lite.organic_system_activities.system_facts",
+        AsyncMock(
+            return_value={"steps": [{"step": "audit", "status": "succeeded", "run_id": None}]}
+        ),
+    )
+    previews = []
+
+    async def plan_changes(**kwargs):
+        previews.append(kwargs)
+        return {"next_run": {"change_ids": ["oa_" + "1" * 20]}}
+
+    monkeypatch.setattr(website_change_audit, "plan_changes", plan_changes)
+    return previews
+
+
+def test_fixes_are_on_by_default_and_need_no_repository_to_start():
+    schema = organic_system.INPUT_SCHEMA["properties"]
+    assert schema["technical_fix"]["default"] is True
+    # A start no longer names the repository: the step takes the one selected on GitHub.
+    organic_system.check_inputs(
+        {
+            "site_url": "https://example.com/",
+            "market": "US",
+            "start_date": "2026-09-14",
+            "technical_fix": True,
+            "expected_repository": "",
+            "repository_serves_site": False,
+        }
+    )
+
+
+async def test_the_technical_step_uses_the_repository_selected_on_github(
+    publication_db, monkeypatch
+):
+    # Start here's inputs: no repository named, fixes on by default.
+    f = await system_fixture(publication_db, monkeypatch, policy=organic_system.POLICY)
+    assert f.parent.input["technical_fix"] is True and not f.parent.input["expected_repository"]
+    previews = audit_preview(monkeypatch)
+    inputs, reason = await f.system._child_inputs(f.parent, "technical")
+    assert reason is None and inputs == {
+        "source": "audit",
+        "expected_repository": "owner/site",
+        "repository_serves_site": True,
+    }
+    assert previews[0]["inputs"] == inputs
+
+
+async def test_the_technical_step_skips_without_a_github_repository(publication_db, monkeypatch):
+    f = await system_fixture(
+        publication_db, monkeypatch, policy=organic_system.POLICY, github=False
+    )
+    previews = audit_preview(monkeypatch)
+    assert await f.system._child_inputs(f.parent, "technical") == (None, "github_not_connected")
+    f.db.get_integration_connection.return_value = SimpleNamespace(
+        status="connected", configuration={}
+    )
+    assert await f.system._child_inputs(f.parent, "technical") == (
+        None,
+        "github_repository_not_selected",
+    )
+    assert not previews
+    result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "technical"})
+    assert result == {"status": "skipped", "reason": "github_repository_not_selected"}
+
+
+async def test_a_named_repository_still_needs_its_confirmation(publication_db, monkeypatch):
+    f = await system_fixture(
+        publication_db,
+        monkeypatch,
+        policy=organic_system.POLICY,
+        inputs={"expected_repository": "owner/other"},
+    )
+    previews = audit_preview(monkeypatch)
+    assert await f.system._child_inputs(f.parent, "technical") == (
+        None,
+        "repository_not_confirmed",
+    )
+    assert not previews
+    result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "technical"})
+    assert result == {"status": "skipped", "reason": "repository_not_confirmed"}
+
+
+async def test_fixes_the_audit_cannot_plan_are_skipped_not_failed(publication_db, monkeypatch):
+    f = await system_fixture(publication_db, monkeypatch, policy=organic_system.POLICY)
+    audit_preview(monkeypatch)
+    monkeypatch.setattr(
+        website_change_audit, "plan_changes", AsyncMock(side_effect=LookupError("no audit"))
+    )
+    result = await f.system.organic_system_step({"run_id": str(f.parent.id), "step": "technical"})
+    assert result == {"status": "skipped", "reason": "fixes_unavailable"}
+
+
+async def test_fixes_turned_off_are_not_requested(publication_db, monkeypatch):
+    f = await system_fixture(
+        publication_db, monkeypatch, policy=organic_system.POLICY, inputs={"technical_fix": False}
+    )
+    assert await f.system._child_inputs(f.parent, "technical") == (None, "not_requested")
 
 
 async def test_v6_pins_website_change_for_both_writer_steps(publication_db, monkeypatch):

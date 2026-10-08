@@ -390,7 +390,8 @@ async def test_parent_prepares_one_pinned_run_per_step_without_temporal_dispatch
     technical = await f.activities.organic_system_step(
         {"run_id": str(f.run.id), "step": "technical"}
     )
-    assert technical == {"status": "skipped", "reason": "not_requested"}
+    # Fixes are on by default; without a succeeded audit there is nothing to fix from.
+    assert technical == {"status": "blocked", "reason": "audit_unavailable"}
     content = await f.activities.organic_system_step({"run_id": str(f.run.id), "step": "content"})
     assert content == {"status": "blocked", "reason": "research_unavailable"}
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 3
