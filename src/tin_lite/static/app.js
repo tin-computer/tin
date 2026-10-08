@@ -4992,7 +4992,7 @@ function websiteChangeDetailHtml(item) {
       ${paths.length ? `<ul class="website-change-paths" aria-label="Pages">${paths.map((path) => `<li><code>${escapeHtml(path)}</code></li>`).join("")}</ul>` : ""}
       ${files.length ? `<ul class="website-change-files" aria-label="Files">${files.map((file) => `<li><code>${escapeHtml(file.path)}</code><span>${escapeHtml(file.action)}</span></li>`).join("")}</ul>` : ""}
       ${change.protected ? `<p class="decision-note website-change-protected">Protected: ${escapeHtml(change.protected)} opens a pull request for you to merge, even when approved.</p>` : ""}
-      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
+      <p class="decision-note">Approving lets Tin publish it: Tin merges the pull request once your site's build and your repository's required checks pass. Declining keeps it off your site, and Tin won't propose it again.</p>
     </div>
     <footer>
       <button class="decision-discard" type="button" data-change-action="decline">Decline</button>

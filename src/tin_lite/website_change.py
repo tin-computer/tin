@@ -502,8 +502,8 @@ def publish_mode(
         }
     return {
         "mode": "direct",
-        "reason": "You approved it to commit to main, so Tin merges it once your repository's "
-        "required checks pass.",
+        "reason": "You approved it to commit to main, so Tin merges it once your site's build "
+        "and your repository's required checks pass.",
     }
 
 

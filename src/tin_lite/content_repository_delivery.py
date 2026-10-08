@@ -51,6 +51,13 @@ MERGE_OPERATION = "content_repository_delivery_merge_v1"
 # delivery activity allows five minutes; this leaves room for the merge call itself.
 MERGE_WAIT_SECONDS = 210
 MERGE_POLL_SECONDS = 15
+# website.change waits for the site's own build: a deploy preview (Vercel, Netlify and the
+# like) or the repository's CI. Previews often take several minutes; the delivery activity
+# allows fifteen.
+BUILD_WAIT_SECONDS = 600
+# How long a pull request may show no checks at all before Tin decides nothing builds it:
+# a deploy preview posts its status a few seconds to a minute after the PR opens.
+NO_CHECKS_GRACE_SECONDS = 90
 # GitHub's mergeable_state values that let Tin merge. `clean`: every check passed.
 # `has_hooks`: the same, with pre-receive hooks. content.deliver merges only on these.
 MERGE_READY = frozenset({"clean", "has_hooks"})
@@ -941,6 +948,8 @@ async def _merge_when_clean(
     binding = binding_from(source)
     rule = {}
     reason = "Its checks had not all passed after a few minutes, so Tin left it open."
+    # website.change (the required-checks rule) also waits for the site's own build.
+    build_check = "unstable" in ready
     if "unstable" in ready:
         required = await required_checks(integrations, run, binding)
         if required:
@@ -966,8 +975,72 @@ async def _merge_when_clean(
         ready=ready,
         record_state=record_state,
         reason=reason,
+        build_check=build_check,
     )
     return {**result, **rule}
+
+
+async def build_verdict(integrations, run, binding, sha, *, waited):
+    """Whether the site's own build passed on this commit: ("merge", facts), ("wait", why it
+    is still waiting) or ("stop", why the PR stays open).
+
+    The build is a deploy preview when the repository has one (Vercel, Netlify, ...), else the
+    checks it runs. A repository with no checks at all has nothing that builds the change,
+    so Tin never merges there; nor where it can't read the checks.
+    """
+    try:
+        found = await integrations.github_commit_checks(
+            project_id=run.project_id, repository=binding.repository, sha=sha
+        )
+    except Exception:
+        found = {"readable": False, "checks": []}
+    if found.get("truncated"):
+        return "stop", (
+            "It has more checks than Tin reads at once, so Tin can't tell whether your site "
+            "still builds and left the PR open for you."
+        )
+    if not found.get("readable"):
+        return "stop", (
+            "Tin can't see this repository's checks, so it can't tell whether your site still "
+            "builds. Accept the updated Tin GitHub App permissions (read-only Checks and Commit "
+            "statuses) so Tin can wait for them. The PR stays open for you to merge."
+        )
+    checks = found.get("checks") or []
+    previews = [check for check in checks if check.get("preview")]
+    failed = [check for check in previews if check.get("state") == "failure"]
+    if failed:
+        return "stop", f"Your {failed[0]['name']} preview build failed, so Tin left it open."
+    if not checks:
+        if waited < NO_CHECKS_GRACE_SECONDS:
+            return "wait", "No check had reported on it yet, so Tin left it open."
+        return "stop", (
+            "Nothing builds this repository's pull requests (no CI and no deploy preview), so "
+            "Tin can't tell whether your site still builds and left the PR open for you."
+        )
+    pending = [check for check in previews if check.get("state") != "success"]
+    if pending:
+        return "wait", (
+            f"Your {pending[0]['name']} preview was still building after ten minutes, so Tin "
+            "left it open."
+        )
+    if not previews:
+        # No preview: the repository's checks are the build, every one of them, required or
+        # not (GitHub's rules above let an optional check fail).
+        broken = [check for check in checks if check.get("state") == "failure"]
+        if broken:
+            return "stop", f"Its {broken[0]['name']} check failed, so Tin left it open."
+        running = [check for check in checks if check.get("state") != "success"]
+        if running:
+            return "wait", (
+                f"Its {running[0]['name']} check was still running after ten minutes, so Tin "
+                "left it open."
+            )
+    return "merge", {
+        "build_check": {
+            "preview": previews[0]["name"] if previews else None,
+            "checks": len(checks),
+        }
+    }
 
 
 async def required_checks(integrations, run, binding):
@@ -997,8 +1070,11 @@ async def _merge_loop(
     ready,
     record_state,
     reason,
+    build_check=False,
 ):
-    deadline = clock().timestamp() + MERGE_WAIT_SECONDS
+    started = clock().timestamp()
+    deadline = started + (BUILD_WAIT_SECONDS if build_check else MERGE_WAIT_SECONDS)
+    build = {}
     while True:
         state = await integrations.github_pull_request_merge_state(
             project_id=run.project_id, repository=binding.repository, number=number
@@ -1023,7 +1099,22 @@ async def _merge_loop(
         stop = MERGE_STOPS.get(state.get("mergeable_state"))
         if stop:
             return {"status": "left_open", "reason": stop}
-        if state.get("mergeable") is True and state.get("mergeable_state") in ready:
+        ready_now = state.get("mergeable") is True and state.get("mergeable_state") in ready
+        if ready_now and build_check:
+            verdict, detail = await build_verdict(
+                integrations,
+                run,
+                binding,
+                state["head_sha"],
+                waited=clock().timestamp() - started,
+            )
+            if verdict == "stop":
+                return {"status": "left_open", "reason": detail}
+            if verdict == "wait":
+                ready_now, reason = False, detail
+            else:
+                build = detail
+        if ready_now:
             from tin_lite.integrations import IntegrationAuthorizationError
 
             try:
@@ -1053,6 +1144,7 @@ async def _merge_loop(
                     "merged_at": clock().isoformat(),
                     "merged_by": "tin",
                     **({"mergeable_state": state["mergeable_state"]} if record_state else {}),
+                    **build,
                 }
             return {"status": "left_open", "reason": merged.get("reason") or reason}
         if state.get("mergeable_state") == "blocked":
