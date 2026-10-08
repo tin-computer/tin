@@ -334,3 +334,92 @@ async def test_required_checks_come_from_branch_protection_and_rulesets(tmp_path
             project_id=PROJECT_ID, repository="example-org/site", branch="main"
         )
     assert found == {"readable": False, "contexts": []}
+
+
+class Checks(GitHub):
+    """GitHub answering one commit's statuses and check runs."""
+
+    def __init__(self, status=None, runs=None):
+        super().__init__()
+        self.status, self.runs = status, runs
+
+    async def __call__(self, request):
+        path = request.url.path
+        if path == f"/repos/example-org/site/commits/{HEAD}/status":
+            self.requests.append(("GET", path))
+            return self.status or httpx.Response(403, json={"message": "Forbidden"})
+        if path == f"/repos/example-org/site/commits/{HEAD}/check-runs":
+            self.requests.append(("GET", path))
+            return self.runs or httpx.Response(403, json={"message": "Forbidden"})
+        return await super().__call__(request)
+
+
+@pytest.mark.asyncio
+async def test_commit_checks_list_previews_and_runs_without_their_output(tmp_path) -> None:
+    database = FakeIntegrationDatabase()
+    connected(database)
+    github = Checks(
+        status=httpx.Response(
+            200,
+            json={
+                "state": "pending",
+                "statuses": [
+                    {"context": "Vercel – site", "state": "pending", "description": "Building"},
+                    {"context": "netlify/site/deploy-preview", "state": "error"},
+                    {"context": "ci/lint", "state": "success"},
+                ],
+            },
+        ),
+        runs=httpx.Response(
+            200,
+            json={
+                "total_count": 3,
+                "check_runs": [
+                    {
+                        "name": "build",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "app": {"slug": "github-actions"},
+                        "output": {"text": "secret log"},
+                    },
+                    {
+                        "name": "e2e",
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "app": {"slug": "github-actions"},
+                    },
+                    {
+                        "name": "Cloudflare Pages",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "app": {"slug": "cloudflare-workers-and-pages"},
+                    },
+                ],
+            },
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        found = await service.github_commit_checks(
+            project_id=PROJECT_ID, repository="example-org/site", sha=HEAD
+        )
+    assert found == {
+        "readable": True,
+        "checks": [
+            {"name": "Vercel – site", "state": "pending", "preview": True},
+            {"name": "netlify/site/deploy-preview", "state": "failure", "preview": True},
+            {"name": "ci/lint", "state": "success", "preview": False},
+            {"name": "build", "state": "success", "preview": False},
+            {"name": "e2e", "state": "pending", "preview": False},
+            {"name": "Cloudflare Pages", "state": "failure", "preview": True},
+        ],
+    }
+    assert "secret log" not in json.dumps(found)
+    # The installation lacks the read-only Checks or Commit statuses permission: never "none".
+    github = Checks(status=httpx.Response(200, json={"statuses": []}))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        found = await service.github_commit_checks(
+            project_id=PROJECT_ID, repository="example-org/site", sha=HEAD
+        )
+    assert found == {"readable": False, "checks": []}

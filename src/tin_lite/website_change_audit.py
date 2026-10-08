@@ -69,8 +69,8 @@ POLICY = repair_plan.POLICY
 MAX_EARLIER_RUNS = 20
 ACTIVE = ("pending", "running", "needs_input")
 DIRECT_REASON = (
-    "You approved these changes in Tin, so Tin merges the pull request once your "
-    "repository's required checks pass."
+    "You approved these changes in Tin, so Tin merges the pull request once your site's "
+    "build and your repository's required checks pass."
 )
 UNAPPROVED_REASON = (
     "No one approved these changes in Tin yet, so the pull request waits for your review and merge."

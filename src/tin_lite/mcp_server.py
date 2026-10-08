@@ -3776,7 +3776,8 @@ def create_mcp_app(
         configured preview) that fits the page into the site's own format and opens a pull
         request: an answer page or public article at the route the founder chose, a planned
         article at the address its plan item names. With github_commit, Tin then merges that
-        pull request once the repository's required checks pass, unless the page is
+        pull request once the site's build (its deploy preview, else its CI) and the
+        repository's required checks pass, unless the page is
         protected; otherwise it stays open and get_run says why. A page refresh changes
         exactly its approved lines instead.
         get_run.delivery_preview shows what Publish does before you approve.

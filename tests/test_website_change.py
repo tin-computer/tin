@@ -40,6 +40,15 @@ ROUTE = "/blog/{slug}"
 PAGE_URL = "https://example.com/blog/reliable-ai-work"
 
 
+PREVIEW_PASSED = {
+    "readable": True,
+    "checks": [
+        {"name": "build", "state": "success", "preview": False},
+        {"name": "Vercel", "state": "success", "preview": True},
+    ],
+}
+
+
 async def fixture(db, monkeypatch):
     f = await page_fixture(db, monkeypatch)
     spec = next(w for w in BUILTIN_WORKFLOWS if w.key == website_change.KEY)
@@ -72,6 +81,8 @@ async def fixture(db, monkeypatch):
     f.runtime.integrations.github_required_status_checks = AsyncMock(
         return_value={"readable": True, "contexts": ["build"]}
     )
+    # The site's own build: its Vercel preview passed, unless a test says otherwise.
+    f.runtime.integrations.github_commit_checks = AsyncMock(return_value=PREVIEW_PASSED)
     return f
 
 
@@ -1023,6 +1034,7 @@ async def test_without_required_checks_an_unstable_pull_request_waits_for_every_
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     integrations = f.runtime.integrations
     if required == "none":
         integrations.github_required_status_checks.return_value = {
@@ -1062,6 +1074,7 @@ async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkey
     f = await fixture(publication_db, monkeypatch)
     choose_route(f)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     page = await approved_for_main(f)
     run = await made(f, await start(f, page))
     integrations = mergeable(f)
@@ -1072,3 +1085,95 @@ async def test_blocked_or_dirty_pull_requests_never_merge(publication_db, monkey
     integrations.github_merge_pull_request.assert_not_called()
     assert merge["status"] == "left_open" and "mergeable_state" not in merge
     assert merge["reason"] == NEVER_MERGE[verdict]
+
+
+# The site's own build (10/8): a deploy preview, or the repository's checks. Nothing that
+# builds the change, or checks Tin can't read, never merges.
+
+
+def checks(*items, readable=True):
+    return {
+        "readable": readable,
+        "checks": [{"name": n, "state": s, "preview": p} for n, s, p in items],
+    }
+
+
+async def approved_change(f, monkeypatch):
+    choose_route(f)
+    run = await made(f, await start(f, await approved_for_main(f)))
+    return run, mergeable(f)
+
+
+async def test_a_passing_preview_lets_tin_merge_and_is_recorded(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    # The preview is still building on the first look, then passes.
+    integrations.github_commit_checks = AsyncMock(
+        side_effect=[
+            checks(("build", "success", False), ("Vercel", "pending", True)),
+            checks(("build", "success", False), ("Vercel", "success", True)),
+        ]
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_awaited_once()
+    assert merge["status"] == "merged"
+    assert merge["build_check"] == {"preview": "Vercel", "checks": 2}
+    sha = integrations.github_commit_checks.call_args.kwargs["sha"]
+    assert sha == "a" * 40  # The head GitHub reported, the one Tin merges.
+
+
+async def test_a_failed_preview_leaves_the_pull_request_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("Vercel – site", "failure", True))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge == {
+        **merge,
+        "status": "left_open",
+        "reason": "Your Vercel – site preview build failed, so Tin left it open.",
+    }
+
+
+async def test_ci_alone_counts_as_the_build(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(("build", "success", False)))
+    merge = await merge_outcome(f, run)
+    assert merge["status"] == "merged"
+    assert merge["build_check"] == {"preview": None, "checks": 1}
+
+
+async def test_a_repository_with_no_checks_is_never_merged(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    monkeypatch.setattr(delivery, "NO_CHECKS_GRACE_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    # GitHub calls a pull request with no checks "clean" at once; that proves nothing.
+    integrations.github_commit_checks = AsyncMock(return_value=checks())
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert merge["reason"].startswith("Nothing builds this repository's pull requests")
+
+
+async def test_checks_tin_cannot_read_never_merge(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(readable=False))
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert "Accept the updated Tin GitHub App permissions" in merge["reason"]
+
+
+async def test_a_preview_still_building_at_the_deadline_leaves_it_open(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(return_value=checks(("Vercel", "pending", True)))
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["status"] == "left_open"
+    assert merge["reason"].startswith("Your Vercel preview was still building")

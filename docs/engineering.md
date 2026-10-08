@@ -569,8 +569,9 @@ through `TIN_LITE_GITHUB_APP_SLUG`,
 `TIN_LITE_GITHUB_WEBHOOK_SECRET`, with OAuth-on-install callback URL
 `https://app.tin.computer/integrations/callback/github` and webhook URL
 `https://app.tin.computer/webhooks/github`. The app requests repository Contents
-write and Pull requests write; GitHub shows those permissions and repository selection during
-installation. Tin exchanges the one-time OAuth code only to prove the signed-in GitHub user can
+write and Pull requests write, plus read-only Checks and Commit statuses so website.change can
+wait for a pull request's own build before it merges (without them Tin never merges; it leaves
+the PR open); GitHub shows those permissions and repository selection during installation. Tin exchanges the one-time OAuth code only to prove the signed-in GitHub user can
 access the returned installation; it does not store that user token. Tin stores the installation
 ID, mints short-lived installation tokens on demand, and never stores a user PAT for the
 GitHub App connection.

@@ -531,6 +531,7 @@ async def test_an_approved_technical_pull_request_never_merges_blocked_or_dirty(
 ):
     f = await fixture(publication_db, monkeypatch)
     monkeypatch.setattr(delivery, "MERGE_WAIT_SECONDS", 0)
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
     await audit_run(f, findings(), revision="2" * 40)
     await preflight(f)
     await approve(f, SITEMAP_LINE)

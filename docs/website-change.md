@@ -101,6 +101,30 @@ The merge receipt records the state that allowed the merge (`mergeable_state`) a
 that applied: `checks_rule` is `required_checks` (with the `required_checks` names) or
 `all_checks`.
 
+### The site's own build must pass (10/8)
+
+GitHub calls a pull request with no checks at all `clean` at once, and Tin can't build the
+site itself: a sandbox build lacks the founder's secrets, services and runtime, and an
+experiment on prod project repositories built 2 of 7 even with per-site fixes. So before a
+merge, website.change also reads every check on the pull request's head
+(`github_commit_checks`: the commit's statuses and check runs; only names and states) and
+treats the site's own build as the deciding check:
+
+| The pull request's head has | website.change |
+| --- | --- |
+| a deploy preview (Vercel, Netlify, Cloudflare Pages, Render, Railway, Amplify) that passed | merges, under the rules above |
+| a deploy preview still building | waits, up to ten minutes, then leaves the PR open |
+| a deploy preview that failed | leaves the PR open at once |
+| checks but no preview, all passing under the rules above | merges |
+| no checks at all, after 90 seconds | leaves the PR open: nothing builds the change |
+| checks Tin can't read | leaves the PR open and asks for the GitHub App's read-only permissions |
+
+Reading checks needs the GitHub App's read-only **Checks** and **Commit statuses**
+permissions. Until an installation accepts them, its approved changes open a PR for the
+founder rather than merge. The merge receipt records `build_check` (the preview's name, or
+none, and how many checks reported). The wait is `BUILD_WAIT_SECONDS` (600); the delivery
+activity allows fifteen minutes.
+
 content.deliver keeps its own rule: it merges only on `clean` or `has_hooks`.
 
 ## Approvals

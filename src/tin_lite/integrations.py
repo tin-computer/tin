@@ -2091,6 +2091,58 @@ class IntegrationService:
             pass
         return {"readable": readable, "contexts": contexts[:50]}
 
+    async def github_commit_checks(
+        self, *, project_id: UUID, repository: str, sha: str
+    ) -> dict[str, Any]:
+        """Every check reported on one commit: commit statuses (Vercel, Netlify and other
+        deploy previews) and check runs (GitHub Actions and other apps).
+
+        Needs the GitHub App's read-only Commit statuses and Checks permissions; `readable` is
+        False when either list can't be read, so callers never mistake that for no checks.
+        Only names, states and whether a check is a deploy preview leave this method; never
+        output, logs or URLs.
+        """
+        if not _SHA.fullmatch(sha or ""):
+            raise IntegrationError("GitHub commit is invalid")
+        token = await self._selected_repository_token(project_id, repository)
+        root = f"https://api.github.com/repos/{quote(repository, safe='/')}/commits/{sha}"
+        headers = self._github_headers(token)
+        checks: list[dict[str, Any]] = []
+        try:
+            combined = _provider_json(
+                await self._client.get(f"{root}/status", headers=headers, params={"per_page": 100}),
+                provider="GitHub",
+            )
+            runs = _provider_json(
+                await self._client.get(
+                    f"{root}/check-runs", headers=headers, params={"per_page": 100}
+                ),
+                provider="GitHub",
+            )
+        except (IntegrationError, httpx.HTTPError):
+            return {"readable": False, "checks": []}
+        for status in combined.get("statuses") or []:
+            if not isinstance(status, dict) or not isinstance(status.get("context"), str):
+                continue
+            name = status["context"][:255]
+            state = {"success": "success", "pending": "pending"}.get(status.get("state"), "failure")
+            checks.append({"name": name, "state": state, "preview": _is_preview(name, None)})
+        for run in runs.get("check_runs") or []:
+            if not isinstance(run, dict) or not isinstance(run.get("name"), str):
+                continue
+            app = run.get("app") if isinstance(run.get("app"), dict) else {}
+            if run.get("status") != "completed":
+                state = "pending"
+            elif run.get("conclusion") in {"success", "neutral", "skipped"}:
+                state = "success"
+            else:
+                state = "failure"
+            name = run["name"][:255]
+            checks.append(
+                {"name": name, "state": state, "preview": _is_preview(name, app.get("slug"))}
+            )
+        return {"readable": True, "checks": checks[:100]}
+
     async def github_merge_pull_request(
         self,
         *,
@@ -5943,6 +5995,19 @@ def _repository_archive(
         raise
     output.seek(0)
     return output
+
+
+# Deploy previews report on a pull request's commit under these names (commit statuses) or
+# apps (check runs). A preview is the site's own build, with its own runtime and secrets.
+_PREVIEW_NAME = re.compile(
+    r"^(vercel\b|netlify\b|deploy/netlify|cloudflare pages|render\b|railway\b|amplify\b)",
+    re.I,
+)
+_PREVIEW_APPS = frozenset({"vercel", "netlify", "cloudflare-workers-and-pages", "render"})
+
+
+def _is_preview(name: str, app: str | None) -> bool:
+    return bool(_PREVIEW_NAME.match(name.strip())) or (app or "").lower() in _PREVIEW_APPS
 
 
 def _safe_github_ref(value: str) -> bool:
