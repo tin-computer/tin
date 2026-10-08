@@ -150,7 +150,7 @@ def test_the_v8_ceiling_is_about_four_times_its_estimate_and_holds_every_child()
     assert (maximum, estimate) == (20 * NANOS_PER_DOLLAR, 4_900_000_000)
     assert Decimal("3.5") < Decimal(maximum) / estimate < Decimal("4.5")
     # Every child fits on its own, without the keyword limit: audit v15 $6, the planning
-    # agent $6, the draft $6, website.change $4 and the refresh $1.
+    # agent $6, the draft $6, website.change $4 and the refresh $3.
     children = [
         service_terms(SPECS["organic.audit"].definition)["maximum_nanos"],
         service_terms(SPECS["content.plan"].definition)["maximum_nanos"],
@@ -159,5 +159,5 @@ def test_the_v8_ceiling_is_about_four_times_its_estimate_and_holds_every_child()
             for key in ("content.generate", "website.change", "content.refresh")
         ),
     ]
-    assert children == [n * NANOS_PER_DOLLAR for n in (6, 6, 6, 4, 1)]
+    assert children == [n * NANOS_PER_DOLLAR for n in (6, 6, 6, 4, 3)]
     assert all(child <= TRAFFIC_SYSTEM_V8_USD * NANOS_PER_DOLLAR for child in children)

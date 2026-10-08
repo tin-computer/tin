@@ -83,11 +83,15 @@ BEFORE_V5_MAXIMUM = 5 * NANOS_PER_DOLLAR
 # A child of a parent budget keeps $5: parent pools (e.g. the organic traffic system's) were
 # composed from $5 children, and the parent's maximum bounds the whole run anyway.
 CHILD_MAXIMUM = 5 * NANOS_PER_DOLLAR
-# Session ceilings by the procedure's output contract. A page refresh reads the page's current
-# text, a few positioning files and the style guide, then writes one short document; its p90
-# over six runs was $0.20 (workflow_estimates), and its ceiling is five times that.
+# Session ceilings by the procedure's output contract. A ceiling also bounds a child funded per
+# operation, where each request first reserves `request_maximum` ($1.93 under the v5 contract),
+# so it must hold that reservation plus what a usual run spends before its last request. A page
+# refresh reads the page's current text, a few positioning files and the style guide, then
+# writes one short document; its p90 over six runs was $0.20 (workflow_estimates). Its $3
+# leaves $1.07 beside one reservation, about five times that p90. ($1 stopped every refresh the
+# organic traffic system started at its first request.)
 PROCEDURE_MAXIMUMS = {
-    "content-refresh.v1": 1_000_000_000,
+    "content-refresh.v1": 3_000_000_000,
     # content.plan_research reads the program's research and the project's files and searches
     # before it plans up to 81 pages; a runaway guard, not an estimate.
     "content-plan-portfolio.v1": 6_000_000_000,

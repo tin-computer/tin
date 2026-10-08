@@ -123,7 +123,7 @@ NATIVE_MAXIMUMS_USD = {
 }
 # organic-traffic-v8's ceiling beyond the founder's keyword limit: its children's p90s
 # (workflow_estimates) come to about $3 without delivery or fixes, and the $12 also holds any
-# one child's own ceiling (audit $6, planning agent $6, draft $6, refresh $1). Delivery and
+# one child's own ceiling (audit $6, planning agent $6, draft $6, refresh $3). Delivery and
 # technical fixes are website.change runs with a $4 ceiling and a p90 under $1, so each adds
 # $3; a run that needs more stops its later paid steps.
 TRAFFIC_SYSTEM_V8_USD = 12

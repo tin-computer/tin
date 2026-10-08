@@ -356,7 +356,9 @@ project limits, except a Codex session budget, which holds its whole ceiling. Ce
 runaway guards: about five times the estimate for Codex procedures (by validator in
 `PROCEDURE_MAXIMUMS`, else by workflow key in `PROCEDURE_KEY_MAXIMUMS`), and the per-call
 reservation floor for native workflows (`NATIVE_MAXIMUMS_USD`). Notable changes:
-`content.generate` $6 (root and child), `website.change` $4, `content.refresh` $1,
+`content.generate` $6 (root and child), `website.change` $4, `content.refresh` $3 (first set to $1, below the $1.93 one request
+reserves in a per-operation child, so the traffic system's refreshes stopped at their first
+request),
 `social.x_draft` $1, the one-call `content.plan` $0.25, and `organic.traffic_system`
 (organic-traffic-v8 only) the keyword limit + $12, + $3 with page delivery, + $3 with a
 technical fix: $20 at defaults, with an estimate of $4.90. Earlier traffic-system versions
