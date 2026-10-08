@@ -79,8 +79,8 @@ window.TinBilling = (() => {
         if (current !== sequence || !form.isConnected || !isCurrent()) return;
         if (cost.estimated_usd == null) return;
         label.textContent = cost.estimated_usd === "0.00" ? "No workflow charge" :
-          cost.estimated_usd === cost.maximum_usd ?
-          `Maximum charge: $${cost.maximum_usd} per run · actual usage is charged` :
+          !cost.maximum_usd || cost.estimated_usd === cost.maximum_usd ?
+          `Maximum charge: $${cost.maximum_usd || cost.estimated_usd} per run · actual usage is charged` :
           `Usually about $${cost.estimated_usd} per run, never more than $${cost.maximum_usd} · actual usage is charged`;
         label.title = cost.notice || "";
         label.hidden = false;
