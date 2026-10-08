@@ -10,10 +10,9 @@ For current metadata repair profiles and finding eligibility, see
 ## ELI5
 
 The system starts two research jobs: inspect the website and research buyer searches.
-Their exact saved results become the inputs to an editable content program. If you
-enable technical fixes and confirm the GitHub repository, Tin can also inspect one
-supported audit finding and propose a small, unmerged PR. Each job is still callable
-on its own.
+Their exact saved results become the inputs to an editable content program. With GitHub
+connected, Tin also opens one unmerged PR with the audit's fixes in the repository you
+selected for the site. Each job is still callable on its own.
 
 This is a fixed Temporal recipe, not a graph engine or a second database in Files.
 The files remain the working material. Existing Postgres run rows and effect receipts
@@ -67,8 +66,13 @@ $5 procedure ceiling as the workflows they replace.
 
 Manual-only. Inputs: HTTPS site origin, English-language buyer market, explicit buyer
 context, content start date, duration (default six months), and keyword spending ceiling
-(default $9). Optional technical repair requires both an exact `owner/repository` and
-the member's confirmation that it serves this site. From 0.3.0, `article_weekdays` and
+(default $9). Technical repair is on by default from 0.8.1 (`technical_fix`). It uses the
+repository selected on the GitHub connection, which Start here asks the founder to choose as
+the one that serves the site; a run that names `expected_repository` itself still needs
+`repository_serves_site`. Without GitHub, or without a selected repository, the step is
+skipped with that reason; a named repository without the confirmation is skipped as
+`repository_not_confirmed`, and an audit whose fixes can't be planned as `fixes_unavailable`. 0.8.0 and earlier defaulted to off and refused to start with it
+on until both repository fields were given. From 0.3.0, `article_weekdays` and
 `article_local_time` choose the weekly drafting schedule it saves (see
 [weekly drafting](organic-content-continuation.md#weekly-drafting-030)).
 
@@ -77,7 +81,7 @@ children. It pins all child definitions from the parent's atomic registry revisi
 Child runs do not silently follow a later catalog publication.
 
 1. Start `organic.audit` and `organic.keyword_plan` as independent child runs.
-2. After the audit, if requested, propose one technical fix. Under `organic-traffic-v6`
+2. After the audit, unless turned off, propose the technical fixes. Under `organic-traffic-v6`
    (0.6.0, the default for new runs) the step starts website.change with the latest audit's
    fixes (`source: audit`) and the system's repository; it passes no judgment-call answers,
    so the rows wait for the founder and the run opens a pull request. A recipe pinned to v5

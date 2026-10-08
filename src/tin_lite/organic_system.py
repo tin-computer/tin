@@ -162,9 +162,11 @@ INPUT_SCHEMA = {
         },
         "technical_fix": {
             "type": "boolean",
-            "title": "Propose one technical fix",
-            "default": False,
-            "description": "May open one unmerged PR; repository CI may run.",
+            "title": "Fix what the audit found",
+            "default": True,
+            "description": "Opens one pull request with the audit's fixes in the repository "
+            "selected on GitHub, or the one named below; repository CI may run. Skipped "
+            "without GitHub.",
         },
         "content_delivery": {
             "type": "string",
@@ -179,11 +181,14 @@ INPUT_SCHEMA = {
             "title": "GitHub owner/repository",
             "default": "",
             "maxLength": 140,
+            "description": "Leave empty to use the repository selected on GitHub.",
         },
         "repository_serves_site": {
             "type": "boolean",
             "default": False,
             "title": "This repository serves the audited website",
+            "description": "Needed only with a repository named here: the repository "
+            "selected on GitHub is the one the founder chose for the site.",
         },
         "article_weekdays": {
             "type": "array",
@@ -211,10 +216,6 @@ def check_inputs(inputs):
     date.fromisoformat(inputs["start_date"])
     if inputs["market"] not in MARKETS or inputs.get("duration", "6_months") not in DURATIONS:
         raise ValueError("Choose a supported market and content-plan duration.")
-    if inputs.get("technical_fix") and (
-        inputs.get("repository_serves_site") is not True or not inputs.get("expected_repository")
-    ):
-        raise ValueError("Confirm the exact GitHub repository before enabling technical fixes.")
     weekdays = inputs.get("article_weekdays", [])
     if len(set(weekdays)) != len(weekdays) or any(day not in WEEKDAYS for day in weekdays):
         raise ValueError("Choose each drafting weekday once, by its lowercase English name.")
