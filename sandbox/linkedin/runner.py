@@ -25,7 +25,13 @@ try:
         raise ValueError
     signal.alarm(max(1, min(45, int(packet["expires_at"] - time.time()))))
     result = asyncio.run(
-        read_page(packet["session"], packet["source"], packet["keywords"], packet["page"])
+        read_page(
+            packet["session"],
+            packet["source"],
+            packet["keywords"],
+            packet["page"],
+            document=packet.get("document") is True,
+        )
     )
 except CollectionError as exc:
     result = {"error": exc.code}

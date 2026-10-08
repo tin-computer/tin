@@ -25,6 +25,7 @@ dependencies = [
   "pydantic-settings>=2.10.0,<3",
   "stripe>=12,<20",
   "temporalio>=1.18.0,<2",
+  "tinycss2==1.4.0",
   "uvicorn[standard]>=0.35.0,<1",
 ]
 

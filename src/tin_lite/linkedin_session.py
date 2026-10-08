@@ -436,7 +436,7 @@ async def check_account(session, actor, *, client=None):
             await client.aclose()
 
 
-async def read_page(session, source, keywords, page, *, client=None):
+async def read_page(session, source, keywords, page, *, client=None, document=False):
     own = client is None
     client = client or httpx.AsyncClient(timeout=15, follow_redirects=False, trust_env=False)
 
@@ -446,6 +446,10 @@ async def read_page(session, source, keywords, page, *, client=None):
     try:
         if not identity_matches(await get("/voyager/api/me"), source["actor"]):
             raise CollectionError("account_changed")
+        if document:
+            from tin_lite.linkedin_document import read_document_page
+
+            return await read_document_page(client, session, source, keywords, page)
         resolved = None
         if "collection_url" not in source:
             if not source.get("query_id"):
