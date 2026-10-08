@@ -34,6 +34,7 @@ from tin_lite.growth_onboarding import (
     systems_details,
     ui_links,
 )
+from tin_lite.integrations import IntegrationAuthorizationError
 from tin_lite.onboarding import onboarding_tin_state
 from tin_lite.organic_audit import digest
 from tin_lite.product_urls import dashboard_url
@@ -648,7 +649,7 @@ class GrowthOnboardingActivities:
                     project_workflow_id=configured_id,
                     template_override=template,
                 )
-            except (WorkflowInputError, PrerequisiteError) as exc:
+            except (WorkflowInputError, PrerequisiteError, IntegrationAuthorizationError) as exc:
                 # These are definitive admission refusals. Transport/runtime failures remain
                 # pending and retry against the same schedule and first-run identities.
                 result = {"status": "blocked", "reason": str(exc)[:240]}
