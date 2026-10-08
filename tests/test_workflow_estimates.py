@@ -152,7 +152,7 @@ def test_a_procedure_ceiling_comes_from_its_validator_then_its_key(monkeypatch):
     assert ceiling("content.generate", child=True) == 6 * DOLLAR
     # The validator's entry wins over a key entry.
     monkeypatch.setitem(codex_api_pricing.PROCEDURE_KEY_MAXIMUMS, "content.refresh", 9 * DOLLAR)
-    assert ceiling("content.refresh") == DOLLAR
+    assert ceiling("content.refresh") == 3 * DOLLAR
     # Neither: the defaults.
     assert ceiling("product.code_map") == 10 * DOLLAR
     assert ceiling("product.code_map", child=True) == 5 * DOLLAR
@@ -225,3 +225,26 @@ async def test_a_refusal_names_the_usual_cost_and_the_ceiling(billed, audit_esti
         "This workflow usually costs about $1.00, never more than $6.00. Available credits: $0.50"
     )
     assert await f.db.pool.fetchval("SELECT count(*) FROM workflow_runs") == 0
+
+
+def test_every_per_operation_codex_ceiling_holds_a_request_and_a_usual_run():
+    # A per-operation budget reserves a whole request before dispatch, so a ceiling below that
+    # reservation stops the run at its first request (content.refresh at $1, 2026-10-08). Each
+    # ceiling must hold one reservation plus what a usual run spends before its last request.
+    from tin_lite.catalog import BUILTIN_WORKFLOWS
+
+    checked = 0
+    for item in BUILTIN_WORKFLOWS:
+        definition = item.definition
+        if definition.get("executor") != "codex.procedure":
+            continue
+        for terms in (
+            codex_api_pricing.api_terms(definition, child=True),
+            codex_api_pricing.api_terms(definition, session_budget=True),
+        ):
+            if "request_maximum_nanos" not in terms:
+                continue  # Session funding reserves the remaining ceiling, not a request.
+            checked += 1
+            usual = estimate_nanos(definition, {}, terms["maximum_nanos"])
+            assert terms["maximum_nanos"] >= terms["request_maximum_nanos"] + usual, item.key
+    assert checked
