@@ -293,6 +293,60 @@ async def test_cloud_prepares_new_friend_and_collects_without_browser(collection
     ]
 
 
+async def test_document_cloud_preparation_without_query_preserves_pages_and_deduplicates(
+    collection_db,
+):
+    from test_linkedin_document import PROFILE, friend_html, results
+
+    f = await prepared(collection_db)
+    await f.connection.save_session(
+        f.project.id,
+        TOKEN,
+        {**f.upload, "query_id": None, "expected_generation": f.status["session_generation"]},
+    )
+    job = await new_run(f)
+
+    def respond(request):
+        if request.url.path == "/voyager/api/me":
+            return httpx.Response(200, json={"miniProfile": {"publicIdentifier": "owner"}})
+        if request.url.path.endswith("/profiles"):
+            return httpx.Response(200, json={"included": [PROFILE]})
+        if request.url.path == "/in/friend":
+            return httpx.Response(200, text=friend_html())
+        assert request.url.path == "/search/results/people/"
+        page = int(request.url.params["page"])
+        return httpx.Response(200, text=results(page, more=page == 1))
+
+    class Cloud:
+        async def page(self, job, session, source):
+            async with httpx.AsyncClient(transport=httpx.MockTransport(respond)) as client:
+                result = await read_page(
+                    session, source, "", job["next_page"], client=client, document=True
+                )
+                return {**result, "observed_at": datetime.now(UTC).isoformat()}
+
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    first = record(
+        await f.db.pool.fetchrow(
+            "SELECT * FROM connection_collection_jobs WHERE run_id=$1", job["run_id"]
+        )
+    )
+    assert first["next_page"] == 2 and first["state"] == "collecting"
+    assert first["sources"]["0"]["query_id"] is None
+    await step(f.store, Cloud(), f.cipher, job["run_id"])
+    final = record(
+        await f.db.pool.fetchrow(
+            "SELECT * FROM connection_collection_jobs WHERE run_id=$1", job["run_id"]
+        )
+    )
+    assert final["state"] == "completed" and final["deadline"] == first["deadline"]
+    assert final["coverage"]["0"] == {
+        "reason": "visible_results_exhausted",
+        "pages": 2,
+        "people": 3,
+    }
+
+
 @pytest.mark.parametrize("query_present", [True, False])
 async def test_unsupported_cloud_preparation_waits_for_browser_without_resetting_progress(
     collection_db,
@@ -315,7 +369,7 @@ async def test_unsupported_cloud_preparation_waits_for_browser_without_resetting
             return {"error": "browser_preparation_required"}
 
     await step(f.store, Cloud(), f.cipher, job["run_id"])
-    assert len(calls) == int(query_present)
+    assert len(calls) == 1
     pending = await f.store.pending(f.project.id, TOKEN)
     assert (
         pending["state"] == "waiting_browser"

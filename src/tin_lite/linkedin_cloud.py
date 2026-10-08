@@ -124,7 +124,8 @@ class LinkedInCloud:
                         "profile": "linkedin_http_v1",
                     },
                     network={
-                        "allow_out": ["www.linkedin.com"],
+                        "allow_out": ["www.linkedin.com"]
+                        + (["static.licdn.com"] if job.get("cloud_transport") == "http_v2" else []),
                         "deny_out": lambda context: [context.all_traffic],
                     },
                     api_key=self.key,
@@ -142,6 +143,7 @@ class LinkedInCloud:
                     "source": source,
                     "keywords": job["inputs"]["keywords"],
                     "page": job["next_page"],
+                    "document": job.get("cloud_transport") == "http_v2",
                     "expires_at": deadline.timestamp(),
                 }
                 # Static command and a root-only file; credentials are never shell arguments,

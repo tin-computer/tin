@@ -111,19 +111,22 @@ integration revocation path. Old single-run transfers remain run-bound and are d
 finalization. An account change or LinkedIn challenge requires attention, not an automatic
 cloud/local retry.
 
-During setup the extension observes a supported search query and matching client context.
-The first search page may provide that identifier in its embedded data or cached resource
-timings without sending a fresh search request. Context stays bound to the tab that supplied
-it; only the validated identifier and structural diagnostics are retained from page data.
-If the initial view supplies no search identifier, setup still verifies and saves the login.
-The run then waits for Chrome to prepare the selected friend's view before dispatching cloud
-collection. An identifier observed later is saved with a session refresh between attempts.
-With a valid session, cloud execution resolves each newly selected friend using a fixed
-read-only request, requiring exact profile identity, linked first-degree evidence and a connections-view link
-inside that profile. A relationship badge alone does not establish list visibility.
-Unsupported evidence waits for Chrome to prepare that friend, preserving the same checkpoint.
-This provider response shape is fixture-tested; live qualification is still required. No
-cloud browser login screen is part of setup.
+Setup verifies and saves the login without requiring a search-query identifier. The current
+image prepares each selected friend in cloud compute from the saved profile URL. It reads
+profile metadata to bind the exact member, then checks the rendered profile for first-degree
+relationship evidence and a connections link for that member. It reads the selected search
+page with the pinned keyword and second-degree filters, using visible profile links,
+relationship labels and pagination controls. It does not execute website scripts. The document adapter resolves unconditional atomic
+visibility rules from bounded public stylesheets on `static.licdn.com`; those requests carry
+no session headers or cookies. It supports this server-rendered contract, not arbitrary CSS
+or client-only layouts. Unsupported or ambiguous evidence stops rather than guessing.
+
+Every page first verifies the authenticated account through `/voyager/api/me` with the same
+explicit cookie header. Account identity does not depend on an avatar rendering in the page.
+Unsupported profile or page evidence preserves the checkpoint and follows the existing
+browser preparation or backup policy. A challenge or account change stops the run.
+The earlier GraphQL parser remains available for older pinned images; its query identifier
+must come from an observed browser view. No cloud browser login screen is part of setup.
 
 Cloud execution uses the existing `E2B_API_KEY` with a dedicated
 `TIN_LITE_LINKEDIN_TEMPLATE`, `TIN_LITE_LINKEDIN_CLOUD_ENABLED=true` and the integration
@@ -136,7 +139,7 @@ that live acceptance has passed.
 Build only the collection image from the repository root:
 
 ```sh
-python sandbox/linkedin/template.py --alias tin-linkedin-http-v2
+python sandbox/linkedin/template.py --alias tin-linkedin-document-v1
 ```
 
 The script accepts the existing E2B key and refuses ordinary Tin image aliases. Its
@@ -149,9 +152,10 @@ reserve capacity. Check account headroom before expanding the pilot.
 
 Before wider rollout, verify full pagination, matching cloud and DOM page boundaries,
 correct identity, preserved normal-browser login through cleanup and later source checks,
-and recovery after worker/sandbox interruption. The current GraphQL parser is deliberately
-narrow: unsupported schemas stop collection. An observed query identifier comes from the
-selected browser view, never from an arbitrary user-supplied request URL.
+and recovery after worker/sandbox interruption. Missing page numbers, ambiguous continuation
+controls, hidden results and unsupported markup stop collection rather than imply completion.
+Rebuild this dedicated image and set `TIN_LITE_LINKEDIN_TEMPLATE` to its new template ID.
+Existing jobs retain their pinned image; create a new run to use the new adapter.
 
 Execution policies are pinned for the run:
 
@@ -166,7 +170,7 @@ Execution policies are pinned for the run:
 Challenges, rate limits, account changes and access denials pause rather than trigger a
 handoff. Uncertain cleanup also pauses. No cloud retry silently creates another paid attempt.
 Each page attempt has an effect receipt, bounded compute lifetime, network access restricted
-to LinkedIn, root-only transfer files and usage/cleanup observations. Collection is Tin-funded
+to LinkedIn and its fixed public stylesheet host, root-only transfer files and usage/cleanup observations. Collection is Tin-funded
 under its explicit connected-account billing policy; recorded supplier usage remains separate
 from the zero customer charge. Missing supplier observations remain unconfirmed.
 

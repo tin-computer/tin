@@ -84,7 +84,7 @@ async def _step(store, runtime, cipher, run_id):
                 "actor": job["actor"],
                 "query_id": sealed.get("query_id"),
             }
-            if not source["query_id"]:
+            if not source["query_id"] and job["cloud_transport"] != "http_v2":
                 raise CollectionError("browser_preparation_required")
         response = await runtime.page(job, sealed["session"], source)
         if response.get("error"):

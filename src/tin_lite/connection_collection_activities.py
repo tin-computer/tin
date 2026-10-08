@@ -286,6 +286,19 @@ class CollectionActivities:
             )
             await self.release(run.id)
             raise ApplicationError("collection_failed", non_retryable=True)
+        people_count = len({person["profile_url"] for page in pages for person in page["records"]})
+        summary = f"Collected {people_count} people. Results are in Files."
+        if job["state"] != "completed":
+            summary = (
+                f"Partial collection: {people_count} people saved. "
+                "Collection stopped before all results were read."
+            )
+        await self.db.project_run_progress(
+            run_id=run.id,
+            mode="indeterminate",
+            step="collect",
+            summary=summary,
+        )
         await self.db.project_success(
             run_id=run.id,
             canonical_commit_sha=revision,
