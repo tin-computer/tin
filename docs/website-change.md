@@ -115,7 +115,8 @@ treats the site's own build as the deciding check:
 | a deploy preview (Vercel, Netlify, Cloudflare Pages, Render, Railway, Amplify) that passed | merges, under the rules above |
 | a deploy preview still building | waits, up to ten minutes, then leaves the PR open |
 | a deploy preview that failed | leaves the PR open at once |
-| checks but no preview, all passing under the rules above | merges |
+| checks but no preview: every one passed, required or not | merges |
+| checks but no preview: one failed | leaves the PR open at once |
 | no checks at all, after 90 seconds | leaves the PR open: nothing builds the change |
 | checks Tin can't read | leaves the PR open and asks for the GitHub App's read-only permissions |
 

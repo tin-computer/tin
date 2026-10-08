@@ -994,6 +994,11 @@ async def build_verdict(integrations, run, binding, sha, *, waited):
         )
     except Exception:
         found = {"readable": False, "checks": []}
+    if found.get("truncated"):
+        return "stop", (
+            "It has more checks than Tin reads at once, so Tin can't tell whether your site "
+            "still builds and left the PR open for you."
+        )
     if not found.get("readable"):
         return "stop", (
             "Tin can't see this repository's checks, so it can't tell whether your site still "
@@ -1018,6 +1023,18 @@ async def build_verdict(integrations, run, binding, sha, *, waited):
             f"Your {pending[0]['name']} preview was still building after ten minutes, so Tin "
             "left it open."
         )
+    if not previews:
+        # No preview: the repository's checks are the build, every one of them, required or
+        # not (GitHub's rules above let an optional check fail).
+        broken = [check for check in checks if check.get("state") == "failure"]
+        if broken:
+            return "stop", f"Its {broken[0]['name']} check failed, so Tin left it open."
+        running = [check for check in checks if check.get("state") != "success"]
+        if running:
+            return "wait", (
+                f"Its {running[0]['name']} check was still running after ten minutes, so Tin "
+                "left it open."
+            )
     return "merge", {
         "build_check": {
             "preview": previews[0]["name"] if previews else None,

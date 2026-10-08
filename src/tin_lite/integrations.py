@@ -2121,13 +2121,22 @@ class IntegrationService:
             )
         except (IntegrationError, httpx.HTTPError):
             return {"readable": False, "checks": []}
-        for status in combined.get("statuses") or []:
+        statuses = combined.get("statuses") if isinstance(combined.get("statuses"), list) else []
+        check_runs = runs.get("check_runs") if isinstance(runs.get("check_runs"), list) else []
+        for listed, total in (
+            (statuses, combined.get("total_count")),
+            (check_runs, runs.get("total_count")),
+        ):
+            if isinstance(total, int) and total > len(listed):
+                # More than one page: a failure Tin didn't read must not pass for none.
+                return {"readable": False, "checks": [], "truncated": True}
+        for status in statuses:
             if not isinstance(status, dict) or not isinstance(status.get("context"), str):
                 continue
             name = status["context"][:255]
             state = {"success": "success", "pending": "pending"}.get(status.get("state"), "failure")
             checks.append({"name": name, "state": state, "preview": _is_preview(name, None)})
-        for run in runs.get("check_runs") or []:
+        for run in check_runs:
             if not isinstance(run, dict) or not isinstance(run.get("name"), str):
                 continue
             app = run.get("app") if isinstance(run.get("app"), dict) else {}
@@ -2141,7 +2150,7 @@ class IntegrationService:
             checks.append(
                 {"name": name, "state": state, "preview": _is_preview(name, app.get("slug"))}
             )
-        return {"readable": True, "checks": checks[:100]}
+        return {"readable": True, "checks": checks}
 
     async def github_merge_pull_request(
         self,

@@ -1177,3 +1177,38 @@ async def test_a_preview_still_building_at_the_deadline_leaves_it_open(publicati
     integrations.github_merge_pull_request.assert_not_called()
     assert merge["status"] == "left_open"
     assert merge["reason"].startswith("Your Vercel preview was still building")
+
+
+async def test_without_a_preview_every_check_must_pass(publication_db, monkeypatch):
+    # The branch requires only "build"; an optional check that fails is still the site's build
+    # when there is no preview.
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("next build", "failure", False))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"] == "Its next build check failed, so Tin left it open."
+    # Still running at the deadline: open, never merged.
+    monkeypatch.setattr(delivery, "BUILD_WAIT_SECONDS", 0)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_pull_request_merge_state.return_value = clean(mergeable_state="unstable")
+    integrations.github_commit_checks = AsyncMock(
+        return_value=checks(("build", "success", False), ("next build", "pending", False))
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"].startswith("Its next build check was still running")
+
+
+async def test_checks_beyond_one_page_never_merge(publication_db, monkeypatch):
+    f = await fixture(publication_db, monkeypatch)
+    run, integrations = await approved_change(f, monkeypatch)
+    integrations.github_commit_checks = AsyncMock(
+        return_value={"readable": False, "checks": [], "truncated": True}
+    )
+    merge = await merge_outcome(f, run)
+    integrations.github_merge_pull_request.assert_not_called()
+    assert merge["reason"].startswith("It has more checks than Tin reads at once")

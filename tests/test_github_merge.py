@@ -423,3 +423,28 @@ async def test_commit_checks_list_previews_and_runs_without_their_output(tmp_pat
             project_id=PROJECT_ID, repository="example-org/site", sha=HEAD
         )
     assert found == {"readable": False, "checks": []}
+
+
+@pytest.mark.asyncio
+async def test_more_checks_than_one_page_are_not_read_as_all_of_them(tmp_path) -> None:
+    database = FakeIntegrationDatabase()
+    connected(database)
+    github = Checks(
+        status=httpx.Response(200, json={"total_count": 0, "statuses": []}),
+        runs=httpx.Response(
+            200,
+            json={
+                "total_count": 150,
+                "check_runs": [
+                    {"name": f"job {n}", "status": "completed", "conclusion": "success"}
+                    for n in range(100)
+                ],
+            },
+        ),
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(github)) as client:
+        service = service_for(tmp_path, database, github, client)
+        found = await service.github_commit_checks(
+            project_id=PROJECT_ID, repository="example-org/site", sha=HEAD
+        )
+    assert found == {"readable": False, "checks": [], "truncated": True}
