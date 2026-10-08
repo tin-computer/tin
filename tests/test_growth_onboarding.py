@@ -831,9 +831,11 @@ async def test_unknown_first_admission_retries_without_hiding_or_recreating_sche
     assert saved.result["actions"][0]["first_run_status"] == "admitted"
 
 
+@pytest.mark.parametrize("refusal", ["prerequisite", "github"])
 async def test_definitive_first_admission_refusal_reports_active_schedule(
-    publication_db, monkeypatch
+    publication_db, monkeypatch, refusal
 ):
+    from tin_lite.integrations import IntegrationAuthorizationError
     from tin_lite.workflow_prerequisites import PrerequisiteError
 
     f = await approved_parent(publication_db, monkeypatch)
@@ -841,6 +843,10 @@ async def test_definitive_first_admission_refusal_reports_active_schedule(
 
     async def refuse_first(*args, **kwargs):
         if kwargs.get("project_workflow_id"):
+            # Tin's own refusal, such as a GitHub repository check, leaves this system out
+            # with its reason instead of failing the founder's whole setup.
+            if refusal == "github":
+                raise IntegrationAuthorizationError("Choose an explicit owner/repository on GitHub")
             raise PrerequisiteError("prerequisite_missing", "Required evidence is missing.")
         return await original(*args, **kwargs)
 
@@ -850,6 +856,8 @@ async def test_definitive_first_admission_refusal_reports_active_schedule(
     saved = await f.db.get_effect(f"onboarding:{f.run.id}:setup")
     action = saved.result["actions"][0]
     assert action["status"] == "scheduled" and action["first_run_status"] == "blocked"
+    if refusal == "github":
+        assert action["reason"] == "Choose an explicit owner/repository on GitHub"
     assert "schedule is active, but its first run was not admitted" in render_report(
         saved.result, titles={}
     )

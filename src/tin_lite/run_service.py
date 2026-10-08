@@ -455,7 +455,9 @@ async def start_workflow_run(
         )
         if organic_system_reason is not None:
             raise WorkflowExecutorUnavailableError(organic_system_reason)
-        if normalized_inputs["technical_fix"]:
+        if normalized_inputs["technical_fix"] and normalized_inputs["expected_repository"]:
+            # Without a named repository the technical step uses the one selected on the
+            # GitHub connection, or skips with a reason; website.change binds it before writing.
             await runtime.integrations.github_repository_binding(
                 project_id=project_id,
                 expected_repository=normalized_inputs["expected_repository"],

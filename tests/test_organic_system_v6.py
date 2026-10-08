@@ -8,8 +8,9 @@ pinned to v5 and earlier keep their children, receipts and report word for word.
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import pytest
 from test_billing import billed as billed
 from test_organic_content import approve, draft, system_fixture
 from test_procedure_publication import publication_db as publication_db
@@ -377,3 +378,62 @@ async def test_v6_budget_admits_website_change_for_its_writer_steps_only(billed)
         assert await f.billing.valid_child(
             conn, system, child("draft"), SPECS["content.generate"].definition
         )
+
+
+class _Admitted(Exception):
+    pass
+
+
+class _SystemWorkflow(SimpleNamespace):
+    @property
+    def current_commit_sha(self):
+        # Read only once every admission check has passed.
+        raise _Admitted
+
+
+@pytest.mark.parametrize(
+    ("named", "binds"),
+    [("", False), ("owner/site", True)],
+)
+async def test_a_start_checks_the_repository_only_when_it_names_one(monkeypatch, named, binds):
+    from tin_lite import run_service
+
+    recipe = next(w for w in BUILTIN_WORKFLOWS if w.key == organic_system.KEY)
+    workflow = _SystemWorkflow(
+        id=recipe.id,
+        key=organic_system.KEY,
+        executor=organic_system.KEY,
+        project_id=None,
+        definition=recipe.definition,
+    )
+    monkeypatch.setattr(run_service, "resolve_execution_contract", AsyncMock(return_value=workflow))
+    monkeypatch.setattr(run_service, "organic_system_gate", lambda *_a, **_k: None)
+    monkeypatch.setattr(
+        run_service,
+        "evaluate_prerequisites",
+        AsyncMock(return_value=SimpleNamespace(blocking=False, results=[])),
+    )
+    binding = AsyncMock()
+    runtime = SimpleNamespace(
+        database=SimpleNamespace(),
+        storage=None,
+        integrations=SimpleNamespace(github_repository_binding=binding),
+    )
+    # Start here's inputs leave the repository out; fixes are on by default.
+    with pytest.raises(_Admitted):
+        await run_service.start_workflow_run(
+            runtime=runtime,  # type: ignore[arg-type]
+            settings=SimpleNamespace(),  # type: ignore[arg-type]
+            workflow=workflow,  # type: ignore[arg-type]
+            project_id=uuid4(),
+            started_by_clerk_user_id="user_member",
+            input_payload={
+                "site_url": "https://example.com/",
+                "market": "US",
+                "buyer_context": "Teams that ship agents.",
+                "start_date": "2026-10-08",
+                "expected_repository": named,
+                "repository_serves_site": bool(named),
+            },
+        )
+    assert binding.await_count == (1 if binds else 0)
