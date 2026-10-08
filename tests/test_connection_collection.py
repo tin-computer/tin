@@ -671,6 +671,12 @@ async def test_publication_retains_coverage_without_hiding_failure(
     assert projected.status.value == ("failed" if state == "failed" else "succeeded")
     assert projected.artifact_path == f"connections/{f.run.id}/manifest.json"
     assert projected.artifact_ref == "f" * 40
+    if state != "failed":
+        assert projected.progress_summary == (
+            "Partial collection: 0 people saved. Collection stopped before all results were read."
+            if state == "partial"
+            else "Collected 0 people. Results are in Files."
+        )
 
 
 async def test_http_extension_origin_and_secret_errors_are_closed(collection_db):
