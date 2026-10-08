@@ -182,7 +182,10 @@ class CollectionActivities:
             "waiting_browser": "Waiting for your browser. Open Chrome with LinkedIn signed in.",
             "paused": "Collection paused. Check LinkedIn in Integrations.",
             "handoff_pending": "Waiting to continue in Chrome. Your saved pages are kept.",
-        }.get(job["state"], f"Collecting connections. {count} pages saved.")
+        }.get(
+            job["state"],
+            f"Collecting connections. {count} {'page' if count == 1 else 'pages'} saved.",
+        )
         if job["state"] == "waiting_browser" and job["reason"] == "cloud_unavailable":
             summary = (
                 "Cloud collection is unavailable. Tin will collect in Chrome; "

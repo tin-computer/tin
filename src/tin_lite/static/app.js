@@ -2318,10 +2318,21 @@ function systemRunningSentence(run, title) {
     // The Postgres projection is authoritative; local time is a safe display fallback.
   }
   const source = systemStartedBy(run);
-  const startPhrase = ["from chat", "from Claude Code", "from Codex", "from the API"].includes(source)
-    ? `Started ${source} at ${started}`
-    : `Started ${started}, ${source}`;
+  const startPhrase = source === "manual" ? `Started ${started}`
+    : source === "scheduled" ? `Started ${started} on schedule`
+      : `Started ${source} at ${started}`;
   return `${clause.replace(/[.\s]+$/, "")}. ${startPhrase}.`;
+}
+
+// A running card's Open sits in the row's actions, where Skip once and Pause sit on others
+// (Paper OPEN-A1); the line below the row is the sentence alone.
+function systemOpenRunAction(run) {
+  const expanded = state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null;
+  return `<span class="system-card-actions"><button class="system-action is-strong" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button></span>`;
+}
+
+function systemRunningDetail(run, title) {
+  return `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, title))}</span></div>`;
 }
 
 function systemProgressBar(run) {
@@ -2483,11 +2494,9 @@ function systemRunCard(run, configured = null) {
       <code class="system-card-every">${escapeHtml(schedule)}</code>
       <code class="system-card-state">${escapeHtml(systemRunProgressLabel(run))}</code>
       <span class="system-card-last">${escapeHtml(last)}</span>
+      ${systemOpenRunAction(run)}
     </div>
-    <div class="system-running-detail">
-      <span>${escapeHtml(systemRunningSentence(run, title))}</span>
-      <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${expanded ? "Close" : "Open"}</button>
-    </div>
+    ${systemRunningDetail(run, title)}
     ${expanded ? systemRunDetailHtml(run, false) : ""}
     ${systemProgressBar(run)}
   </article>`;
@@ -2755,7 +2764,9 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   }).join("");
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
-  const rowActions = !isRunning && configured.schedule
+  const rowActions = isRunning
+    ? systemOpenRunAction(run)
+    : configured.schedule
     ? `<span class="system-card-actions">
         ${configured.status === "paused"
           ? `<button class="system-action is-strong" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="resume">Resume</button>`
@@ -2763,12 +2774,7 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
              <button class="system-action" type="button" data-toggle-project-workflow="${escapeHtml(configured.id)}" data-action="pause">Pause</button>`}
        </span>`
     : "";
-  const runningDetail = isRunning
-    ? `<div class="system-running-detail">
-        <span>${escapeHtml(systemRunningSentence(run, configured.name))}</span>
-        <button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button>
-       </div>`
-    : "";
+  const runningDetail = isRunning ? systemRunningDetail(run, configured.name) : "";
   const runDetail = isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null
     ? systemRunDetailHtml(run, false)
     : "";
@@ -2786,12 +2792,10 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
     ${runDetail}
     <div class="system-config-body">
       <section>
-        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">what it works on</code>'}
         ${fields || '<span class="system-config-note">No additional choices.</span>'}
         <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}" /></label>
       </section>
       <section class="system-config-when">
-        ${isXAuthoring(workflow) ? "" : '<code class="system-config-kicker">when</code>'}
         ${isXAuthoring(workflow) ? xWorkflowRunControls(workflow) : `${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.executor === "workflow.code" ? ["on_demand", "daily", "weekly", "monthly"] : workflow.definition?.schedule_modes)}<p>${escapeHtml(systemConfigurationFact(configured))}</p>`}
       </section>
     </div>
@@ -2817,17 +2821,16 @@ function systemContentProgramEditor(workflow, configured, run) {
       <code class="system-card-every">${escapeHtml(systemScheduleLabel(configured))}</code>
       <code class="system-card-state">${escapeHtml(isRunning ? systemRunProgressLabel(run) : systemNextLabel(configured))}</code>
       <span class="system-card-last">${escapeHtml(systemLastLabel(configured))}</span>
+      ${isRunning ? systemOpenRunAction(run) : ""}
     </div>
-    ${isRunning ? `<div class="system-running-detail"><span>${escapeHtml(systemRunningSentence(run, configured.name))}</span><button class="open-button" type="button" data-observe-run="${escapeHtml(run.id)}">${state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? "Close" : "Open"}</button></div>` : ""}
+    ${isRunning ? systemRunningDetail(run, configured.name) : ""}
     ${isRunning && state.expandedRun?.runId === run.id && state.expandedRun?.eventId === null ? systemRunDetailHtml(run, false) : ""}
     <div class="system-config-body">
       <section class="content-program-work" aria-label="Upcoming content">
-        <code class="system-config-kicker">what it works on</code>
         <div class="content-program-panel" data-content-program="${escapeHtml(configured.id)}" data-content-projection="${escapeHtml(JSON.stringify([configured.content_revision || null, configured.last_run_id, configured.last_run_status, configured.run_count, state.runs.filter(run => ["00000000-0000-4000-8000-000000000031", "00000000-0000-4000-8000-000000000036"].includes(run.workflow_id)).map(runFingerprint)]))}"></div>
       </section>
       <section class="system-config-when">
         <form class="system-config-form content-program-settings ${mode === "weekly" ? "is-weekly" : ""} ${mode === "monthly" ? "is-monthly" : ""} ${mode === "manual" ? "is-manual" : ""}" data-workflow-id="${escapeHtml(workflow.id)}" data-project-workflow-id="${escapeHtml(configured.id)}">
-          <code class="system-config-kicker">when</code>
           ${workflowScheduleControls(configured.id, configured.schedule, false, workflow.definition?.schedule_modes)}
           <p class="system-config-note">${escapeHtml(systemConfigurationFact(configured))}</p>
           <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" name="workflow_name" required maxlength="120" value="${escapeHtml(configured.name)}"></label>
