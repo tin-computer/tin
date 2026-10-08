@@ -6892,7 +6892,7 @@ async function confirmLinkedInConnection() {
       const deadline = Date.now() + 45000;
       while (Date.now() < deadline && state.linkedInChoice === choice && isCurrentProjectContext(choice.context)) {
         let status;
-        try { status = await linkedInMessage("DISCOVER", {}, 35000); } catch { break; }
+        status = await linkedInMessage("DISCOVER", {}, 35000);
         if (status.project_id !== choice.context.projectId || status.account?.key !== choice.account.key) throw new Error("account_changed");
         if (["session_expired","challenge","rate_limited","access_denied","unsupported_identity","refresh_linkedin_context","search_setup_unavailable","ambiguous_search_contract","login_or_checkpoint","platform_limit"].includes(status.reason)) throw new Error(status.reason);
         ready = status.session_available === true;

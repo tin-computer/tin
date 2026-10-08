@@ -17,15 +17,17 @@ again, it will say so. Change the choice or disconnect under **Integrations → 
 
 ## Development and release
 
-This is version 0.4.2 of the existing published Tin extension, not a separate store item.
-The store link requires a 0.4.2 release; merging this source does not update installed
+This is version 0.4.3 of the existing published Tin extension, not a separate store item.
+The store link requires a 0.4.3 release; merging this source does not update installed
 extensions. See [store release](STORE_RELEASE.md).
 
 For an operator pilot before the store update, open `chrome://extensions`, enable
 **Developer mode**, choose **Load unpacked**, and select this `browser-extension` directory.
 If it is already loaded, click its reload button instead. Refresh Tin, then follow step 3
 above. The deployment must allowlist this installation's extension ID. Keep older diagnostic
-copies disabled so you use one Tin connection.
+copies disabled so you use one Tin connection. After replacing or reloading an unpacked
+copy, refresh every open Tin tab before connecting again. Old tabs can retain a disconnected
+extension script until refreshed; reinstalling the extension alone does not replace it.
 
 The v3 bridge supports the new setup protocol while retaining the legacy v2 transport.
 Pairing confirms retirement of this device's legacy Tin credential before clearing its
