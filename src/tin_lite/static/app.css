@@ -5116,12 +5116,13 @@ html[data-theme="dark"] .system-week-nav button {
   gap: 10px;
 }
 
+/* Paper WF-A: a title, the description's first sentence and one mono line; actions centred. */
 .system-template-card {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 14px;
   min-height: 92px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   background: var(--paper-card);
   border: 1px solid var(--card-border);
   border-radius: 8px;
@@ -5163,6 +5164,14 @@ html[data-theme="dark"] .system-week-nav button {
   font-size: 13px;
   line-height: 18px;
   white-space: normal;
+}
+
+.system-template-card:not(.is-open) .system-template-description {
+  max-width: 720px;
+}
+
+.system-template-card:not(.is-open) .system-template-actions {
+  padding-top: 0;
 }
 
 .system-template-actions,
@@ -8589,6 +8598,7 @@ html[data-theme="dark"] .integration-badge.is-monochrome::before {
 
   .system-template-card:not(.is-open) {
     flex-direction: column;
+    align-items: stretch;
     gap: 12px;
     padding: 13px 14px;
   }

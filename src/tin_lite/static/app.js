@@ -948,6 +948,15 @@ function workflowRequirementState(workflow) {
   });
 }
 
+// A workflow's description opens with what it does; the list shows that sentence and the
+// setup card the rest. "website.change" has no space after its dot, so it never splits.
+function workflowSummary(description) {
+  const text = String(description || "").trim();
+  return text.match(/^.*?[.!?](?=\s+[A-Z])/s)?.[0] || text;
+}
+
+// Paper WF-A ("System · workflows list"): the first sentence on a readable measure, and the
+// last run beside the key instead of under the actions.
 function systemTemplateCard(workflow, query) {
   if (state.workflowEditor?.workflowId === workflow.id && !state.workflowEditor.projectWorkflowId) {
     return systemTemplateSetupCard(workflow);
@@ -957,11 +966,19 @@ function systemTemplateCard(workflow, query) {
   const contextLabel = count
     ? `${count} ${count === 1 ? "workflow" : "workflows"} in My system`
     : saved ? "not set up yet" : "";
+  const summary = workflowSummary(workflow.description);
+  // A search that matched only the rest of the description shows all of it, so the match shows.
+  const description = query && !`${workflow.title} ${workflow.key} ${summary}`.toLowerCase().includes(query)
+    ? workflow.description
+    : summary;
+  const lastRun = workflow.last_run_id && workflow.last_run_at
+    ? ` · <button class="system-last-run" type="button" data-template-last-run="${escapeHtml(workflow.last_run_id)}">last run ${escapeHtml(dayLabel(workflow.last_run_at))}, ${escapeHtml(ledgerTime(workflow.last_run_at))}</button>`
+    : "";
   return `<article class="system-template-card">
     <span class="system-template-identity">
       <strong>${workflowSearchMatch(workflow.title, query, "workflow-search-title-match")}</strong>
-      <span class="system-template-description">${escapeHtml(workflow.description)}</span>
-      <code>${workflowSearchMatch(workflow.key, query, "workflow-search-id-match")}${contextLabel ? ` · ${escapeHtml(contextLabel)}` : ""}</code>
+      <span class="system-template-description">${escapeHtml(description)}</span>
+      <code>${workflowSearchMatch(workflow.key, query, "workflow-search-id-match")}${contextLabel ? ` · ${escapeHtml(contextLabel)}` : ""}${lastRun}</code>
     </span>
     <span class="system-template-side">
       <span class="system-template-actions ${state.templateView === "saved" ? "is-saved-view" : ""}">
@@ -971,9 +988,6 @@ function systemTemplateCard(workflow, query) {
         ${systemDiagramSlot(workflow)}
         <button class="button-secondary" type="button" data-configure-workflow="${escapeHtml(workflow.id)}">Set up</button>
       </span>
-      ${workflow.last_run_id && workflow.last_run_at
-        ? `<button class="system-last-run" type="button" data-template-last-run="${escapeHtml(workflow.last_run_id)}">Last run ${escapeHtml(dayLabel(workflow.last_run_at))}, ${escapeHtml(ledgerTime(workflow.last_run_at))}</button>`
-        : ""}
     </span>
   </article>`;
 }
