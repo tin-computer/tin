@@ -57,12 +57,12 @@ calls = [
 if SCENARIO in {"api_context", "session_context", "bounded_context"}:
     calls += [("exec_command", {"cmd": "test -s reports/private/RESULT.md"})] * 4
 if SCENARIO == "studio_voice":
-    from codex_api_config import studio_shell_policy
+    from codex_api_config import worker_shell_policy
 
     config = Path("/home/user/.codex/config.toml")
     config.write_text(
         config.read_text()
-        + studio_shell_policy(
+        + worker_shell_policy(
             {
                 "TIN_PROCEDURE_STUDIO": "1",
                 "TIN_RUN_TOOLS_URL": "https://tin.test/internal/run-tools/mcp",

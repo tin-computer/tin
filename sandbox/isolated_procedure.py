@@ -26,13 +26,17 @@ EXEC_URL = "ws://127.0.0.1:8788"
 # a repository snapshot of 100,000 files (repository_limits) needs about 2.2x that.
 MAX_ENTRIES = 400_000
 STUDIO_CONFIG = Path("/home/user/.tin-lite/studio-worker.json")
+PROXY_CONFIG = Path("/home/user/.tin-lite/proxy-worker.json")
+PROXY_KEYS = frozenset(
+    {"HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "NO_PROXY", "no_proxy"}
+)
 
 
-def studio_environment() -> list[str]:
-    """Delegate only this run's bounded voice capability, never model/storage auth."""
-    if not STUDIO_CONFIG.exists():
-        return []
-    info = STUDIO_CONFIG.lstat()
+def trusted_config(path: Path, label: str) -> dict | None:
+    """A small JSON file only the controller can have written, or None when absent."""
+    if not path.exists():
+        return None
+    info = path.lstat()
     if (
         not stat.S_ISREG(info.st_mode)
         or info.st_nlink != 1
@@ -40,14 +44,34 @@ def studio_environment() -> list[str]:
         or stat.S_IMODE(info.st_mode) != 0o600
         or info.st_size > 8192
     ):
-        raise RuntimeError("invalid trusted Studio configuration")
-    value = json.loads(STUDIO_CONFIG.read_text())
-    if set(value) != {"TIN_RUN_TOOLS_URL", "TIN_RUN_TOOLS_GRANT"} or any(
+        raise RuntimeError(f"invalid trusted {label} configuration")
+    value = json.loads(path.read_text())
+    if not isinstance(value, dict) or any(
         not isinstance(v, str) or not v or "\x00" in v or "\n" in v for v in value.values()
     ):
+        raise RuntimeError(f"invalid trusted {label} configuration")
+    return value
+
+
+def studio_environment() -> list[str]:
+    """Delegate only this run's bounded voice capability, never model/storage auth."""
+    value = trusted_config(STUDIO_CONFIG, "Studio")
+    if value is None:
+        return []
+    if set(value) != {"TIN_RUN_TOOLS_URL", "TIN_RUN_TOOLS_GRANT"}:
         raise RuntimeError("invalid Studio voice capability")
     if not value["TIN_RUN_TOOLS_URL"].startswith("https://"):
         raise RuntimeError("Studio voice requires HTTPS")
+    return [f"{key}={value[key]}" for key in sorted(value)]
+
+
+def proxy_environment() -> list[str]:
+    """This run's forward-proxy grant, so commands can reach public pages through it."""
+    value = trusted_config(PROXY_CONFIG, "proxy")
+    if value is None:
+        return []
+    if set(value) != PROXY_KEYS or not value["HTTPS_PROXY"].startswith("https://"):
+        raise RuntimeError("invalid run proxy")
     return [f"{key}={value[key]}" for key in sorted(value)]
 
 
@@ -63,8 +87,9 @@ def protect_runtime() -> None:
 
 
 def worker_command(*command: str) -> list[str]:
-    # An allowlist, not an expanding credential denylist. No broker, proxy, storage,
-    # provider or integration credential reaches commands or repository build hooks.
+    # An allowlist, not an expanding credential denylist. No broker, storage, provider or
+    # integration credential reaches commands or repository build hooks. The only grants
+    # are this run's forward-proxy grant and, in Studio, its voice capability.
     return [
         "/usr/bin/setpriv",
         f"--reuid={WORKER}",
@@ -82,6 +107,7 @@ def worker_command(*command: str) -> list[str]:
         "GIT_CONFIG_VALUE_0=/home/user/project",
         "GIT_CONFIG_KEY_1=safe.directory",
         "GIT_CONFIG_VALUE_1=/home/user/state",
+        *proxy_environment(),
         *studio_environment(),
         *command,
     ]

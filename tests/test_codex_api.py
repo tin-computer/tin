@@ -358,9 +358,54 @@ def test_studio_shell_policy_delegates_only_voice_capability(tmp_path):
     assert "controller-only" not in config.read_text()
     assert "provider-only" not in config.read_text()
     assert config.stat().st_mode & 0o777 == 0o600
-    assert module.studio_shell_policy({}) == ""
+    assert module.worker_shell_policy({}) == ""
     with pytest.raises(ValueError, match="voice capability"):
-        module.studio_shell_policy({**env, "TIN_RUN_TOOLS_GRANT": ""})
+        module.worker_shell_policy({**env, "TIN_RUN_TOOLS_GRANT": ""})
+
+
+PROXY = "https://tin-run:run-bound-proxy-grant@proxy.tin.test:8888"
+
+
+def test_commands_receive_only_this_runs_proxy_grant(tmp_path):
+    module = load_sandbox_module("codex_api_config")
+    env = {
+        "TIN_PROCEDURE_ISOLATED": "1",
+        "TIN_CODEX_API_URL": f"https://tin.test/internal/codex-api/{uuid4()}/v1",
+        "TIN_CODEX_API_GRANT": "controller-only",
+        "HTTPS_PROXY": PROXY,
+        "NO_PROXY": "app.tin.test",
+    }
+    config = tmp_path / "config.toml"
+    config.write_text('model = "gpt-6-sol"\n')
+    module.configure(config, env)
+    policy = tomllib.loads(config.read_text())["shell_environment_policy"]
+    bypass = "app.tin.test,127.0.0.1,localhost,::1"
+    expected = {
+        "HTTP_PROXY": PROXY,
+        "HTTPS_PROXY": PROXY,
+        "http_proxy": PROXY,
+        "https_proxy": PROXY,
+        "NO_PROXY": bypass,
+        "no_proxy": bypass,
+    }
+    assert policy == {"inherit": "none", "set": expected}
+    assert "controller-only" not in config.read_text()
+
+    worker = tmp_path / "proxy-worker.json"
+    module.write_worker_proxy(worker, env)
+    assert json.loads(worker.read_text()) == expected
+    assert worker.stat().st_mode & 0o777 == 0o600
+    module.write_worker_proxy(worker, {})
+    assert not worker.exists()
+
+    for url in (
+        "http://tin-run:grant@proxy.tin.test:8888",
+        "https://proxy.tin.test:8888",
+        "https://someone:grant@proxy.tin.test:8888",
+        "https://tin-run:grant@proxy.tin.test:8888/path",
+    ):
+        with pytest.raises(ValueError, match="proxy"):
+            module.command_proxy({"HTTPS_PROXY": url})
 
 
 async def test_pinned_auth_survives_flags_and_ambiguous_attempt_not_restarted(publication_db):

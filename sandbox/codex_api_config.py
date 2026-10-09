@@ -7,22 +7,78 @@ import tomllib
 from pathlib import Path
 from urllib.parse import urlsplit
 
+WORKER_PROXY = Path("/home/user/.tin-lite/proxy-worker.json")
 
-def studio_shell_policy(env):
-    """Codex constructs command environments; exec-server inheritance is insufficient."""
+
+def studio_values(env):
+    """Delegate only this run's bounded voice capability, never model/storage auth."""
     if env.get("TIN_PROCEDURE_STUDIO") != "1":
-        return ""
+        return {}
     values = {key: env.get(key, "") for key in ("TIN_RUN_TOOLS_URL", "TIN_RUN_TOOLS_GRANT")}
     if not values["TIN_RUN_TOOLS_URL"].startswith("https://") or any(
         not value or "\x00" in value or "\n" in value for value in values.values()
     ):
         raise ValueError("Studio API requires its run-bound voice capability")
+    return values
+
+
+def command_proxy(env):
+    """This run's forward-proxy grant, so commands can make public requests.
+
+    The sandbox fence admits only Tin's own hosts directly; public pages go through the
+    proxy, which refuses private addresses. The grant expires with the run.
+    """
+    url = env.get("HTTPS_PROXY", "")
+    if not url:
+        return {}
+    parsed = urlsplit(url)
+    if (
+        parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username != "tin-run"
+        or not parsed.password
+        or parsed.path not in ("", "/")
+        or parsed.query
+        or parsed.fragment
+        or "\x00" in url
+        or "\n" in url
+    ):
+        raise ValueError("Invalid run-bound proxy configuration")
+    hosts = [*env.get("NO_PROXY", "").split(","), "127.0.0.1", "localhost", "::1"]
+    bypass = ",".join(dict.fromkeys(host.strip() for host in hosts if host.strip()))
+    return {
+        "HTTP_PROXY": url,
+        "HTTPS_PROXY": url,
+        "http_proxy": url,
+        "https_proxy": url,
+        "NO_PROXY": bypass,
+        "no_proxy": bypass,
+    }
+
+
+def worker_shell_policy(env):
+    """Codex constructs command environments; exec-server inheritance is insufficient."""
+    values = {**studio_values(env), **command_proxy(env)}
+    if not values:
+        return ""
     return (
         '\n[shell_environment_policy]\ninherit = "none"\n'
         "[shell_environment_policy.set]\n"
         + "\n".join(f"{key} = {json.dumps(value)}" for key, value in values.items())
         + "\n"
     )
+
+
+def write_worker_proxy(path, env):
+    """Only the controller writes this; the root helper hands it to every author command."""
+    values = command_proxy(env)
+    path.unlink(missing_ok=True)
+    if not values:
+        return
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        os.fchmod(handle.fileno(), 0o600)
+        json.dump(values, handle)
 
 
 def configure(path, env):
@@ -91,7 +147,7 @@ def configure(path, env):
             ]
         )
     )
-    content += studio_shell_policy(env)
+    content += worker_shell_policy(env)
     tomllib.loads(content)
     path.write_text(content)
     path.chmod(0o600)
@@ -110,3 +166,4 @@ if __name__ == "__main__":
         print("TIN_CODEX_API_READY_V5")
     else:
         configure(Path("/home/user/.codex/config.toml"), os.environ)
+        write_worker_proxy(WORKER_PROXY, os.environ)
