@@ -146,6 +146,7 @@ CREATIVE_STUDIO_SYSTEM = "creative-studio"
 PAID_ADS_SYSTEM = "paid-ads"
 # The stored system ID stays "x"; only its name changed.
 SOCIAL_SYSTEM = "x"
+LINKEDIN_SYSTEM = "linkedin"
 COMPETITORS_SYSTEM = "competitors"
 REVENUE_SYSTEM = "revenue"
 DESIGN_MD_WORKFLOW_ID = UUID("00000000-0000-4000-8000-000000000001")
@@ -234,6 +235,7 @@ WORKFLOW_SYSTEMS = (
     WorkflowSystem(id=SOCIAL_SYSTEM, name="Social", display_order=6),
     WorkflowSystem(id=COMPETITORS_SYSTEM, name="Competitors", display_order=7),
     WorkflowSystem(id=REVENUE_SYSTEM, name="Revenue system", display_order=8),
+    WorkflowSystem(id=LINKEDIN_SYSTEM, name="LinkedIn", display_order=9),
 )
 WORKFLOW_SYSTEM_IDS = frozenset(item.id for item in WORKFLOW_SYSTEMS)
 
@@ -4569,6 +4571,7 @@ BUILTIN_WORKFLOWS = (
         ),
         description="Collect visible second-degree connections through selected friends.",
         executor=connection_collection.KEY,
+        system=LINKEDIN_SYSTEM,
         version_label="v2",
         input_schema=connection_collection.INPUT_SCHEMA,
         schedule_modes=("on_demand",),

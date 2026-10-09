@@ -1070,12 +1070,12 @@ function workflowFieldPresentation(workflow, name, definition) {
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</div>`;
-  }).join("");
+  });
   const requirements = workflowRequirementState(workflow);
   const requirementRows = requirements.map(({ requirement, integration, ready }) => `<div class="system-requirement ${ready ? "is-ready" : "is-missing"}">
     <span class="system-card-dot ${ready ? "is-running" : "is-pending"}" aria-hidden="true"></span>
@@ -2769,13 +2769,13 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   if (workflow.key === "content.plan") return systemContentProgramEditor(workflow, configured, run);
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
     return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}${definition.description ? workflowFieldHelp(definition, fieldId) : ""}</div>`;
-  }).join("");
+  });
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
   const rowActions = isRunning
@@ -3602,17 +3602,23 @@ function orderedWorkflowFields(schema) {
     });
 }
 
+function groupWorkflowFields(schema, renderField) {
+  const fields = orderedWorkflowFields(schema);
+  const advanced = ([name, field]) => field["x-tin-ui"]?.advanced === true && !(schema.required || []).includes(name);
+  const basic = fields.filter(field => !advanced(field)).map(renderField).join("");
+  const extra = fields.filter(advanced).map(renderField).join("");
+  return basic + (extra ? `<details class="x-workflow-details"><summary>More options</summary><div>${extra}</div></details>` : "");
+}
+
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
-    .map(([name, definition]) => workflowInputField(
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
       name,
       definition,
       undefined,
       required.has(name),
-    ))
-    .join("");
+    ));
   return `<form class="workflow-config-form is-manual" data-workflow-id="${escapeHtml(workflow.id)}">
     <div class="workflow-config-heading">
       <span class="status-dot is-ready"></span>

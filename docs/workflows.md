@@ -77,6 +77,12 @@ Tin ships 42 built-in workflows. Every workflow also takes a `project_id`; requi
 |---|---|---|---|
 | Recover failed payments (human review)<br>`revenue.payment_recovery` | Find customers whose automatic Stripe payment failed and is still unpaid, and write each one a short personal email in your voice: their plan, why the card failed, their history with you and your latest mail with them, with Stripe's own payment link. After you approve, Tin checks each invoice again and sends only the unpaid ones from your Gmail. Runs weekly by default; a person is emailed at most once a month, and an unanswered Decision closes unsent after six days. | `lookback_days`, `max_customers`, `products` | — |
 
+## LinkedIn
+
+| Workflow | What it does | Inputs | Output |
+|---|---|---|---|
+| Collect connections<br>`connections.collect` | Collect visible second-degree connections through selected friends. | **`friends`**, `keywords`, `execution` | — |
+
 ## General
 
 | Workflow | What it does | Inputs | Output |
@@ -89,7 +95,6 @@ Tin ships 42 built-in workflows. Every workflow also takes a `project_id`; requi
 | One-off project task (task)<br>`project.task` | Use an isolated Codex task when the founder asks Tin to inspect, research, or change project files and no narrower registered workflow fits. | **`instruction`**, **`title`** | — |
 | Research a question deeply<br>`research.deep_dive` | Test a project question and its upstream assumptions against current, source-backed evidence. | **`question`**, `depth`, `audience`, `known_assumptions`, `constraints` | `reports/RESEARCH_DEEP_DIVE.md` |
 | Create a diagram (human review)<br>`content.diagram` | Turn a process or system into one clear diagram using approved brand guidance. Its source stays editable in project Files. | **`brief`**, **`slug`**, `direction`, `context` | `diagrams/{slug}.mmd` |
-| Collect connections<br>`connections.collect` | Collect visible second-degree connections through selected friends. | **`friends`**, `keywords`, `execution` | — |
 
 # Registry packages
 
