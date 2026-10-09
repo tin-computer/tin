@@ -161,7 +161,9 @@ outside marketing, or were written without ever being run. Full rules:
 - Keep the protected controller separate from user/agent commands. Preserve output
   bounds, result validators, worker isolation, fenced egress, TLS proxy and cleanup.
 - Browser execution is a specific pinned sandbox profile, not permission for arbitrary
-  private code to access the network. Rebuild and verify images when runtime contracts change.
+  private code to access the network. Isolated commands reach public addresses only through
+  the run's expiring proxy grant, never directly. Rebuild and verify images when runtime
+  contracts change.
 - Project integrations enforce selected resources and bounded operations. Custom API
   connections use the trusted service gateway; author code receives a service binding,
   not an API key. Preserve endpoint/redirect/private-address checks and stable operation IDs.

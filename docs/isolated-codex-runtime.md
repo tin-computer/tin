@@ -24,6 +24,12 @@ The provider key stays on the switchboard. Pooled ChatGPT authentication is reti
   Linux `no_new_privs`. Provider keys, model/storage grants, reusable proxy credentials,
   and the controller's run-tool grant do not enter their environment. The ordinary trusted
   controller may still use Tin's declared, run-bound MCP integration gateway.
+- Commands do receive this run's forward-proxy grant as `HTTP(S)_PROXY`, with loopback and
+  Tin's own host in `NO_PROXY`. The sandbox fence admits only Tin's hosts directly, so a
+  public GET (a buyer-trust header check, a page fetch) goes through the proxy, which
+  refuses private and link-local addresses and the switchboard itself. The grant expires
+  with the run. The controller validates it, sets it in Codex's shell policy and writes it
+  to a controller-owned `proxy-worker.json`, which the root helper hands to every command.
 - The image provider makes `/usr/local` world-writable during finalization. Runtime
   preparation removes group/other write permission there before any author process starts.
   The image-protocol check runs before the runner starts API execution.

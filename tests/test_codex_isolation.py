@@ -115,6 +115,37 @@ def test_studio_worker_receives_only_its_run_voice_capability(tmp_path, monkeypa
         helper.worker_command("/bin/true")
 
 
+def test_worker_receives_this_runs_proxy_grant(tmp_path, monkeypatch):
+    helper = load_sandbox_module("isolated_procedure")
+    config = tmp_path / "proxy-worker.json"
+    proxy = "https://tin-run:run-bound-proxy-grant@proxy.tin.test:8888"
+    bypass = "app.tin.test,127.0.0.1,localhost,::1"
+    values = {
+        "HTTP_PROXY": proxy,
+        "HTTPS_PROXY": proxy,
+        "http_proxy": proxy,
+        "https_proxy": proxy,
+        "NO_PROXY": bypass,
+        "no_proxy": bypass,
+    }
+    config.write_text(json.dumps(values))
+    config.chmod(0o600)
+    monkeypatch.setattr(helper, "PROXY_CONFIG", config)
+    monkeypatch.setattr(helper.pwd, "getpwnam", lambda _: SimpleNamespace(pw_uid=os.getuid()))
+    command = helper.worker_command("/bin/true")
+    assert f"HTTPS_PROXY={proxy}" in command and f"no_proxy={bypass}" in command
+    assert command.index(f"HTTPS_PROXY={proxy}") < command.index("/bin/true")
+    config.write_text(json.dumps({**values, "TIN_CODEX_API_GRANT": "must-not-be-delegated"}))
+    with pytest.raises(RuntimeError, match="invalid run proxy"):
+        helper.worker_command("/bin/true")
+    config.write_text(json.dumps({**values, "HTTPS_PROXY": "http://proxy.tin.test"}))
+    with pytest.raises(RuntimeError, match="invalid run proxy"):
+        helper.worker_command("/bin/true")
+    config.chmod(0o644)
+    with pytest.raises(RuntimeError, match="invalid trusted proxy"):
+        helper.worker_command("/bin/true")
+
+
 def test_worker_environment_is_an_allowlist_and_profile_has_no_fallback():
     helper = load_sandbox_module("isolated_procedure")
     command = helper.worker_command("/bin/true")
