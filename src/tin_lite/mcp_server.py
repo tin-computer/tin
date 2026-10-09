@@ -67,6 +67,7 @@ from tin_lite.growth_onboarding_control import (
 )
 from tin_lite.integrations import IntegrationError
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
+from tin_lite.linkedin_drafts import LinkedInDrafts
 from tin_lite.mcp_errors import GuardedMCPServer
 from tin_lite.onboarding_experience import (
     delivery_destination,
@@ -4361,6 +4362,109 @@ def create_mcp_app(
             }
             for run in runs
         ]
+
+    def linkedin_draft_handoff(project_id: UUID, path: str) -> dict[str, str]:
+        query = urlencode({"project": str(project_id), "linkedin_draft": path})
+        url = f"{dashboard_url(settings)}/activity?{query}"
+        return {"open_url": url, "open_command": _open_command(url)}
+
+    @server.tool()
+    async def read_linkedin_drafts(project_id: str, path: str) -> dict[str, Any]:
+        """Read a bounded LinkedIn draft in project Files and get its browser editor link.
+
+        The returned JSON has separate publishable text, sources and editorial notes.
+        Reading or editing a draft never publishes to LinkedIn.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="read_linkedin_drafts")
+        assert token.subject is not None
+        try:
+            view = await LinkedInDrafts(runtime()).read(project, token.subject, path)
+        except ValidationError as exc:
+            raise ToolError("LinkedIn draft is invalid or unavailable") from exc
+        return {**view, **linkedin_draft_handoff(project, path)}
+
+    @server.tool()
+    async def save_linkedin_draft(
+        project_id: str,
+        path: str,
+        expected_revision: str,
+        request_id: str,
+        draft: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Save an edited LinkedIn draft as an ordinary project file at expected_revision.
+
+        Preserve stable post IDs and separate notes from publishable text. Reuse the
+        same request_id only when retrying identical edits after an uncertain response.
+        This does not approve or publish any post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        request = _mcp_uuid(request_id, field="request_id")
+        await require_project(project, token, tool_name="save_linkedin_draft")
+        _validate_revision(expected_revision)
+        assert token.subject is not None
+        try:
+            view = await LinkedInDrafts(runtime()).save(
+                project,
+                token.subject,
+                path=path,
+                expected_revision=expected_revision,
+                request_id=request,
+                draft=draft,
+                client_id=token.client_id,
+            )
+        except ValidationError as exc:
+            raise ToolError("LinkedIn draft has an invalid field") from exc
+        return {**view, **linkedin_draft_handoff(project, path)}
+
+    @server.tool()
+    async def revise_linkedin_draft(
+        project_id: str,
+        path: str,
+        expected_sha256: str,
+        post_id: str,
+        feedback: str,
+        request_id: str,
+    ) -> dict[str, Any]:
+        """Request changes to one saved alternative using its pinned private code package.
+
+        Read the batch first and pass its sha256. Normal model billing applies. The
+        result is a new batch; the current file and its later edits remain untouched.
+        Retry identical feedback with the same request_id after a lost response.
+        This does not publish or approve a LinkedIn post.
+        """
+        token = await caller()
+        project = _mcp_uuid(project_id, field="project_id")
+        await require_project(project, token, tool_name="revise_linkedin_draft")
+        assert token.subject is not None
+        prepared = await LinkedInDrafts(runtime()).prepare_revision(
+            project,
+            token.subject,
+            path=path,
+            expected_sha256=expected_sha256,
+            post_id=post_id,
+            feedback=feedback,
+            request_id=_mcp_uuid(request_id, field="request_id"),
+        )
+        if "existing" in prepared:
+            run = prepared["existing"]
+        else:
+            from tin_lite.run_service import start_workflow_run
+
+            run = await start_workflow_run(
+                runtime=runtime(),
+                settings=settings,
+                workflow=prepared["workflow"],
+                project_id=project,
+                started_by_clerk_user_id=token.subject,
+                started_by_oauth_client_id=token.client_id,
+                trigger_source="api",
+                start_idempotency_key=prepared["key"],
+                input_payload=prepared["inputs"],
+            )
+        return {"run_id": str(run.id), "status": run.status.value}
 
     def x_draft_handoff(project_id: UUID, path: str) -> dict[str, str]:
         query = urlencode({"project": str(project_id), "x_draft": path})

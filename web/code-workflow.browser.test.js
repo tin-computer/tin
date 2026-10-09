@@ -9,9 +9,9 @@ import {chromium} from "playwright";
 for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${theme}`, async () => {
   const assets = path.resolve("src/tin_lite/static");
   const project = {id:"project", name:"Fixture project", workspace_id:"workspace", workspace_name:"Fixture", timezone:"UTC", member_count:1};
-  const schema = {type:"object", properties:{minimum_cents:{type:"integer", minimum:0, title:"Minimum cents"}}, required:["minimum_cents"]};
+  const schema = {type:"object", properties:{minimum_cents:{type:"integer", minimum:0, title:"Minimum cents"}, notes:{type:"string",maxLength:200,title:"Saved notes",default:"Default notes","x-tin-ui":{advanced:true}}}, required:["minimum_cents"]};
   const workflow = {id:"code", key:"custom.report", title:"Order report", description:"Fixture report", version_label:"1.0", status:"active", executor:"workflow.code", allowed_actions:["start","save"], definition:{executor:"workflow.code", input_schema:schema, schedule_modes:["on_demand"]}};
-  let configured = {id:"saved", project_id:"project", workflow_id:"code", workflow_key:workflow.key, workflow_title:workflow.title, name:"Weekly orders", definition_commit_sha:"a".repeat(40), inputs:{minimum_cents:1000}, input_schema:schema, status:"active", settings_revision:1, created_at:"2026-09-16T00:00:00Z", schedule:{cadence:"weekly", weekdays:["monday","friday"], local_time:"09:00", timezone:"America/Los_Angeles", start_at:"2026-09-16T00:00:00Z", end_at:"2026-10-01T00:00:00Z"}, next_run_at:"2026-09-18T16:00:00Z", run_count:2, done_count:2};
+  let configured = {id:"saved", project_id:"project", workflow_id:"code", workflow_key:workflow.key, workflow_title:workflow.title, name:"Weekly orders", definition_commit_sha:"a".repeat(40), inputs:{minimum_cents:1000,notes:"Remembered notes"}, input_schema:schema, status:"active", settings_revision:1, created_at:"2026-09-16T00:00:00Z", schedule:{cadence:"weekly", weekdays:["monday","friday"], local_time:"09:00", timezone:"America/Los_Angeles", start_at:"2026-09-16T00:00:00Z", end_at:"2026-10-01T00:00:00Z"}, next_run_at:"2026-09-18T16:00:00Z", run_count:2, done_count:2};
   const writes = [], errors = [];
   let liveRuns = [];
   const provider = theme === "light"
@@ -63,6 +63,11 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     await page.goto(`${base}/?project=project#workflows`);
     await page.getByRole("button",{name:"Open Weekly orders settings",exact:true}).click();
     await page.getByText("Included compute · 0 Tin credits",{exact:true}).waitFor();
+    assert.equal(await page.getByLabel("Saved notes",{exact:true}).isVisible(),false);
+    assert.equal(await page.getByLabel("Saved notes",{exact:true}).inputValue(),"Remembered notes");
+    await page.getByText("More options",{exact:true}).click();
+    assert.equal(await page.getByLabel("Saved notes",{exact:true}).isVisible(),true);
+    await page.getByText("More options",{exact:true}).click();
     assert.equal(await page.getByRole("button",{name:"Weekly",exact:true}).isVisible(),true);
     assert.equal(await page.getByLabel("Monday",{exact:true}).isChecked(),true);
     assert.equal(await page.getByLabel("Friday",{exact:true}).isChecked(),true);
@@ -111,6 +116,7 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     assert.equal(configured.schedule.start_at,"2026-09-16T00:00:00Z");
     assert.equal(configured.schedule.end_at,"2026-10-01T00:00:00Z");
     assert.equal(configured.inputs.minimum_cents,2000);
+    assert.equal(configured.inputs.notes,"Remembered notes");
     await page.getByRole("button",{name:"Open Renamed report settings",exact:true}).click();
     await page.getByText("Included compute · 0 Tin credits",{exact:true}).waitFor();
     await page.getByLabel("Minimum cents",{exact:true}).fill("3000");

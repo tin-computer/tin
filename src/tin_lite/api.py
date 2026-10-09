@@ -73,6 +73,7 @@ from tin_lite.integrations import (
     registered_integrations,
 )
 from tin_lite.keyword_plan_control import stop_keyword_plan as stop_keyword_plan_service
+from tin_lite.linkedin_drafts import LinkedInDrafts
 from tin_lite.luna import LunaProtocolError, LunaSafetyError, LunaUpstreamError
 from tin_lite.organic_audit_control import stop_organic_audit as stop_organic_audit_service
 from tin_lite.output_resolution import OutputResolutionError, OutputResolutionRequest
@@ -1264,6 +1265,24 @@ class ProjectFilesCommit(BaseModel):
     changes: list[ProjectFileMutationInput] = Field(min_length=1, max_length=50)
 
 
+class LinkedInDraftRevision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    path: str = Field(min_length=1, max_length=512)
+    expected_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+    post_id: str = Field(pattern=r"^p[1-6]$")
+    feedback: str = Field(min_length=1, max_length=4000)
+    request_id: UUID
+
+
+class LinkedInDraftSave(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(min_length=1, max_length=512)
+    expected_revision: str = Field(pattern=r"^[0-9a-f]{40}$")
+    request_id: UUID
+    draft: dict[str, Any]
+
+
 class XDraftSave(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2443,6 +2462,87 @@ async def delete_project(
 
 def _x_posts_service(request: Request) -> XPosts:
     return XPosts(request.app.state.runtime, request.app.state.settings)
+
+
+@router.get("/api/projects/{project_id}/linkedin/drafts")
+async def read_linkedin_drafts(
+    project_id: UUID,
+    request: Request,
+    path: str = Query(min_length=1, max_length=512),
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await LinkedInDrafts(request.app.state.runtime).read(
+            project_id, user.clerk_user_id, path
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=422, detail="LinkedIn draft is invalid or unavailable."
+        ) from exc
+
+
+@router.put("/api/projects/{project_id}/linkedin/drafts")
+async def save_linkedin_draft(
+    project_id: UUID,
+    payload: LinkedInDraftSave,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> dict:
+    await _require_project_access(project_id, request, user)
+    try:
+        return await LinkedInDrafts(request.app.state.runtime).save(
+            project_id,
+            user.clerk_user_id,
+            path=payload.path,
+            expected_revision=payload.expected_revision,
+            request_id=payload.request_id,
+            draft=payload.draft,
+            client_id="browser",
+        )
+    except (StaleProjectRevisionError, SideEffectConflictError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=422, detail="LinkedIn draft has an invalid field or path."
+        ) from exc
+
+
+@router.post(
+    "/api/projects/{project_id}/linkedin/drafts/revisions", response_model=RunView, status_code=202
+)
+async def revise_linkedin_draft(
+    project_id: UUID,
+    payload: LinkedInDraftRevision,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+) -> RunView:
+    await _require_project_access(project_id, request, user)
+    try:
+        prepared = await LinkedInDrafts(request.app.state.runtime).prepare_revision(
+            project_id,
+            user.clerk_user_id,
+            **payload.model_dump(),
+        )
+    except StaleProjectRevisionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422, detail="The selected draft cannot be revised. Reload it and try again."
+        ) from exc
+    if "existing" in prepared:
+        return RunView.model_validate(prepared["existing"])
+    return await _start_workflow_run(
+        prepared["workflow"],
+        RunCreate(project_id=project_id, inputs=prepared["inputs"]),
+        request,
+        user,
+        start_idempotency_key=prepared["key"],
+    )
 
 
 @router.get("/api/projects/{project_id}/x/drafts")

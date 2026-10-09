@@ -70,7 +70,7 @@ function routeUrl(route, base = window.location.href, carry = null) {
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
   if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
-  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back"]) url.searchParams.delete(key);
+  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back", "linkedin_draft"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
   return `${url.pathname}${url.search}`;
@@ -296,6 +296,7 @@ const state = {
 };
 
 function viewFromLocation() {
+  if (new URLSearchParams(location.search).get("linkedin_draft")) return "linkedin-draft";
   if (xDraftPathFromLocation()) return "x-draft";
   if (compareRouteFromLocation()) return "compare";
   if (documentRouteFromLocation()) return "document";
@@ -1070,12 +1071,12 @@ function workflowFieldPresentation(workflow, name, definition) {
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, definition.default ?? "", label, fieldId, required.has(name))}${workflowFieldHelp(definition, fieldId)}</div>`;
-  }).join("");
+  });
   const requirements = workflowRequirementState(workflow);
   const requirementRows = requirements.map(({ requirement, integration, ready }) => `<div class="system-requirement ${ready ? "is-ready" : "is-missing"}">
     <span class="system-card-dot ${ready ? "is-running" : "is-pending"}" aria-hidden="true"></span>
@@ -1444,6 +1445,9 @@ function openRunArtifact(runId, returnView = state.view) {
   const run = state.runs.find((item) => item.id === runId);
   if (hasOutputConflict(run)) { openOutputComparison(runId, returnView); return; }
   const output = availableRunOutput(run);
+  if (output?.source === "canonical" && /^social\/linkedin\/drafts\/[^/]+\.json$/.test(output.path)) {
+    openLinkedInDrafts(output.path); return;
+  }
   if (output?.source === "canonical" && /^social\/x-drafts\/[^/]+\.json$/.test(output.path) && window.TinXPosts) {
     openXComposer(output.path, runId);
     return;
@@ -1453,6 +1457,25 @@ function openRunArtifact(runId, returnView = state.view) {
     return;
   }
   openRunOutputFile(run, output, returnView);
+}
+
+function openLinkedInDrafts(path) {
+  goToRoute(`files?${new URLSearchParams({linkedin_draft:path})}`);
+}
+
+function renderLinkedInDrafts() {
+  const path = new URLSearchParams(location.search).get("linkedin_draft");
+  if (!path || !window.TinLinkedInDrafts || state.projectAccess !== "ready") return;
+  const context = currentProjectContext();
+  window.TinLinkedInDrafts.open({host:main, actorId:state.signedInUserId, projectId:context.projectId, path,
+    onClose:()=>goToRoute("files"), openDraft:openLinkedInDrafts,
+    api:async (url, options)=>{
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen this draft.");
+      const result = await api(url, options);
+      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen this draft.");
+      return result;
+    },
+  });
 }
 
 function openXComposer(path, runId = "manual") {
@@ -1607,6 +1630,7 @@ function comparisonFileLabel(route) {
 }
 
 function render() {
+  if (state.view !== "linkedin-draft" || state.projectAccess !== "ready") window.TinLinkedInDrafts?.close();
   if (state.view !== "x-draft" || state.projectAccess !== "ready") window.TinXPosts?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
@@ -1621,7 +1645,7 @@ function render() {
       item.dataset.view === state.view ||
         (state.view === "task" && item.dataset.view === "workflows") ||
         (state.view === "document" && state.documentRoute?.returnView === item.dataset.view) ||
-        (["file", "x-draft"].includes(state.view) && item.dataset.view === "files"),
+        (["file", "x-draft", "linkedin-draft"].includes(state.view) && item.dataset.view === "files"),
     );
     // On the mobile strip a deep link can land on a tab that sits past the edge; bring it into view.
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1646,6 +1670,7 @@ function render() {
     onChange: (value) => { state.billing = value; renderProjectMenu(); },
   });
   if (state.view === "x-draft") renderXComposer();
+  if (state.view === "linkedin-draft") renderLinkedInDrafts();
   if (state.view === "document") renderDocument();
   if (state.view === "task") renderTask();
   if (state.view === "file") renderFile();
@@ -2769,13 +2794,13 @@ function systemProjectWorkflowEditor(workflow, configured, run = null) {
   if (workflow.key === "content.plan") return systemContentProgramEditor(workflow, configured, run);
   const schema = configured.input_schema || workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : orderedWorkflowFields(schema).map(([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow, configured.inputs) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields(configured.inputs) : workflow.key === "content.generate" ? window.TinContentDraft.fields(configured.inputs, schema) : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `system-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
     const value = configured.inputs[name] ?? definition.default ?? "";
     return `<div class="system-setting"><label for="${fieldId}"><strong>${escapeHtml(label)}</strong></label>${workflowInputControl(`input:${name}`, definition, value, label, fieldId, required.has(name))}${definition.description ? workflowFieldHelp(definition, fieldId) : ""}</div>`;
-  }).join("");
+  });
   const mode = configured.schedule?.cadence || "manual";
   const isRunning = Boolean(run && RUNNING_STATES.has(run.status));
   const rowActions = isRunning
@@ -3602,17 +3627,23 @@ function orderedWorkflowFields(schema) {
     });
 }
 
+function groupWorkflowFields(schema, renderField) {
+  const fields = orderedWorkflowFields(schema);
+  const advanced = ([name, field]) => field["x-tin-ui"]?.advanced === true && !(schema.required || []).includes(name);
+  const basic = fields.filter(field => !advanced(field)).map(renderField).join("");
+  const extra = fields.filter(advanced).map(renderField).join("");
+  return basic + (extra ? `<details class="x-workflow-details"><summary>More options</summary><div>${extra}</div></details>` : "");
+}
+
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : orderedWorkflowFields(schema)
-    .map(([name, definition]) => workflowInputField(
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
       name,
       definition,
       undefined,
       required.has(name),
-    ))
-    .join("");
+    ));
   return `<form class="workflow-config-form is-manual" data-workflow-id="${escapeHtml(workflow.id)}">
     <div class="workflow-config-heading">
       <span class="status-dot is-ready"></span>
@@ -6022,6 +6053,12 @@ function renderJsonProjectFile(route, file) {
       }
     },
   });
+  if (route.source === "canonical" && !route.compareRun && /^social\/linkedin\/drafts\/[^/]+\.json$/.test(route.path)) {
+    const edit = document.createElement("button");
+    edit.type = "button"; edit.className = "project-file-action"; edit.textContent = "Open LinkedIn drafts";
+    edit.addEventListener("click", () => openLinkedInDrafts(route.path));
+    main.querySelector(".project-json-actions")?.prepend(edit);
+  }
   if (route.source === "canonical" && !route.compareRun && /^social\/x-drafts\/[^/]+\.json$/.test(route.path)) {
     const actions = main.querySelector(".project-json-actions");
     if (actions) {

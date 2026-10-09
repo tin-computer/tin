@@ -61,12 +61,14 @@ def validate_input_schema(schema: dict[str, Any]) -> None:
         if ui is not None:
             if not isinstance(ui, dict):
                 raise WorkflowInputError(f"workflow input {name} x-tin-ui must be an object")
-            unknown = set(ui) - {"control", "order"}
+            unknown = set(ui) - {"control", "order", "advanced"}
             if unknown:
                 raise WorkflowInputError(
                     f"workflow input {name} x-tin-ui contains unsupported hints: "
                     f"{', '.join(sorted(unknown))}"
                 )
+            if "advanced" in ui and type(ui["advanced"]) is not bool:
+                raise WorkflowInputError(f"workflow input {name} advanced hint must be a boolean")
             control = ui.get("control")
             if control is not None and control not in _SUPPORTED_UI_CONTROLS[field["type"]]:
                 raise WorkflowInputError(
