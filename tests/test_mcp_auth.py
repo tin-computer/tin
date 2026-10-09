@@ -181,7 +181,10 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     } <= {tool.name for tool in tools}
     assert "revise_capture_proposal" in {tool.name for tool in tools}
     assert "discard_workflow_review" in {tool.name for tool in tools}
-    assert len(tools) == 99
+    assert {"read_linkedin_drafts", "save_linkedin_draft", "revise_linkedin_draft"} <= {
+        tool.name for tool in tools
+    }
+    assert len(tools) == 102
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description
