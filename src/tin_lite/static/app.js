@@ -70,7 +70,7 @@ function routeUrl(route, base = window.location.href, carry = null) {
   const [path, query = ""] = route.replace(/^#?\/?/, "").split("?", 2);
   url.pathname = `/${path === "workflows" ? "system" : path}`;
   if (carry) for (const key of [...url.searchParams.keys()]) if (!carry.includes(key)) url.searchParams.delete(key);
-  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back", "linkedin_draft"]) url.searchParams.delete(key);
+  for (const key of ["return", "taskPath", "source", "path", "revision", "reviewRun", "compareRun", "back", "x_draft", "x_run", "x_back"]) url.searchParams.delete(key);
   for (const [key, value] of new URLSearchParams(query)) url.searchParams.set(key, value);
   url.hash = "";
   return `${url.pathname}${url.search}`;
@@ -296,7 +296,6 @@ const state = {
 };
 
 function viewFromLocation() {
-  if (new URLSearchParams(location.search).get("linkedin_draft")) return "linkedin-draft";
   if (xDraftPathFromLocation()) return "x-draft";
   if (compareRouteFromLocation()) return "compare";
   if (documentRouteFromLocation()) return "document";
@@ -1445,9 +1444,6 @@ function openRunArtifact(runId, returnView = state.view) {
   const run = state.runs.find((item) => item.id === runId);
   if (hasOutputConflict(run)) { openOutputComparison(runId, returnView); return; }
   const output = availableRunOutput(run);
-  if (output?.source === "canonical" && /^social\/linkedin\/drafts\/[^/]+\.json$/.test(output.path)) {
-    openLinkedInDrafts(output.path); return;
-  }
   if (output?.source === "canonical" && /^social\/x-drafts\/[^/]+\.json$/.test(output.path) && window.TinXPosts) {
     openXComposer(output.path, runId);
     return;
@@ -1457,25 +1453,6 @@ function openRunArtifact(runId, returnView = state.view) {
     return;
   }
   openRunOutputFile(run, output, returnView);
-}
-
-function openLinkedInDrafts(path) {
-  goToRoute(`files?${new URLSearchParams({linkedin_draft:path})}`);
-}
-
-function renderLinkedInDrafts() {
-  const path = new URLSearchParams(location.search).get("linkedin_draft");
-  if (!path || !window.TinLinkedInDrafts || state.projectAccess !== "ready") return;
-  const context = currentProjectContext();
-  window.TinLinkedInDrafts.open({host:main, actorId:state.signedInUserId, projectId:context.projectId, path,
-    onClose:()=>goToRoute("files"), openDraft:openLinkedInDrafts,
-    api:async (url, options)=>{
-      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen this draft.");
-      const result = await api(url, options);
-      if (!isCurrentProjectContext(context)) throw new Error("Project changed. Reopen this draft.");
-      return result;
-    },
-  });
 }
 
 function openXComposer(path, runId = "manual") {
@@ -1630,7 +1607,6 @@ function comparisonFileLabel(route) {
 }
 
 function render() {
-  if (state.view !== "linkedin-draft" || state.projectAccess !== "ready") window.TinLinkedInDrafts?.close();
   if (state.view !== "x-draft" || state.projectAccess !== "ready") window.TinXPosts?.close();
   state.comparePage?.destroy();
   state.comparePage = null;
@@ -1645,7 +1621,7 @@ function render() {
       item.dataset.view === state.view ||
         (state.view === "task" && item.dataset.view === "workflows") ||
         (state.view === "document" && state.documentRoute?.returnView === item.dataset.view) ||
-        (["file", "x-draft", "linkedin-draft"].includes(state.view) && item.dataset.view === "files"),
+        (["file", "x-draft"].includes(state.view) && item.dataset.view === "files"),
     );
     // On the mobile strip a deep link can land on a tab that sits past the edge; bring it into view.
     if (active && item.parentElement.scrollWidth > item.parentElement.clientWidth) item.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -1670,7 +1646,6 @@ function render() {
     onChange: (value) => { state.billing = value; renderProjectMenu(); },
   });
   if (state.view === "x-draft") renderXComposer();
-  if (state.view === "linkedin-draft") renderLinkedInDrafts();
   if (state.view === "document") renderDocument();
   if (state.view === "task") renderTask();
   if (state.view === "file") renderFile();
@@ -6053,12 +6028,6 @@ function renderJsonProjectFile(route, file) {
       }
     },
   });
-  if (route.source === "canonical" && !route.compareRun && /^social\/linkedin\/drafts\/[^/]+\.json$/.test(route.path)) {
-    const edit = document.createElement("button");
-    edit.type = "button"; edit.className = "project-file-action"; edit.textContent = "Open LinkedIn drafts";
-    edit.addEventListener("click", () => openLinkedInDrafts(route.path));
-    main.querySelector(".project-json-actions")?.prepend(edit);
-  }
   if (route.source === "canonical" && !route.compareRun && /^social\/x-drafts\/[^/]+\.json$/.test(route.path)) {
     const actions = main.querySelector(".project-json-actions");
     if (actions) {

@@ -1,67 +1,81 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import {chromium} from 'playwright';
-import {serveApp,openApp,revision} from './app-fixture.js';
-const path='social/linkedin/drafts/2026-10-08-example.json';
-const draft={schema_version:'tin.social.linkedin_draft.v1',batch_id:'example',author:'Ada',audience:'Founders building their first product.',style_path:'',brand_path:'brand/BRAND.md',template_path:'formats.json',sources:[],parent:null,gaps:[],posts:[
- {id:'p1',text:'A useful lesson.\n\n<script>not markup</script>',angle:'Shared context',template_id:'lesson',readiness:'ready',support:[],editor_notes:'Private editorial note.'},
- {id:'p2',text:'Another point worth sharing.',angle:'Working together',template_id:'lesson',readiness:'needs_evidence',support:[],editor_notes:'Add evidence.'},
-]};
-test('LinkedIn drafts preserve literal text, edits and conflicts without publishing',async()=>{
- const {server,base}=await serveApp();const browser=await chromium.launch({headless:true});
- try{
-  const {page,context,errors}=await openApp(browser,base,{url:'/files'});
-  await context.grantPermissions(['clipboard-read','clipboard-write']);
-  let saved=structuredClone(draft), conflict=false;const writes=[], revisions=[];
-  await page.route('**/api/projects/project/linkedin/drafts**',async route=>{
-   const request=route.request();
-   if(new URL(request.url()).pathname.endsWith('/revisions')){revisions.push(request.postDataJSON());return route.fulfill({status:202,json:{id:'revision-run'}});}
-   if(request.method()==='PUT'){
-    writes.push(request.postDataJSON());
-    if(conflict)return route.fulfill({status:409,json:{detail:'This file changed. Reload the saved version.'}});
-    saved=request.postDataJSON().draft;
-   }
-   return route.fulfill({json:{path,revision,draft:saved,sha256:'a'.repeat(64),revision_source_run_id:'source-run'}});
-  });
-  await page.route('**/api/workflows/runs/revision-run',route=>route.fulfill({json:{id:'revision-run',status:'succeeded',artifact_path:'social/linkedin/drafts/revised.json'}}));
-  await page.goto(`${base}/files?${new URLSearchParams({project:'project',linkedin_draft:path})}`);
-  await page.locator('[data-linkedin-copy]').waitFor();
-  assert.equal(await page.locator('[data-linkedin-copy]').textContent(),draft.posts[0].text);
-  assert.equal(await page.locator('[data-linkedin-copy] script').count(),0);
-  assert.equal(await page.getByText('Private editorial note.').count(),0);
-  assert.equal(await page.getByRole('button',{name:/Publish|Preview post/}).count(),0);
-  await page.getByRole('button',{name:'Copy post',exact:true}).click();
-  assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),draft.posts[0].text);
-  await page.getByRole('button',{name:'Draft notes',exact:true}).click();
-  await page.getByText('Private editorial note.').waitFor();
-  await page.getByRole('button',{name:'Edit post',exact:true}).click();
-  await page.getByLabel('Post text',{exact:true}).fill('Edited plain text.');
-  await page.getByRole('button',{name:'Post 2',exact:false}).click();
-  assert.equal(await page.locator('[data-linkedin-copy]').textContent(),draft.posts[1].text);
-  await page.getByRole('button',{name:'Post 1',exact:false}).click();
-  assert.equal(await page.getByLabel('Post text',{exact:true}).inputValue(),'Edited plain text.');
-  await page.locator('.nav-item[data-view="integrations"]').click();
-  await page.goBack();await page.getByText('Your unsaved edits are still here.').waitFor();
-  await page.getByRole('button',{name:'Edit post',exact:true}).click();
-  await page.getByRole('button',{name:'Save draft',exact:true}).click();await page.getByText('Draft saved.',{exact:true}).waitFor();
-  assert.equal(writes[0].expected_revision,revision);
-  assert.equal(saved.posts[0].readiness,'edited');assert.deepEqual(saved.posts[1],draft.posts[1]);
-  await page.getByRole('button',{name:'Request changes',exact:true}).click();
-  await page.getByLabel('What should change?',{exact:true}).fill('Make the point more direct.');
-  await page.getByRole('button',{name:'Revise this post',exact:true}).click();
-  await page.getByRole('button',{name:'Open revised batch',exact:true}).waitFor();
-  assert.equal(revisions.length,1);assert.equal(revisions[0].post_id,'p1');
-  assert.equal(revisions[0].expected_sha256,'a'.repeat(64));
-  assert.equal(await page.locator('[data-linkedin-copy]').textContent(),'Edited plain text.');
-  conflict=true;await page.getByLabel('Post text',{exact:true}).fill('Keep this newer edit.');
-  await page.getByRole('button',{name:'Save draft',exact:true}).click();
-  await page.getByText(/Your edits are still here. Copy them before reloading./).waitFor();
-  assert.equal(await page.getByLabel('Post text',{exact:true}).inputValue(),'Keep this newer edit.');
-  for(const width of [1280,390]){
-   await page.setViewportSize({width,height:1000});
-   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-   if(process.env.TIN_LINKEDIN_DRAFT_SCREENSHOTS)await page.screenshot({path:`${process.env.TIN_LINKEDIN_DRAFT_SCREENSHOTS}-${width}.png`,fullPage:true});
+// Synthetic Markdown output uses the same reader as articles and social batches.
+import assert from "node:assert/strict";
+import {execFileSync} from "node:child_process";
+import test from "node:test";
+import {chromium} from "playwright";
+import {fileUrl, openApp, serveApp} from "./app-fixture.js";
+
+const path = "social/linkedin/drafts/2026-10-08-example.md";
+const markdown = `# LinkedIn drafts
+
+For: Ada
+
+Choose the posts you want to use and tell Tin their numbers. You can ask for changes first. Nothing has been posted or scheduled.
+
+## Post 1
+
+The hardest part of handing off work is often explaining what happened before it.
+
+We moved our project notes next to the work itself. Decisions, source material and drafts now have a shared home.
+
+A small change, but it means the next person can start with the context instead of asking us to reconstruct it.
+
+## Post 2
+
+A shared folder is useful. A shared explanation is better.
+
+When we save a draft, we also save the notes behind it. The next person can see what we were trying to say and where the facts came from.
+
+That makes feedback more specific: change the argument, add a missing example, or question the source.
+
+## Post 3
+
+Before handing something off, I ask: could someone understand this without asking me to retell the conversation?
+
+If the answer is no, the handoff still depends on me.
+
+Keeping the decision beside the work has helped us see where that context was missing.
+`;
+const document = JSON.parse(execFileSync("uv", ["run", "python", "-c", `import json, sys
+from tin_lite.documents import render_markdown
+r = render_markdown(sys.stdin.read())
+print(json.dumps(dict(html=r.html, word_count=r.word_count, reading_minutes=r.reading_minutes)))`], {input: markdown, encoding: "utf8"}));
+
+test("LinkedIn alternatives open as an ordinary document with section navigation", async () => {
+  const {server, base} = await serveApp();
+  const browser = await chromium.launch({headless: true});
+  try {
+    for (const theme of ["light", "dark"]) {
+      const {page, context, errors} = await openApp(browser, base, {theme});
+      const mutations = [];
+      page.on("request", request => {if (request.method() !== "GET") mutations.push(request.url());});
+      await page.route("**/files/document?*", route => route.fulfill({json: {
+        filename: path.split("/").at(-1), ...document, related_documents: [],
+      }}));
+      await page.goto(`${base}${fileUrl(path)}&project=project`);
+      await page.getByRole("heading", {name: "LinkedIn drafts", exact: true}).waitFor();
+      assert.equal(await page.locator(".markdown-document h2").count(), 3);
+      assert.equal(await page.locator(".markdown-section-link").count(), 3);
+      assert.equal(await page.getByRole("button", {name: /Save draft|Copy post|Publish|Approve draft|Request changes/}).count(), 0);
+      assert.match(await page.locator(".markdown-document").textContent(), /tell Tin their numbers/);
+      await page.locator(".markdown-section-link").filter({hasText: "Post 2"}).click();
+      assert.equal(await page.locator(".markdown-document h2").nth(1).isVisible(), true);
+      for (const width of [1440, 390]) {
+        await page.setViewportSize({width, height: 1000});
+        await page.evaluate(() => window.scrollTo(0, 0));
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+        const rect = await page.locator(".markdown-document").boundingBox();
+        assert.ok(rect.x >= 0 && rect.x + rect.width <= width);
+        if (process.env.TIN_LINKEDIN_DRAFT_SCREENSHOTS) await page.screenshot({
+          path: `${process.env.TIN_LINKEDIN_DRAFT_SCREENSHOTS}-${theme}-${width}.png`, fullPage: true,
+        });
+      }
+      assert.deepEqual(mutations, []);
+      assert.deepEqual(errors, []);
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+    await new Promise(resolve => server.close(resolve));
   }
-  assert.deepEqual(errors,[]);
- }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
 });

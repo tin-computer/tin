@@ -48,8 +48,8 @@ your own accounts before use; ordinary contributor tests need no production cred
   managed-model Python and Codex procedures, with explicit maintainer registration.
 - [Social planning and drafts](social-post-batch.md): an editable plan, weekly batches
   from project files, and article repurposing with the current writing guide.
-- [LinkedIn draft files](linkedin-drafts.md): private workflow grouping and reading, editing
-  and copying bounded draft batches without publishing.
+- [LinkedIn drafts](linkedin-drafts.md): private workflow grouping and ordinary draft
+  documents for choosing posts before a separate publishing step.
 - [X drafting and publishing](x-workflow.md): account connection, personal voice capture,
   project-file drafts and individually confirmed posts with images or video.
 - [Project files in code workflows](code-project-files.md): direct reads of current files,
