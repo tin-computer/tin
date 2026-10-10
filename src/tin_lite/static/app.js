@@ -4006,7 +4006,9 @@ function workflowInputControl(name, definition, value, label, fieldId, required 
   }
   if (definition.type === "array") {
     const list = Array.isArray(value) ? value.join(", ") : "";
-    return `<input class="workflow-inline-input" id="${fieldId}" name="${escapeHtml(name)}" data-input-type="array" value="${escapeHtml(list)}" aria-describedby="${fieldId}-help" />`;
+    // A list drawn from fixed keys (hacker_news, github_discussions) is typed exactly, so it reads as a literal.
+    const variant = Array.isArray(definition.items?.enum) ? " is-literal" : "";
+    return `<input class="workflow-inline-input${variant}" id="${fieldId}" name="${escapeHtml(name)}" data-input-type="array" value="${escapeHtml(list)}" aria-describedby="${fieldId}-help" />`;
   }
   if (definition.type === "string" && requestedControl === "textarea") {
     return `<textarea class="workflow-inline-input workflow-inline-textarea" id="${fieldId}" name="${escapeHtml(name)}" data-max-length="${escapeHtml(definition.maxLength || "")}" aria-describedby="${fieldId}-help"${textConstraints}>${escapeHtml(value)}</textarea>`;

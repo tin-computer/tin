@@ -14,11 +14,13 @@ const schema = {type: "object", properties: {
   tone: {type: "string", enum: ["plain", "warm"], title: "Tone"},
   mode: {type: "string", enum: ["draft", "publish"], title: "Mode", "x-tin-ui": {control: "segmented"}},
   alternatives: {type: "integer", minimum: 1, maximum: 9, title: "Alternatives", "x-tin-ui": {control: "counter"}},
+  topics: {type: "array", title: "Topics", items: {type: "string"}},
+  platforms: {type: "array", title: "Where to look", items: {type: "string", enum: ["reddit", "hacker_news"]}},
 }};
 const workflow = {id: "code", key: "custom.posts", title: "Draft posts", description: "Fixture posts", version_label: "1.0", status: "active", executor: "workflow.code", allowed_actions: ["start", "save"], definition: {executor: "workflow.code", input_schema: schema, schedule_modes: ["on_demand", "weekly"]}};
-const configured = {id: "saved", project_id: "project", workflow_id: "code", workflow_key: workflow.key, workflow_title: workflow.title, name: "Weekly posts", definition_commit_sha: "a".repeat(40), inputs: {audience: "Founders", site_url: "https://example.com", tone: "warm", mode: "draft", alternatives: 6}, input_schema: schema, status: "active", settings_revision: 1, created_at: "2026-10-01T00:00:00Z", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "09:00", timezone: "America/Los_Angeles", start_at: "2026-10-01T00:00:00Z"}, next_run_at: "2026-10-13T16:00:00Z", run_count: 0, done_count: 0};
+const configured = {id: "saved", project_id: "project", workflow_id: "code", workflow_key: workflow.key, workflow_title: workflow.title, name: "Weekly posts", definition_commit_sha: "a".repeat(40), inputs: {audience: "Founders", site_url: "https://example.com", tone: "warm", mode: "draft", alternatives: 6, topics: ["pricing", "onboarding"], platforms: ["reddit", "hacker_news"]}, input_schema: schema, status: "active", settings_revision: 1, created_at: "2026-10-01T00:00:00Z", schedule: {cadence: "weekly", weekdays: ["tuesday"], local_time: "09:00", timezone: "America/Los_Angeles", start_at: "2026-10-01T00:00:00Z"}, next_run_at: "2026-10-13T16:00:00Z", run_count: 0, done_count: 0};
 
-test("workflow forms set words in sans and keep mono for paths, URLs, times and timezones", async () => {
+test("workflow forms set words in sans and keep mono for keys, paths, URLs, times and timezones", async () => {
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, "http://localhost");
     const send = (data) => {response.setHeader("Content-Type", "application/json"); response.end(JSON.stringify(data));};
@@ -78,8 +80,12 @@ test("workflow forms set words in sans and keep mono for paths, URLs, times and 
     assert.equal(await type(form.locator(".tin-select-option").first()), "sans 13px");
     assert.equal(await type(form.locator(".tin-segment").first()), "sans 12.5px");
     assert.equal(await type(form.locator(".tin-counter input")), "sans 13px");
+    assert.equal(await type(form.locator('[name="input:topics"]')), "sans 13px");
+    // Tabular figures in the sans draw a footed 1 that reads as mono.
+    assert.equal(await form.locator(".tin-counter input").evaluate((node) => getComputedStyle(node).fontVariantNumeric), "normal");
     // Literals someone must get exactly right stay mono, a step smaller.
     assert.equal(await type(form.locator('[name="input:site_url"]')), "mono 12px");
+    assert.equal(await type(form.locator('[name="input:platforms"]')), "mono 12px");
     assert.equal(await type(form.locator('[name="schedule_time"]')), "mono 12px");
     assert.equal(await type(form.locator('[name="schedule_timezone"]')), "mono 12px");
 
