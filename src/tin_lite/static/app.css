@@ -2960,6 +2960,28 @@ html[data-theme="dark"] .markdown-logo::before {
   width: 104px;
 }
 
+/* A native select draws the same chevron as .tin-select, 9px in from its edge, instead of the
+   platform's own arrow. A background image cannot use currentColor, so each theme names its
+   --ink-secondary. */
+select.workflow-inline-input {
+  padding-right: 28px;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235F594C' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-position: right 9px center;
+  background-repeat: no-repeat;
+  background-size: 10px 6px;
+  cursor: pointer;
+}
+
+html[data-theme="dark"] select.workflow-inline-input {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23B3AA9B' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+select.workflow-inline-input:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .workflow-inline-textarea {
   height: 76px;
   resize: vertical;
