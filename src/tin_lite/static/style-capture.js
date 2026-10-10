@@ -28,7 +28,7 @@
         <button class="button-secondary" type="button" data-style-add>Add passage</button>
         <label class="system-setting"><strong>Or upload samples</strong><input type="file" data-style-upload accept=".md,.txt,.docx" multiple></label>
         <button class="button-quiet" type="button" data-style-files>Choose from project Files →</button>
-        <select class="workflow-inline-input" data-style-project-file aria-label="Project writing sample" hidden></select>
+        <select class="workflow-inline-input is-literal" data-style-project-file aria-label="Project writing sample" hidden></select>
         <button class="button-secondary" type="button" data-style-add-file hidden>Add selected file</button>
         <div data-style-list></div>
         <p class="system-config-note">Up to 8 samples. Selected text is saved in this project and visible to its members. Uploaded originals are converted, not retained. Capture saves an editable guide for future drafts.</p>

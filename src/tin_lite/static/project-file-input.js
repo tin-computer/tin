@@ -6,7 +6,7 @@
       <span class="project-file-choice"><span data-file-label>${esc(value ? value.split("/").at(-1) : "No file selected")}</span>
       <a data-file-open class="system-quiet-action" target="_blank" rel="noopener" hidden>Open</a>
       <button type="button" class="system-quiet-action" data-file-change aria-expanded="false" aria-controls="${esc(id)}">Change</button></span>
-      <select class="workflow-inline-input" id="${esc(id)}" name="${esc(name)}" aria-label="${esc(label)}" hidden><option value="${esc(value)}">${esc(value || "Choose a project file…")}</option></select>
+      <select class="workflow-inline-input is-literal" id="${esc(id)}" name="${esc(name)}" aria-label="${esc(label)}" hidden><option value="${esc(value)}">${esc(value || "Choose a project file…")}</option></select>
       <small class="workflow-field-message" data-file-status role="status">Checking project Files…</small>
     </span>`;
   }

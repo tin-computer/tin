@@ -3946,11 +3946,11 @@ function workflowScheduleControls(id, schedule, ledger = false, scheduleModes = 
     </div>
     <div class="workflow-config-row schedule-timed ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <label for="schedule-time-${escapeHtml(id)}">Time</label>
-      <div class="workflow-row-control"><input class="workflow-inline-input is-short" id="schedule-time-${escapeHtml(id)}" name="schedule_time" inputmode="numeric" pattern="(?:[01]\\d|2[0-3]):[0-5]\\d" value="${escapeHtml(localTime)}" aria-describedby="schedule-time-help-${escapeHtml(id)}" /><small id="schedule-time-help-${escapeHtml(id)}">24-hour local time</small></div>
+      <div class="workflow-row-control"><input class="workflow-inline-input is-short is-literal" id="schedule-time-${escapeHtml(id)}" name="schedule_time" inputmode="numeric" pattern="(?:[01]\\d|2[0-3]):[0-5]\\d" value="${escapeHtml(localTime)}" aria-describedby="schedule-time-help-${escapeHtml(id)}" /><small id="schedule-time-help-${escapeHtml(id)}">24-hour local time</small></div>
     </div>
     <div class="workflow-config-row schedule-timed ${ledger ? "workflow-ledger-row is-nested" : ""}">
       <label for="schedule-timezone-${escapeHtml(id)}">Timezone</label>
-      <div class="workflow-row-control"><input class="workflow-inline-input" id="schedule-timezone-${escapeHtml(id)}" name="schedule_timezone" value="${escapeHtml(timezone)}" /></div>
+      <div class="workflow-row-control"><input class="workflow-inline-input is-literal" id="schedule-timezone-${escapeHtml(id)}" name="schedule_timezone" value="${escapeHtml(timezone)}" /></div>
     </div>`;
 }
 
@@ -4013,7 +4013,8 @@ function workflowInputControl(name, definition, value, label, fieldId, required 
   }
   const type = ["integer", "number"].includes(definition.type) ? "number" : "text";
   const step = definition.type === "integer" ? "1" : "any";
-  return `<input class="workflow-inline-input ${type === "number" ? "is-short" : ""}" id="${fieldId}" name="${escapeHtml(name)}" data-input-type="${escapeHtml(definition.type || "string")}" data-max-length="${escapeHtml(definition.maxLength || "")}" type="${type}" step="${step}" value="${escapeHtml(value)}" aria-describedby="${fieldId}-help"${definition.type === "string" ? textConstraints : ""} />`;
+  const variant = type === "number" ? " is-short" : definition.format === "uri" ? " is-literal" : "";
+  return `<input class="workflow-inline-input${variant}" id="${fieldId}" name="${escapeHtml(name)}" data-input-type="${escapeHtml(definition.type || "string")}" data-max-length="${escapeHtml(definition.maxLength || "")}" type="${type}" step="${step}" value="${escapeHtml(value)}" aria-describedby="${fieldId}-help"${definition.type === "string" ? textConstraints : ""} />`;
 }
 
 function tinCounterControl(name, value, definition, label) {

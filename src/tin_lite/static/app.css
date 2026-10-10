@@ -2940,12 +2940,24 @@ html[data-theme="dark"] .markdown-logo::before {
   border: 1px solid rgb(var(--ink-rgb) / 20%);
   border-radius: var(--radius-chip);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-family: var(--sans);
+  font-size: 13px;
   line-height: 16px;
   transition:
     background-color 120ms ease,
     border-color 120ms ease;
+}
+
+.workflow-inline-input::placeholder {
+  color: var(--ink-muted);
+  opacity: 1;
+}
+
+/* Words read in sans; a value someone must get exactly right (a path, URL, time or timezone)
+   stays mono, a step smaller so it sits level with the sans beside it. */
+.workflow-inline-input.is-literal {
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 .workflow-inline-input:hover {
@@ -3513,8 +3525,8 @@ body.has-diagram-panel .main {
   background: transparent;
   border-left: 1px solid rgb(var(--ink-rgb) / 9%);
   color: var(--ink-muted);
-  font-family: var(--mono);
-  font-size: 11.5px;
+  font-family: var(--sans);
+  font-size: 12.5px;
   line-height: 16px;
   cursor: pointer;
   transition:
@@ -3558,8 +3570,8 @@ body.has-diagram-panel .main {
   border: 1px solid rgb(var(--ink-rgb) / 20%);
   border-radius: var(--radius-chip);
   color: var(--ink);
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-family: var(--sans);
+  font-size: 13px;
   line-height: 16px;
   text-align: left;
   cursor: pointer;
@@ -3621,8 +3633,8 @@ body.has-diagram-panel .main {
   background: transparent;
   border-radius: 3px;
   color: var(--ink-secondary);
-  font-family: var(--mono);
-  font-size: 11.5px;
+  font-family: var(--sans);
+  font-size: 13px;
   line-height: 16px;
   text-align: left;
   cursor: pointer;
@@ -3677,7 +3689,10 @@ body.has-diagram-panel .main {
   height: 28px;
   background: var(--input-bg);
   color: var(--ink);
-  font-family: var(--mono);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
   text-align: center;
 }
 
@@ -3692,8 +3707,10 @@ body.has-diagram-panel .main {
 
 .tin-counter input {
   width: 54px;
+  border: 0;
   border-right: 1px solid rgb(var(--ink-rgb) / 9%);
   border-left: 1px solid rgb(var(--ink-rgb) / 9%);
+  border-radius: 0;
   appearance: textfield;
 }
 
@@ -4817,10 +4834,15 @@ html[data-theme="dark"] .system-week-nav button {
 }
 
 .system-setting .workflow-inline-input,
-.system-setting .tin-select,
-.system-setting .tin-segmented {
+.system-setting .tin-select {
   width: 100%;
   max-width: 520px;
+}
+
+/* Choices and counts keep their own width; stretched, they left a bar of dead space. */
+.system-setting .tin-segmented,
+.system-setting .tin-counter {
+  align-self: flex-start;
 }
 
 [data-project-file-input],
@@ -4959,10 +4981,6 @@ html[data-theme="dark"] .system-week-nav button {
   color: var(--ink);
   font-size: 14.5px;
   line-height: 18px;
-}
-
-.content-program-card .workflow-inline-input {
-  font-family: var(--sans);
 }
 
 .content-program-settings .tin-counter,
