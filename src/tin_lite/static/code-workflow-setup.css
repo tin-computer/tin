@@ -1,8 +1,14 @@
-.code-workflow-setup { padding: 16px 24px; border-top: 1px solid var(--paper-border); font-size: 13px; line-height: 1.55; }
+/* On the card's 16px edge, like its sections and footer; a padded legacy form adds none. */
+.code-workflow-setup { padding: 16px; border-top: 1px solid var(--paper-border); font-size: 13px; line-height: 1.55; }
+.workflow-config-form:not(.system-template-card) .code-workflow-setup { padding-inline: 0; }
 .code-workflow-setup p { margin: 4px 0; }
 .code-workflow-setup a { color: inherit; text-underline-offset: 3px; }
 .code-workflow-setup details { margin: 4px 0; }
-.code-workflow-setup summary { cursor: pointer; }
+.code-workflow-setup summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
+.code-workflow-setup summary::marker { content: ""; }
+.code-workflow-setup summary::-webkit-details-marker { display: none; }
+.code-workflow-setup summary::before { width: 6px; height: 6px; flex: 0 0 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 120ms ease; content: ""; }
+.code-workflow-setup details[open] > summary::before { transform: rotate(45deg); }
 .code-setup-provider { color: var(--ink-secondary); }
 .code-setup-issue { color: var(--bermellon-text); }
 [data-code-weekdays] { display: flex; flex-wrap: wrap; gap: 8px 14px; }

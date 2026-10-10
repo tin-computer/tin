@@ -65,7 +65,14 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     await page.getByText("Included compute · 0 Tin credits",{exact:true}).waitFor();
     assert.equal(await page.getByLabel("Saved notes",{exact:true}).isVisible(),false);
     assert.equal(await page.getByLabel("Saved notes",{exact:true}).inputValue(),"Remembered notes");
+    // A thin chevron, not the browser's solid triangle, and it turns down when open.
+    const chevron=()=>page.locator(".x-workflow-details > summary").evaluate(node=>{const mark=getComputedStyle(node,"::before");return {list:getComputedStyle(node).listStyleType,size:mark.width,stroke:mark.borderRightWidth,turn:mark.transform};});
+    const closed=await chevron();
+    assert.equal(closed.list,"none");
+    assert.equal(closed.size,"6px");
+    assert.notEqual(closed.stroke,"0px");
     await page.getByText("More options",{exact:true}).click();
+    await page.waitForFunction(turn=>getComputedStyle(document.querySelector(".x-workflow-details > summary"),"::before").transform!==turn,closed.turn);
     assert.equal(await page.getByLabel("Saved notes",{exact:true}).isVisible(),true);
     await page.getByText("More options",{exact:true}).click();
     assert.equal(await page.getByRole("button",{name:"Weekly",exact:true}).isVisible(),true);
@@ -80,6 +87,9 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     }
     assert.doesNotMatch(await page.locator(".code-workflow-setup").innerText(), /Tin cannot estimate/);
     assert.match(await page.locator(".code-workflow-setup").innerText(),/Ends/);
+    // The setup readout starts on the same edge as the settings above it and the footer below.
+    const edges=await page.locator(".system-config-form").evaluate(form=>[".system-config-body .system-setting",".code-workflow-setup p",".system-config-footer > *"].map(selector=>Math.round(form.querySelector(selector).getBoundingClientRect().left)));
+    assert.equal(new Set(edges).size,1,JSON.stringify(edges));
     await page.evaluate(() => {window.testOpenForm = document.querySelector(".system-config-form");});
     const setupCount = () => writes.filter(item => item.path.endsWith("/workflow-setup")).length;
     const initialChecks = setupCount();
