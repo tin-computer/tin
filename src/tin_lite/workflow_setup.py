@@ -1,5 +1,7 @@
 """Shared code-workflow setup facts; never a paid provider probe or spending approval."""
 
+from copy import deepcopy
+
 from tin_lite import managed_services
 from tin_lite.billing_contracts import usd
 from tin_lite.code_models import model_terms
@@ -55,10 +57,10 @@ async def code_readiness(
         workflow=workflow,
         normalized_inputs=inputs,
     )
-    if evaluation.blocking:
-        issues.append(
-            "Complete this workflow's required earlier work or project files before running."
-        )
+    prerequisites = evaluation.views(inputs=inputs)
+    for item in prerequisites:
+        if not item["satisfied"] and not item.get("skipped") and item["level"] == "required":
+            issues.append(item["how_to_satisfy"])
     evidence_snapshot = None
     article_source = None
     if evidence_specs(workflow.definition):
@@ -150,6 +152,8 @@ async def code_readiness(
                     "Set a sufficient standing schedule limit in project billing settings."
                 )
     return {
+        "prerequisites": prerequisites,
+        "project_revision": evaluation.head_commit_sha,
         "connections": connections,
         "issues": issues,
         "schedule_issues": schedule_issues,
@@ -188,11 +192,18 @@ async def prepare_workflow(
     )
     if workflow.executor != "workflow.code":
         raise ValueError("This setup readout is for code workflows.")
-    normalized = normalize_workflow_inputs(
-        schema=workflow.definition["input_schema"],
-        project_id=project_id,
-        inputs=inputs or {},
-    )
+    # Preparation can inspect known files before every required field is filled in.
+    # Normal save/start normalization remains strict; invalid supplied values still fail.
+    schema = deepcopy(workflow.definition["input_schema"])
+    required = [name for name in schema.get("required", []) if name != "project_id"]
+    partial = dict(inputs or {})
+    for name in required:
+        if name in partial and partial[name] in (None, ""):
+            partial.pop(name)
+            schema["properties"][name].pop("default", None)
+    schema["required"] = []
+    normalized = normalize_workflow_inputs(schema=schema, project_id=project_id, inputs=partial)
+    missing = [name for name in required if name not in normalized]
     result = await code_readiness(
         database=db,
         integrations=getattr(runtime, "integrations", None),
@@ -202,6 +213,12 @@ async def prepare_workflow(
         project_id=project_id,
         inputs=normalized,
     )
+    if missing:
+        result["issues"] = [
+            f"Add {schema['properties'][name].get('title', name)}." for name in missing
+        ] + result["issues"]
+        result["can_run"] = result["can_schedule"] = False
+    result["missing_inputs"] = missing
     if configured and not await db.has_project_access(
         project_id=project_id, clerk_user_id=configured.created_by_clerk_user_id
     ):

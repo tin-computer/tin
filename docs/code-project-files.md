@@ -24,9 +24,30 @@ oversized file must not silently become a different source.
 See the complete [example package](../workflow_packages/example.project_files/workflow.json).
 Like other examples, it is unregistered; a private copy uses ordinary validation and activation.
 
-![The social workflow uses ordinary file and optional text inputs](images/project-files-inputs.png)
+![The social workflow uses ordinary file and optional text inputs](images/workflow-file-setup.png)
 
 The screenshot uses synthetic project data.
+
+## File setup in the dashboard and MCP
+
+For a string input containing a project-relative path, add
+`"x-tin-ui": {"control": "project_file"}`. Its value and default remain ordinary paths.
+The dashboard shows the selected filename, whether it exists in project Files, and quiet
+**Open** and **Change** actions. Change lists project files through the existing file API;
+Open reads the checked revision in a separate tab so unsaved setup stays intact. Missing
+saved references remain selected until the person changes them.
+
+Declare genuinely required documents with the existing artifact prerequisite, for example
+`{"kind": "artifact", "path": "{audience_path}", "level": "required", "reason": "Drafts use the saved audience."}`.
+Use a required schema input with a nonempty default path when the document is mandatory.
+Keep conditional inputs optional: a file with an inline-text fallback should not become an
+unconditional prerequisite. Required inputs stay visible outside More options.
+
+The existing workflow-setup API and `get_code_workflow_setup` MCP tool return individual
+`prerequisites`, their `resolved_path` and checked `revision`, plus `missing_inputs`.
+They check known documents while required form inputs are still missing; save and run
+validation remain strict. These checks establish availability, not approval or usable
+content. Package code must still validate file contents before making model calls.
 
 ## File interface
 

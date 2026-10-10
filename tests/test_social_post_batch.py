@@ -128,7 +128,7 @@ def inputs(**kwargs):
 def test_manifest_uses_project_files_with_optional_plain_text_and_one_model_call():
     _, definition = load_package()
     spec = validate_code_definition(definition)
-    assert definition["version"] == "3.0.0"
+    assert definition["version"] == "3.1.0"
     assert definition["input_schema"]["required"] == ["project_id"]
     assert definition["input_schema"]["properties"]["article_path"]["maxLength"] == 512
     assert definition["input_schema"]["properties"]["article_text"]["maxLength"] == 20000

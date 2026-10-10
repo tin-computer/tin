@@ -29,7 +29,7 @@ def client_input_schema(definition: dict[str, Any]) -> dict[str, Any]:
 
 
 _SUPPORTED_UI_CONTROLS = {
-    "string": {"text", "textarea", "select"},
+    "string": {"text", "textarea", "select", "project_file"},
     "boolean": {"segmented"},
     "integer": {"counter", "number"},
     "number": {"counter", "number"},

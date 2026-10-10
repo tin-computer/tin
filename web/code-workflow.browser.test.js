@@ -31,7 +31,7 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     if (["POST","PATCH","PUT"].includes(request.method)) {
       let raw=""; for await(const chunk of request) raw+=chunk;
       const body=JSON.parse(raw || "{}"); writes.push({path:url.pathname, body});
-      if (url.pathname.endsWith("/workflow-setup")) return send({schedule_modes:["on_demand","daily","weekly"], input_schema:schema, can_run:true, can_schedule:true, connections:[{provider_key:provider.provider_key,ready:true}], issues:[], schedule_issues:[], estimate:{estimated_usd:"0.00",basis:"included_bounded_compute",external_provider_cost:theme === "light" ? "free" : "estimated", external_providers:[provider]}});
+      if (url.pathname.endsWith("/workflow-setup")) return send({schedule_modes:["on_demand","daily","weekly"], input_schema:schema, can_run:true, can_schedule:true, prerequisites:[{kind:"artifact", path:"reports/INPUT.md",resolved_path:"reports/INPUT.md",revision:"a".repeat(40),satisfied:true,level:"required"}], connections:[{provider_key:provider.provider_key,ready:true}], issues:[], schedule_issues:[], estimate:{estimated_usd:"0.00",basis:"included_bounded_compute",external_provider_cost:theme === "light" ? "free" : "estimated", external_providers:[provider]}});
       if (url.pathname.endsWith("/workflows/saved")) {
         if (body.expected_settings_revision !== configured.settings_revision) {
           response.statusCode=409; return send({detail:"Settings changed elsewhere"});
@@ -63,6 +63,8 @@ for (const theme of ["light", "dark"]) test(`code setup and saved schedule: ${th
     await page.goto(`${base}/?project=project#workflows`);
     await page.getByRole("button",{name:"Open Weekly orders settings",exact:true}).click();
     await page.getByText("Included compute · 0 Tin credits",{exact:true}).waitFor();
+    assert.match(await page.locator(".code-workflow-setup").innerText(), /reports\/INPUT.md: found in project Files/);
+    assert.match(await page.locator(".code-workflow-setup").getByRole("link", {name:"Open", exact:true}).getAttribute("href"), /path=reports%2FINPUT.md&revision=a{40}/);
     assert.equal(await page.getByLabel("Saved notes",{exact:true}).isVisible(),false);
     assert.equal(await page.getByLabel("Saved notes",{exact:true}).inputValue(),"Remembered notes");
     // A thin chevron, not the browser's solid triangle, and it turns down when open.
@@ -176,6 +178,7 @@ test("social code workflow uses ordinary project file or text inputs without sou
     if (url.pathname === "/api/projects") return send([project]);
     if (url.pathname === "/api/workflows") return send([workflow]);
     if (url.pathname === "/api/projects/project/workflows") return send([]);
+    if (url.pathname === "/api/projects/project/files") return send({revision:"a".repeat(40),files:[{path:"reports/PUBLIC_ARTICLE.md"}]});
     if (url.pathname.endsWith("/system")) return send({workflow_count:0,running_count:0,waiting_count:0,runs_this_month:0});
     if (url.pathname.startsWith("/api/")) return send([]);
     response.writeHead(404).end();
@@ -195,7 +198,10 @@ test("social code workflow uses ordinary project file or text inputs without sou
     assert.equal(await page.locator("[data-approved-source-picker]").count(),0);
     assert.equal(await page.locator("[name='input:article_path']").count(),1);
     assert.equal(await page.locator("textarea[name='input:article_text']").count(),1);
-    await page.locator("[name='input:article_path']").fill("reports/PUBLIC_ARTICLE.md");
+    const article = page.locator("[data-project-file-input]").filter({has: page.locator("[name='input:article_path']")});
+    await article.getByRole("button", {name:"Change",exact:true}).click();
+    await article.getByRole("combobox").selectOption("reports/PUBLIC_ARTICLE.md");
+    await article.getByRole("link", {name:"Open",exact:true}).waitFor();
     await page.getByText("Setup ready to run.", {exact:true}).waitFor();
     if (process.env.TIN_CODE_SCREENSHOTS) await page.screenshot({path:`${process.env.TIN_CODE_SCREENSHOTS}/project-files-inputs.png`,fullPage:true});
     await page.getByRole("button",{name:"Set up and run now"}).click();
@@ -206,4 +212,47 @@ test("social code workflow uses ordinary project file or text inputs without sou
     assert.equal(Object.hasOwn(writes[0].body.inputs,"source_run_id"),false);
     assert.deepEqual(errors,[]);
   } finally {await browser.close(); await new Promise(resolve=>server.close(resolve));}
+});
+
+for (const theme of ["light", "dark"]) test(`project file controls preserve choices and show missing documents: ${theme}`, async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1100, height: 800}});
+    await page.setContent(`<html data-theme="${theme}"><body><main class="workspace"><form class="system-template-card is-open"><div class="system-template-setup-body"><section><div class="x-workflow-fields" id="fields"></div></section></div></form></main></body></html>`);
+    await page.addStyleTag({path: "src/tin_lite/static/app.css"});
+    await page.addStyleTag({path: "src/tin_lite/static/x-posts.css"});
+    await page.addScriptTag({path: "src/tin_lite/static/project-file-input.js"});
+    await page.evaluate(() => {
+      fields.innerHTML = `<div class="system-setting"><strong>Audience</strong>${TinProjectFileInput.field("input:audience", "context/AUDIENCE.md", "Audience", "audience", true)}</div>
+        <details class="x-workflow-details"><summary>More options</summary><div class="system-setting"><strong>Source material</strong>${TinProjectFileInput.field("input:source", "context/missing.md", "Source material", "source", true)}</div></details>`;
+      window.calls = 0; window.currentProject = true;
+      TinProjectFileInput.bind(document.querySelector("form"), {
+        projectId: "project", isCurrent: () => currentProject,
+        api: async () => {calls++; return {revision: "a".repeat(40), files: [{path: "context/AUDIENCE.md"}, {path: "notes/release.md"}]};},
+      });
+    });
+    await page.getByText("Found in project Files.", {exact: true}).waitFor();
+    assert.equal(await page.evaluate(() => calls), 1, "one listing shared by all controls");
+    assert.equal(await page.locator("details").getAttribute("open"), "");
+    assert.equal(await page.getByLabel("Source material", {exact: true}).inputValue(), "context/missing.md", "missing saved reference is never silently replaced");
+    assert.equal(await page.getByRole("link", {name: "Open", exact: true}).getAttribute("target"), "_blank", "opening a document keeps unsaved setup intact");
+    assert.match(await page.getByRole("link", {name: "Open", exact: true}).getAttribute("href"), /project=project&path=context%2FAUDIENCE.md&revision=a{40}/);
+    await page.getByLabel("Source material", {exact: true}).selectOption("notes/release.md");
+    assert.equal(await page.getByRole("link", {name: "Open", exact: true}).count(), 2);
+    await page.locator("[data-project-file-input]").first().getByRole("button", {name:"Change",exact:true}).click();
+    assert.equal(await page.evaluate(() => calls), 2, "Change refreshes Files after upstream work");
+    assert.equal(await page.locator('[name="input:source"]').inputValue(), "notes/release.md");
+    for (const width of [1100, 390]) {
+      await page.setViewportSize({width, height: 800});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      if (process.env.TIN_CODE_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_CODE_SCREENSHOTS}/file-setup-${theme}-${width}.png`, fullPage: true});
+    }
+    await page.evaluate(() => {
+      fields.innerHTML += `<div id="stale">${TinProjectFileInput.field("input:late", "late.md", "Late file", "late")}</div>`;
+      TinProjectFileInput.bind(document.querySelector("#stale"), {projectId: "project", isCurrent: () => currentProject, api: () => new Promise(resolve => {window.finishListing = resolve;})});
+      currentProject = false;
+      finishListing({revision: "b".repeat(40), files: [{path: "late.md"}]});
+    });
+    assert.equal(await page.locator("#stale [data-file-open]").isVisible(), false, "a stale response cannot open another project's file");
+  } finally {await browser.close();}
 });

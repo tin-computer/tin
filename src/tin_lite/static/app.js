@@ -3986,6 +3986,9 @@ function workflowFieldHelp(definition, fieldId) {
 function workflowInputControl(name, definition, value, label, fieldId, required = false) {
   const requestedControl = definition["x-tin-ui"]?.control;
   const textConstraints = `${required ? " required" : ""}${definition.minLength !== undefined ? ` minlength="${escapeHtml(definition.minLength)}"` : ""}${definition.maxLength !== undefined ? ` maxlength="${escapeHtml(definition.maxLength)}"` : ""}`;
+  if (requestedControl === "project_file") {
+    return window.TinProjectFileInput.field(name, value, label, fieldId, required);
+  }
   if (Array.isArray(definition.enum)) {
     const options = definition.enum.map((option) => [option, humanize(option)]);
     return requestedControl === "segmented"
@@ -4064,6 +4067,13 @@ function openTinSelect(dropdown, focusOption = false) {
 }
 
 function bindTinControls(form) {
+  if (form.querySelector("[data-project-file-input]")) {
+    const fileContext = currentProjectContext();
+    window.TinProjectFileInput?.bind(form, {
+      projectId: fileContext.projectId, api,
+      isCurrent: () => isCurrentProjectContext(fileContext),
+    });
+  }
   form.querySelectorAll(".tin-segmented").forEach((control) => {
     if (control.dataset.tinBound) return;
     control.dataset.tinBound = "true";
