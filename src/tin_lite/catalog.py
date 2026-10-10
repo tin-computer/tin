@@ -1241,7 +1241,7 @@ BUILTIN_WORKFLOWS = (
             "first. Once you approve it, future content uses it. Nothing is published."
         ),
         executor=style_capture.KEY,
-        version_label="1.3.0",
+        version_label="1.4.0",
         presentation=WorkflowDiagram(
             direction="TD",
             nodes=(
@@ -1299,6 +1299,12 @@ BUILTIN_WORKFLOWS = (
             "additionalProperties": False,
             "properties": {
                 "project_id": {"type": "string", "format": "uuid"},
+                "author_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "title": "Write as",
+                    "description": "Optional project author. Omit for the shared project guide.",
+                },
                 "source_path": {
                     "type": "string",
                     "minLength": 1,

@@ -30,8 +30,8 @@ def style_capture_preparation(project_id, *, include_guide=False):
     }
 
 
-def writing_style_guide():
-    return {
+def writing_style_guide(*, author=None):
+    result = {
         "schema": "writing-style-guide-v2",
         "path": STYLE_PATH,
         "execution": "Your agent selects samples; style.capture extracts the guide. "
@@ -222,3 +222,18 @@ def writing_style_guide():
             "A plan-to-article workflow and GitHub article delivery are separate follow-up work.",
         ],
     }
+    if author is not None:
+        result["path"] = author["guide_path"]
+        result["author"] = author
+        result["capture_inputs"] = {"author_id": author["id"]}
+        result["steps"].insert(
+            0,
+            "Use capture_inputs.author_id when starting style.capture. Read or save only "
+            "this author's path, never the shared project guide. The selected author is "
+            "an explicit binding, not a name match.",
+        )
+        result["consumers"] = [
+            "This guide belongs to the selected author. "
+            "Consumers must select that author explicitly."
+        ]
+    return result

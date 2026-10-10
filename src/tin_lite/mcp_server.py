@@ -1129,7 +1129,55 @@ def create_mcp_app(
         return await resolve_brand(runtime().storage, project, revision)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
-    async def get_writing_style_guide(project_id: str) -> dict[str, Any]:
+    async def list_project_authors(project_id: str) -> dict[str, Any]:
+        """List explicit author/guide bindings. Only a member binding supplies a default;
+        never match by name or silently use a project's shared guide."""
+        from tin_lite.project_authors import ProjectAuthors
+
+        token = await caller()
+        parsed = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed, token, tool_name="list_project_authors")
+        return await ProjectAuthors(runtime().database, runtime().storage).list(
+            parsed, token.subject
+        )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+    async def save_project_author(
+        project_id: str,
+        author_id: str,
+        display_name: str,
+        expected_version: int,
+        selected_guide: str | None = None,
+        link_to_me: bool | None = None,
+    ) -> dict[str, Any]:
+        """Explicitly associate an author with a writing guide. Use a new UUID and version 0
+        to create, or the listed version to edit. Confirm the intended author and guide with
+        the user; names do not establish identity. link_to_me links only the authenticated
+        member. Omit a guide for a new author's reserved capture destination, or to retain
+        an existing binding. Capture with style.capture and this author_id; approval saves
+        only this author's guide. This grants no access or permission to publish."""
+        from tin_lite.project_authors import ProjectAuthors
+
+        token = await caller()
+        parsed = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed, token, tool_name="save_project_author")
+        try:
+            return await ProjectAuthors(runtime().database, runtime().storage).save(
+                project_id=parsed,
+                actor=token.subject,
+                author_id=_mcp_uuid(author_id, field="author_id"),
+                display_name=display_name,
+                expected_version=expected_version,
+                selected_guide=selected_guide,
+                link_to_me=link_to_me,
+            )
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+
+    @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
+    async def get_writing_style_guide(
+        project_id: str, author_id: str | None = None
+    ) -> dict[str, Any]:
         """Begin style capture by leading a source-discovery conversation with the user.
 
         Use one short invitation for writing samples, including blog links or files, unless
@@ -1149,7 +1197,18 @@ def create_mcp_app(
             token,
             tool_name="get_writing_style_guide",
         )
-        return writing_style_guide()
+        author = None
+        if author_id is not None:
+            from tin_lite.project_authors import ProjectAuthors
+
+            try:
+                author = await ProjectAuthors(runtime().database, runtime().storage).resolve(
+                    _mcp_uuid(project_id, field="project_id"),
+                    _mcp_uuid(author_id, field="author_id"),
+                )
+            except ValueError as exc:
+                raise ToolError(str(exc)) from None
+        return writing_style_guide(author=author)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def get_content_draft_sources(

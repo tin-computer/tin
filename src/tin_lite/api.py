@@ -91,6 +91,7 @@ from tin_lite.paid_ads_proposals import list_paid_ads_proposals as list_paid_ads
 from tin_lite.private_workflow_api import router as private_workflow_router
 from tin_lite.private_workflows import private_execution_ready, workflow_source_view
 from tin_lite.product_urls import dashboard_url
+from tin_lite.project_authors_api import router as project_authors_router
 from tin_lite.project_connections_api import router as project_connections_router
 from tin_lite.project_deletion import ProjectDeletionPending, deletable_project
 from tin_lite.project_deletion import delete_project as delete_project_service
@@ -156,6 +157,7 @@ router.include_router(content_delivery_router)
 router.include_router(technical_fix_router)
 router.include_router(organic_system_router)
 router.include_router(project_connections_router)
+router.include_router(project_authors_router)
 
 router.include_router(collection_router)
 router.include_router(public_catalog_router)
@@ -199,7 +201,10 @@ BILLING_QUOTE_HEADER = Header(default=None, alias="Tin-Billing-Quote")
 
 @router.get("/api/projects/{project_id}/writing-style/guide")
 async def get_writing_style_guide(
-    project_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER
+    project_id: UUID,
+    request: Request,
+    user: AuthContext = AUTHENTICATED_USER,
+    author_id: UUID | None = None,
 ):
     from tin_lite.writing_style import writing_style_guide
 
@@ -207,7 +212,18 @@ async def get_writing_style_guide(
         project_id=project_id, clerk_user_id=user.clerk_user_id
     ):
         raise HTTPException(status_code=404, detail="project not found")
-    return JSONResponse(writing_style_guide(), headers={"Cache-Control": "no-store"})
+    author = None
+    if author_id is not None:
+        from tin_lite.project_authors import ProjectAuthors
+
+        runtime = request.app.state.runtime
+        try:
+            author = await ProjectAuthors(runtime.database, runtime.storage).resolve(
+                project_id, author_id
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from None
+    return JSONResponse(writing_style_guide(author=author), headers={"Cache-Control": "no-store"})
 
 
 @router.post("/api/projects/{project_id}/writing-style/preview")

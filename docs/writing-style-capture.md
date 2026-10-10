@@ -1,8 +1,8 @@
 # Writing style capture
 
 `style.capture` is a manual native workflow in Organic traffic. The user's coding agent curates
-selected evidence; Tin extracts an editable guide through the existing model service. There is no
-style database, sandbox, background history scan, or second execution engine. Calling the
+selected evidence; Tin extracts an editable guide through the existing model service. Guide contents remain in project Files; there is no
+sandbox, background history scan, or second execution engine. Calling the
 project-authorized MCP `get_writing_style_guide(project_id)` or matching HTTP guide endpoint remains
 read-only. Only an ordinary authenticated workflow start buys the extraction.
 
@@ -110,6 +110,34 @@ the run ID. The model service records usage through its existing accounting boun
 Users edit the guide directly in Files or with their agent; future article runs read it without
 activation or a version picker. Directly saving a complete agent-extracted guide remains supported
 for callers who do not want hosted extraction.
+
+## Several authors in one project
+
+Capture 1.4.0 optionally accepts `author_id`. `list_project_authors` and
+`save_project_author` (also available at `/api/projects/{project_id}/authors`) maintain
+small project-scoped bindings: stable ID, display name, optional member, guide path and
+version. The authenticated member can explicitly link themselves; names never establish
+identity. New capture setup defaults only to that explicit member binding. Switching authors
+keeps unfinished samples separate. The shared-project option remains explicit.
+
+Create with a caller-generated UUID and `expected_version: 0`; edits use the listed version.
+A missing `selected_guide` reserves `.agents/skills/authors/<id>/SKILL.md` for a new author,
+or preserves an existing binding. Supplying a guide explicitly checks that it is a usable
+Markdown file. A guide cannot belong to two authors. Copy a shared project guide to a separate
+file before associating it with one author. Omitting `link_to_me` preserves the existing link;
+`true` links the caller, and `false` removes only the caller's own link.
+
+`get_writing_style_guide(project_id, author_id)` returns preparation instructions and the
+selected destination. Start capture with that same `author_id`; admission pins the binding
+in the existing receipt transaction before compute. Proposal edits and exact-version approval
+use the existing review service. Publication and retained-output comparison target the pinned
+file. Another author's guide and the shared guide remain untouched. A binding cannot change
+destinations while its capture is active. Renaming the author does not redirect an admitted run.
+
+Omitting `author_id` preserves shared-guide behavior. Historical definitions retain their
+original policy, destination and output cap. These records do not grant membership or posting
+permission. Existing drafting workflows are not automatically converted to author consumers;
+the readable drafting setup and per-draft documents are separate follow-up work.
 
 ## Dashboard fallback
 

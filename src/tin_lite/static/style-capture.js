@@ -1,16 +1,26 @@
 /* Sample preparation only. The ordinary run endpoint performs extraction. */
 (() => {
   const drafts = new Map();
+  const authors = new Map();
   const bytes = (s) => new TextEncoder().encode(s).length;
   const escape = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   function draft(projectId) {
     if (!drafts.has(projectId)) drafts.set(projectId, {samples: [], purpose: "Clear public articles", preferences: "", pending: null});
     return drafts.get(projectId);
   }
-  function fields() {
+  function fields({authors = false} = {}) {
     return `<div data-style-capture>
+      ${authors ? `<div class="x-workflow-fields" data-style-authors>
+        <label class="system-setting"><strong>Capture for</strong><select class="workflow-inline-input" name="input:author_id" data-style-author disabled><option value="">Loading authors…</option></select></label>
+        <p class="system-config-note" data-style-author-note></p>
+        <details class="x-workflow-details"><summary>Add an author</summary><div>
+          <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" data-style-author-name maxlength="200" autocomplete="name"></label>
+          <label class="system-setting"><span><input type="checkbox" data-style-author-me> This is me</span></label>
+          <button class="button-secondary" type="button" data-style-author-add>Add author</button>
+        </div></details>
+      </div>` : ""}
       <p class="system-config-note">Your agent can help choose passages from notes, articles or conversations.</p>
-      <button class="button" type="button" data-style-agent>Use your coding agent · copy prompt</button>
+      <button class="system-quiet-action" type="button" data-style-agent>Use your coding agent · copy prompt</button>
       <button class="button-quiet" type="button" data-style-connect>Connection instructions →</button>
       <details data-style-samples><summary class="system-quiet-action">Add samples here</summary>
         <label class="system-setting"><strong>What will you write?</strong><input class="workflow-inline-input" data-style-purpose maxlength="500"></label>
@@ -37,7 +47,7 @@
     const root = form.querySelector("[data-style-capture]");
     if (!root || root.dataset.bound) return;
     root.dataset.bound = "true";
-    const data = draft(services.projectId);
+    let data = draft(services.projectId);
     const el = (name) => root.querySelector(`[data-style-${name}]`);
     const message = (s) => { el("message").textContent = s; };
     const safe = (fn) => async () => { try { services.assertCurrent(); await fn(); } catch (e) { message(e.message); } };
@@ -45,6 +55,56 @@
     el("preferences").value = data.preferences;
     el("purpose").oninput = () => { data.purpose = el("purpose").value; data.pending = null; };
     el("preferences").oninput = () => { data.preferences = el("preferences").value; data.pending = null; };
+    if (el("author")) {
+      const select = el("author");
+      let listed = [];
+      let pendingAuthor;
+      const switchAuthor = () => {
+        authors.set(services.projectId, select.value);
+        if (select.value) select.name = "input:author_id";
+        else select.removeAttribute("name");
+        data = draft(`${services.projectId}:${select.value || "shared"}`);
+        el("purpose").value = data.purpose;
+        el("preferences").value = data.preferences;
+        el("text").value = data.text || "";
+        const author = listed.find(a => a.id === select.value);
+        el("author-note").textContent = author
+          ? `After approval, this guide is saved for ${author.display_name}. Other authors' guides stay unchanged.`
+          : "After approval, this updates the shared project writing guide.";
+        render();
+      };
+      el("text").oninput = () => { data.text = el("text").value; };
+      select.onchange = switchAuthor;
+      const load = async (chosen) => {
+        const response = await services.api(`/api/projects/${services.projectId}/authors`);
+        services.assertCurrent();
+        if (!root.isConnected) return;
+        listed = response.authors;
+        select.innerHTML = '<option value="">Shared project guide</option>' + listed.map(a => `<option value="${escape(a.id)}">${escape(a.display_name)}${a.id === response.default_author_id ? " (you)" : ""}</option>`).join("");
+        const selection = chosen ?? authors.get(services.projectId) ?? response.default_author_id ?? "";
+        if (selection && !listed.some(a => a.id === selection)) throw new Error("The selected author is unavailable. Refresh this setup and choose an author.");
+        select.value = selection;
+        select.disabled = false;
+        switchAuthor();
+      };
+      el("author-add").onclick = safe(async () => {
+        const name = el("author-name").value.trim();
+        if (!name) throw new Error("Enter this author's name.");
+        const body = JSON.stringify({display_name: name, expected_version: 0, link_to_me: el("author-me").checked});
+        if (!pendingAuthor || pendingAuthor.body !== body) pendingAuthor = {id: crypto.randomUUID(), body};
+        const {id} = pendingAuthor;
+        el("author-add").disabled = true;
+        try {
+          await services.api(`/api/projects/${services.projectId}/authors/${id}`, {method: "PUT", body});
+          await load(id);
+          pendingAuthor = null;
+        } finally { el("author-add").disabled = false; }
+        el("author-name").value = "";
+        el("author-add").closest("details").open = false;
+        message("Author added. Choose samples for their writing guide.");
+      });
+      safe(() => load())();
+    }
     function render() {
       el("list").innerHTML = data.samples.map((s, i) => `<details><summary>${escape(s.label)} · ${escape(s.kind)}</summary><pre class="style-sample-preview">${escape(s.text)}</pre><button class="button-quiet" type="button" data-style-remove="${i}">Remove</button></details>`).join("");
       el("list").querySelectorAll("[data-style-remove]").forEach((button) => {
@@ -59,11 +119,13 @@
       data.samples.push({...sample, kind: el("kind").value}); data.pending = null; render();
     }
     el("agent").onclick = safe(async () => {
-      await navigator.clipboard.writeText(`Help me capture a writing style for Tin project ${services.projectId}. Use the guide in get_workflow's preparation for style.capture, or call get_writing_style_guide. Start with one short invitation for pieces that sound like me, including blog posts I've written as links or files, unless I already supplied samples. Reuse our conversation's context; do not turn source discovery into a questionnaire. Obsidian notes and recent Codex, Claude Code or other harness sessions are options when helpful, not extra questions to ask if my writing samples are sufficient. Ask only for missing context or scoped read permission, and help locate sources if needed using your own available tools. Inspect the approved sources, select substantial representative passages and my editing preferences, then show me the selection in one concise confirmation before sharing it with Tin and running style.capture. Honor approval already given. Do not silently substitute a few messages from this conversation. If histories are unavailable, explain that and offer documents or selected exports. Do not treat assistant replies as my writing.`);
+      const selectedAuthor = el("author")?.value;
+      const authorContext = selectedAuthor ? ` Call get_writing_style_guide with author_id ${selectedAuthor} and use that author_id for style.capture. Keep this author separate from other project voices.` : "";
+      await navigator.clipboard.writeText(`Help me capture a writing style for Tin project ${services.projectId}.${authorContext} Use the guide in get_workflow's preparation for style.capture, or call get_writing_style_guide. Start with one short invitation for pieces that sound like me, including blog posts I've written as links or files, unless I already supplied samples. Reuse our conversation's context; do not turn source discovery into a questionnaire. Obsidian notes and recent Codex, Claude Code or other harness sessions are options when helpful, not extra questions to ask if my writing samples are sufficient. Ask only for missing context or scoped read permission, and help locate sources if needed using your own available tools. Inspect the approved sources, select substantial representative passages and my editing preferences, then show me the selection in one concise confirmation before sharing it with Tin and running style.capture. Honor approval already given. Do not silently substitute a few messages from this conversation. If histories are unavailable, explain that and offer documents or selected exports. Do not treat assistant replies as my writing.`);
       message("Prompt copied. Paste it into your connected coding agent.");
     });
     el("connect").onclick = () => services.openAgent();
-    el("add").onclick = safe(() => { add({label: `Passage ${data.samples.length + 1}`, origin: "User-pasted passage", text: el("text").value}); el("text").value = ""; });
+    el("add").onclick = safe(() => { add({label: `Passage ${data.samples.length + 1}`, origin: "User-pasted passage", text: el("text").value}); el("text").value = ""; data.text = ""; });
     el("upload").onchange = safe(async () => {
       const files = [...el("upload").files];
       if (files.length + data.samples.length > 8 || files.reduce((n, f) => n + f.size, 0) > 10 * 1024 * 1024) throw new Error("Choose at most 8 samples and 10 MiB per upload selection.");
@@ -94,7 +156,10 @@
   }
   async function prepare(form, services) {
     services.assertCurrent();
-    const data = draft(services.projectId);
+    const author = form.querySelector("[data-style-author]");
+    if (author?.disabled) throw new Error("Wait for the author list to load before continuing.");
+    const authorId = author?.value;
+    const data = draft(author ? `${services.projectId}:${author.value || "shared"}` : services.projectId);
     if (!data.purpose.trim()) throw new Error("Choose the intended writing context.");
     if (!data.samples.length && !data.preferences.trim()) throw new Error("Add samples here, or use your coding agent to capture style.");
     if (form.querySelector("[data-style-text]")?.value.trim()) throw new Error("Add the pasted passage before continuing.");
@@ -111,6 +176,7 @@
     services.assertCurrent();
     await services.api(`/api/projects/${services.projectId}/files/commit`, {method: "POST", body: JSON.stringify(pending)});
     services.assertCurrent();
+    if (author?.value !== authorId) throw new Error("Author changed while saving. Check the samples before continuing.");
     if (data.pending !== pending) throw new Error("Samples changed while saving. Review them and continue again.");
     form.elements.namedItem("input:source_path").value = pending.changes[0].path;
   }
