@@ -167,7 +167,7 @@
             <label class="system-setting"><strong>Topic</strong><input class="workflow-inline-input" data-item-field="title" value="${esc(item.title)}" maxlength="180" required></label>
             <label class="system-setting"><strong>Short brief</strong><textarea class="workflow-inline-input workflow-inline-textarea" data-item-field="brief" maxlength="1800" required>${esc(item.brief)}</textarea></label>
             ${setting("Action", tinSelectControl(`content:action:${index}`, item.action, [["new_page","New page"],["update_page","Update existing page"]], "Action", {"data-item-field":"action"}))}
-            <label class="system-setting"><strong>Destination URL</strong><input class="workflow-inline-input" data-item-field="destination" type="url" value="${esc(item.destination)}" placeholder="https://${esc(plan.host)}/…"></label>
+            <label class="system-setting"><strong>Destination URL</strong><input class="workflow-inline-input is-literal" data-item-field="destination" type="url" value="${esc(item.destination)}" placeholder="https://${esc(plan.host)}/…"></label>
             <details class="content-disclosure content-topic-details"><summary>Intent and verification</summary><div class="content-fields">
               <label class="system-setting"><strong>Buyer intent</strong><input class="workflow-inline-input" data-item-field="intent" value="${esc(item.intent)}" maxlength="500" required></label>
               <ul class="content-verification">${item.verification.map(value => `<li>${esc(value)}</li>`).join("")}</ul></div></details>

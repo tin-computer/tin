@@ -15,7 +15,7 @@
       <span class="project-file-choice"><a class="system-quiet-action" data-author-guide target="_blank" rel="noopener" hidden>Open writing guide</a>
       <button type="button" class="system-quiet-action" data-author-choose hidden>Use an existing writing guide</button></span>
       <div data-author-guide-picker hidden>
-        <select class="workflow-inline-input" aria-label="Existing writing guide" data-author-guide-file></select>
+        <select class="workflow-inline-input is-literal" aria-label="Existing writing guide" data-author-guide-file></select>
         <span class="project-file-choice"><button type="button" class="system-quiet-action" data-author-guide-save>Use this guide</button></span>
       </div>
     </div>`;

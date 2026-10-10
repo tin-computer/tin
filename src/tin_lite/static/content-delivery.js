@@ -3,7 +3,7 @@
   const pending = new Map();
   const esc = v => String(v ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
   const field = (label, content) => `<label class="system-setting"><strong>${esc(label)}</strong>${content}</label>`;
-  const input = (name, value, label) => `<input class="workflow-inline-input" data-delivery-field="${name}" value="${esc(value)}" aria-label="${esc(label)}">`;
+  const input = (name, value, label) => `<input class="workflow-inline-input is-literal" data-delivery-field="${name}" value="${esc(value)}" aria-label="${esc(label)}">`;
   const labels = {awaiting_review: "Awaiting review", pending: "PR delivery queued", started: "Opening PR", failed: "PR delivery needs attention", completed: "PR opened"};
   const safePR = value => typeof value === "string" && /^https:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+$/.test(value);
   async function mount(root, context, {plan, drafts}) {
@@ -29,9 +29,9 @@
           <details class="content-disclosure"><summary>Markdown files for drafts started before site adaptation</summary><div class="content-fields">
           ${field("Markdown file pattern", input("path_pattern", saved.path_pattern, "Markdown file pattern"))}
           <p class="system-config-note">For example: content/blog/{slug}.md. Only drafts pinned before Tin adapted articles to your site use these.</p>
-          ${field("Frontmatter for new files", `<textarea class="workflow-inline-input workflow-inline-textarea" data-frontmatter rows="4" aria-label="Frontmatter for new files">${esc(state.frontmatter)}</textarea>`)}
+          ${field("Frontmatter for new files", `<textarea class="workflow-inline-input workflow-inline-textarea is-literal" data-frontmatter rows="4" aria-label="Frontmatter for new files">${esc(state.frontmatter)}</textarea>`)}
           <p class="system-config-note">Optional JSON fields, for example {"title":"{title}","date":"{date}"}. Existing files keep their frontmatter.</p>
-          ${items.filter(item => item.action === "update_page" || saved.item_paths[item.id]).map(item => field(item.title, `<input class="workflow-inline-input" data-item-path="${esc(item.id)}" value="${esc(saved.item_paths[item.id] || "")}" placeholder="Exact repository file, such as content/docs/setup.md" aria-label="File for ${esc(item.title)}">`)).join("")}
+          ${items.filter(item => item.action === "update_page" || saved.item_paths[item.id]).map(item => field(item.title, `<input class="workflow-inline-input is-literal" data-item-path="${esc(item.id)}" value="${esc(saved.item_paths[item.id] || "")}" placeholder="Exact repository file, such as content/docs/setup.md" aria-label="File for ${esc(item.title)}">`)).join("")}
           <p class="system-config-note">Older drafts that update an existing page map it to its Markdown file here.</p>
           </div></details></div>
           <p class="system-config-note">Applies to new drafts only. Existing drafts keep their original review behavior.</p>
