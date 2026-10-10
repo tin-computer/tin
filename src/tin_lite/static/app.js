@@ -4067,11 +4067,13 @@ function openTinSelect(dropdown, focusOption = false) {
 }
 
 function bindTinControls(form) {
-  const fileContext = currentProjectContext();
-  window.TinProjectFileInput?.bind(form, {
-    projectId: fileContext.projectId, api,
-    isCurrent: () => isCurrentProjectContext(fileContext),
-  });
+  if (form.querySelector("[data-project-file-input]")) {
+    const fileContext = currentProjectContext();
+    window.TinProjectFileInput?.bind(form, {
+      projectId: fileContext.projectId, api,
+      isCurrent: () => isCurrentProjectContext(fileContext),
+    });
+  }
   form.querySelectorAll(".tin-segmented").forEach((control) => {
     if (control.dataset.tinBound) return;
     control.dataset.tinBound = "true";
