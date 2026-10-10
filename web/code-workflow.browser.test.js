@@ -237,6 +237,15 @@ for (const theme of ["light", "dark"]) test(`project file controls preserve choi
     assert.equal(await page.getByLabel("Source material", {exact: true}).inputValue(), "context/missing.md", "missing saved reference is never silently replaced");
     assert.equal(await page.getByRole("link", {name: "Open", exact: true}).getAttribute("target"), "_blank", "opening a document keeps unsaved setup intact");
     assert.match(await page.getByRole("link", {name: "Open", exact: true}).getAttribute("href"), /project=project&path=context%2FAUDIENCE.md&revision=a{40}/);
+    // A native select draws our chevron, 9px in, not the platform's arrow.
+    const select = await page.getByLabel("Source material", {exact: true}).evaluate(node => {
+      const style = getComputedStyle(node);
+      return {appearance: style.appearance, image: style.backgroundImage, position: style.backgroundPosition, padding: style.paddingRight};
+    });
+    assert.equal(select.appearance, "none");
+    assert.match(select.image, /M1 1l4 4 4-4/);
+    assert.equal(select.position, "calc(100% - 9px) 50%");
+    assert.equal(select.padding, "28px");
     await page.getByLabel("Source material", {exact: true}).selectOption("notes/release.md");
     assert.equal(await page.getByRole("link", {name: "Open", exact: true}).count(), 2);
     await page.locator("[data-project-file-input]").first().getByRole("button", {name:"Change",exact:true}).click();
