@@ -5261,14 +5261,21 @@ class TinActivities:
         )
         for source_run in runs:
             ref = source_run.artifact_ref or f"tin.run://{source_run.id}"
+            body = None
             if source_run.canonical_commit_sha is not None and source_run.artifact_path is not None:
                 content = await self._storage.read_canonical_artifact(
                     repo_id=project.state_repo_id,
                     commit_sha=source_run.canonical_commit_sha,
                     path=source_run.artifact_path,
                 )
-                body = content.decode("utf-8")
-            else:
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    pass  # Media stays represented by its run receipt and artifact reference.
+                else:
+                    if "\x00" not in text:
+                        body = text
+            if body is None:
                 body = json.dumps(
                     {
                         "workflow": source_run.executor,
