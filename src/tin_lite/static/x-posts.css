@@ -4,7 +4,12 @@
 .x-workflow-fields, .x-workflow-details > div { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
 .x-workflow-fields[hidden], .x-workflow-fields [hidden] { display: none; }
 .x-workflow-fields .system-config-note { margin: 0; }
-.x-workflow-details summary { color: var(--accent-text); font: 400 13px/18px var(--sans); cursor: pointer; }
+.x-workflow-details summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; color: var(--accent-text); font: 400 13px/18px var(--sans); cursor: pointer; }
+/* A thin chevron instead of the browser's solid triangle; it turns down when open. */
+.x-workflow-details summary::marker { content: ""; }
+.x-workflow-details summary::-webkit-details-marker { display: none; }
+.x-workflow-details summary::before { width: 6px; height: 6px; flex: 0 0 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform 120ms ease; content: ""; }
+.x-workflow-details[open] > summary::before { transform: rotate(45deg); }
 .x-workflow-details > div { padding-top: 14px; }
 .x-posts-reader { container: x-reader / inline-size; min-height: 100svh; background: var(--paper-bg); color: var(--ink); font-family: var(--sans); }
 .x-posts-context { min-height: 62px; gap: 16px; }
