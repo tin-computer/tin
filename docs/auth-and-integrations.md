@@ -7,6 +7,10 @@ separate question: **which projects may that person use?**
 
 - Hosted Tin uses the same production Clerk instance as Tin Computer, so an existing person does
   not create another login. Self-host operators configure their own Clerk instance and origins.
+- Clerk's verification steps use the History API within the mounted sign-in or sign-up flow.
+  Reloading the document between steps can request a second email code and invalidate the first.
+  Switching between sign-in and sign-up, or finishing authentication, still loads the destination
+  page so the correct component or signed-in dashboard starts.
 - The dashboard, MCP, API and integration callbacks use `app.tin.computer`. The former
   `lite` hostname is retired. The optional legacy-origin setting is a migration compatibility
   mechanism, not a required or advertised service. See [the domain rollout](app-domain-rollout.md).

@@ -91,3 +91,72 @@ test("auth keeps the OAuth return through both account modes and bypasses provis
     await new Promise(resolve => server.close(resolve));
   }
 });
+
+test("Clerk verification navigation retains the mounted flow and leaves auth with a document navigation", async () => {
+  const documents = [], apis = [], errors = [];
+  const server = http.createServer(async (request, response) => {
+    const url = new URL(request.url, "http://localhost");
+    if (/^\/sign-(in|up)(\/|$)/.test(url.pathname)) {
+      documents.push(`${url.pathname}${url.search}`);
+      let html = await fs.readFile(path.join(assets, "index.html"), "utf8");
+      for (const [key, value] of Object.entries({ASSET_VERSION: "test", BILLING_ENABLED: "false", CLERK_PUBLISHABLE_KEY: "synthetic", CLERK_FRONTEND_API_URL: "https://clerk.test", AUTH_RETURN_URL: escaped(continuation), AUTH_FLOW: "mcp"})) html = html.replaceAll(`{{${key}}}`, value);
+      response.writeHead(200, {"Content-Type": "text/html"}); return response.end(html);
+    }
+    if (url.pathname === "/system") {documents.push(request.url); response.writeHead(200, {"Content-Type": "text/html"}); return response.end("Signed-in destination");}
+    if (url.pathname.startsWith("/api/")) {apis.push(url.pathname); response.writeHead(500).end(); return;}
+    if (url.pathname.startsWith("/assets/")) {
+      const content = await fs.readFile(path.join(assets, url.pathname.slice(8))).catch(() => null);
+      if (!content) return response.writeHead(404).end();
+      response.writeHead(200, {"Content-Type": url.pathname.endsWith(".js") ? "text/javascript" : url.pathname.endsWith(".css") ? "text/css" : "application/octet-stream"}); return response.end(content);
+    }
+    response.writeHead(404).end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const browser = await chromium.launch({headless: true});
+  try {
+    for (const mode of ["sign-in", "sign-up"]) {
+      documents.length = 0;
+      const context = await browser.newContext();
+      await context.route("**/*", route => route.request().url().startsWith(base) ? route.continue() : route.abort());
+      await context.addInitScript(() => {
+        window.Clerk = {
+          isSignedIn: false, load: async props => {window.loadProps = props;},
+          mountSignIn: node => {node.innerHTML = '<input aria-label="Code" value="123456">';},
+          mountSignUp: node => {node.innerHTML = '<input aria-label="Code" value="123456">';},
+        };
+      });
+      const page = await context.newPage(); page.on("pageerror", error => errors.push(error.message));
+      const entry = `/${mode}?${new URLSearchParams({redirect_url: continuation})}`;
+      await page.goto(base + entry);
+      const code = page.getByRole("textbox", {name: "Code"}); await code.waitFor();
+      const initialHistory = await page.evaluate(() => history.length);
+      const step = `/${mode}/factor-one?${new URLSearchParams({redirect_url: continuation})}`;
+      await page.evaluate(to => window.loadProps.routerPush(to), step);
+      await page.waitForURL(base + step);
+      assert.equal(await code.inputValue(), "123456");
+      assert.equal(await page.evaluate(() => history.length), initialHistory + 1);
+      assert.deepEqual(documents, [entry]); // No new document or verification remount.
+      const replacement = step + "&step=verification";
+      await page.evaluate(to => window.loadProps.routerReplace(to), replacement);
+      assert.equal(page.url(), base + replacement);
+      assert.equal(await page.evaluate(() => history.length), initialHistory + 1);
+      await page.goBack(); assert.equal(page.url(), base + entry);
+      await page.goForward(); assert.equal(page.url(), base + replacement);
+      assert.equal(await code.inputValue(), "123456");
+      assert.deepEqual(documents, [entry]);
+      assert.deepEqual(apis, []); // Auth history must not start dashboard work.
+      // Changing modes must bootstrap the other Clerk component.
+      const other = mode === "sign-in" ? "/sign-up" : "/sign-in";
+      await page.evaluate(to => window.loadProps.routerPush(to), other);
+      await page.waitForURL(base + other); await code.waitFor();
+      assert.deepEqual(documents, [entry, other]);
+      // Successful authentication must bootstrap the product, not just change its URL.
+      await page.evaluate(() => window.loadProps.routerReplace("/system?project=synthetic"));
+      await page.getByText("Signed-in destination").waitFor();
+      assert.equal(page.url(), base + "/system?project=synthetic");
+      await context.close();
+    }
+    assert.deepEqual(errors, []);
+  } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
+});
