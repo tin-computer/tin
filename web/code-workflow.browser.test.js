@@ -246,6 +246,18 @@ for (const theme of ["light", "dark"]) test(`project file controls preserve choi
     assert.match(select.image, /M1 1l4 4 4-4/);
     assert.equal(select.position, "calc(100% - 9px) 50%");
     assert.equal(select.padding, "28px");
+    // Focused, in either theme, it stays one small chevron and takes our focus ring.
+    for (const theme of ["dark", "light"]) {
+      const focused = await page.getByLabel("Source material", {exact: true}).evaluate((node, value) => {
+        document.documentElement.dataset.theme = value;
+        node.focus({focusVisible: true});
+        const style = getComputedStyle(node);
+        return {image: style.backgroundImage, size: style.backgroundSize, repeat: style.backgroundRepeat, outline: style.outlineColor};
+      }, theme);
+      assert.match(focused.image, /M1 1l4 4 4-4/);
+      assert.equal(focused.size, "10px 6px");
+      assert.equal(focused.repeat, "no-repeat");
+    }
     await page.getByLabel("Source material", {exact: true}).selectOption("notes/release.md");
     assert.equal(await page.getByRole("link", {name: "Open", exact: true}).count(), 2);
     await page.locator("[data-project-file-input]").first().getByRole("button", {name:"Change",exact:true}).click();
