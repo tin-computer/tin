@@ -507,6 +507,20 @@ def test_voice_pairs_each_script_step_with_its_own_keyframe(
         (("click", "results"), "Line C"),
     ]
 
+    # Voice-only retries edit the captured copy, without another capture.
+    captured = json.loads((tmp_path / "script.json").read_text())
+    captured["steps"][1]["vo"] = "Shorter B"
+    (tmp_path / "script.json").write_text(json.dumps(captured))
+    requested.clear()
+    voice.main()
+
+    assert requested == ["Shorter B"]
+    retried = json.loads((tmp_path / "vo.json").read_text())["clips"]
+    assert [clip["text"] for clip in retried] == ["Line A", "Shorter B", "Line C"]
+    assert retried[0] == clips[0]
+    assert retried[2] == clips[2]
+    assert json.loads((tmp_path / "in.json").read_text()) == script
+
 
 def _run_voice(voice, monkeypatch, tmp_path: Path, script, log, requested: list[str]) -> None:
     (tmp_path / "script.json").write_text(json.dumps(script))

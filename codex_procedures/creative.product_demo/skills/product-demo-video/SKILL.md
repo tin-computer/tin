@@ -49,7 +49,9 @@ synthesizes the scroll, tap, zoom, and caption motion, which is why the result i
    on the hook line and `[warm]` on the last; otherwise plain sentences. Each run prints the
    clip length per step; if a clip is longer than five seconds, shorten that line.
 2. Voice is capped per run (24 lines, 3000 characters). Re-running keeps unchanged lines, so
-   edit a line in `WORK/script.json`, recapture is not needed, and run `voice` again.
+   edit the `vo` line in `WORK/out/script.json` (the captured copy that `voice` reads), then
+   run `voice` again. Voice-only edits need no recapture. Keep the steps and actions unchanged.
+   To add, remove, reorder, or change actions, edit `WORK/script.json` and recapture first.
 3. A line the provider refuses is reported as `REFUSED` with the reason and the other lines
    are kept. A `content_policy_violation` is the provider's opaque text checker misfiring:
    first run `voice` again without any `--style` of your own (the default style is known to
@@ -70,7 +72,8 @@ synthesizes the scroll, tap, zoom, and caption motion, which is why the result i
 3. Render: `tin-studio render WORK/out WORK/<slug>.mp4 --bg <backdrop> [--character <svg>]`.
    It prints the duration. Then `tin-studio check WORK/<slug>.mp4` must print `OK` and
    `tin-studio probe` should show 1080x1920 with an audio stream.
-4. Longer than 40 seconds: cut a step or shorten lines, re-run `voice`, render again.
+4. Longer than 40 seconds: shorten lines in `WORK/out/script.json`, re-run `voice`, and render
+   again. To cut a step, edit `WORK/script.json` and recapture before voice and render.
 
 ## 5. Deliver
 

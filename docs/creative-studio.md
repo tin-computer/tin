@@ -32,6 +32,8 @@ mascot reacting in the corner. The design record is the "Creative studio outcome
 3. `tin-studio voice` posts each line to the switchboard route; the switchboard calls fal, stores
    one receipt per line, and returns the mp3 plus the words heard. The sandbox aligns those words
    onto the script text (difflib) so the captions show the written words at the spoken times.
+   For voice-only retries, edit `vo` in the capture directory's `script.json`; unchanged clips
+   are reused. Changes to actions or step order require editing the source script and recapturing.
 4. `tin-studio frame` previews three timestamps; `tin-studio render` writes the MP4 (30 fps,
    CRF 20, loudnorm -16 LUFS, whoosh on scrolls, tap on clicks; the character's mouth follows the
    voice envelope through three shapes with hysteresis and blinks every 3.2 s);
