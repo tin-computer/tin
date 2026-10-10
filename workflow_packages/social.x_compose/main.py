@@ -11,10 +11,10 @@ OUTPUT_PATH = "social/x-drafts/{date}-{slug}.json"
 STYLE_PATH = ".agents/skills/x-writing-style/SKILL.md"
 CONTEXT_PATHS = (
     "context/product-marketing.md",
+    "wiki/INDEX.md",
     "reports/GROWTH_ONBOARDING_PLAN.md",
     "brand/BRAND.md",
     "BRAND.md",
-    "wiki/INDEX.md",
 )
 MAX_REQUEST_BYTES = 32000
 MAX_OUTPUT_BYTES = 24000
@@ -200,6 +200,9 @@ def _source_packet(inputs, files):
     context = ""
     for path in CONTEXT_PATHS:
         context = _read_optional(files, path)
+        # Large memory indexes use the next context source instead of failing composition.
+        if path == "wiki/INDEX.md" and len(context.encode("utf-8")) > MAX_READ_BYTES:
+            continue
         if context.strip():
             context_path = path
             break
