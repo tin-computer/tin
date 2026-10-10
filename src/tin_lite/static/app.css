@@ -4799,6 +4799,25 @@ html[data-theme="dark"] .system-week-nav button {
   max-width: 520px;
 }
 
+[data-project-file-input] {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+.project-file-choice {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+[data-file-label] {
+  overflow-wrap: anywhere;
+}
+
 .system-config-when .workflow-config-row {
   display: flex;
   min-height: 0;

@@ -1030,6 +1030,10 @@ def _view(
         "workflow_id": str(result.upstream.id) if result.upstream else None,
         "title": result.upstream.title if result.upstream else None,
     }
+    if prerequisite.kind == "artifact":
+        view["resolved_path"] = _resolve_path(prerequisite, inputs)
+        if result.evidence:
+            view["revision"] = result.evidence.get("revision")
     if result.skipped:
         view["skipped"] = True
     if result.evidence and result.evidence.get("scope") == "checked_at_start":

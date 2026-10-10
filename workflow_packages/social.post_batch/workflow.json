@@ -4,7 +4,7 @@
     "key": "social.post_batch",
     "title": "Draft social posts from a weekly plan or article",
     "description": "Draft reviewable X and LinkedIn posts from an editable weekly plan and current source notes, or repurpose an article. Nothing is posted or scheduled.",
-    "version": "3.0.0",
+    "version": "3.1.0",
     "executor": "workflow.code",
     "system": "x",
     "schedule_modes": ["on_demand"],
@@ -18,13 +18,14 @@
       "properties": {
         "project_id": {"type": "string", "format": "uuid"},
         "mode": {"type": "string", "enum": ["weekly", "repurpose"], "default": "repurpose", "title": "Drafting mode"},
-        "plan_path": {"type": "string", "maxLength": 512, "default": "social/PLAN.md", "title": "Weekly plan file"},
-        "sources_path": {"type": "string", "maxLength": 512, "default": "context/social-updates.md", "title": "Current source notes file"},
+        "plan_path": {"type": "string", "maxLength": 512, "default": "social/PLAN.md", "title": "Weekly plan file", "x-tin-ui": {"control": "project_file"}},
+        "sources_path": {"type": "string", "maxLength": 512, "default": "context/social-updates.md", "title": "Current source notes file", "x-tin-ui": {"control": "project_file"}},
         "raw_material": {"type": "string", "maxLength": 12000, "title": "Optional current source notes", "x-tin-ui": {"control": "textarea"}},
         "article_path": {
           "type": "string",
           "maxLength": 512,
           "title": "Article file",
+          "x-tin-ui": {"control": "project_file"},
           "description": "A relative project-file path. If omitted, a single matching article is used automatically."
         },
         "article_text": {

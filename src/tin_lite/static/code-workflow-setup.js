@@ -72,9 +72,35 @@
         const provider = estimate.external_providers?.find((item) => item.provider_key === connection.provider_key);
         paragraph(`${provider?.provider_name || connection.provider_key}: ${connection.ready ? "connected" : "needs setup"}`);
       }
+      for (const item of data.prerequisites || []) {
+        if (item.skipped) continue;
+        const inputName = /^\{([a-z][a-z0-9_]*)\}$/.exec(item.path || "")?.[1];
+        const title = inputName ? data.input_schema?.properties?.[inputName]?.title || inputName : item.resolved_path || item.title || item.workflow || "Earlier work";
+        // File controls already show availability beside the selected document.
+        const field = inputName && form.elements[`input:${inputName}`];
+        if (!field?.closest("[data-project-file-input]")) {
+          const row = document.createElement("p");
+          row.textContent = `${title}: ${item.satisfied ? item.kind === "artifact" ? "found in project Files" : "available" : "missing"}.`;
+          if (item.satisfied && item.resolved_path && item.revision) {
+            const link = document.createElement("a");
+            link.textContent = "Open";
+            link.href = `/file?${new URLSearchParams({project: services.projectId, path: item.resolved_path, revision: item.revision})}`;
+            link.target = "_blank"; link.rel = "noopener";
+            row.append(" ", link);
+          }
+          panel.append(row);
+        }
+        if (!item.satisfied && item.level === "required") {
+          const advanced = field?.closest("details.x-workflow-details");
+          if (advanced) advanced.open = true;
+        }
+      }
       const scheduled = form.elements.schedule_mode?.value !== "manual";
       const issues = [...data.issues, ...(scheduled ? data.schedule_issues : [])];
-      for (const issue of new Set(issues)) paragraph(issue, "code-setup-issue");
+      for (const issue of new Set(issues)) {
+        const file = data.prerequisites?.find(item => item.kind === "artifact" && !item.producer && !item.section && item.how_to_satisfy === issue);
+        paragraph(file ? `Add ${file.resolved_path || file.path} to project Files, or choose another file.` : issue, "code-setup-issue");
+      }
       if (!issues.length) paragraph(scheduled ? "Setup ready for scheduling." : "Setup ready to run.");
       if (data.connections.length) {
         const link = document.createElement("a"); link.href = `/integrations?project=${encodeURIComponent(services.projectId)}`;
