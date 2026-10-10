@@ -7872,6 +7872,21 @@ function authMode() {
     : "sign-in";
 }
 
+function navigateAuthStep(to, replace = false) {
+  const target = new URL(to, window.location.href);
+  const currentFlow = window.location.pathname.match(/^\/sign-(?:in|up)(?=\/|$)/)?.[0];
+  if (target.origin === window.location.origin && currentFlow &&
+      (target.pathname === currentFlow || target.pathname.startsWith(`${currentFlow}/`))) {
+    // Keep Clerk mounted through verification. Reloading here can prepare a
+    // second code and invalidate the one sent before navigation completes.
+    window.history[replace ? "replaceState" : "pushState"](null, "", target.href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    return;
+  }
+  // Switching account modes or completing sign-in needs a fresh app bootstrap.
+  window.location[replace ? "replace" : "assign"](target.href);
+}
+
 function authUrl(mode) {
   const url = new URL(window.location.href);
   url.pathname = mode === "sign-up" ? "/sign-up" : "/sign-in";
@@ -7926,6 +7941,8 @@ async function initializeAuth() {
     }
     await window.Clerk.load({
       ui: { ClerkUI: window.__internal_ClerkUICtor },
+      routerPush: to => navigateAuthStep(to),
+      routerReplace: to => navigateAuthStep(to, true),
       appearance: TIN_AUTH_APPEARANCE,
       localization,
       // The server has validated the entire return URL, including its path.
@@ -8285,6 +8302,8 @@ document.addEventListener("pointerdown", (event) => {
 });
 
 function routeChanged() {
+  // Clerk owns history changes within its mounted authentication flow.
+  if (/^\/sign-(?:in|up)(?:\/|$)/.test(window.location.pathname)) return;
   state.view = viewFromLocation();
   state.documentRoute = documentRouteFromLocation();
   state.taskRoute = taskRouteFromLocation();
