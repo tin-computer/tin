@@ -905,6 +905,7 @@ button {
 button:focus-visible,
 a:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--accent-deep);
   outline-offset: 2px;
@@ -2951,8 +2952,9 @@ html[data-theme="dark"] .markdown-logo::before {
   border-color: rgb(var(--ink-rgb) / 32%);
 }
 
+/* Only the colour: the shorthand would reset a select's chevron to a full-size tile. */
 .workflow-inline-input:focus {
-  background: var(--paper-input-focus);
+  background-color: var(--paper-input-focus);
   border-color: var(--accent-deep);
 }
 
