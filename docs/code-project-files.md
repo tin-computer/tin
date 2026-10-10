@@ -81,8 +81,12 @@ extra manifest or approval step for an ordinary file.
 
 A code workflow can declare `"author": true` inside `code` and a required string
 `author_id` input with `"format": "uuid"`. The `project_author` UI control on that input
-lists confirmed project authors. A member-linked author supplies the initial choice;
-names are never matched or treated as identity. Missing saved authors remain unresolved.
+lists current project members by their Clerk name and email and defaults to the signed-in
+member. Selecting a member idempotently reuses or reserves their author binding; it never
+matches a writing guide by name. **Use an existing writing guide** explicitly associates a
+project Markdown file through the same version-checked service. Existing guides are reused;
+missing guides can be prepared with Learn my writing style. Missing saved authors remain
+unresolved instead of falling back to someone else's voice.
 
 Tin resolves and checks the binding at admission, then records it with the run. The package
 receives `ctx["author"]` with `id`, `display_name`, `guide_path` and binding `version`.

@@ -17,15 +17,16 @@ for (const theme of ["light", "dark"]) test(`project author selection keeps conf
       fields.innerHTML = `<div class="system-setting"><strong>Author</strong>${TinProjectAuthorInput.field("input:author_id", "", "Author", "author")}</div><div class="system-setting"><strong>Audience</strong>${TinProjectFileInput.field("input:icp", "context/AUDIENCE.md", "Audience", "audience", true)}</div><label class="system-setting">What do you want to share?<textarea class="workflow-inline-input" id="direction">Our latest project update</textarea></label>`;
       window.current = true; window.fileReads = 0; window.changes = 0;
       document.querySelector("form").addEventListener("change", () => changes++);
-      window.authorRows = [{id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",display_name:"Alex",guide_path:"style/alex-one.md"},{id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",display_name:"Alex",guide_path:"style/alex-two.md"}];
+      window.authorRows = [{id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",display_name:"Alex",email:"one@example.test",is_me:true,member_clerk_user_id:"user_one",version:1,guide_path:"style/alex-one.md"},{id:"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",display_name:"Alex",email:"two@example.test",member_clerk_user_id:"user_two",version:1,guide_path:"style/alex-two.md"}];
       window.services = {projectId:"project",isCurrent:()=>current,api:async (url, options) => {
+        if (options?.method === "POST") return authorRows.find(a=>a.member_clerk_user_id === url.split("/").at(-1));
         if (options?.method === "PUT") {
-          window.created = JSON.parse(options.body);
-          const row = {id:url.split("/").at(-1),display_name:created.display_name,guide_path:"style/new.md"};
-          authorRows.push(row); return row;
+          window.updated = JSON.parse(options.body);
+          const row = authorRows.find(a=>a.id === url.split("/").at(-1));
+          Object.assign(row, {guide_path:updated.selected_guide,version:row.version+1}); return row;
         }
-        if (url.endsWith("/authors")) return {authors:authorRows,default_author_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"};
-        fileReads++; return {revision:"a".repeat(40),files:[{path:"context/AUDIENCE.md"},{path:"style/alex-one.md"}]};
+        if (url.endsWith("/authors?members=true")) return {authors:authorRows,default_author_id:"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"};
+        fileReads++; return {revision:"a".repeat(40),files:[{path:"context/AUDIENCE.md"},{path:"style/alex-one.md"},{path:"style/existing.md"}]};
       }};
       TinProjectFileInput.bind(document.querySelector("form"), services);
       TinProjectAuthorInput.bind(document.querySelector("form"), services);
@@ -34,10 +35,10 @@ for (const theme of ["light", "dark"]) test(`project author selection keeps conf
     assert.equal(await page.getByLabel("Author",{exact:true}).inputValue(), "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
     assert.equal(await page.evaluate(()=>fileReads), 1, "author and file fields share one listing");
     const options = await page.getByLabel("Author",{exact:true}).locator("option").allTextContents();
-    assert.ok(options.includes("Alex · aaaaaaaa (you)"));
-    assert.ok(options.includes("Alex · bbbbbbbb"));
+    assert.ok(options.includes("Alex · one@example.test (you)"));
+    assert.ok(options.includes("Alex · two@example.test"));
     await page.getByLabel("Author",{exact:true}).selectOption("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb");
-    await page.getByText("Writing guide missing. Use Learn my writing style to prepare it.",{exact:true}).waitFor();
+    await page.getByText("Choose an existing guide, or use Learn my writing style to prepare one.",{exact:true}).waitFor();
     assert.equal(await page.getByRole("link",{name:"Open writing guide"}).count(), 0);
     assert.equal(await page.locator("#direction").inputValue(), "Our latest project update");
     await page.getByLabel("Author",{exact:true}).selectOption("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
@@ -54,12 +55,13 @@ for (const theme of ["light", "dark"]) test(`project author selection keeps conf
     assert.equal(await page.getByLabel("Saved author",{exact:true}).inputValue(), "unavailable", "never replace an unavailable saved author with the member's default");
     assert.ok(await page.evaluate(()=>changes>=3));
     const first = page.locator("[data-project-author-input]").first();
-    await first.getByText("Add an author",{exact:true}).click();
-    await first.getByLabel("Name",{exact:true}).fill("New author");
-    await first.getByLabel("This is me",{exact:true}).check();
-    await first.getByRole("button",{name:"Add author",exact:true}).click();
-    await page.waitForFunction(()=>document.querySelector("#author").selectedOptions[0].textContent === "New author");
-    assert.deepEqual(await page.evaluate(()=>created), {display_name:"New author",expected_version:0,link_to_me:true});
+    assert.equal(await first.getByText("Add an author",{exact:true}).count(), 0);
+    assert.equal(await first.getByLabel("This is me",{exact:true}).count(), 0);
+    await first.getByRole("button",{name:"Change writing guide",exact:true}).click();
+    await first.getByLabel("Existing writing guide").selectOption("style/existing.md");
+    await first.getByRole("button",{name:"Use this guide",exact:true}).click();
+    await page.waitForFunction(()=>window.updated?.selected_guide === "style/existing.md");
+    assert.deepEqual(await page.evaluate(()=>updated), {display_name:"Alex",expected_version:1,selected_guide:"style/existing.md"});
     assert.equal(await page.locator("#direction").inputValue(), "Our latest project update");
   } finally {await browser.close();}
 });

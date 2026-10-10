@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -196,3 +196,76 @@ async def test_uppercase_uuid_keeps_capture_destination(publication_db):
     author = await save(f, author_id)
     run = await start(f, str(author_id).upper())
     assert await authors.capture_destination(f.db, run) == author["guide_path"]
+
+
+async def test_member_choices_are_read_only_and_selection_reuses_identity(publication_db):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    f = await capture_fixture(publication_db)
+    await f.db.record_tin_user("user_other")
+    await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id="user_other")
+    profiles = SimpleNamespace(
+        member_profile=AsyncMock(
+            side_effect=lambda member: {
+                "display_name": "Alex",
+                "email": f"{member}@example.test",
+            }
+        )
+    )
+    service = authors.ProjectAuthors(f.db, f.storage)
+    listing = await service.members(f.project.id, ACTOR, profiles)
+    assert len(listing["authors"]) == 2
+    assert len({a["email"] for a in listing["authors"]}) == 2
+    assert await f.db.pool.fetchval("SELECT count(*) FROM project_authors") == 0
+    selected = await asyncio.gather(
+        *(service.select_member(f.project.id, ACTOR, ACTOR, profiles) for _ in range(2))
+    )
+    assert selected[0] == selected[1]
+    assert selected[0]["id"] == listing["default_author_id"]
+    assert selected[0]["member_clerk_user_id"] == ACTOR
+    assert await f.db.pool.fetchval("SELECT count(*) FROM project_authors") == 1
+    f.storage.repo.edit({"style/selected.md": b"Explicit personal guide"})
+    bound = await save(
+        f, UUID(selected[0]["id"]), version=1, guide="style/selected.md", linked=True
+    )
+    repeated = await service.select_member(f.project.id, "user_other", ACTOR, profiles)
+    assert repeated["guide_path"] == bound["guide_path"]
+    assert repeated["version"] == bound["version"]
+    profiles.member_profile.reset_mock()
+    with pytest.raises(LookupError):
+        await service.members(f.project.id, "user_outsider", profiles)
+    with pytest.raises(LookupError):
+        await service.select_member(f.project.id, ACTOR, "user_outsider", profiles)
+    profiles.member_profile.assert_not_called()
+
+
+async def test_member_http_routes_use_profiles_and_do_not_expose_nonmembers(publication_db):
+    from unittest.mock import AsyncMock
+
+    f = await capture_fixture(publication_db)
+    existing = await save(f, uuid4(), linked=True)
+    await save(f, uuid4(), name="Legacy unlinked")
+    application = app(f)
+    application.state.auth = SimpleNamespace(
+        member_profile=AsyncMock(
+            return_value={
+                "display_name": "Alex",
+                "email": "alex@example.test",
+            }
+        )
+    )
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        base = f"/api/projects/{f.project.id}/authors"
+        listing = await client.get(base + "?members=true")
+        assert listing.status_code == 200
+        assert [a["id"] for a in listing.json()["authors"]] == [existing["id"]]
+        response = await client.post(base + f"/member/{ACTOR}")
+        assert response.json()["id"] == existing["id"]
+        assert response.headers["cache-control"] == "no-store"
+        assert (await client.post(base + "/member/user_outsider")).status_code == 404
+        assert (
+            await client.get(f"/api/projects/{uuid4()}/authors?members=true")
+        ).status_code == 404

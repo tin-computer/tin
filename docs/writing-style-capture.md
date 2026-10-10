@@ -113,7 +113,20 @@ for callers who do not want hosted extraction.
 
 ## Several authors in one project
 
-Capture 1.4.0 optionally accepts `author_id`. `list_project_authors` and
+Capture 1.4.0 optionally accepts `author_id`. Dashboard author choices come from current
+project membership and show Clerk name/email labels, defaulting to the signed-in member.
+There is no manual author creation form. Capture retains the explicit shared-project guide
+choice for workflows that use it.
+
+`list_project_authors(project_id, members=true)` lists these choices without writing records.
+`select_project_member_author(project_id, member_clerk_user_id)` reserves a guide binding once
+or reuses the member's existing ID and guide. HTTP uses the same services through the authors
+listing and `POST /api/projects/{project_id}/authors/member/{member_id}`. Membership is checked
+before profile lookup and again under the project lock at selection. Clerk profile labels do
+not grant access or establish authorship. Historical unlinked author records and saved runs
+are retained; they are not offered as new dashboard choices.
+
+The original binding API remains compatible for existing callers. `list_project_authors` and
 `save_project_author` (also available at `/api/projects/{project_id}/authors`) maintain
 small project-scoped bindings: stable ID, display name, optional member, guide path and
 version. The authenticated member can explicitly link themselves; names never establish

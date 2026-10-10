@@ -13,11 +13,6 @@
       ${authors ? `<div class="x-workflow-fields" data-style-authors>
         <label class="system-setting"><strong>Capture for</strong><select class="workflow-inline-input" name="input:author_id" data-style-author disabled><option value="">Loading authors…</option></select></label>
         <p class="system-config-note" data-style-author-note></p>
-        <details class="x-workflow-details"><summary>Add an author</summary><div>
-          <label class="system-setting"><strong>Name</strong><input class="workflow-inline-input" data-style-author-name maxlength="200" autocomplete="name"></label>
-          <label class="system-setting"><span><input type="checkbox" data-style-author-me> This is me</span></label>
-          <button class="button-secondary" type="button" data-style-author-add>Add author</button>
-        </div></details>
       </div>` : ""}
       <p class="system-config-note">Your agent can help choose passages from notes, articles or conversations.</p>
       <button class="system-quiet-action" type="button" data-style-agent>Use your coding agent · copy prompt</button>
@@ -58,7 +53,6 @@
     if (el("author")) {
       const select = el("author");
       let listed = [];
-      let pendingAuthor;
       const switchAuthor = () => {
         authors.set(services.projectId, select.value);
         if (select.value) select.name = "input:author_id";
@@ -74,35 +68,28 @@
         render();
       };
       el("text").oninput = () => { data.text = el("text").value; };
-      select.onchange = switchAuthor;
+      const choose = safe(async () => {
+        select.disabled = true;
+        try {
+          const author = listed.find(a => a.id === select.value);
+          if (author) await TinProjectAuthorInput.selectMember(services, author);
+          services.assertCurrent();
+          if (root.isConnected) switchAuthor();
+        } finally {if (root.isConnected) select.disabled = false;}
+      });
+      select.onchange = choose;
       const load = async (chosen) => {
-        const response = await services.api(`/api/projects/${services.projectId}/authors`);
+        const response = await TinProjectAuthorInput.members(services);
         services.assertCurrent();
         if (!root.isConnected) return;
         listed = response.authors;
-        select.innerHTML = '<option value="">Shared project guide</option>' + listed.map(a => `<option value="${escape(a.id)}">${escape(a.display_name)}${a.id === response.default_author_id ? " (you)" : ""}</option>`).join("");
+        select.innerHTML = '<option value="">Shared project guide</option>' + listed.map(a => `<option value="${escape(a.id)}">${escape(TinProjectAuthorInput.label(a))}</option>`).join("");
         const selection = chosen ?? authors.get(services.projectId) ?? response.default_author_id ?? "";
         if (selection && !listed.some(a => a.id === selection)) throw new Error("The selected author is unavailable. Refresh this setup and choose an author.");
         select.value = selection;
         select.disabled = false;
-        switchAuthor();
+        await choose();
       };
-      el("author-add").onclick = safe(async () => {
-        const name = el("author-name").value.trim();
-        if (!name) throw new Error("Enter this author's name.");
-        const body = JSON.stringify({display_name: name, expected_version: 0, link_to_me: el("author-me").checked});
-        if (!pendingAuthor || pendingAuthor.body !== body) pendingAuthor = {id: crypto.randomUUID(), body};
-        const {id} = pendingAuthor;
-        el("author-add").disabled = true;
-        try {
-          await services.api(`/api/projects/${services.projectId}/authors/${id}`, {method: "PUT", body});
-          await load(id);
-          pendingAuthor = null;
-        } finally { el("author-add").disabled = false; }
-        el("author-name").value = "";
-        el("author-add").closest("details").open = false;
-        message("Author added. Choose samples for their writing guide.");
-      });
       safe(() => load())();
     }
     function render() {
