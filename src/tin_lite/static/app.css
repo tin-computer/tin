@@ -3691,7 +3691,6 @@ body.has-diagram-panel .main {
   color: var(--ink);
   font-family: var(--sans);
   font-size: 13px;
-  font-variant-numeric: tabular-nums;
   line-height: 16px;
   text-align: center;
 }
