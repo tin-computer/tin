@@ -20,7 +20,7 @@
         </div></details>
       </div>` : ""}
       <p class="system-config-note">Your agent can help choose passages from notes, articles or conversations.</p>
-      <button class="button" type="button" data-style-agent>Use your coding agent · copy prompt</button>
+      <button class="system-quiet-action" type="button" data-style-agent>Use your coding agent · copy prompt</button>
       <button class="button-quiet" type="button" data-style-connect>Connection instructions →</button>
       <details data-style-samples><summary class="system-quiet-action">Add samples here</summary>
         <label class="system-setting"><strong>What will you write?</strong><input class="workflow-inline-input" data-style-purpose maxlength="500"></label>
