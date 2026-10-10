@@ -259,6 +259,9 @@ to be configured from the Registry and scheduled—for example, every Tuesday at
 project member's timezone. Its first delivery surface is the normal in-product Activity feed and
 Markdown reader. Email, Slack, and other delivery providers remain separate integrations so a
 notification failure cannot invalidate a successfully created report.
+Run artifacts that are not UTF-8 text or contain NUL bytes contribute their run status,
+summary and artifact reference instead of their bytes. Text artifacts still contribute their
+contents; a storage read failure remains an error.
 
 Activity is a flat Postgres-backed ledger rather than a card feed. It groups real product events by
 day, keeps run facts in fixed mono lanes, links completed Markdown artifacts into the generic
