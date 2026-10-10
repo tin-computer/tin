@@ -182,11 +182,11 @@ async def test_members_cannot_claim_someone_elses_author(publication_db):
     f = await capture_fixture(publication_db)
     author_id = uuid4()
     await save(f, author_id, linked=True)
-    await f.db.record_tin_user("user_other_member")
-    await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id="user_other_member")
+    await f.db.record_tin_user("user_other")
+    await f.db.grant_project_membership(project_id=f.project.id, clerk_user_id="user_other")
     with pytest.raises(ValueError, match="another member"):
-        await save(f, author_id, version=1, actor="user_other_member", linked=True)
-    renamed = await save(f, author_id, name="Alex renamed", version=1, actor="user_other_member")
+        await save(f, author_id, version=1, actor="user_other", linked=True)
+    renamed = await save(f, author_id, name="Alex renamed", version=1, actor="user_other")
     assert renamed["member_clerk_user_id"] == ACTOR
 
 
