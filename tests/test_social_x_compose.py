@@ -100,6 +100,31 @@ def test_manifest_and_shared_counter():
     ).read_bytes()
 
 
+@pytest.mark.parametrize("wiki", ["Example is a live reading practice app.", "", "   ", None])
+@pytest.mark.parametrize("curated", [False, True])
+def test_product_memory_precedes_historical_onboarding(wiki, curated):
+    module, _ = package()
+    plan_path = "reports/GROWTH_ONBOARDING_PLAN.md"
+    values = {plan_path: "This side project has no public site yet."}
+    if wiki is not None:
+        values["wiki/INDEX.md"] = wiki
+    if curated:
+        values["context/product-marketing.md"] = "Example helps readers practise daily."
+    files = Files(values)
+    _, sources, units, *_ = module._source_packet(inputs(), files)
+    expected = (
+        "context/product-marketing.md"
+        if curated
+        else "wiki/INDEX.md"
+        if wiki and wiki.strip()
+        else plan_path
+    )
+    assert sources == {"direction": FACT, expected: values[expected]}
+    assert {unit["source_path"] for unit in units} == {"direction", expected}
+    if expected != plan_path:
+        assert plan_path not in files.reads
+
+
 async def test_plan_free_singleton_uses_exact_current_fact_and_json_artifact():
     module, definition = package()
     spec = validate_code_definition(definition)

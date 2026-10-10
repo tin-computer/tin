@@ -11,10 +11,10 @@ OUTPUT_PATH = "social/x-drafts/{date}-{slug}.json"
 STYLE_PATH = ".agents/skills/x-writing-style/SKILL.md"
 CONTEXT_PATHS = (
     "context/product-marketing.md",
+    "wiki/INDEX.md",
     "reports/GROWTH_ONBOARDING_PLAN.md",
     "brand/BRAND.md",
     "BRAND.md",
-    "wiki/INDEX.md",
 )
 MAX_REQUEST_BYTES = 32000
 MAX_OUTPUT_BYTES = 24000
