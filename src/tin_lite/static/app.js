@@ -3986,6 +3986,9 @@ function workflowFieldHelp(definition, fieldId) {
 function workflowInputControl(name, definition, value, label, fieldId, required = false) {
   const requestedControl = definition["x-tin-ui"]?.control;
   const textConstraints = `${required ? " required" : ""}${definition.minLength !== undefined ? ` minlength="${escapeHtml(definition.minLength)}"` : ""}${definition.maxLength !== undefined ? ` maxlength="${escapeHtml(definition.maxLength)}"` : ""}`;
+  if (requestedControl === "project_author") {
+    return window.TinProjectAuthorInput.field(name, value, label, fieldId);
+  }
   if (requestedControl === "project_file") {
     return window.TinProjectFileInput.field(name, value, label, fieldId, required);
   }
@@ -4067,12 +4070,11 @@ function openTinSelect(dropdown, focusOption = false) {
 }
 
 function bindTinControls(form) {
-  if (form.querySelector("[data-project-file-input]")) {
+  if (form.querySelector("[data-project-file-input], [data-project-author-input]")) {
     const fileContext = currentProjectContext();
-    window.TinProjectFileInput?.bind(form, {
-      projectId: fileContext.projectId, api,
-      isCurrent: () => isCurrentProjectContext(fileContext),
-    });
+    const fileServices = {projectId: fileContext.projectId, api, isCurrent: () => isCurrentProjectContext(fileContext)};
+    window.TinProjectFileInput?.bind(form, fileServices);
+    window.TinProjectAuthorInput?.bind(form, fileServices);
   }
   form.querySelectorAll(".tin-segmented").forEach((control) => {
     if (control.dataset.tinBound) return;

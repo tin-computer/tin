@@ -118,6 +118,7 @@ class CodeSpec:
     services: tuple[ServiceBinding, ...] = ()
     approved_article_input: str | None = None
     evidence: tuple[EvidenceSlot, ...] = ()
+    author: bool = False
 
     @property
     def paid_services(self) -> tuple[ServiceBinding, ...]:
@@ -176,7 +177,7 @@ def validate_code_definition(definition) -> CodeSpec:
     code = definition.get("code")
     if (
         not isinstance(code, dict)
-        or set(code) - {"model_routes", "services", "approved_article", "evidence"}
+        or set(code) - {"model_routes", "services", "approved_article", "evidence", "author"}
         != {"runtime", "entrypoint", "files", "timeout_seconds", "output"}
         or code["runtime"] != RUNTIME
     ):
@@ -212,6 +213,17 @@ def validate_code_definition(definition) -> CodeSpec:
     maximum = output["max_bytes"]
     if type(maximum) is not int or not 1 <= maximum <= MAX_OUTPUT_BYTES:
         raise ValueError("code output exceeds its byte limit")
+    author = code.get("author", False)
+    author_field = definition["input_schema"]["properties"].get("author_id", {})
+    if type(author) is not bool or (
+        author
+        and (
+            author_field.get("type") != "string"
+            or author_field.get("format") != "uuid"
+            or "author_id" not in definition["input_schema"].get("required", [])
+        )
+    ):
+        raise ValueError("code.author requires a required author_id UUID input")
     article_input = approved_article_input(definition)
     evidence = evidence_specs(definition)
     if article_input is not None and any(slot.input == article_input for slot in evidence):
@@ -231,6 +243,7 @@ def validate_code_definition(definition) -> CodeSpec:
         ),
         article_input,
         evidence,
+        author,
     )
 
 

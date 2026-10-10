@@ -29,7 +29,7 @@ def client_input_schema(definition: dict[str, Any]) -> dict[str, Any]:
 
 
 _SUPPORTED_UI_CONTROLS = {
-    "string": {"text", "textarea", "select", "project_file"},
+    "string": {"text", "textarea", "select", "project_file", "project_author"},
     "boolean": {"segmented"},
     "integer": {"counter", "number"},
     "number": {"counter", "number"},
@@ -76,6 +76,10 @@ def validate_input_schema(schema: dict[str, Any]) -> None:
                 )
             if control == "select" and not isinstance(field.get("enum"), list):
                 raise WorkflowInputError(f"workflow input {name} select controls require an enum")
+            if control == "project_author" and (
+                name != "author_id" or field.get("format") != "uuid"
+            ):
+                raise WorkflowInputError("project_author controls require an author_id UUID input")
             order = ui.get("order")
             if order is not None and (not isinstance(order, int) or isinstance(order, bool)):
                 raise WorkflowInputError(f"workflow input {name} x-tin-ui order must be an integer")

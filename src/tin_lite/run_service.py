@@ -329,6 +329,21 @@ async def start_workflow_run(
     run_card = prepare_payment_card(
         payment_card, workflow=workflow, integrations=getattr(runtime, "integrations", None)
     )
+    code_files_source = None
+    if workflow.executor == "workflow.code" and existing is None:
+        from tin_lite import code_project_files
+
+        try:
+            code_files_source = await code_project_files.select(
+                database=runtime.database,
+                storage=runtime.storage,
+                project_id=project_id,
+            )
+        except (ValueError, LookupError, RuntimeError) as exc:
+            if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
+                project_id=project_id, start_idempotency_key=start_idempotency_key
+            ):
+                raise WorkflowInputError(str(exc)) from exc
     prerequisite_evidence: dict[str, Any] | None = None
     if existing is None and _review_transition is None:
         # Admission asks the project's durable facts, never a caller claim, whether the
@@ -342,6 +357,7 @@ async def start_workflow_run(
             normalized_inputs=normalized_inputs,
             # A parent-dispatched child starts without the wait memo, so it cannot wait.
             can_wait=can_wait_for_prerequisites(workflow) and not _prepare_only,
+            artifact_revision=code_files_source["revision"] if code_files_source else None,
         )
         if evaluation.blocking:
             raise PrerequisiteError.from_evaluation(
@@ -350,6 +366,17 @@ async def start_workflow_run(
         if evaluation.results:
             prerequisite_evidence = evaluation.evidence(inputs=normalized_inputs)
     author_source = None
+    if workflow.executor == "workflow.code" and existing is None:
+        from tin_lite.project_authors import ProjectAuthors
+        from tin_lite.workflow_code import validate_code_definition
+
+        if validate_code_definition(workflow.definition).author:
+            try:
+                author_source = await ProjectAuthors(runtime.database, runtime.storage).resolve(
+                    project_id, normalized_inputs["author_id"]
+                )
+            except ValueError as exc:
+                raise WorkflowInputError(str(exc)) from None
     if workflow.executor == "style.capture" and existing is None:
         from tin_lite.style_capture import StyleSourceError, read_sources
 
@@ -536,17 +563,7 @@ async def start_workflow_run(
         from tin_lite import code_article_sources, code_evidence, code_project_files
         from tin_lite.workflow_code import approved_article_input, evidence_specs
 
-        try:
-            create_arguments["code_project_files_source"] = await code_project_files.select(
-                database=runtime.database,
-                storage=runtime.storage,
-                project_id=project_id,
-            )
-        except (ValueError, LookupError, RuntimeError) as exc:
-            if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
-                project_id=project_id, start_idempotency_key=start_idempotency_key
-            ):
-                raise WorkflowInputError(str(exc)) from exc
+        create_arguments["code_project_files_source"] = code_files_source
         if approved_article_input(workflow.definition) is not None:
             try:
                 create_arguments["approved_article_source"] = await code_article_sources.select(

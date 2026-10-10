@@ -212,22 +212,26 @@ async def guard(conn, *, project_id, inputs, source):
         raise ValueError("This author changed. Check the writing guide and start again.")
 
 
-async def capture_author(database, run):
+async def saved_author(database, run):
     """An existing run never follows a subsequently edited author binding."""
     if not run.input.get("author_id"):
         return None
     receipt = await database.get_effect(source_key(run.id))
     if not receipt or receipt.status != "completed" or receipt.operation != OPERATION:
-        raise ValueError("This capture has no pinned author destination.")
+        raise ValueError("This run has no pinned author binding.")
     source = receipt.result
     if source.get("project_id") != str(run.project_id) or source.get("id") != str(
         UUID(run.input["author_id"])
     ):
-        raise ValueError("This capture's author does not match its project.")
+        raise ValueError("This run's author does not match its project.")
     validate_guide_path(source["guide_path"])
     return source
 
 
+# Existing capture activities retain their entrypoint and historical receipt contract.
+capture_author = saved_author
+
+
 async def capture_destination(database, run):
-    author = await capture_author(database, run)
+    author = await saved_author(database, run)
     return author["guide_path"] if author else STYLE_PATH

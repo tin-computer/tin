@@ -94,6 +94,15 @@ class CodeActivities:
                     inputs={k: v for k, v in (run.input or {}).items() if k != "project_id"},
                 )
                 context = {"run_id": run_id, "created_at": run.created_at.isoformat()}
+                if spec.author:
+                    from tin_lite.project_authors import saved_author
+
+                    author = await saved_author(self.db, run)
+                    if author is None:
+                        raise ValueError("This run has no pinned author binding.")
+                    context["author"] = {
+                        key: author[key] for key in ("id", "display_name", "guide_path", "version")
+                    }
                 if spec.approved_article_input is not None:
                     from tin_lite.code_article_sources import saved_source
 
