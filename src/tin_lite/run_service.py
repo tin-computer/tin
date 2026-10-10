@@ -349,6 +349,7 @@ async def start_workflow_run(
             )
         if evaluation.results:
             prerequisite_evidence = evaluation.evidence(inputs=normalized_inputs)
+    author_source = None
     if workflow.executor == "style.capture" and existing is None:
         from tin_lite.style_capture import StyleSourceError, read_sources
 
@@ -361,6 +362,17 @@ async def start_workflow_run(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
             raise LookupError("project not found")
+        if normalized_inputs.get("author_id"):
+            from tin_lite.project_authors import ProjectAuthors
+
+            if not (workflow.definition.get("style_policy") or {}).get("author_destination"):
+                raise WorkflowInputError("This capture version does not support authors.")
+            try:
+                author_source = await ProjectAuthors(runtime.database, runtime.storage).resolve(
+                    project_id, normalized_inputs["author_id"]
+                )
+            except ValueError as exc:
+                raise WorkflowInputError(str(exc)) from None
         try:
             await read_sources(runtime.storage, project, normalized_inputs["source_path"])
         except StyleSourceError as exc:
@@ -516,6 +528,8 @@ async def start_workflow_run(
         "definition_commit_sha": workflow.current_commit_sha,
         "pinned_definition": workflow.definition,
     }
+    if author_source is not None:
+        create_arguments["author_source"] = author_source
     from tin_lite import content_repository_delivery
 
     if workflow.executor == "workflow.code" and existing is None:

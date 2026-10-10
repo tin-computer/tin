@@ -2437,6 +2437,7 @@ class Database:
         approved_article_source: dict[str, Any] | None = None,
         approved_evidence_source: dict[str, Any] | None = None,
         code_project_files_source: dict[str, Any] | None = None,
+        author_source: dict[str, Any] | None = None,
         review_transition: dict[str, Any] | None = None,
         payment_card=None,
     ) -> tuple[WorkflowRun, bool]:
@@ -2697,6 +2698,17 @@ class Database:
                 content_repository_delivery,
             )
 
+            if executor == "style.capture" and input_payload.get("author_id"):
+                from tin_lite import project_authors
+
+                if not (definition.get("style_policy") or {}).get("author_destination"):
+                    raise ValueError("This capture version does not support authors.")
+                await project_authors.guard(
+                    conn, project_id=project_id, inputs=input_payload, source=author_source
+                )
+            elif author_source is not None:
+                raise ValueError("An author destination requires a declared consumer.")
+
             if executor == "workflow.code":
                 await code_project_files.guard(
                     conn, project_id=project_id, source=code_project_files_source
@@ -2868,6 +2880,12 @@ class Database:
                 await self.complete_effect(
                     conn, execution_key=key, result=code_project_files_source
                 )
+            if author_source is not None:
+                key = project_authors.source_key(run_id)
+                await self.start_effect(
+                    conn, execution_key=key, operation=project_authors.OPERATION
+                )
+                await self.complete_effect(conn, execution_key=key, result=author_source)
             if payment_card is not None:
                 await payment_card.store(conn, run_id=run_id, project_id=project_id)
             if draft_selection is not None:

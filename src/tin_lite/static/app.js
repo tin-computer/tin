@@ -1070,7 +1070,7 @@ function workflowFieldPresentation(workflow, name, definition) {
 function systemTemplateSetupCard(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => {
     definition = workflowFieldPresentation(workflow, name, definition);
     const label = definition.title || humanize(name);
     const fieldId = `template-input-${String(name).replace(/[^a-z0-9_-]/gi, "-")}`;
@@ -3613,7 +3613,7 @@ function groupWorkflowFields(schema, renderField) {
 function workflowDraftForm(workflow) {
   const schema = workflow.definition?.input_schema || {};
   const required = new Set(schema.required || []);
-  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields() : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
+  const fields = isXAuthoring(workflow) ? xWorkflowFields(workflow) : workflow.key === "content.deliver" ? window.TinContentDelivery.fields() : workflow.key === "content.generate" ? window.TinContentDraft.fields({}, schema) : workflow.key === "style.capture" ? window.TinStyleCapture.fields({authors: Boolean(schema.properties?.author_id)}) : workflow.key === "content.plan" ? window.TinContentPlan.fields() : groupWorkflowFields(schema, ([name, definition]) => workflowInputField(
       name,
       definition,
       undefined,

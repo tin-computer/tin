@@ -87,7 +87,7 @@ Tin ships 42 built-in workflows. Every workflow also takes a `project_id`; requi
 
 | Workflow | What it does | Inputs | Output |
 |---|---|---|---|
-| Capture writing style (human review)<br>`style.capture` | Use your coding agent to select writing samples, or add samples here. Review the proposed voice guide in Decisions; your coding agent can revise it first. Once you approve it, future content uses it. Nothing is published. | **`source_path`**, `direction` | — |
+| Capture writing style (human review)<br>`style.capture` | Use your coding agent to select writing samples, or add samples here. Review the proposed voice guide in Decisions; your coding agent can revise it first. Once you approve it, future content uses it. Nothing is published. | `author_id`, **`source_path`**, `direction` | — |
 | Generate project design<br>`content.design_md` | Analyze a project repository and publish its DESIGN.md. | — | — |
 | Garden project memory<br>`project.memory` | Consolidate durable project outputs into the project wiki. | — | — |
 | Scan project<br>`scan.report` | Review durable project knowledge against the system scanning guide and publish SCAN.md. | — | — |

@@ -548,9 +548,10 @@ class StyleProposalReview:
             raise ReviewConflict(EDITED)
 
     async def view(self, run_id, actor):
-        from tin_lite.writing_style import STYLE_PATH
+        from tin_lite.project_authors import capture_destination
 
         run, project = await self.source(run_id, actor)
+        destination = await capture_destination(self.db, run)
         bound = await contract(self.db, self.storage, run) is not None
         artifact, raw = await self.artifact(run, project, bound=bound)
         waiting = run.status == RunStatus.NEEDS_INPUT and run.review_decision is None
@@ -566,7 +567,7 @@ class StyleProposalReview:
         guide = await self.storage.read_output_destination(
             repo_id=project.state_repo_id,
             revision=await self.storage.head_sha(repo, project.canonical_branch),
-            path=STYLE_PATH,
+            path=destination,
         )
         return {
             "run_id": str(run.id),
@@ -587,7 +588,7 @@ class StyleProposalReview:
                 {
                     "path": artifact["path"],
                     "sha256": artifact["sha256"],
-                    "destination": STYLE_PATH,
+                    "destination": destination,
                     "change": "new"
                     if guide is None
                     else "unchanged"

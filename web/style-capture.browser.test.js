@@ -13,6 +13,7 @@ for (const theme of ["light", "dark"]) test(`style source preparation: ${theme},
     await page.goto("http://localhost/style-test");
     await page.setContent(`<html data-theme="${theme}"><body><main class="workspace"><form class="system-template-card is-open workflow-config-form"><div class="system-template-setup-body"><section id="samples"></section></div></form></main></body></html>`);
     await page.addStyleTag({content: await fs.readFile("src/tin_lite/static/app.css", "utf8")});
+    await page.addStyleTag({content: await fs.readFile("src/tin_lite/static/x-posts.css", "utf8")});
     await page.addScriptTag({path: "src/tin_lite/static/style-capture.js"});
     await page.evaluate(() => {
       document.querySelector("#samples").innerHTML = window.TinStyleCapture.fields();
@@ -71,6 +72,75 @@ for (const theme of ["light", "dark"]) test(`style source preparation: ${theme},
     await page.evaluate(() => {window.changed = true;});
     await page.locator("[data-style-add]").click();
     assert.match(await page.locator("[data-style-message]").innerText(), /Project changed/);
+    assert.deepEqual(errors, []);
+  } finally {await browser.close();}
+});
+
+for (const theme of ["light", "dark"]) test(`author capture keeps samples separate: ${theme}`, async () => {
+  const browser = await chromium.launch({headless: true});
+  try {
+    const page = await browser.newPage({viewport: {width: 1100, height: 1000}});
+    const errors = [];
+    page.on("pageerror", e => errors.push(e.message));
+    await page.route("http://localhost/author-test", r => r.fulfill({body: "<!doctype html><html><body></body></html>", contentType: "text/html"}));
+    await page.goto("http://localhost/author-test");
+    await page.setContent(`<html data-theme="${theme}"><body><main class="workspace"><form class="system-template-card is-open workflow-config-form"><div class="system-template-setup-body"><section id="samples"></section></div></form></main></body></html>`);
+    await page.addStyleTag({content: await fs.readFile("src/tin_lite/static/app.css", "utf8")});
+    await page.addStyleTag({content: await fs.readFile("src/tin_lite/static/x-posts.css", "utf8")});
+    await page.addScriptTag({path: "src/tin_lite/static/style-capture.js"});
+    await page.evaluate(() => {
+      document.querySelector("#samples").innerHTML = TinStyleCapture.fields({authors: true});
+      window.writes = [];
+      window.authors = [{id: "author-one", display_name: "Alex"}, {id: "author-two", display_name: "Alex"}];
+      window.services = {
+        projectId: "project", openAgent() {}, assertCurrent() {},
+        api: async (path, options) => {
+          if (path.endsWith("/authors")) return {authors: window.authors, default_author_id: "author-two"};
+          if (path.includes("/authors/")) {
+            const author = {id: path.split("/").pop(), display_name: JSON.parse(options.body).display_name};
+            window.authors.push(author); return author;
+          }
+          if (!options) return {revision: "a".repeat(40), files: []};
+          window.writes.push(JSON.parse(options.body));
+          return {revision: "b".repeat(40)};
+        },
+      };
+      TinStyleCapture.bind(document.querySelector("form"), services);
+      Object.defineProperty(navigator.clipboard, "writeText", {value: async (text) => {window.copiedPrompt = text;}});
+    });
+    await page.waitForFunction(() => !document.querySelector("[data-style-author]").disabled);
+    assert.equal(await page.locator("[data-style-author]").inputValue(), "author-two");
+    await page.locator("[data-style-agent]").click();
+    assert.match(await page.evaluate(() => copiedPrompt), /author_id author-two/);
+    await page.locator("[data-style-samples] > summary").click();
+    await page.locator("[data-style-preferences]").fill("Use examples from my work.");
+    await page.locator("[data-style-text]").fill("Unsaved personal passage.");
+    await page.locator("[data-style-author]").selectOption("author-one");
+    assert.equal(await page.locator("[data-style-preferences]").inputValue(), "");
+    assert.equal(await page.locator("[data-style-text]").inputValue(), "");
+    await page.locator("[data-style-preferences]").fill("A different author's preferences.");
+    await page.locator("[data-style-author]").selectOption("author-two");
+    assert.equal(await page.locator("[data-style-text]").inputValue(), "Unsaved personal passage.");
+    assert.equal(await page.locator("[data-style-preferences]").inputValue(), "Use examples from my work.");
+    await page.locator("[data-style-add]").click();
+    await page.evaluate(() => TinStyleCapture.prepare(document.querySelector("form"), services));
+    const packet = await page.evaluate(() => writes[0].changes[0].content);
+    assert.match(packet, /Use examples from my work/);
+    assert.doesNotMatch(packet, /different author's/);
+    assert.match(await page.locator("[data-style-author-note]").innerText(), /Other authors' guides stay unchanged/);
+    await page.locator("[data-style-author]").selectOption("");
+    assert.equal(await page.locator('[name="input:author_id"]').count(), 0);
+    assert.match(await page.locator("[data-style-author-note]").innerText(), /shared project/);
+    await page.locator("[data-style-authors] summary").click();
+    await page.locator("[data-style-author-name]").fill("Jordan");
+    await page.locator("[data-style-author-add]").click();
+    await page.waitForFunction(() => document.querySelector("[data-style-author-note]").textContent.includes("Jordan"));
+    assert.equal(await page.locator("[data-style-preferences]").inputValue(), "");
+    for (const width of [1100, 390]) {
+      await page.setViewportSize({width, height: 1000});
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+      if (process.env.TIN_STYLE_SCREENSHOTS) await page.screenshot({path: `${process.env.TIN_STYLE_SCREENSHOTS}/author-${theme}-${width}.png`, fullPage: true});
+    }
     assert.deepEqual(errors, []);
   } finally {await browser.close();}
 });

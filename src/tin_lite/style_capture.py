@@ -24,9 +24,10 @@ POLICY_V1 = {"version": 1, "max_source_bytes": MAX_SOURCE_BYTES, "max_output_tok
 # Version 2 (style.capture 1.3.0) only raises the output cap from 6,000 to 32,000 tokens.
 # A runaway guard, not an expected length: reasoning counts against the cap, and billing
 # charges the tokens a call actually used. GPT-6 Sol allows 128,000 output tokens.
-POLICY = {**POLICY_V1, "version": 2, "max_output_tokens": 32_000}
+POLICY_V2 = {**POLICY_V1, "version": 2, "max_output_tokens": 32_000}
+POLICY = {**POLICY_V2, "version": 3, "author_destination": True}
 # Every policy a pinned definition may carry; runs keep the cap they were admitted with.
-POLICIES = {policy["version"]: policy for policy in (POLICY_V1, POLICY)}
+POLICIES = {policy["version"]: policy for policy in (POLICY_V1, POLICY_V2, POLICY)}
 PROPOSAL_DIR = "style/proposals"
 
 

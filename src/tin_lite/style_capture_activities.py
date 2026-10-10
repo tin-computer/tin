@@ -21,8 +21,8 @@ from tin_lite.model_providers import (
     ModelRequest,
 )
 from tin_lite.model_usage import model_usage_scope
+from tin_lite.project_authors import capture_author, capture_destination
 from tin_lite.publication import OutputCheckpoint, OutputConflictError, PublicationPendingError
-from tin_lite.writing_style import STYLE_PATH
 
 WAITING_FOR_APPROVAL = "The writing guide waits for your approval. The current guide is unchanged."
 # The provider's own wait for the style model: the client default, long enough for its
@@ -44,6 +44,7 @@ class StyleCaptureActivities:
     async def prepare(self, run_id: str):
         try:
             run = await self.active(run_id)
+            destination = await capture_destination(self.db, run)
             await self.db.mark_run_running(run.id)
             key = f"{run.id}:style_context"
             async with self.db.effect_lock(key, style.KEY) as (conn, saved):
@@ -55,12 +56,12 @@ class StyleCaptureActivities:
                         self.storage, project, run.input["source_path"]
                     )
                     existing = await self.storage.read_output_destination(
-                        repo_id=project.state_repo_id, revision=revision, path=STYLE_PATH
+                        repo_id=project.state_repo_id, revision=revision, path=destination
                     )
                     guide = existing[1].decode("utf-8") if existing else ""
                     if len(guide.encode()) > style.MAX_GUIDE_BYTES:
                         raise style.StyleSourceError(
-                            f"The current writing guide {STYLE_PATH} is "
+                            f"The current writing guide {destination} is "
                             f"{len(guide.encode()):,} bytes; Tin reads at most "
                             f"{style.MAX_GUIDE_BYTES:,}. Shorten it in Files first."
                         )
@@ -238,12 +239,18 @@ class StyleCaptureActivities:
                 await self.db.complete_effect(conn, execution_key=key, result=proposal)
         await self.progress(run.id, "review", 2, "Your writing guide is ready to review")
         sha, path = proposal["canonical_commit_sha"], proposal["artifact_path"]
+        author = await capture_author(self.db, run)
+        title = (
+            f"Writing style for {author['display_name']}"
+            if author
+            else "Proposed writing style guide"
+        )
         return await self.db.request_human_review(
             run_id=run.id,
             canonical_commit_sha=sha,
             artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{path}",
             artifact_path=path,
-            artifact_title="Proposed writing style guide",
+            artifact_title=title,
             summary=(
                 "Your writing style guide is ready. Approve it to save it for future drafts; "
                 "until then your current guide stays in place."
@@ -335,6 +342,7 @@ class StyleCaptureActivities:
             raise ApplicationError(WAITING_FOR_APPROVAL, non_retryable=True)
         run = await self.active(run_id)
         project = await self.db.get_project(run.project_id)
+        destination = await capture_destination(self.db, run)
         if run.review_required:
             content = await self.approved(run, project)
         else:
@@ -355,13 +363,13 @@ class StyleCaptureActivities:
                     branch=project.canonical_branch,
                     run_id=str(run.id),
                     generation=run.generation,
-                    path=STYLE_PATH,
+                    path=destination,
                     content=content,
                 )
                 checkpoint = OutputCheckpoint.create(
                     run=run,
                     revision=revision,
-                    path=STYLE_PATH,
+                    path=destination,
                     media_type="text/markdown",
                     content=content,
                 )
@@ -404,8 +412,8 @@ class StyleCaptureActivities:
                             execution_key=key,
                             run_id=run.id,
                             canonical_commit_sha=sha,
-                            artifact_path=STYLE_PATH,
-                            artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{STYLE_PATH}",
+                            artifact_path=destination,
+                            artifact_ref=f"code.storage://{project.state_repo_id}@{sha}/{destination}",
                             summary="Writing style captured. Future drafts can use this guide.",
                             workflow_key=style.KEY,
                         )

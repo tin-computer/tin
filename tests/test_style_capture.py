@@ -347,7 +347,7 @@ async def test_native_capture_pins_inputs_retries_and_projects(publication_db):
 
 @pytest.mark.parametrize(
     "pinned, cap",
-    [(None, 32_000), ("v1", 6000), ("edited", None)],
+    [(None, 32_000), ("v1", 6000), ("v2", 32_000), ("edited", None)],
 )
 async def test_a_run_sends_the_output_cap_of_the_policy_it_was_pinned_to(
     publication_db, pinned, cap
@@ -357,13 +357,15 @@ async def test_a_run_sends_the_output_cap_of_the_policy_it_was_pinned_to(
     policy = {
         None: None,
         "v1": style_capture.POLICY_V1,
+        "v2": style_capture.POLICY_V2,
         "edited": {**style_capture.POLICY, "max_output_tokens": 128_000},
     }[pinned]
-    assert style_capture.POLICY["version"] == 2 and style_capture.POLICY_V1["version"] == 1
+    assert style_capture.POLICY["version"] == 3 and style_capture.POLICY_V1["version"] == 1
     assert style_capture.POLICY == {
         **style_capture.POLICY_V1,
         "max_output_tokens": 32_000,
-        "version": 2,
+        "version": 3,
+        "author_destination": True,
     }
     f = await capture_fixture(publication_db, policy=policy)
     run = await start(f)
