@@ -32,6 +32,9 @@ mascot reacting in the corner. The design record is the "Creative studio outcome
 3. `tin-studio voice` posts each line to the switchboard route; the switchboard calls fal, stores
    one receipt per line, and returns the mp3 plus the words heard. The sandbox aligns those words
    onto the script text (difflib) so the captions show the written words at the spoken times.
+   For voice-only retries, edit `vo` in the capture directory's `script.json` and copy that
+   edit to the source script; unchanged clips are reused. Keep both copies in sync so later
+   recaptures preserve the corrected line. Changes to actions or step order need a recapture.
 4. `tin-studio frame` previews three timestamps; `tin-studio render` writes the MP4 (30 fps,
    CRF 20, loudnorm -16 LUFS, whoosh on scrolls, tap on clicks; the character's mouth follows the
    voice envelope through three shapes with hysteresis and blinks every 3.2 s);
@@ -93,6 +96,8 @@ browser saw except live-rendered pages, which the JSON-LD/Open Graph fallback co
   hook 92 px, `BACKDROPS`), the mouth thresholds in the mascot block, `--fps`.
 - Voice: `DEFAULT_VOICE_STYLE` and `STUDIO_VOICES` in `src/tin_lite/studio.py`; the fal
   model ids `TTS_URL` and `STT_URL` there.
+  Omit `--style` to keep the default; use `--style ""` to send no style instructions.
+  This allows an unstyled retry when the provider speaks the style text aloud.
 - Story: the skill's word budgets (hook seven words, line fourteen words, 75 spoken words) and
   the target length (20 to 35 s) are prompt text in `codex_procedures/creative.product_demo/`.
 - Contract limits: `studio_contracts.py` (64 KB SVG, 16 MB MP4, 8 to 90 s, 1080x1920).

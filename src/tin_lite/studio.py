@@ -95,7 +95,7 @@ class StudioService:
             raise StudioError(f"a voice line must contain 1-{MAX_VOICE_LINE_CHARACTERS} characters")
         if voice not in STUDIO_VOICES:
             raise StudioError(f"voice must be one of {', '.join(STUDIO_VOICES)}")
-        style = " ".join(style.split()) or DEFAULT_VOICE_STYLE
+        style = " ".join(style.split())
         if len(style) > MAX_VOICE_STYLE_CHARACTERS:
             raise StudioError(f"style must contain at most {MAX_VOICE_STYLE_CHARACTERS} characters")
         language_code = language_code.strip()[:40] or "English (US)"
