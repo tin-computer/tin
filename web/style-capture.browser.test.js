@@ -98,7 +98,10 @@ for (const theme of ["light", "dark"]) test(`author capture keeps samples separa
         projectId: "project", openAgent() {}, assertCurrent() {},
         api: async (path, options) => {
           if (path.endsWith("/authors?members=true")) return {authors: window.authors, default_author_id: "author-two"};
-          if (path.includes("/authors/member/")) return window.authors.find(a=>a.member_clerk_user_id === path.split("/").pop());
+          if (path.includes("/authors/member/")) {
+            if (window.failSelection) throw new Error("Member temporarily unavailable");
+            return window.authors.find(a=>a.member_clerk_user_id === path.split("/").pop());
+          }
           if (!options) return {revision: "a".repeat(40), files: []};
           window.writes.push(JSON.parse(options.body));
           return {revision: "b".repeat(40)};
@@ -131,6 +134,18 @@ for (const theme of ["light", "dark"]) test(`author capture keeps samples separa
     assert.equal(await page.locator('[name="input:author_id"]').count(), 0);
     assert.match(await page.locator("[data-style-author-note]").innerText(), /shared project/);
     assert.equal(await page.getByText("Add an author", {exact:true}).count(), 0);
+    await page.evaluate(() => {window.failSelection = true;});
+    await page.locator("[data-style-author]").selectOption("author-one");
+    await page.getByText("Member temporarily unavailable", {exact:true}).waitFor();
+    assert.equal(await page.evaluate(async () => {
+      try {await TinStyleCapture.prepare(document.querySelector("form"), services); return "unexpected";}
+      catch (e) {return e.message;}
+    }), "Choose an available author before continuing.");
+    assert.equal(await page.locator("[data-style-text]").inputValue(), "");
+    await page.evaluate(() => {window.failSelection = false;});
+    await page.locator("[data-style-author]").selectOption("author-two");
+    await page.waitForFunction(() => document.querySelector("[data-style-author]").dataset.ready === "true");
+
     for (const width of [1100, 390]) {
       await page.setViewportSize({width, height: 1000});
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);

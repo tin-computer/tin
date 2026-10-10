@@ -43,6 +43,7 @@
         try {
           const bound = await selectMember(services, author);
           if (!current() || request !== generation) return;
+          select.selectedOptions[0].value = bound.id;
           Object.assign(author, bound); selected = author;
           select.value = bound.id;
           const files = await TinProjectFileInput.list(root, services);

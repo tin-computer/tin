@@ -70,11 +70,19 @@
       el("text").oninput = () => { data.text = el("text").value; };
       const choose = safe(async () => {
         select.disabled = true;
+        select.dataset.ready = "false";
+        switchAuthor();
         try {
           const author = listed.find(a => a.id === select.value);
-          if (author) await TinProjectAuthorInput.selectMember(services, author);
-          services.assertCurrent();
-          if (root.isConnected) switchAuthor();
+          if (author) {
+            const bound = await TinProjectAuthorInput.selectMember(services, author);
+            services.assertCurrent();
+            if (!root.isConnected) return;
+            select.selectedOptions[0].value = bound.id;
+            Object.assign(author, bound);
+            switchAuthor();
+          }
+          select.dataset.ready = "true";
         } finally {if (root.isConnected) select.disabled = false;}
       });
       select.onchange = choose;
@@ -144,7 +152,7 @@
   async function prepare(form, services) {
     services.assertCurrent();
     const author = form.querySelector("[data-style-author]");
-    if (author?.disabled) throw new Error("Wait for the author list to load before continuing.");
+    if (author && (author.disabled || author.dataset.ready !== "true")) throw new Error("Choose an available author before continuing.");
     const authorId = author?.value;
     const data = draft(author ? `${services.projectId}:${author.value || "shared"}` : services.projectId);
     if (!data.purpose.trim()) throw new Error("Choose the intended writing context.");
