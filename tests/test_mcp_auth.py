@@ -181,7 +181,9 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     } <= {tool.name for tool in tools}
     assert "revise_capture_proposal" in {tool.name for tool in tools}
     assert "discard_workflow_review" in {tool.name for tool in tools}
-    assert {"list_project_authors", "save_project_author"} <= {tool.name for tool in tools}
+    assert {"list_project_authors", "save_project_author", "select_project_member_author"} <= {
+        tool.name for tool in tools
+    }
     authors = next(tool for tool in tools if tool.name == "list_project_authors")
     assert authors.annotations.read_only_hint is True
     save_author = next(tool for tool in tools if tool.name == "save_project_author")
@@ -190,7 +192,7 @@ async def test_mcp_exposes_personal_project_bootstrap_explicitly() -> None:
     assert "member_clerk_user_id" not in save_author.input_schema["properties"]
     style_guide = next(tool for tool in tools if tool.name == "get_writing_style_guide")
     assert "author_id" in style_guide.input_schema["properties"]
-    assert len(tools) == 101
+    assert len(tools) == 102
     assert "refund_billing_payment" not in {tool.name for tool in tools}
     start = next(tool for tool in tools if tool.name == "start_workflow")
     assert "instruction and title are only for project.task" in start.description

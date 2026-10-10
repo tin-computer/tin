@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from uuid import UUID
+import asyncio
+from uuid import UUID, uuid5
 
 from tin_lite.project_files import credential_findings, safe_project_file_path
 from tin_lite.writing_style import STYLE_PATH
@@ -63,6 +64,64 @@ class ProjectAuthors:
                 (a["id"] for a in authors if a["member_clerk_user_id"] == actor), None
             ),
         }
+
+    async def members(self, project_id, actor, profiles):
+        """Read-only member choices, including members who have not captured a guide yet."""
+        existing = await self.list(project_id, actor)
+        members = await self.db.list_project_members(project_id)
+        bound = {a["member_clerk_user_id"]: a for a in existing["authors"]}
+        semaphore = asyncio.Semaphore(8)
+
+        async def option(member):
+            member_id = member.clerk_user_id
+            async with semaphore:
+                profile = await profiles.member_profile(member_id)
+            author = bound.get(member_id)
+            author_id = str(uuid5(project_id, f"member-author:{member_id}"))
+            return {
+                **(author or {"id": author_id, "guide_path": guide_path(author_id), "version": 0}),
+                **profile,
+                "member_clerk_user_id": member_id,
+                "is_me": member_id == actor,
+            }
+
+        options = await asyncio.gather(*(option(member) for member in members))
+        return {
+            "authors": options,
+            "default_author_id": next((a["id"] for a in options if a["is_me"]), None),
+        }
+
+    async def select_member(self, project_id, actor, member_id, profiles):
+        """Reserve a member's guide once; never infer a guide from a name or email."""
+        await self.project(project_id, actor)
+        if not await self.db.has_project_access(project_id=project_id, clerk_user_id=member_id):
+            raise LookupError("project member not found")
+        profile = await profiles.member_profile(member_id)
+        author_id = uuid5(project_id, f"member-author:{member_id}")
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            await conn.fetchval("SELECT id FROM projects WHERE id=$1 FOR UPDATE", project_id)
+            for member in (actor, member_id):
+                if not await self.db.has_project_access(
+                    project_id=project_id, clerk_user_id=member, conn=conn
+                ):
+                    raise LookupError("project member not found")
+            row = await conn.fetchrow(
+                "SELECT * FROM project_authors WHERE project_id=$1 AND member_clerk_user_id=$2",
+                project_id,
+                member_id,
+            )
+            if row is None:
+                row = await conn.fetchrow(
+                    "INSERT INTO project_authors(project_id,id,display_name,member_clerk_user_id,"
+                    "guide_path,confirmed_by_clerk_user_id) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
+                    project_id,
+                    author_id,
+                    profile["display_name"][:200],
+                    member_id,
+                    guide_path(author_id),
+                    actor,
+                )
+        return {**view(row), **profile, "is_me": member_id == actor}
 
     async def save(
         self,

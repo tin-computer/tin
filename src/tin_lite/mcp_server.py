@@ -1129,7 +1129,7 @@ def create_mcp_app(
         return await resolve_brand(runtime().storage, project, revision)
 
     @server.tool(annotations=ToolAnnotations(readOnlyHint=True))
-    async def list_project_authors(project_id: str) -> dict[str, Any]:
+    async def list_project_authors(project_id: str, members: bool = False) -> dict[str, Any]:
         """List explicit author/guide bindings. Only a member binding supplies a default;
         never match by name or silently use a project's shared guide."""
         from tin_lite.project_authors import ProjectAuthors
@@ -1137,9 +1137,29 @@ def create_mcp_app(
         token = await caller()
         parsed = _mcp_uuid(project_id, field="project_id")
         await require_project(parsed, token, tool_name="list_project_authors")
-        return await ProjectAuthors(runtime().database, runtime().storage).list(
-            parsed, token.subject
+        service = ProjectAuthors(runtime().database, runtime().storage)
+        return (
+            await service.members(parsed, token.subject, auth)
+            if members
+            else await service.list(parsed, token.subject)
         )
+
+    @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
+    async def select_project_member_author(project_id: str, member_clerk_user_id: str) -> dict:
+        """Select a current project member as author. Reuses their guide binding, or
+        reserves an empty guide destination. List project authors with members=true first.
+        Names and email addresses are labels only; selection uses the member's account ID."""
+        from tin_lite.project_authors import ProjectAuthors
+
+        token = await caller()
+        parsed = _mcp_uuid(project_id, field="project_id")
+        await require_project(parsed, token, tool_name="select_project_member_author")
+        try:
+            return await ProjectAuthors(runtime().database, runtime().storage).select_member(
+                parsed, token.subject, member_clerk_user_id, auth
+            )
+        except LookupError:
+            raise ToolError("Project member not found.") from None
 
     @server.tool(annotations=ToolAnnotations(destructiveHint=False, idempotentHint=True))
     async def save_project_author(

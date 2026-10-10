@@ -135,25 +135,43 @@ class ClerkAuth:
     async def close(self) -> None:
         await self._client.aclose()
 
+    async def member_profile(self, clerk_user_id: str) -> dict[str, str | None]:
+        """Display labels only; project membership and Clerk IDs establish identity."""
+        response = await self._client.get(f"/users/{clerk_user_id}")
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Invalid member profile")
+        addresses = payload.get("email_addresses") or []
+        primary_id = payload.get("primary_email_address_id")
+        email = next(
+            (
+                item.get("email_address")
+                for item in addresses
+                if isinstance(item, dict) and item.get("id") == primary_id
+            ),
+            None,
+        )
+        if not email:
+            email = next(
+                (
+                    item.get("email_address")
+                    for item in addresses
+                    if isinstance(item, dict) and item.get("email_address")
+                ),
+                None,
+            )
+        name = " ".join(
+            str(payload.get(key) or "").strip() for key in ("first_name", "last_name")
+        ).strip()
+        return {"display_name": name or email or "Project member", "email": email}
+
     async def primary_email(self, clerk_user_id: str) -> str | None:
         """The person's primary email from Clerk's Backend API, or None when unavailable."""
         try:
-            response = await self._client.get(f"/users/{clerk_user_id}")
-            response.raise_for_status()
-            payload = response.json()
-        except (httpx.HTTPError, ValueError):
+            return (await self.member_profile(clerk_user_id))["email"]
+        except (httpx.HTTPError, ValueError, AttributeError):
             return None
-        if not isinstance(payload, dict):
-            return None
-        addresses = payload.get("email_addresses") or []
-        primary_id = payload.get("primary_email_address_id")
-        for item in addresses:
-            if isinstance(item, dict) and item.get("id") == primary_id:
-                return item.get("email_address") or None
-        for item in addresses:
-            if isinstance(item, dict) and item.get("email_address"):
-                return item["email_address"]
-        return None
 
     async def authenticate_session(self, request: Request) -> AuthContext:
         try:

@@ -94,6 +94,8 @@ async def test_primary_email_comes_from_clerks_user_record() -> None:
         return httpx.Response(
             200,
             json={
+                "first_name": "Alex",
+                "last_name": "River",
                 "primary_email_address_id": "idn_2",
                 "email_addresses": [
                     {"id": "idn_1", "email_address": "old@example.com"},
@@ -119,5 +121,9 @@ async def test_primary_email_comes_from_clerks_user_record() -> None:
     )
     try:
         assert await auth.primary_email("user_New1") == "founder@example.com"
+        assert await auth.member_profile("user_New1") == {
+            "display_name": "Alex River",
+            "email": "founder@example.com",
+        }
     finally:
         await auth.close()

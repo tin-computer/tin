@@ -2,6 +2,7 @@
 
 from uuid import UUID
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,11 +28,19 @@ def service(request):
 
 
 @router.get("/api/projects/{project_id}/authors")
-async def list_authors(project_id: UUID, request: Request, user: AuthContext = USER):
+async def list_authors(
+    project_id: UUID, request: Request, user: AuthContext = USER, members: bool = False
+):
     try:
-        result = await service(request).list(project_id, user.clerk_user_id)
+        result = (
+            await service(request).members(project_id, user.clerk_user_id, request.app.state.auth)
+            if members
+            else await service(request).list(project_id, user.clerk_user_id)
+        )
     except LookupError:
         raise HTTPException(404, "project not found") from None
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, "Could not load project members. Try again.") from None
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
 
 
@@ -54,4 +63,22 @@ async def save_author(
         raise HTTPException(404, "project not found") from None
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from None
+    return JSONResponse(result, headers={"Cache-Control": "no-store"})
+
+
+@router.post("/api/projects/{project_id}/authors/member/{member_id}")
+async def select_member_author(
+    project_id: UUID,
+    member_id: str,
+    request: Request,
+    user: AuthContext = USER,
+):
+    try:
+        result = await service(request).select_member(
+            project_id, user.clerk_user_id, member_id, request.app.state.auth
+        )
+    except LookupError:
+        raise HTTPException(404, "project member not found") from None
+    except (httpx.HTTPError, ValueError):
+        raise HTTPException(503, "Could not load this member. Try again.") from None
     return JSONResponse(result, headers={"Cache-Control": "no-store"})
