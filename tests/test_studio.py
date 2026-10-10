@@ -33,7 +33,7 @@ from tin_lite.procedures import (
     validate_procedure_artifact,
 )
 from tin_lite.run_tools import create_run_tools_app
-from tin_lite.studio import StudioError, StudioService, StudioVoice
+from tin_lite.studio import DEFAULT_VOICE_STYLE, StudioError, StudioService, StudioVoice
 from tin_lite.studio_contracts import (
     CHARACTER_SVG_VALIDATOR,
     DEMO_VIDEO_VALIDATOR,
@@ -511,6 +511,8 @@ def test_voice_pairs_each_script_step_with_its_own_keyframe(
     captured = json.loads((tmp_path / "script.json").read_text())
     captured["steps"][1]["vo"] = "Shorter B"
     (tmp_path / "script.json").write_text(json.dumps(captured))
+    script["steps"][1]["vo"] = "Shorter B"
+    (tmp_path / "in.json").write_text(json.dumps(script))
     requested.clear()
     voice.main()
 
@@ -520,6 +522,11 @@ def test_voice_pairs_each_script_step_with_its_own_keyframe(
     assert retried[0] == clips[0]
     assert retried[2] == clips[2]
     assert json.loads((tmp_path / "in.json").read_text()) == script
+    capture.capture(str(tmp_path / "in.json"), str(tmp_path))
+    requested.clear()
+    voice.main()
+    assert requested == []
+    assert json.loads((tmp_path / "vo.json").read_text())["clips"] == retried
 
 
 def _run_voice(voice, monkeypatch, tmp_path: Path, script, log, requested: list[str]) -> None:
@@ -708,7 +715,8 @@ def _fal_transport(seen: list[httpx.Request]) -> httpx.MockTransport:
 
 
 @pytest.mark.asyncio
-async def test_studio_voice_records_one_receipt_and_replays_it() -> None:
+@pytest.mark.parametrize("style", ["", "   ", DEFAULT_VOICE_STYLE, "Speak slowly."])
+async def test_studio_voice_records_one_receipt_and_replays_it(style: str) -> None:
     seen: list[httpx.Request] = []
     database = FakeStudioDatabase()
     service = StudioService(
@@ -721,7 +729,7 @@ async def test_studio_voice_records_one_receipt_and_replays_it() -> None:
         request_id="abc123",
         text="Meet   Claw.",
         voice="Kore",
-        style="",
+        style=style,
         language_code="English (US)",
         transcription_language="en",
     )
@@ -735,12 +743,13 @@ async def test_studio_voice_records_one_receipt_and_replays_it() -> None:
     assert receipt["characters"] == 10 and receipt["audio_url"] == "https://cdn.fal.test/a.mp3"
     assert "fal-secret" not in json.dumps(receipt)
     assert len(seen) == 3
+    assert json.loads(seen[0].content)["style_instructions"] == " ".join(style.split())
     replay = await service.voice(
         run_id=RUN_ID,
         request_id="abc123",
         text="Meet Claw.",
         voice="Kore",
-        style="",
+        style=style,
         language_code="English (US)",
         transcription_language="en",
     )
@@ -894,6 +903,14 @@ async def test_studio_voice_route_requires_the_studio_grant_and_returns_audio() 
         assert base64.b64decode(payload["audio_base64"]) == b"mp3"
         assert payload["media_type"] == "audio/mpeg" and payload["characters"] == 3
         assert studio.calls[0]["run_id"] == RUN_ID and studio.calls[0]["voice"] == "Puck"
+        assert studio.calls[0]["style"] == DEFAULT_VOICE_STYLE
+        unstyled = await client.post(
+            "/studio/voice",
+            json={"request_id": "plain", "text": "hi", "style": ""},
+            headers={"Authorization": f"Bearer {GRANT}"},
+        )
+        assert unstyled.status_code == 200
+        assert studio.calls[-1]["style"] == ""
         quota = await client.post(
             "/studio/voice",
             json={"request_id": "r2", "text": "boom"},

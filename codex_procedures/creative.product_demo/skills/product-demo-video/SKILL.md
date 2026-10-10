@@ -50,7 +50,9 @@ synthesizes the scroll, tap, zoom, and caption motion, which is why the result i
    clip length per step; if a clip is longer than five seconds, shorten that line.
 2. Voice is capped per run (24 lines, 3000 characters). Re-running keeps unchanged lines, so
    edit the `vo` line in `WORK/out/script.json` (the captured copy that `voice` reads), then
-   run `voice` again. Voice-only edits need no recapture. Keep the steps and actions unchanged.
+   copy the same `vo` edit to `WORK/script.json`, then run `voice` again. Voice-only edits
+   need no recapture. Keep the steps and actions unchanged; syncing the source prevents a
+   later recapture from restoring the old line.
    To add, remove, reorder, or change actions, edit `WORK/script.json` and recapture first.
 3. A line the provider refuses is reported as `REFUSED` with the reason and the other lines
    are kept. A `content_policy_violation` is the provider's opaque text checker misfiring:
