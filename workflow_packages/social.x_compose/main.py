@@ -200,6 +200,9 @@ def _source_packet(inputs, files):
     context = ""
     for path in CONTEXT_PATHS:
         context = _read_optional(files, path)
+        # Large memory indexes use the next context source instead of failing composition.
+        if path == "wiki/INDEX.md" and len(context.encode("utf-8")) > MAX_READ_BYTES:
+            continue
         if context.strip():
             context_path = path
             break

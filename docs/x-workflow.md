@@ -94,11 +94,6 @@ existing assets or optional social plan. A plan is not required. Choose one to s
 each needs its own useful point. Technical claims, quotes, numbers and links must have
 support in the supplied material. Missing facts or demo assets are called out for editing.
 
-Product context uses the first nonempty file: `context/product-marketing.md`, then
-`wiki/INDEX.md`, then the legacy `reports/GROWTH_ONBOARDING_PLAN.md`,
-`brand/BRAND.md` or `BRAND.md`. Product memory takes priority over the old onboarding
-plan so later Code map and Feature map findings can inform the draft.
-
 The result is `social/x-drafts/{date}-{slug}.json`. It contains post text, supporting
 excerpts, editorial notes and media paths. Creating a draft sends nothing to X. Each new
 run reads current project files; retries keep the run's internally pinned snapshot.
