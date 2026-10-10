@@ -10,11 +10,16 @@
       <small class="workflow-field-message" data-file-status role="status">Checking project Files…</small>
     </span>`;
   }
+  const listings = new WeakMap();
+  function list(root, {projectId, api}, refresh = false) {
+    if (refresh) listings.delete(root);
+    if (!listings.has(root)) listings.set(root, api(`/api/projects/${encodeURIComponent(projectId)}/files`).catch(error => {listings.delete(root); throw error;}));
+    return listings.get(root);
+  }
   function bind(root, {projectId, api, isCurrent}) {
     const fields = [...root.querySelectorAll("[data-project-file-input]")].filter(el => !el.dataset.bound);
     if (!fields.length || !projectId) return;
-    let listing;
-    const load = () => listing ||= api(`/api/projects/${encodeURIComponent(projectId)}/files`).catch(error => {listing = null; throw error;});
+    const load = () => list(root, {projectId, api});
     for (const el of fields) {
       el.dataset.bound = "true";
       const select = el.querySelector("select"), label = el.querySelector("[data-file-label]");
@@ -57,7 +62,7 @@
       change.onclick = async () => {
         if (!current()) return;
         reveal();
-        listing = null;
+        listings.delete(root);
         await refresh();
         if (current()) select.focus();
       };
@@ -65,5 +70,5 @@
       refresh();
     }
   }
-  window.TinProjectFileInput = {field, bind};
+  window.TinProjectFileInput = {field, bind, list};
 })();

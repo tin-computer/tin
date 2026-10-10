@@ -4799,7 +4799,8 @@ html[data-theme="dark"] .system-week-nav button {
   max-width: 520px;
 }
 
-[data-project-file-input] {
+[data-project-file-input],
+[data-project-author-input] {
   display: grid;
   min-width: 0;
   gap: 6px;

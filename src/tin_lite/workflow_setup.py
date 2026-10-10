@@ -61,6 +61,17 @@ async def code_readiness(
     for item in prerequisites:
         if not item["satisfied"] and not item.get("skipped") and item["level"] == "required":
             issues.append(item["how_to_satisfy"])
+    author = None
+    if spec.author and inputs.get("author_id"):
+        from tin_lite.project_authors import ProjectAuthors
+
+        try:
+            source = await ProjectAuthors(database, storage).resolve(
+                project_id, inputs["author_id"]
+            )
+            author = {key: source[key] for key in ("id", "display_name", "guide_path", "version")}
+        except ValueError as exc:
+            issues.append(str(exc))
     evidence_snapshot = None
     article_source = None
     if evidence_specs(workflow.definition):
@@ -152,6 +163,7 @@ async def code_readiness(
                     "Set a sufficient standing schedule limit in project billing settings."
                 )
     return {
+        "author": author,
         "prerequisites": prerequisites,
         "project_revision": evaluation.head_commit_sha,
         "connections": connections,

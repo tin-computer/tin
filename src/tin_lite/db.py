@@ -2697,11 +2697,17 @@ class Database:
                 code_project_files,
                 content_repository_delivery,
             )
+            from tin_lite.workflow_code import validate_code_definition
 
-            if executor == "style.capture" and input_payload.get("author_id"):
+            code_author = (
+                executor == "workflow.code" and validate_code_definition(definition).author
+            )
+            if code_author or (executor == "style.capture" and input_payload.get("author_id")):
                 from tin_lite import project_authors
 
-                if not (definition.get("style_policy") or {}).get("author_destination"):
+                if not code_author and not (definition.get("style_policy") or {}).get(
+                    "author_destination"
+                ):
                     raise ValueError("This capture version does not support authors.")
                 await project_authors.guard(
                     conn, project_id=project_id, inputs=input_payload, source=author_source

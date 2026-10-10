@@ -342,6 +342,7 @@ async def evaluate_prerequisites(
     workflows_by_key: Mapping[str, Workflow] | None = None,
     now: datetime | None = None,
     can_wait: bool = False,
+    artifact_revision: str | None = None,
 ) -> PrerequisiteEvaluation:
     """Decide, from durable project facts, whether this exact start may be admitted.
 
@@ -381,7 +382,13 @@ async def evaluate_prerequisites(
             project = await database.get_project(project_id)
             if project is None:
                 raise LookupError("project not found")
-            listed, head = await _head_files(storage, project)
+            if artifact_revision is None:
+                listed, head = await _head_files(storage, project)
+            else:
+                head = artifact_revision
+                listed = await storage.list_canonical_files_at(
+                    repo_id=project.state_repo_id, revision=head
+                )
             paths = set(listed)
             for prerequisite, resolved in artifact_items:
                 if (

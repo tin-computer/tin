@@ -77,6 +77,24 @@ the existing artifact prerequisite to explain missing setup before launch. File 
 lazy, so a missing path found during execution can still consume sandbox time. There is no
 extra manifest or approval step for an ordinary file.
 
+## A confirmed author as context
+
+A code workflow can declare `"author": true` inside `code` and a required string
+`author_id` input with `"format": "uuid"`. The `project_author` UI control on that input
+lists confirmed project authors. A member-linked author supplies the initial choice;
+names are never matched or treated as identity. Missing saved authors remain unresolved.
+
+Tin resolves and checks the binding at admission, then records it with the run. The package
+receives `ctx["author"]` with `id`, `display_name`, `guide_path` and binding `version`.
+Read the guide through `ctx.files.read_text(ctx["author"]["guide_path"])`; it uses the same
+pinned project revision as the other files. Editing the author binding or guide later
+does not redirect an admitted run or retry. This capability requires no new runtime image.
+
+The capability supplies identity and the confirmed path, not permission to publish or a
+promise that the guide is usable. A package still validates its context before model calls
+and owns any explicit option to proceed without a personal writing guide. Existing
+packages without this declaration retain their previous context.
+
 ## Project memory sections
 
 Workflows that map the product keep their results in project memory, not in files of their
@@ -95,7 +113,8 @@ has no such file, that read returns the `### Code map` section, so they find wha
 
 ## Latest files for new runs, stable files for retries
 
-At admission, Tin reads the project's canonical HEAD and records that revision in an
+At admission, Tin reads the project's canonical HEAD once, checks artifact prerequisites
+at that revision, and records it in an
 existing effect receipt, in the transaction that creates the run. The code cannot choose a
 different revision. Every file read in that run uses the recorded revision; subsequent
 edits do not change an execution in progress or its retry.
