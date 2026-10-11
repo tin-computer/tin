@@ -4429,7 +4429,8 @@ html[data-theme="dark"] .system-week-nav button {
   border-radius: 11px;
 }
 
-.system-group-fold.is-open {
+/* Scoped to the well so it outranks the dark theme's card border reset. */
+.system-group-well > .system-group-fold.is-open {
   background: transparent;
   border-color: transparent;
 }

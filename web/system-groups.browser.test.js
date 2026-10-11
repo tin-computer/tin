@@ -108,6 +108,12 @@ test("My system keeps live runs and failures open and folds the healthy rest", a
     assert.equal(await scheduled.getAttribute("aria-expanded"), "true");
     assert.deepEqual(await page.locator(".system-group-well .system-card-identity strong").allInnerTexts(), ["Scheduled", "Weekly page decisions", "Weekly tracking review", "Daily signups"]);
     assert.equal(await page.locator(".system-group-well .system-action").first().innerText(), "Hide");
+    // The opened row is the well's header: no card edge of its own inside the well's edge.
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), "dark");
+    assert.deepEqual(await page.locator(".system-group-well > .system-group-fold").evaluate((row) => {
+      const style = getComputedStyle(row);
+      return [style.borderTopColor, style.backgroundColor];
+    }), ["rgba(0, 0, 0, 0)", "rgba(0, 0, 0, 0)"]);
     await page.goto(`${base}/?project=project#workflows`);
     await page.locator(".system-group-well").waitFor();
     assert.deepEqual((await groups()).slice(2), [{fold: "Scheduled", open: true, cards: 3}, {fold: "Available", open: false, cards: 0}]);
