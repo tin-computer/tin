@@ -264,6 +264,8 @@ const state = {
   templateView: "all",
   workflowSearch: "",
   workflowEditor: null,
+  // My system's folded groups this viewer opened, remembered in the browser (Paper SYS-C).
+  systemGroupsOpen: null,
   expandedRun: null,
   diagramPanel: null,
   runDetails: new Map(),
@@ -1899,6 +1901,9 @@ function bindWorkflowResultControls(root) {
   root.querySelectorAll("[data-clear-workflow-search]").forEach((button) => {
     button.addEventListener("click", clearWorkflowSearch);
   });
+  root.querySelectorAll("[data-toggle-system-group]").forEach((button) => {
+    button.addEventListener("click", () => toggleSystemGroup(button));
+  });
   root.querySelectorAll("[data-ask-luna-workflow]").forEach((button) => {
     button.addEventListener("click", () => {
       const workflowQuery = state.workflowSearch.trim();
@@ -2547,22 +2552,6 @@ function systemConfiguredCard(configured) {
   </article>`;
 }
 
-function systemGroupEntries(configuredItems, activeRuns) {
-  const cards = [];
-  const activeByConfiguration = new Map();
-  for (const run of activeRuns) {
-    const key = run.project_workflow_id || "";
-    if (!activeByConfiguration.has(key)) activeByConfiguration.set(key, []);
-    activeByConfiguration.get(key).push(run);
-  }
-  for (const configured of configuredItems) {
-    const runs = activeByConfiguration.get(configured.id) || [];
-    if (runs.length) cards.push(...runs.map((run) => systemRunCard(run, configured)));
-    else cards.push(systemConfiguredCard(configured));
-  }
-  return cards;
-}
-
 function systemWorkflowMatches(configured, activeRuns, query) {
   if (!query) return true;
   const workflowText = `${configured.name} ${configured.workflow_key} ${configured.workflow_description}`.toLowerCase();
@@ -2578,6 +2567,71 @@ function systemRunMatches(run, query) {
     .includes(query);
 }
 
+// A group of one stays a card, and a search lists its matches as before. An editor opened inside
+// a folded group (from the calendar, say) opens the group with it.
+function systemFoldedGroup(key, title, items, query) {
+  const cards = items.map(systemConfiguredCard);
+  if (items.length < 2 || query) return systemWorkflowGroup(title, cards);
+  const editing = items.some((item) => state.workflowEditor?.projectWorkflowId === item.id);
+  const open = editing || systemGroupOpen(key);
+  const row = systemGroupRow(key, title, items, open);
+  return `<section class="system-workflow-group">
+    ${open ? `<div class="system-group-well">${row}${cards.join("")}</div>` : row}
+  </section>`;
+}
+
+function systemGroupRow(key, title, items, open) {
+  const scheduled = items.filter((item) => item.schedule);
+  const waiting = scheduled.filter((item) => item.status !== "paused" && item.next_run_at);
+  const next = waiting.sort((a, b) => new Date(a.next_run_at) - new Date(b.next_run_at))[0];
+  const paused = scheduled.filter((item) => item.status === "paused").length;
+  const cadences = [...new Set(items.map((item) => {
+    const cadence = item.schedule?.cadence;
+    return !item.schedule ? "manual" : cadence === "daily" || cadence === "monthly" ? cadence : "weekly";
+  }))];
+  const summary = !scheduled.length
+    ? items.map((item) => item.name).join(", ")
+    : [next ? `Next is ${next.name}` : "", paused ? `${paused} paused` : ""].filter(Boolean).join(" · ");
+  const chevron = open ? "M2 3.5 5 6.5 8 3.5" : "M3.5 2 6.5 5 3.5 8";
+  return `<article class="system-workflow-card system-group-fold ${open ? "is-open" : ""}">
+    <button class="system-card-row system-group-toggle" type="button" data-toggle-system-group="${escapeHtml(key)}" aria-expanded="${open}">
+      <span class="system-card-mark"><svg aria-hidden="true" viewBox="0 0 10 10"><path d="${chevron}" /></svg></span>
+      <span class="system-card-identity"><strong>${escapeHtml(title)}</strong><code>${items.length} workflows</code></span>
+      <span class="system-card-diagram is-empty" aria-hidden="true"></span>
+      <code class="system-card-every">${escapeHtml(cadences.join(", "))}</code>
+      <code class="system-card-state">${next ? `next ${escapeHtml(systemDateTime(next.next_run_at))}` : "—"}</code>
+      <span class="system-card-last">${escapeHtml(summary)}</span>
+      <span class="system-card-actions"><span class="system-action">${open ? "Hide" : "Show all"}</span></span>
+    </button>
+  </article>`;
+}
+
+function systemGroupOpen(key) {
+  if (!state.systemGroupsOpen) {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem("tin-lite:system-groups") || "{}");
+      state.systemGroupsOpen = stored && typeof stored === "object" ? stored : {};
+    } catch (_error) {
+      state.systemGroupsOpen = {};
+    }
+  }
+  return state.systemGroupsOpen[key] === true;
+}
+
+function toggleSystemGroup(button) {
+  const open = button.getAttribute("aria-expanded") !== "true";
+  systemGroupOpen(button.dataset.toggleSystemGroup);
+  state.systemGroupsOpen[button.dataset.toggleSystemGroup] = open;
+  try {
+    window.localStorage.setItem("tin-lite:system-groups", JSON.stringify(state.systemGroupsOpen));
+  } catch (_error) {
+    // The group still opens for this visit; storage only remembers it.
+  }
+  // Hiding a group hides an editor open inside it too.
+  if (!open && button.closest(".system-group-well")?.querySelector(".system-config-form")) state.workflowEditor = null;
+  renderWorkflows();
+}
+
 function systemWorkflowGroup(title, cards) {
   if (!cards.length) return "";
   return `<section class="system-workflow-group">
@@ -2586,27 +2640,34 @@ function systemWorkflowGroup(title, cards) {
   </section>`;
 }
 
+// My system under the calendar (Paper SYS-C): every live run, saved or not, stays open in
+// Running, and a saved workflow whose last run failed stays open in Needs a look. The healthy
+// rest fold into one row per group.
 function systemMySystemHtml() {
   const activeRuns = state.runs.filter(
     (run) => RUNNING_STATES.has(run.status) && run.workflow_name !== "project.task",
   );
   const query = state.workflowSearch.trim().toLowerCase();
-  const scheduled = state.projectWorkflows.filter(
-    (item) => item.schedule && systemWorkflowMatches(item, activeRuns, query),
+  const configuredById = new Map(state.projectWorkflows.map((item) => [item.id, item]));
+  const matching = new Set(
+    state.projectWorkflows.filter((item) => systemWorkflowMatches(item, activeRuns, query)),
   );
-  const available = state.projectWorkflows.filter(
-    (item) => !item.schedule && systemWorkflowMatches(item, activeRuns, query),
-  );
-  const configuredIds = new Set(state.projectWorkflows.map((item) => item.id));
-  const scheduledCards = systemGroupEntries(scheduled, activeRuns);
-  const availableCards = systemGroupEntries(available, activeRuns);
   const runningCards = activeRuns
-    .filter((run) =>
-      (!run.project_workflow_id || !configuredIds.has(run.project_workflow_id)) &&
-      systemRunMatches(run, query),
-    )
-    .map((run) => systemRunCard(run));
-  const content = `${systemWorkflowGroup("Running", runningCards)}${systemWorkflowGroup("Scheduled", scheduledCards)}${systemWorkflowGroup("Available", availableCards)}`;
+    .filter((run) => {
+      const configured = configuredById.get(run.project_workflow_id);
+      return configured ? matching.has(configured) : systemRunMatches(run, query);
+    })
+    .map((run) => systemRunCard(run, configuredById.get(run.project_workflow_id) || null));
+  const live = new Set(activeRuns.map((run) => run.project_workflow_id));
+  const resting = [...matching].filter((item) => !live.has(item.id));
+  const failed = resting.filter((item) => item.last_run_status === "failed");
+  const healthy = resting.filter((item) => item.last_run_status !== "failed");
+  const content = [
+    systemWorkflowGroup("Running", runningCards),
+    systemWorkflowGroup("Needs a look", failed.map(systemConfiguredCard)),
+    systemFoldedGroup("scheduled", "Scheduled", healthy.filter((item) => item.schedule), query),
+    systemFoldedGroup("available", "Available", healthy.filter((item) => !item.schedule), query),
+  ].join("");
   const week = query ? "" : systemWeekHtml();
   if (!content) {
     return query
