@@ -4393,6 +4393,51 @@ html[data-theme="dark"] .system-week-nav button {
   gap: 10px;
 }
 
+/* A healthy group folds into one row in the card lanes (Paper SYS-C); a second edge under it
+   says cards are stacked there. */
+.system-group-fold:not(.is-open) {
+  margin-bottom: 4px;
+  box-shadow:
+    0 5px 0 -2px var(--paper-card),
+    0 5px 0 -1px var(--card-border);
+}
+
+/* The count names the group, so it stays when a narrow screen drops workflow keys. */
+.system-group-fold .system-card-identity code {
+  display: block;
+}
+
+.system-group-toggle {
+  width: 100%;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.system-group-fold .system-card-last {
+  color: var(--ink-secondary);
+}
+
+/* Opened, the group sits in a recessed well with its row as the header. */
+.system-workflow-group > .system-group-well {
+  gap: 8px;
+  padding: 0 6px 6px;
+  background: var(--spine-canvas);
+  border: 1px solid var(--card-border);
+  border-radius: 11px;
+}
+
+.system-group-fold.is-open {
+  background: transparent;
+  border-color: transparent;
+}
+
+.system-group-fold.is-open .system-group-toggle {
+  padding: 12px 10px 6px;
+}
+
 .system-workflow-card {
   --card-border-width: 1px;
   --card-radius: 8px;

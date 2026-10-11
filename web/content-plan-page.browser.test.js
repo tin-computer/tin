@@ -194,19 +194,23 @@ for (const theme of ["light", "dark"]) test(`packaged My system content card: ${
     await page.locator(".system-run-detail").waitFor();
     assert.equal(writes.length, 2, "observation must not start or stop a run");
 
-    // New saves appear first immediately; editing or running an older card cannot move it.
+    // New saves appear first immediately; editing an older card cannot move it. A live run shows
+    // in Running (Paper SYS-C), so the run ends before the order is compared.
     await page.evaluate(() => {
+      state.runs = [];
+      state.systemGroupsOpen = {available: true};
       const original = state.projectWorkflows[0];
       upsertProjectWorkflow({...original, id: "new-program", name: "Newest saved roadmap"});
       renderWorkflows();
     });
-    assert.deepEqual(await page.locator(".system-card-identity strong").allTextContents(), ["Newest saved roadmap", configured.name]);
+    const cards = page.locator(".system-workflow-card:not(.system-group-fold) .system-card-identity strong");
+    assert.deepEqual(await cards.allTextContents(), ["Newest saved roadmap", configured.name]);
     await page.evaluate(() => {
       const original = state.projectWorkflows.find(item => item.id === "program");
       upsertProjectWorkflow({...original, name: "Older roadmap edited", updated_at: new Date().toISOString()});
       renderWorkflows();
     });
-    assert.deepEqual(await page.locator(".system-card-identity strong").allTextContents(), ["Newest saved roadmap", "Older roadmap edited"]);
+    assert.deepEqual(await cards.allTextContents(), ["Newest saved roadmap", "Older roadmap edited"]);
     assert.deepEqual(errors, []);
   } finally {await browser.close(); await new Promise(resolve => server.close(resolve));}
 });

@@ -679,7 +679,7 @@ def test_product_ui_assets_are_packaged_beside_the_application() -> None:
     assert "<strong>Live runs</strong>" in script
     assert "data-live-run-activity" not in script
     assert "activeRuns.filter" not in script
-    assert "cards.push(...runs.map((run) => systemRunCard(run, configured)))" in script
+    assert "systemRunCard(run, configuredById.get(run.project_workflow_id) || null)" in script
     assert ".live-workflow-runs" in stylesheet
     assert ".live-workflow-run" in stylesheet
     assert "padding: 0 16px 14px 44px" in stylesheet

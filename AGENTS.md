@@ -198,8 +198,10 @@ outside marketing, or were written without ever being run. Full rules:
   contracts. Chat can start workflows only through the normal project-bound run API.
 - Chat is a shared durable project transcript. Tasks have their own transcript and exact
   turn/gate controls; background responses must not replace navigation or newer drafts.
-- My system is a flat operational view. Saved workflows list newest-created first;
-  editing or running an older configuration does not reorder it. Activity keeps history.
+- My system is a flat operational view. Live runs show in Running and saved workflows whose
+  last run failed in Needs a look; the healthy rest fold by group. Within a group, saved
+  workflows list newest-created first and editing an older one does not reorder it.
+  Activity keeps history.
 - Content generation selects the next eligible chronological plan item unless explicitly
   overridden. Preserve editorial judgment: already-covered or weakly evidenced ideas need
   not produce another article. Keep source evidence separate from publishable copy.

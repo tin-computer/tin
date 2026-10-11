@@ -86,6 +86,8 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
     await context.route("**/*", (route) => route.request().url().startsWith(base) ? route.continue() : route.abort());
     await context.addInitScript(() => {
       window.Clerk = {load: async () => {}, isSignedIn: true, user: {id: "member"}, session: {getToken: async () => "synthetic-only"}};
+      // This viewer opened the folded Scheduled group earlier (Paper SYS-C).
+      localStorage.setItem("tin-lite:system-groups", '{"scheduled":true}');
     });
     const page = await context.newPage();
     page.setDefaultTimeout(10000);
@@ -99,7 +101,7 @@ test("a saved workflow's diagram opens beside the System page and reads top to b
     // A row without a drawing keeps the button's slot: every row the same height, every
     // schedule in the same lane.
     const lanes = await page.evaluate(() => [...document.querySelectorAll(".system-card-row")]
-      .filter((row) => row.querySelector(".system-card-every"))
+      .filter((row) => row.querySelector(".system-card-every") && !row.closest(".system-group-fold"))
       .map((row) => ({
         height: Math.round(row.getBoundingClientRect().height),
         every: Math.round(row.querySelector(".system-card-every").getBoundingClientRect().left),
