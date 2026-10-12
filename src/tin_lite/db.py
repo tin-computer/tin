@@ -18,7 +18,7 @@ from zoneinfo import ZoneInfo
 
 import asyncpg
 
-from tin_lite import analytics
+from tin_lite import ads_currency, analytics
 from tin_lite.domain import (
     PROJECT_TASK_WORKFLOW_NAME,
     ActivityEvent,
@@ -8375,9 +8375,10 @@ def _proposal(row: asyncpg.Record) -> dict[str, Any]:
 def _proposal_summary(proposal: dict[str, Any]) -> str:
     proposed = proposal.get("proposed") or {}
     if proposal.get("kind") == "budget_change":
+        amount = proposed.get("daily_budget", proposed.get("daily_budget_usd"))
         return (
             f"Proposal {proposal.get('proposal_number')}: change the daily budget to "
-            f"${proposed.get('daily_budget_usd')}."
+            f"{ads_currency.money(amount, proposed.get('currency_code') or 'USD', cents=True)}."
         )
     return (
         f"Proposal {proposal.get('proposal_number')}: switch bidding to "

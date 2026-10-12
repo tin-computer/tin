@@ -43,8 +43,40 @@ last thirty days) and the landing page:
   telling the founder where the event snippet goes; they run the launch again once conversions
   record. This is the hard block.
 - `needs_billing`, `needs_link`, `account_disabled`, `campaign_exists`,
-  `landing_page_unreachable`, `not_recommended`: a `SETUP.md` note is published and the run ends
-  failed with that reason, since a review-pinned run cannot succeed without an approval.
+  `landing_page_unreachable`, `not_recommended`, `unsupported_currency`: a `SETUP.md` note is
+  published and the run ends failed with that reason, since a review-pinned run cannot succeed
+  without an approval.
+
+## Currency
+
+Google reads every amount in the account's own currency (the `amount_micros` fields of
+[`CampaignBudget`](https://developers.google.com/google-ads/api/reference/rpc/v25/CampaignBudget)
+and the bidding strategies). Tin's figures start in dollars: the assessment's bids come from a
+USD account, and the launch's budget and ceiling inputs are in USD. `ads_currency` bridges the
+two once:
+
+- `gather` reads the account's `currency_code`. For USD nothing is converted. For any other
+  currency it reads the day's [ECB reference rates](https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.en.html),
+  derives units per dollar through the euro and receipts the result as `gather:fx`. A failed
+  read is a retryable error that writes nothing; a retry reuses the receipt once it exists.
+- `plan_skeleton()` works out the budget, ceiling, allowable and target cost per customer in
+  dollars as before, then converts each once and rounds to Google's minimum unit for the
+  currency (whole yen, won, rupiah; cents elsewhere). The dollar floors (a $1 budget, a $0.05
+  ceiling) stay floors at the converted rate. The plan carries `currency_code` and `fx` (rate,
+  source, date), and `PLAN.md` shows every amount in the account's currency with its dollar
+  equivalent and the rate used. The founder approves the converted figures.
+- Nothing converts again. `campaign.json` carries the same `fx`, and the monitor compares the
+  account's own costs with the converted allowable cost; proposals carry `currency_code` and
+  the pinned rate, so `budget_body` and `bidding_body` check the unit and floors in the
+  account's currency.
+- Supported currencies are the ones Google Ads bills in and the ECB publishes (`ads_currency.
+  MINIMUM_UNIT_MICROS`). Any other, or an account that reports none, gates as
+  `unsupported_currency` before any rate read, model call or write.
+- `apply` refuses a plan whose currency is not the account's. A plan drafted before currencies
+  were pinned (no `fx`) is read as a USD plan, which is what it was.
+- The monitor reads the account's currency each run. A campaign planned in one currency in an
+  account billing in another (only possible for launches from before currencies were pinned)
+  gets a `currency_mismatch` alert, plain cost reporting and no cost-based pauses or proposals.
 
 ## The plan and the one approval
 
@@ -85,7 +117,7 @@ and `campaign.json` (what the monitor consumes) publish under `ads/google/{run}/
 ## The monitor
 
 `ads.monitor` runs on demand, daily or weekly against a launch whose campaign row is
-`live`. It reads the campaign over seven, fourteen and thirty days, the search terms, keywords
+`live`. It reads the account's currency, the campaign over seven, fourteen and thirty days, the search terms, keywords
 with quality scores, ad policy status, assets, conversion actions and recommendation
 subscriptions, each a zero-cost receipt. `paid_ads_monitor.decide()` is deterministic:
 

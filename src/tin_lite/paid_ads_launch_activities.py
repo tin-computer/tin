@@ -15,7 +15,7 @@ from uuid import UUID
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
-from tin_lite import paid_ads, paid_ads_launch
+from tin_lite import ads_currency, paid_ads, paid_ads_launch
 from tin_lite.google_ads_requests import (
     QUERIES,
     SUBSCRIPTION_TYPES,
@@ -94,11 +94,20 @@ def _failed(result: dict, action: str, outcome: str) -> str:
 
 class PaidAdsLaunchActivities:
     def __init__(
-        self, *, database, storage, settings, router=None, integrations=None, site_reader=None
+        self,
+        *,
+        database,
+        storage,
+        settings,
+        router=None,
+        integrations=None,
+        site_reader=None,
+        rate_reader=None,
     ):
         self.db, self.storage, self.settings = database, storage, settings
         self.router, self.integrations = router, integrations
         self.read_site = site_reader or read_site
+        self.read_rates = rate_reader or ads_currency.read_ecb
 
     # ------------------------------------------------------------ receipts
 
@@ -411,20 +420,6 @@ class PaidAdsLaunchActivities:
             return
         await self._progress(run_id, "gather", 1, "Reading the assessment and the Ads account")
         assessment, keywords_csv = await self._assessment(run_id, scope)
-        try:
-            skeleton = paid_ads_launch.plan_skeleton(
-                assessment=assessment,
-                keywords_csv=keywords_csv,
-                inputs=scope["inputs"],
-                account={"customer": {}},
-                marker=scope["marker"],
-                today=datetime.fromisoformat(scope["today"]).date(),
-            )
-        except (ValueError, KeyError, TypeError) as exc:
-            skeleton = None
-            skeleton_error = str(exc)[:200]
-        else:
-            skeleton_error = None
         reads = {}
         for name, query in (
             ("account", QUERIES["account"]()),
@@ -433,16 +428,6 @@ class PaidAdsLaunchActivities:
             ("subscriptions", QUERIES["subscriptions"]()),
         ):
             reads[name] = await self._ads(run_id, f"gather:{name}", "search", {"query": query})
-        existing = None
-        if skeleton is not None:
-            lookup = await self._ads(
-                run_id,
-                "gather:campaign_lookup",
-                "search",
-                {"query": QUERIES["campaign_by_name"](bundle_names(skeleton)["campaign"])},
-            )
-            rows = _rows(lookup)
-            existing = rows[0].get("campaign") if rows else None
         health = ads_health_summary(
             {name: _rows(result) for name, result in reads.items() if name != "subscriptions"}
         )
@@ -481,6 +466,32 @@ class PaidAdsLaunchActivities:
                 non_retryable=reads["account"].get("error") is not None,
             )
         await self._save(run_id, "gathered:account", {"status": "completed", "value": account})
+        # Budget and bids are only drafted in a currency Tin can price; the gate names any other.
+        currency = account["customer"].get("currency_code")
+        fx = await self._fx(run_id, currency) if ads_currency.supported(currency) else None
+        skeleton, skeleton_error = None, None
+        if fx is not None:
+            try:
+                skeleton = paid_ads_launch.plan_skeleton(
+                    assessment=assessment,
+                    keywords_csv=keywords_csv,
+                    inputs=scope["inputs"],
+                    marker=scope["marker"],
+                    today=datetime.fromisoformat(scope["today"]).date(),
+                    fx=fx,
+                )
+            except (ValueError, KeyError, TypeError) as exc:
+                skeleton_error = str(exc)[:200]
+        existing = None
+        if skeleton is not None:
+            lookup = await self._ads(
+                run_id,
+                "gather:campaign_lookup",
+                "search",
+                {"query": QUERIES["campaign_by_name"](bundle_names(skeleton)["campaign"])},
+            )
+            rows = _rows(lookup)
+            existing = rows[0].get("campaign") if rows else None
         landing = (
             skeleton["landing_page"]
             if skeleton
@@ -519,6 +530,27 @@ class PaidAdsLaunchActivities:
             {"gate": gate, "skeleton": skeleton, "existing_campaign": existing},
         )
 
+    async def _fx(self, run_id: str, currency: str) -> dict:
+        """The day's rate for the account's currency, read once and receipted so a retry or a
+        later step uses the same rate the founder approves."""
+        if currency == "USD":
+            return dict(ads_currency.USD_FX)
+        saved = await self._result(run_id, "gather:fx")
+        if saved:
+            return saved["value"]
+        try:
+            fx = ads_currency.fx_for(currency, ads_currency.parse_ecb(await self.read_rates()))
+        except ads_currency.RateUnavailable as exc:
+            # Nothing was written; the activity retries and reads the rate again.
+            raise ApplicationError(
+                f"Tin could not read the day's {currency} exchange rate ({exc.code}). "
+                "Nothing was changed.",
+                non_retryable=False,
+            ) from None
+        return (await self._save(run_id, "gather:fx", {"status": "completed", "value": fx}))[
+            "value"
+        ]
+
     @activity.defn(name="paid_ads_launch_draft")
     async def draft(self, run_id: str) -> str:
         """Returns the mode as a small control fact: launch, tracking or setup."""
@@ -531,7 +563,6 @@ class PaidAdsLaunchActivities:
         run = await self._active(run_id)
         project = await self.db.get_project(run.project_id)
         assessment, _ = await self._assessment(run_id, scope)
-        account = (await self._result(run_id, "gathered:account"))["value"]
         site = ((await self._result(run_id, "gather:site")) or {}).get("value") or {}
         business = str((assessment.get("profile") or {}).get("business_name") or "the business")
         await self._progress(run_id, "draft", 2, "Drafting the campaign for your approval")
@@ -542,10 +573,11 @@ class PaidAdsLaunchActivities:
             return await self._model(run_id, step, system, user, schema, max_out, effort)
 
         record: dict = {"mode": None, "gate": gate}
+        fx = ((await self._result(run_id, "gather:fx")) or {}).get("value") or ads_currency.USD_FX
         if gate["outcome"] == "ready":
             record["mode"] = "launch"
             evidence = {
-                "plan": gathered["skeleton"],
+                "plan": paid_ads_launch.upgrade_plan(gathered["skeleton"]),
                 "assessment": assessment,
                 "readable": site.get("readable") or [],
                 "site_text": evidence_text(site) if site.get("pages") else "",
@@ -576,8 +608,11 @@ class PaidAdsLaunchActivities:
                     "name": paid_ads_launch.conversion_action_name(business, scope["marker"]),
                     "category": category,
                     "counting_type": counting,
-                    "default_value": float(assessment.get("allowable_cpa_usd") or 0) or 1.0,
-                    "currency": account["customer"].get("currency_code") or "USD",
+                    "default_value": ads_currency.convert(
+                        float(assessment.get("allowable_cpa_usd") or 0) or 1.0,
+                        fx,
+                    ),
+                    "currency": ads_currency.code_of(fx),
                     "create": True,
                 }
             record["action"] = action
@@ -605,8 +640,8 @@ class PaidAdsLaunchActivities:
             source_commit_sha=scope["assessment"]["revision"],
             plan_path=names[artifact],
             plan_commit_sha=publication["canonical_commit_sha"],
-            daily_budget_micros=int(micros(plan["daily_budget_usd"])) if plan else None,
-            cpc_ceiling_micros=int(micros(plan["cpc_ceiling_usd"])) if plan else None,
+            daily_budget_micros=int(micros(plan["daily_budget"], maximum=1e12)) if plan else None,
+            cpc_ceiling_micros=int(micros(plan["cpc_ceiling"], maximum=1e12)) if plan else None,
         )
         await self._save(run_id, "draft", record)
         return record["mode"]
@@ -725,11 +760,11 @@ class PaidAdsLaunchActivities:
             f"/{publication['artifact_path']}"
         )
         if draft["mode"] == "launch":
-            plan = draft["plan"]
+            plan = paid_ads_launch.upgrade_plan(draft["plan"])
             summary = (
                 f"Approve and launch: one Google Search campaign, {plan['campaign_name']}, at "
-                f"${plan['daily_budget_usd']:.2f} a day in your Google Ads account. Nothing is "
-                "created until you approve it."
+                f"{ads_currency.with_usd(plan['daily_budget'], plan['fx'])} a day in your Google "
+                "Ads account. Nothing is created until you approve it."
             )
         else:
             action = draft["action"]
@@ -785,8 +820,18 @@ class PaidAdsLaunchActivities:
 
     async def _apply_launch(self, run_id: str, draft: dict) -> None:
         scope = await self._result(run_id, "scope")
-        plan = draft["plan"]
+        plan = paid_ads_launch.upgrade_plan(draft["plan"])
         run = await self._active(run_id)
+        account = (await self._result(run_id, "gathered:account"))["value"]
+        billed_in = account["customer"].get("currency_code")
+        if billed_in != plan["currency_code"]:
+            await self._refuse(
+                run_id,
+                "currency",
+                f"The plan's amounts are in {plan['currency_code']} but the account bills in "
+                f"{billed_in or 'an unreported currency'}, so nothing was created. Run the "
+                "launch again to draft it in the account's currency.",
+            )
         operations = campaign_bundle(plan, customer_id=scope["customer_id"])
         await self.db.update_paid_ads_campaign(run_id=run.id, status="creating")
         validated = await self._ads(
@@ -866,7 +911,6 @@ class PaidAdsLaunchActivities:
                 str(resources.get("shared_set") or "").rsplit("/", 1)[-1] or None
             ),
         )
-        account = (await self._result(run_id, "gathered:account"))["value"]
         enabled_types = sorted(
             {
                 str(item.get("type"))
@@ -1082,8 +1126,9 @@ class PaidAdsLaunchActivities:
         business = str((assessment.get("profile") or {}).get("business_name") or "the business")
         await self._progress(run_id, "publish", 5, "Saving the result to your project files")
         if draft["mode"] == "launch":
+            plan = paid_ads_launch.upgrade_plan(draft["plan"])
             documents = paid_ads_launch.render_result(
-                draft["plan"],
+                plan,
                 applied,
                 {
                     "summary": (
@@ -1096,7 +1141,7 @@ class PaidAdsLaunchActivities:
             status = "live"
             event = "paid_ads_launch_ready"
             summary = paid_ads_launch.summary_line(
-                "unconfirmed" if applied.get("enable_unconfirmed") else "ready", draft["plan"]
+                "unconfirmed" if applied.get("enable_unconfirmed") else "ready", plan
             )
         else:
             rendered = paid_ads_launch.render_tracking(

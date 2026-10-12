@@ -42,7 +42,9 @@ STEP_TOTAL = 5
 # The provider's own wait for one model step, just inside the step's 240-second budget. Without
 # it the client stops at its 90-second default and a slow but valid answer is lost.
 MODEL_TIMEOUT_SECONDS = 225
+# The account read only supplies its currency; a missing answer falls back to the launch's.
 READS = (
+    ("account", "account", None),
     ("campaign_7d", "campaign_health", 7),
     ("campaign_14d", "campaign_health", 14),
     ("campaign_30d", "campaign_health", 30),

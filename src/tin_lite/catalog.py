@@ -4214,13 +4214,13 @@ BUILTIN_WORKFLOWS = (
                     "check",
                     "step",
                     "Read the assessment and account",
-                    "link, billing, conversions, tag on the page",
+                    "link, billing, currency, conversions, page tag",
                 ),
                 DiagramNode(
                     "plan",
                     "step",
                     "Set budget, bids and groups",
-                    "code only, up to 5 groups, never broad match",
+                    "code only, account currency at the ECB rate",
                 ),
                 DiagramNode(
                     "tracking",

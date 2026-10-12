@@ -1,7 +1,8 @@
 """Pure Google Ads REST request builders and the fixed GAQL set (API v25).
 
 Everything here is deterministic and free of I/O so the exact bodies a launch or a monitor
-sends can be pinned in tests. Money is expressed as USD and converted to micros strings; enums
+sends can be pinned in tests. Money is in the account's currency (see ads_currency) and sent as
+micros strings on Google's minimum unit for that currency; enums
 are the REST string forms; temporary resource ids are negative and unique per bulk request.
 """
 
@@ -13,6 +14,8 @@ import hashlib
 import re
 from decimal import Decimal, InvalidOperation
 from uuid import UUID
+
+from tin_lite import ads_currency
 
 GEO: dict[str, int] = {
     "US": 2840,
@@ -85,6 +88,7 @@ BOUNDS = {
     "callouts": 6,
     "min_budget_usd": Decimal("1"),
     "min_ceiling_usd": Decimal("0.05"),
+    "max_amount_usd": Decimal("1000000"),
     "search_rows": 5000,
 }
 CUSTOMER_ID = re.compile(r"^\d{10}$")
@@ -104,16 +108,16 @@ def customer_id(value) -> str:
     return digits
 
 
-def micros(usd) -> str:
-    """USD to a micros int64 string; the API rejects fractions of a micro."""
-    if isinstance(usd, bool):
+def micros(value, *, maximum=Decimal("1000000")) -> str:
+    """An amount to a micros int64 string; the API rejects fractions of a micro."""
+    if isinstance(value, bool):
         raise ValueError("Amounts must be numbers.")
     try:
-        amount = Decimal(str(usd))
+        amount = Decimal(str(value))
     except (InvalidOperation, ValueError, TypeError):
         raise ValueError("Amounts must be numbers.") from None
-    if not amount.is_finite() or amount < 0 or amount > Decimal("1000000"):
-        raise ValueError("Amounts must be finite, non-negative and below one million dollars.")
+    if not amount.is_finite() or amount < 0 or amount > Decimal(str(maximum)):
+        raise ValueError("Amounts must be finite, non-negative and below their ceiling.")
     return str(int((amount * _MICROS).quantize(Decimal(1))))
 
 
@@ -157,10 +161,32 @@ def _url(value, *, label: str) -> str:
     return value
 
 
-def _amount(value, *, minimum: Decimal, label: str) -> str:
-    result = micros(value)
-    if Decimal(result) < minimum * _MICROS:
-        raise ValueError(f"{label} must be at least ${minimum}.")
+def _fx(fx) -> dict:
+    fx = fx or ads_currency.USD_FX
+    if not isinstance(fx, dict) or not ads_currency.supported(fx.get("currency_code")):
+        raise ValueError("Amounts need a supported account currency.")
+    try:
+        rate = Decimal(str(fx.get("usd_rate")))
+    except (InvalidOperation, ValueError, TypeError):
+        raise ValueError("The pinned exchange rate is not a number.") from None
+    if not rate.is_finite() or rate <= 0:
+        raise ValueError("The pinned exchange rate must be positive.")
+    return fx
+
+
+def _amount(value, *, minimum: Decimal, label: str, fx=None) -> str:
+    """Micros in the account's currency: on its minimum unit, at least `minimum` dollars'
+    worth at the pinned rate and below the one-million-dollar runaway guard."""
+    fx = _fx(fx)
+    code = fx["currency_code"]
+    ceiling = ads_currency.convert(BOUNDS["max_amount_usd"], fx)
+    result = micros(value, maximum=ceiling)
+    if int(result) % ads_currency.unit_micros(code):
+        step = ads_currency.money(ads_currency.unit(code), code, cents=True)
+        raise ValueError(f"{label} must be a whole multiple of {step}.")
+    floor = ads_currency.convert(minimum, fx, floor_usd=minimum)
+    if Decimal(result) < Decimal(str(floor)) * _MICROS:
+        raise ValueError(f"{label} must be at least {ads_currency.money(floor, code, cents=True)}.")
     return result
 
 
@@ -202,9 +228,12 @@ def campaign_bundle(plan: dict, *, customer_id: str) -> list[dict]:
     if not isinstance(plan, dict):
         raise ValueError("A campaign plan is an object.")
     names = bundle_names(plan)
-    budget = _amount(plan.get("daily_budget_usd"), minimum=BOUNDS["min_budget_usd"], label="Budget")
+    fx = plan.get("fx") or ads_currency.USD_FX
+    budget = _amount(
+        plan.get("daily_budget"), minimum=BOUNDS["min_budget_usd"], label="Budget", fx=fx
+    )
     ceiling = _amount(
-        plan.get("cpc_ceiling_usd"), minimum=BOUNDS["min_ceiling_usd"], label="CPC ceiling"
+        plan.get("cpc_ceiling"), minimum=BOUNDS["min_ceiling_usd"], label="CPC ceiling", fx=fx
     )
     markets = _list(plan.get("markets"), label="Markets", maximum=len(GEO), minimum=1)
     if any(not isinstance(m, str) or m not in GEO for m in markets) or len(set(markets)) != len(
@@ -554,24 +583,26 @@ def campaign_status_body(campaign_resource: str, status: str) -> tuple[str, dict
     )
 
 
-def budget_body(budget_resource: str, daily_usd) -> tuple[str, dict]:
+def budget_body(budget_resource: str, daily, fx=None) -> tuple[str, dict]:
     rn = _resource(budget_resource, kind="campaignBudgets")
-    amount = _amount(daily_usd, minimum=BOUNDS["min_budget_usd"], label="Budget")
+    amount = _amount(daily, minimum=BOUNDS["min_budget_usd"], label="Budget", fx=fx)
     return "campaignBudgets", _body(
         [{"update": {"resourceName": rn, "amountMicros": amount}, "updateMask": "amount_micros"}]
     )
 
 
-def bidding_body(campaign_resource: str, strategy: str, target_cpa_usd=None) -> tuple[str, dict]:
+def bidding_body(
+    campaign_resource: str, strategy: str, target_cpa=None, fx=None
+) -> tuple[str, dict]:
     rn = _resource(campaign_resource, kind="campaigns")
     if strategy == "maximize_conversions":
-        if target_cpa_usd is not None:
+        if target_cpa is not None:
             raise ValueError("Maximise conversions takes no target.")
         # A bare "maximize_conversions" mask is refused (FIELD_HAS_SUBFIELDS); naming the
         # target subfield with an empty message switches the strategy without a target.
         update, mask = {"maximizeConversions": {}}, "maximize_conversions.target_cpa_micros"
     elif strategy == "target_cpa":
-        amount = _amount(target_cpa_usd, minimum=BOUNDS["min_ceiling_usd"], label="Target CPA")
+        amount = _amount(target_cpa, minimum=BOUNDS["min_ceiling_usd"], label="Target CPA", fx=fx)
         update = {"maximizeConversions": {"targetCpaMicros": amount}}
         mask = "maximize_conversions.target_cpa_micros"
     else:
@@ -637,7 +668,8 @@ def conversion_action_body(
         raise ValueError("Counting type is ONE_PER_CLICK or MANY_PER_CLICK.")
     if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency):
         raise ValueError("Currency is a three letter code.")
-    value = Decimal(micros(default_value)) / _MICROS
+    # A reporting value in the account's currency, not spend: rupiah and won need room.
+    value = Decimal(micros(default_value, maximum=Decimal("1e11"))) / _MICROS
     return "conversionActions", _body(
         [
             {

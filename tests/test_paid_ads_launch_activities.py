@@ -177,6 +177,7 @@ class Script:
         self.lookup_found = False
         self.enable_lost = False
         self.status_after_enable = None
+        self.currency = "USD"
         self.sent = []
         self.calls = []
 
@@ -263,7 +264,7 @@ class Script:
                     "customer": {
                         "id": CUSTOMER,
                         "descriptiveName": "Claw Messenger",
-                        "currencyCode": "USD",
+                        "currencyCode": self.currency,
                         "timeZone": "America/New_York",
                         "status": "ENABLED",
                         "autoTaggingEnabled": True,
@@ -362,7 +363,7 @@ def assessment_documents(run_id):
     }
 
 
-async def fixture(*, script=None, model=None, github=None, site=None):
+async def fixture(*, script=None, model=None, github=None, site=None, rate_reader=None):
     db, storage = LaunchDB(), HistoryStorage()
     script = script or Script()
     documents = assessment_documents(str(db.assessment_run.id))
@@ -418,6 +419,7 @@ async def fixture(*, script=None, model=None, github=None, site=None):
         router=router,
         integrations=integrations,
         site_reader=read_site,
+        rate_reader=rate_reader,
     )
     return activities, db, storage, script, router, integrations, model
 
@@ -486,7 +488,7 @@ async def test_ready_path_validates_then_creates_once_and_a_replay_buys_nothing(
     assert set(results.values()) <= set(tree) and storage.repo.writes == 2
     saved = json.loads(tree[results["campaign.json"]][1])
     assert saved["campaign_id"] == "2" and saved["launch_run_id"] == run_id
-    assert saved["allowable_cpa_usd"] == 30.0 and saved["enabled"] is True
+    assert saved["allowable_cpa"] == 30.0 and saved["enabled"] is True
     assert b"The campaign is on" in tree[results["RESULT.md"]][1]
     assert db.completions[0]["campaign_status"] == "live"
     assert db.completions[0]["event_type"] == "paid_ads_launch_ready"
