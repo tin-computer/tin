@@ -6,6 +6,7 @@ import asyncio
 import json
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from decimal import Decimal
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -135,3 +136,28 @@ async def test_activity_refuses_without_a_panel_an_active_run_or_credentials():
         await env.run(activities(db, FakeDataForSEO()).ai_answers_measure, control)
     with pytest.raises(ValueError):
         receipt_key(db.run.id, "Bad Stage!", "result")
+
+
+@pytest.mark.parametrize(
+    ("code", "reason"),
+    [
+        ("run_limit", "spending_limit"),
+        ("project_limit", "spending_limit"),
+        ("unpriced_model", "billing_refused"),
+        ("insufficient_funds", "billing_refused"),
+    ],
+)
+async def test_a_billing_refusal_keeps_its_code_and_is_not_bought_again(code, reason):
+    from unittest.mock import AsyncMock
+
+    from tin_lite.ai_answers_activities import ReceiptLedger
+    from tin_lite.billing_contracts import BillingError
+
+    db = FakeRunDatabase()
+    ledger = ReceiptLedger(db, run_id=db.run.id, stage="test")
+    call = AsyncMock(side_effect=BillingError(code, "Private diagnostic"))
+    first = await ledger.once("q:0", reserve_usd=Decimal("0.01"), call=call)
+    second = await ledger.once("q:0", reserve_usd=Decimal("0.01"), call=call)
+    assert first == second and call.await_count == 1
+    assert first["status"] == "failed" and first["reason"] == reason
+    assert first["billing_code"] == code and "Private diagnostic" not in str(first)

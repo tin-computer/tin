@@ -12,6 +12,7 @@ import httpx
 from tin_lite import managed_services, posthog_connection, stripe_connection
 from tin_lite.billing_contracts import BillingError, digest
 from tin_lite.connection_records import ServiceArgumentError
+from tin_lite.failures import billing_refusal
 from tin_lite.integrations import (
     POSTHOG_PROVIDER,
     STRIPE_PROVIDER,
@@ -117,11 +118,6 @@ class CodeServiceError(ValueError):
         if self.provider_error:
             value["provider_error"] = self.provider_error
         return value
-
-
-SPENDING_STOPPED = (
-    "Tin credits or project spending limits do not allow this paid read; no request was made."
-)
 
 
 def _too_large(service):
@@ -441,15 +437,22 @@ class CodeServices:
                             conn, execution_key=usage_key, result=received
                         )
                 raise _too_large(service) from None
-            except BillingError:
-                # Credits or project limits refused the reservation before anything was sent.
+            except BillingError as exc:
+                # Billing refused the reservation before anything was sent. Say which refusal:
+                # credits and limits are the founder's to change; pricing states are Tin's.
+                message = f"{billing_refusal(exc).message} No request was made."
                 async with conn.transaction():
                     await self.db.complete_effect(
                         conn,
                         execution_key=key,
-                        result={**record, "error": "spending_stopped", "message": SPENDING_STOPPED},
+                        result={
+                            **record,
+                            "error": "spending_stopped",
+                            "billing_code": exc.code,
+                            "message": message,
+                        },
                     )
-                raise CodeServiceError(SPENDING_STOPPED, code="spending_stopped") from None
+                raise CodeServiceError(message, code="spending_stopped") from None
             except (ServiceCallRefused, IntegrationProviderError) as exc:
                 # The provider answered and refused (rate limit, missing permission, revoked
                 # key, a query it could not run): settle the step so a new step may try again.

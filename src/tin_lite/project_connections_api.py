@@ -7,6 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from tin_lite.auth import require_user
+from tin_lite.failures import public_error_text
 from tin_lite.integrations import IntegrationError
 
 router = APIRouter(prefix="/api/projects/{project_id}/connections")
@@ -64,7 +65,7 @@ async def call(operation):
     except LookupError:
         raise HTTPException(status_code=404, detail="project not found") from None
     except IntegrationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from None
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from None
     except (ValueError, TypeError, KeyError):
         raise HTTPException(
             status_code=422, detail="Invalid setup fields; values were not saved."

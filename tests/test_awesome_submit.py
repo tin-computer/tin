@@ -24,6 +24,7 @@ from tin_lite import awesome_submit_activities as activities_module
 from tin_lite import github_account as gh
 from tin_lite.awesome_submit_activities import AwesomeSubmitActivities
 from tin_lite.domain import EffectReceipt, RunStatus
+from tin_lite.failures import INTERNAL_MESSAGE
 from tin_lite.integrations import (
     GITHUB_USER_PROVIDER,
     IntegrationAuthorizationError,
@@ -596,8 +597,9 @@ class RunDatabase:
     async def complete_awesome_submit_projection(self, conn, **values):
         self.projected = values
 
-    async def project_failure(self, *, run_id, error_message):
+    async def project_failure(self, *, run_id, error_message, **fields):
         self.failed = error_message
+        self.failed_fields = fields
 
     def __getattr__(self, name):
         return getattr(self.integrations_db, name)
@@ -897,3 +899,54 @@ def test_one_unusable_packet_is_skipped_and_the_rest_still_go() -> None:
     assert [s["list"] for s in packets["submissions"]] == [LIST, "other/awesome-things"]
     assert packets["rejected"][0]["list"] == "someone/awesome-table"
     assert "written like its neighbours" in packets["rejected"][0]["reason"]
+
+
+async def test_failure_keeps_its_text_for_older_histories_and_names_a_specific_cause(
+    monkeypatch,
+) -> None:
+    activities, database, run, *_ = await submission_setup(GitHub(), monkeypatch)
+    run_id = str(run.id)
+    await activities.failure(run_id)
+    assert database.failed == activities_module.FAILURE_FALLBACK
+    assert database.failed.startswith("The list submission stopped before finishing.")
+
+    # GitHub not answering in the draft loop outlasts its retries: the founder reads why,
+    # with the caution about checking GitHub before trying again.
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "GitHub could not be reached; try again",
+            "kind": "transient",
+            "detail": "IntegrationUpstreamError: GitHub could not be reached; try again",
+        }
+    )
+    assert database.failed == (
+        f"GitHub could not be reached; try again. {activities_module.FAILURE_CAUTION}"
+    )
+    assert database.failed_fields["error_kind"] == "transient"
+
+    await activities.failure(
+        {"run_id": run_id, "reason": INTERNAL_MESSAGE, "kind": "internal", "detail": "KeyError"}
+    )
+    assert database.failed == activities_module.FAILURE_FALLBACK
+    assert database.failed_fields["error_kind"] == "internal"
+    assert database.failed_fields["error_detail"] == "KeyError"
+
+
+async def test_a_saved_refusal_wins_and_keeps_the_fix(monkeypatch) -> None:
+    activities, database, run, *_ = await submission_setup(GitHub(), monkeypatch)
+    run_id = str(run.id)
+    with pytest.raises(ApplicationError):
+        await activities._refuse(run_id, "Reconnect your GitHub account")
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "Reconnect your GitHub account",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "ApplicationError: Reconnect your GitHub account",
+        }
+    )
+    assert database.failed == "Reconnect your GitHub account"
+    assert database.failed_fields["error_kind"] == "needs_you"
+    assert database.failed_fields["error_action"] == "integrations"

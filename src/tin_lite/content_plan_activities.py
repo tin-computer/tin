@@ -7,6 +7,7 @@ import json
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import NoReturn
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
@@ -18,6 +19,7 @@ from temporalio.exceptions import ApplicationError
 from tin_lite import content_plan as legacy
 from tin_lite import content_plan_agent as agent
 from tin_lite import content_plan_editorial as editorial
+from tin_lite.billing_contracts import BillingError
 from tin_lite.content_plan import (
     KEY,
     check_inputs,
@@ -46,12 +48,23 @@ from tin_lite.content_plan_sources import (
     site_signals,
 )
 from tin_lite.content_programs import ContentPrograms, decoded
+from tin_lite.failures import (
+    billing_refusal,
+    classify,
+    failure_projection,
+    split_failure_input,
+)
+from tin_lite.failures import detail as failure_detail
 from tin_lite.model_providers import MessageRole, ModelMessage, ModelRequest
 from tin_lite.model_usage import model_usage_scope
 from tin_lite.organic_audit import canonical_json, digest
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.technical_fix import fetch_page
 from tin_lite.workflow_evidence import integration_inventory
+
+FAILURE_FALLBACK = (
+    "Content planning could not finish. Saved work and pending revision holds remain recoverable."
+)
 
 
 def legacy_style_path():
@@ -223,6 +236,10 @@ class ContentPlanActivities:
                             ),
                             timeout_seconds=MODEL_TIMEOUT_SECONDS,
                         )
+            except BillingError:
+                # Billing refused the reservation before anything was sent; guarded() says
+                # which refusal it was.
+                raise
             except Exception as exc:
                 raise ValueError(
                     "The model result is unconfirmed; no replacement was purchased."
@@ -429,7 +446,6 @@ class ContentPlanActivities:
             )
         documents = {path: content.encode() for path, content in brief["documents"].items()}
         revision = await self.publish_brief(run, project, documents)
-        from tin_lite.billing_contracts import BillingError
         from tin_lite.run_service import (
             PrerequisiteError,
             WorkflowExecutorUnavailableError,
@@ -481,8 +497,10 @@ class ContentPlanActivities:
                 _prepare_only=True,
                 _billing_parent_run_id=run.id if getattr(self.db, "billing", None) else None,
             )
+        except BillingError:
+            # Credits or limits stopped the agent's start; guarded() says which refusal.
+            raise
         except (
-            BillingError,
             PrerequisiteError,
             WorkflowExecutorUnavailableError,
             WorkflowInputError,
@@ -603,12 +621,26 @@ class ContentPlanActivities:
                 },
             )
             raise ApplicationError("Content plan validation failed.", non_retryable=True) from None
+        except BillingError as exc:
+            await self.refuse(run_id, billing_refusal(exc), exc)
         except ValueError as exc:
-            # Only Tin-owned validation messages, never SDK exceptions or model content.
-            await self.save(run_id, "failure", {"summary": str(exc)[:500]})
-            raise ApplicationError(
-                "Content planning could not validate or prepare this run.", non_retryable=True
-            ) from None
+            # Only Tin's own sentences (classify), never parser, SDK or model text.
+            await self.refuse(run_id, classify(exc), exc)
+
+    async def refuse(self, run_id, failure, exc) -> NoReturn:
+        """Save what stopped the plan for content_plan_failure, then stop without retrying.
+        An internal cause saves only the operator detail; the founder reads the fallback."""
+        saved = {"kind": failure.kind, "detail": failure_detail(exc)}
+        if failure.kind != "internal":
+            saved["summary"] = failure.message[:500]
+        if failure.action:
+            saved["action"] = failure.action
+        await self.save(run_id, "failure", saved)
+        raise ApplicationError(
+            "Content planning could not validate or prepare this run.",
+            failure.details(),
+            non_retryable=True,
+        ) from None
 
     async def execute(self, run_id, *, research_only=False):
         run = await self.active(run_id)
@@ -1127,13 +1159,14 @@ class ContentPlanActivities:
                     )
 
     @activity.defn
-    async def content_plan_failure(self, run_id: str):
+    async def content_plan_failure(self, value: str | dict):
+        run_id, passed = split_failure_input(value)
         failure = await self.saved(run_id, "failure") or {}
-        await self.db.project_failure(
-            run_id=UUID(run_id),
-            error_message=failure.get(
-                "summary",
-                "Content planning could not finish. Saved work and pending revision holds "
-                "remain recoverable.",
-            ),
-        )
+        summary = failure.get("summary")
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=summary)
+        if summary and failure.get("kind") in ("needs_you", "transient"):
+            # The saved record names its kind, also for histories that pass only the run ID.
+            projection.update(error_kind=failure["kind"], error_action=failure.get("action"))
+        if isinstance(failure.get("detail"), str):
+            projection["error_detail"] = failure["detail"]
+        await self.db.project_failure(run_id=UUID(run_id), **projection)

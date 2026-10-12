@@ -28,6 +28,7 @@ from tin_lite.domain import (
     EffectReceipt,
 )
 from tin_lite.e2b_runtime import E2BRuntime, SandboxProcedureInput
+from tin_lite.failures import TRANSIENT_MESSAGE
 from tin_lite.integrations import GitHubOpenPullRequestEvidence, GitHubRepositoryBundle
 from tin_lite.procedures import (
     GITHUB_PULL_REQUEST_RESULT,
@@ -936,6 +937,7 @@ async def test_procedure_failure_projects_sanitized_effect_error() -> None:
         async def project_failure(self, **values):
             assert values["run_id"] == run_id
             self.projected_error = values["error_message"]
+            self.projected_detail = values.get("error_detail")
 
         async def release_lease(self, requested_id):
             assert requested_id == run_id
@@ -965,7 +967,9 @@ async def test_procedure_failure_projects_sanitized_effect_error() -> None:
         {"run_id": str(run_id), "reason": "ActivityError: workflow failed"}
     )
 
-    assert database.projected_error == "ReadError: operation failed"
+    # The receipt's raw cause stays for operators; the founder reads that it was temporary.
+    assert database.projected_error == TRANSIENT_MESSAGE
+    assert database.projected_detail == "ReadError: operation failed"
     assert database.released is True
     assert sandboxes.killed == "sandbox-1"
 

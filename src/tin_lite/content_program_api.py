@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tin_lite.auth import AuthContext, require_user
 from tin_lite.content_programs import ContentPrograms
+from tin_lite.failures import public_error_text
 from tin_lite.workflow_prerequisites import PrerequisiteError
 
 router = APIRouter(prefix="/api/projects/{project_id}/content-programs")
@@ -110,7 +111,7 @@ async def stop(
             actor=user.clerk_user_id,
         )
     except (LookupError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.get("/sources")
@@ -140,7 +141,7 @@ async def facts(project_id: UUID, program_id: UUID, request: Request, user: Auth
         await programs.configured(project_id, program_id)
         return await programs.facts(program_id)
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=public_error_text(exc)) from exc
 
 
 @router.get("/{program_id}/plan")
@@ -179,7 +180,7 @@ async def save(
             )
         )
     except (LookupError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.post("/{program_id}/revisions")
@@ -203,7 +204,7 @@ async def revise(
     except PrerequisiteError as exc:
         raise HTTPException(status_code=exc.status, detail=exc.diagnostic()) from exc
     except (LookupError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.post("/{program_id}/revisions/{revision_id}")
@@ -226,4 +227,4 @@ async def resolve(
             expected_revision=payload.expected_revision,
         )
     except (LookupError, ValueError, RuntimeError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc

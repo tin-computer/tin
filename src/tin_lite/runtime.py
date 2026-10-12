@@ -37,6 +37,7 @@ from tin_lite.codex_api_relay import CodexAPIRelay
 from tin_lite.content_plan_activities import ContentPlanActivities
 from tin_lite.db import Database
 from tin_lite.e2b_runtime import E2BRuntime
+from tin_lite.failure_interceptor import FailureClassificationInterceptor
 from tin_lite.growth_onboarding_activities import GrowthOnboardingActivities
 from tin_lite.growth_plan_activities import GrowthPlanActivities
 from tin_lite.integrations import IntegrationService
@@ -534,6 +535,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             max_concurrent_activities=2,
             graceful_shutdown_timeout=graceful_shutdown,
             activities=[by_name[name] for name in sorted(COLLECTION_ACTIVITIES)],
+            interceptors=[FailureClassificationInterceptor()],
         ),
         Worker(
             temporal,
@@ -546,7 +548,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             workflows=registered_workflows(),
             workflow_runner=workflow_runner(),
             activities=[fn for name, fn in by_name.items() if name not in COLLECTION_ACTIVITIES],
-            interceptors=[ActivityLaneInterceptor()],
+            interceptors=[ActivityLaneInterceptor(), FailureClassificationInterceptor()],
         ),
         Worker(
             temporal,
@@ -554,6 +556,7 @@ async def build_runtime(settings: Settings) -> RuntimeServices:
             max_concurrent_activities=4,
             graceful_shutdown_timeout=graceful_shutdown,
             activities=[by_name[name] for name in sorted(TRUSTED_ACTIVITIES)],
+            interceptors=[FailureClassificationInterceptor()],
         ),
     )
     luna = None

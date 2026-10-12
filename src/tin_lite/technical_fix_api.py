@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.failures import public_error_text
 from tin_lite.technical_fix_sources import TechnicalFixSources
 
 router = APIRouter(prefix="/api/projects/{project_id}/technical-fixes")
@@ -58,7 +59,7 @@ async def stop_control(request, project_id, run_id, user, control):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="run not found") from exc
     except (ValueError, SideEffectConflictError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 @router.get("/runs/{run_id}/live")

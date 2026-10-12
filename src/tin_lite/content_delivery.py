@@ -133,13 +133,15 @@ def adaptation_refusal(exc):
     here is Tin's own; provider payloads never reach the receipt.
     """
     from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import billing_refusal
     from tin_lite.integrations import IntegrationAuthorizationError, IntegrationNotConfiguredError
     from tin_lite.run_service import WorkflowExecutorUnavailableError
     from tin_lite.workflow_prerequisites import PrerequisiteError
 
     if isinstance(exc, BillingError):
         return (
-            f"Tin could not start adapting this page. {exc} The approved page stays in Tin; "
+            f"Tin could not start adapting this page. {billing_refusal(exc).message} "
+            "The approved page stays in Tin; "
             "retry delivery or use Prepare PR once that is fixed."
         )[:500]
     if isinstance(

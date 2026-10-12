@@ -487,3 +487,99 @@ async def test_prepare_refuses_without_a_live_campaign_or_with_another_account()
     )
     with pytest.raises(ApplicationError, match="not the one the campaign lives in"):
         await activities.prepare(str(db.run.id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", ["run_limit", "project_limit", "insufficient_funds"])
+async def test_a_billing_limit_on_a_model_call_reads_as_billing_not_unconfirmed(code):
+    from tin_lite.billing_contracts import BillingError
+
+    activities, db, *_rest = fixture()
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    activities.router.generate.side_effect = BillingError(code, "Private diagnostic")
+    for _ in range(2):
+        with pytest.raises(ApplicationError):
+            await activities._model(run_id, "classify", "system", "user", {}, 100, "low")
+    assert activities.router.generate.await_count == 1
+    receipt = db.effects[activities.key(run_id, "model:classify")].result
+    assert receipt["status"] == "unavailable" and receipt["reason"] == code
+    failure = db.effects[activities.key(run_id, "failure")].result
+    assert failure["code"] == "billing_refused" and failure["reason"] == code
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert "Billing" in kwargs["error_message"]
+    assert "could not be confirmed" not in kwargs["error_message"]
+    assert "Private diagnostic" not in kwargs["error_message"]
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "billing"
+
+
+@pytest.mark.asyncio
+async def test_an_internal_billing_code_does_not_claim_a_spending_limit():
+    from tin_lite.billing_contracts import BillingError
+
+    activities, db, *_rest = fixture()
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    activities.router.generate.side_effect = BillingError("unpriced_model", "gpt-x unpriced")
+    with pytest.raises(ApplicationError):
+        await activities._model(run_id, "brief", "system", "user", {}, 100, "low")
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert "spending limit" not in kwargs["error_message"]
+    assert "unpriced" not in kwargs["error_message"]
+    assert kwargs["error_kind"] == "internal"
+
+
+@pytest.mark.asyncio
+async def test_a_google_ads_link_to_reconnect_is_named_and_not_retried():
+    from tin_lite.integrations import IntegrationAuthorizationError
+
+    integrations = FakeIntegrations()
+    activities, db, *_rest = fixture(integrations=integrations)
+    run_id = str(db.run.id)
+    await activities.prepare(run_id)
+    calls = AsyncMock(side_effect=IntegrationAuthorizationError("integration is not connected"))
+    integrations.google_ads_call = calls
+    for _ in range(2):
+        with pytest.raises(ApplicationError) as raised:
+            await activities.read(run_id)
+        assert raised.value.non_retryable
+    assert calls.await_count == len(READS)  # the retry replays receipts
+    receipt = db.effects[activities.key(run_id, "read:campaign_7d")].result
+    assert receipt["status"] == "unavailable" and receipt["reason"] == "google_ads_reconnect"
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert "Reconnect Google Ads" in kwargs["error_message"]
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "integrations"
+
+
+@pytest.mark.asyncio
+async def test_failure_input_shapes():
+    from tin_lite.paid_ads_monitor_activities import FAILURE_FALLBACK
+
+    activities, db, *_rest = fixture()
+    run_id = str(db.run.id)
+    await activities.failure(run_id)
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] is None
+
+    await activities.failure(
+        {
+            "run_id": run_id,
+            "reason": "Google Ads needs to be reconnected.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: expired",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == "Google Ads needs to be reconnected."
+    assert kwargs["error_kind"] == "needs_you" and kwargs["error_action"] == "integrations"
+
+    await activities.failure(
+        {"run_id": run_id, "reason": "x", "kind": "internal", "detail": "KeyError: 'scope'"}
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"] == FAILURE_FALLBACK and kwargs["error_kind"] == "internal"
+    assert kwargs["error_detail"] == "KeyError: 'scope'"

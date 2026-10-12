@@ -22,6 +22,7 @@ import httpx
 from tin_lite.billing_contracts import BillingError, digest
 from tin_lite.db import Database
 from tin_lite.domain import STUDIO_PROVIDER, STUDIO_VOICE_CAPABILITY, StudioUsage
+from tin_lite.failures import billing_refusal
 from tin_lite.settings import Settings
 from tin_lite.studio_billing import CARD, billing_event
 
@@ -167,7 +168,7 @@ class StudioService:
                     conn, execution_key=execution_key, error_message=str(exc)
                 )
                 if isinstance(exc, BillingError):
-                    raise StudioError(str(exc)) from exc
+                    raise StudioError(billing_refusal(exc).message) from exc
                 raise
             except Exception as exc:
                 await self._db.fail_effect(

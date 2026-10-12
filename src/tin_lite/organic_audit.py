@@ -401,6 +401,7 @@ AUDIT_GAP_REASONS = {
     "provider_result_unavailable": "The provider request outcome could not be confirmed.",
     "unconfirmed_previous_request": "An earlier request was not confirmed and was not repeated.",
     "spending_limit": "The spending limit prevented this request.",
+    "billing_refused": "A billing check refused this request, so it was not bought.",
     "model_not_configured": "The model provider was not configured.",
     "classification_exceeded_evidence_budget": (
         "The scored result exceeded the evidence size limit."

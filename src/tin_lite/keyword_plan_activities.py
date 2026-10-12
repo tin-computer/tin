@@ -22,6 +22,13 @@ from tin_lite import keyword_plan_v6 as v6
 from tin_lite import keyword_plan_v7 as v7
 from tin_lite import keyword_plan_v8 as v8
 from tin_lite import keyword_plan_v9 as v9
+from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.integrations import GSC_PROVIDER
 from tin_lite.keyword_data import ENDPOINTS, KeywordData, request_for
 from tin_lite.keyword_plan import (
@@ -306,19 +313,16 @@ class KeywordPlanActivities:
                     ):
                         value = await call()
                     result = {"status": "completed", "value": value}
+                except BillingError as exc:
+                    # Billing refused before the call was bought; keep only its code.
+                    result = {"status": "unavailable", "reason": exc.code}
                 except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
                     # Raw SDK/provider errors, headers and credentials never enter evidence;
                     # a model call keeps only a fixed label for why it failed.
-                    result = (
-                        {"status": "unavailable", "reason": "spending_limit"}
-                        if isinstance(exc, BillingError)
-                        else {
-                            "status": "unknown",
-                            "reason": classify(exc) if classify else "provider_result_unavailable",
-                        }
-                    )
+                    result = {
+                        "status": "unknown",
+                        "reason": classify(exc) if classify else "provider_result_unavailable",
+                    }
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
             return result
@@ -393,8 +397,20 @@ class KeywordPlanActivities:
             await self._save(
                 run_id,
                 "failure",
-                {"code": "model_unavailable", "stage": stage, "reason": result.get("reason")},
+                {
+                    "code": "model_unavailable",
+                    "stage": stage,
+                    "reason": result.get("reason"),
+                    "status": result["status"],
+                },
             )
+            billing = saved_billing_refusal(result)
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                )
             raise ApplicationError(
                 "The keyword model result was unavailable; no replacement was purchased.",
                 non_retryable=True,
@@ -1001,7 +1017,12 @@ class KeywordPlanActivities:
             await self._save(
                 run_id,
                 "failure",
-                {"code": "model_unavailable", "stage": "triage", "reason": result.get("reason")},
+                {
+                    "code": "model_unavailable",
+                    "stage": "triage",
+                    "reason": result.get("reason"),
+                    "status": result["status"],
+                },
             )
             raise ScreeningStopped
         try:
@@ -1027,6 +1048,17 @@ class KeywordPlanActivities:
             )
         except ScreeningStopped:
             failure = await self._result(run_id, "failure") or {}
+            billing = (
+                saved_billing_refusal(failure)
+                if failure.get("code") == "model_unavailable"
+                else None
+            )
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                ) from None
             raise ApplicationError(
                 "Keyword screening stopped at its output limit; no further batch was bought."
                 if failure.get("code") == "output_truncated"
@@ -1380,17 +1412,22 @@ class KeywordPlanActivities:
             )
 
     @activity.defn
-    async def keyword_failure(self, run_id: str) -> None:
+    async def keyword_failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         failure = await self._result(run_id, "failure") or {}
         message = None
+        billing = None
         if failure.get("code") == "validation":
             message = (
                 "Keyword planning stopped because the saved model assessment failed "
                 "validation. No plan was published; saved research was retained."
             )
         elif failure.get("code") == "model_unavailable":
+            billing = saved_billing_refusal(failure)
             message = (
-                f"Keyword planning stopped because {model_failure_cause(failure)}. "
+                f"{billing.message} Saved research was retained; no replacement call was purchased."
+                if billing is not None
+                else f"Keyword planning stopped because {model_failure_cause(failure)}. "
                 "Saved research was retained; no replacement call was purchased."
             )
         elif failure.get("code") == "output_truncated":
@@ -1405,15 +1442,30 @@ class KeywordPlanActivities:
                 f"output-token limit, and {retry}. Completed batches and the paid research were "
                 "kept; retrying the run reuses the research instead of buying it again."
             )
-        await self.db.project_failure(
-            run_id=UUID(run_id),
-            error_message=message
-            or (
-                "Keyword planning could not finish. Check the selected inputs, "
-                "provider configuration, and spending limit. Saved calls were retained; "
-                "uncertain requests were not purchased again."
-            ),
-        )
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=message)
+        if billing is not None:
+            projection.update(error_kind=billing.kind, error_action=billing.action)
+        await self.db.project_failure(run_id=UUID(run_id), **projection)
+
+
+FAILURE_FALLBACK = (
+    "Keyword planning could not finish. Check the selected inputs, "
+    "provider configuration, and spending limit. Saved calls were retained; "
+    "uncertain requests were not purchased again."
+)
+
+
+def saved_billing_refusal(result: dict) -> Failure | None:
+    """The founder wording for a billing refusal a receipt saved by its code. `spending_limit`
+    is the run's own reservation ceiling (and every billing refusal before codes were kept),
+    so it keeps its fixed wording. Failure receipts from before carry no status and never a
+    billing code."""
+    reason = result.get("reason")
+    if result.get("status") != "unavailable" or not isinstance(reason, str):
+        return None
+    if reason == "spending_limit":
+        return None
+    return billing_refusal(BillingError(reason, ""))
 
 
 def model_failure_cause(failure: dict) -> str:

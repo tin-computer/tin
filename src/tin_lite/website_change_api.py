@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from tin_lite import website_change
 from tin_lite.auth import AuthContext, require_user
+from tin_lite.failures import public_error_text
 
 router = APIRouter(prefix="/api/projects/{project_id}/website-changes")
 settings_router = APIRouter(prefix="/api/projects/{project_id}/protected-paths")
@@ -77,7 +78,7 @@ async def _decide(project_id, change_id, action, payload, request, user):
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="change not found") from exc
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     if action == "approve" and row["source"] == "feedback":
         from tin_lite import website_change_feedback
 
@@ -154,9 +155,9 @@ async def preflight_changes(
             inputs=inputs,
         )
     except TechnicalFixError as exc:
-        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=exc.status_code, detail=public_error_text(exc)) from exc
     except (ValueError, IntegrationError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
 
 
 class ProtectedPaths(BaseModel):
@@ -196,6 +197,6 @@ async def save_protected_paths(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail="project not found") from exc
     except website_change.WebsiteChangeConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=public_error_text(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=public_error_text(exc)) from exc

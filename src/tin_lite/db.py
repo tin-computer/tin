@@ -5264,6 +5264,9 @@ class Database:
         canonical_commit_sha: str | None = None,
         artifact_path: str | None = None,
         artifact_ref: str | None = None,
+        error_kind: str | None = None,
+        error_action: str | None = None,
+        error_detail: str | None = None,
     ) -> None:
         """A launch that cannot proceed ends failed with a founder-readable reason; when a
         setup note was published first it stays linked as the run's artifact."""
@@ -5272,6 +5275,7 @@ class Database:
                 """
                 UPDATE workflow_runs
                 SET status = 'failed', error_message = $2,
+                    error_kind = $6, error_action = $7, error_detail = $8,
                     canonical_commit_sha = COALESCE($3, canonical_commit_sha),
                     artifact_path = COALESCE($4, artifact_path),
                     artifact_ref = COALESCE($5, artifact_ref),
@@ -5286,6 +5290,9 @@ class Database:
                 canonical_commit_sha,
                 artifact_path,
                 artifact_ref,
+                error_kind,
+                (error_action or None) and error_action[:40],
+                (error_detail or None) and error_detail[:2000],
             )
             if row is None:
                 return
@@ -7946,13 +7953,38 @@ class Database:
                 artifact_path,
             )
 
-    async def project_failure(self, *, run_id: UUID, error_message: str) -> None:
+    async def project_failure(
+        self,
+        *,
+        run_id: UUID,
+        error_message: str,
+        error_kind: str | None = None,
+        error_action: str | None = None,
+        error_detail: str | None = None,
+    ) -> None:
+        """Mark a run failed. A run that already failed with a message keeps it: the first
+        failure written is the specific one, and a later generic projection must not hide it."""
         async with self.pool.acquire() as conn, conn.transaction():
             row = await conn.fetchrow(
                 """
                 UPDATE workflow_runs
                 SET status = 'failed',
-                    error_message = $2,
+                    error_message = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_message
+                        ELSE $2
+                    END,
+                    error_kind = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_kind
+                        ELSE $3
+                    END,
+                    error_action = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_action
+                        ELSE $4
+                    END,
+                    error_detail = CASE
+                        WHEN status = 'failed' AND error_message IS NOT NULL THEN error_detail
+                        ELSE $5
+                    END,
                     task_phase = CASE
                         WHEN executor = 'project.task' THEN 'failed'
                         ELSE task_phase
@@ -7968,6 +8000,9 @@ class Database:
                 """,
                 run_id,
                 error_message[:2000],
+                error_kind,
+                (error_action or None) and error_action[:40],
+                (error_detail or None) and error_detail[:2000],
             )
             if row is None:
                 return
@@ -8432,6 +8467,8 @@ def _run(row: asyncpg.Record) -> WorkflowRun:
             else None
         ),
         error_message=row["error_message"],
+        error_kind=row.get("error_kind"),
+        error_action=row.get("error_action"),
         input=_json_object(row.get("input", {}), field="run input"),
         task_title=row.get("task_title"),
         task_phase=row.get("task_phase"),

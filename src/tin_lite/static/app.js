@@ -2445,6 +2445,17 @@ function emailCampaignRunDetail(run, detail) {
   </section>`;
 }
 
+// A failure the founder can fix links to where it is fixed (failures.py error_action).
+const RUN_FAILURE_FIX_VIEWS = { integrations: ["integrations", "Open Integrations"], billing: ["billing", "Open Billing"] };
+
+function runFailureFixLink(run) {
+  if (run.error_kind !== "needs_you") return "";
+  const fix = RUN_FAILURE_FIX_VIEWS[run.error_action];
+  return fix && ALLOWED_VIEWS.has(fix[0])
+    ? ` <a href="/${fix[0]}" data-run-failure-fix="${fix[0]}">${fix[1]} →</a>`
+    : "";
+}
+
 function systemRunDetailHtml(run, includeClose = true) {
   const workflow = workflowForRun(run);
   const available = availableRunOutput(run);
@@ -2468,7 +2479,7 @@ function systemRunDetailHtml(run, includeClose = true) {
       <span><code>result</code><strong>${output}</strong></span>
     </div>
     ${selectedSources ? `<div class="system-run-facts is-sources">${selectedSources}</div>` : ""}
-    ${run.error_message ? `<p class="system-run-error">${escapeHtml(run.error_message)}</p>` : ""}
+    ${run.error_message ? `<p class="system-run-error">${escapeHtml(run.error_message)}${runFailureFixLink(run)}</p>` : ""}
     ${run.status === "failed" && run.progress_summary ? `<p class="system-run-error">Last update before it stopped: ${escapeHtml(run.progress_summary)}</p>` : ""}
     ${run.retained_output && (!run.error_message || run.retained_output.reason === "execution_interrupted") ? `<p class="system-run-error">${escapeHtml(retainedOutputMessage(run))}</p>` : ""}
     ${run.workflow_name === "outreach.email_campaign" ? emailCampaignRunDetail(run, detail) : ""}
@@ -2997,6 +3008,12 @@ function bindRunDetailControls(root) {
   });
   root.querySelectorAll("[data-run-detail-artifact]").forEach((button) => {
     button.addEventListener("click", () => openRunArtifact(button.dataset.runDetailArtifact, state.view));
+  });
+  root.querySelectorAll("[data-run-failure-fix]").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      navigate(link.dataset.runFailureFix);
+    });
   });
   root.querySelectorAll("[data-campaign-plan]").forEach((button) => {
     button.addEventListener("click", () => {

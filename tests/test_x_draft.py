@@ -305,3 +305,87 @@ async def test_discarding_the_voice_guide_stops_the_draft_instead_of_failing_it(
         "SELECT count(*) FROM activity_events WHERE run_id=$1 AND event_type='x_draft_stopped'",
         run.id,
     )
+
+
+@pytest.mark.parametrize(
+    ("error", "kind"),
+    [
+        ("billing", "needs_you"),
+        ("prerequisite", "needs_you"),
+        ("input", "needs_you"),
+    ],
+)
+async def test_a_refused_child_start_says_why_and_is_not_retried(
+    publication_db, monkeypatch, error, kind
+):
+    # These escaped as raw exceptions, retried, and the run said to check a voice run.
+    import tin_lite.run_service as run_service
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import classify
+    from tin_lite.workflow_inputs import WorkflowInputError
+    from tin_lite.workflow_prerequisites import PrerequisiteError
+
+    refusal = {
+        "billing": BillingError("insufficient_funds", "Balance is $0.00."),
+        "prerequisite": PrerequisiteError("missing", "Finish Start here first."),
+        "input": WorkflowInputError("Choose an X account."),
+    }[error]
+    f = await fixture(publication_db, connected=True)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    monkeypatch.setattr(run_service, "start_workflow_run", AsyncMock(side_effect=refusal))
+    with pytest.raises(ApplicationError) as raised:
+        await step(f, run, "style")
+    assert raised.value.non_retryable and raised.value.__cause__ is refusal
+    failure = classify(raised.value)
+    assert failure.kind == kind
+    if error == "billing":
+        assert raised.value.message.startswith("Your Tin credits ran out.")
+    assert await f.activities.saved(run.id, "style") is None
+    # No child was started, so the run does not point at one.
+    await f.activities.failure(str(run.id))
+    done = await f.db.get_run(run.id)
+    assert done.error_message.startswith("X drafting could not finish.")
+    assert "voice" not in done.error_message
+
+
+async def test_failure_shows_the_passed_cause_and_names_started_children(publication_db):
+    f = await fixture(publication_db, connected=True)
+    run = await start(f)
+    await f.activities.prepare(str(run.id))
+    await step(f, run, "style")
+
+    async def project(argument):
+        await f.db.pool.execute(
+            "UPDATE workflow_runs SET status='running', error_message=NULL WHERE id=$1", run.id
+        )
+        await f.activities.failure(argument)
+        return await f.db.get_run(run.id)
+
+    done = await project(str(run.id))
+    assert "Check the voice run in Activity." in done.error_message
+    done = await project(
+        {
+            "run_id": str(run.id),
+            "reason": "Reconnect X under Integrations.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: Reconnect X under Integrations.",
+        }
+    )
+    assert done.error_message == "Reconnect X under Integrations."
+    assert (done.error_kind, done.error_action) == ("needs_you", "integrations")
+    done = await project(
+        {
+            "run_id": str(run.id),
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'run_id'",
+        }
+    )
+    assert "Check the voice run in Activity." in done.error_message
+    assert done.error_kind == "internal"
+    assert (
+        await f.db.pool.fetchval("SELECT error_detail FROM workflow_runs WHERE id=$1", run.id)
+        == "KeyError: 'run_id'"
+    )

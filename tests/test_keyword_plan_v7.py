@@ -343,7 +343,12 @@ async def test_v6_pinned_runs_keep_one_call_and_fail_without_a_retry():
         await activities.keyword_collect(run_id)
     assert [tokens for tokens, _ in calls] == [5000]
     failure = await activities._result(run_id, "failure")
-    assert failure == {"code": "model_unavailable", "stage": "triage", "reason": "output_truncated"}
+    assert failure == {
+        "code": "model_unavailable",
+        "stage": "triage",
+        "reason": "output_truncated",
+        "status": "unknown",
+    }
     assert await activities._result(run_id, "research") is None
     await activities.keyword_failure(run_id)
     message = db.project_failure.await_args.kwargs["error_message"]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 from dataclasses import asdict
@@ -13,7 +14,9 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import style_capture as style
+from tin_lite.billing_contracts import BillingError
 from tin_lite.capture_revisions import approved_style_artifact, contract
+from tin_lite.failures import billing_refusal, failure_projection, split_failure_input
 from tin_lite.model_providers import (
     DEFAULT_TIMEOUT_SECONDS,
     MessageRole,
@@ -177,6 +180,17 @@ class StyleCaptureActivities:
                         "request_id": result.request_id,
                     },
                 )
+            except BillingError as exc:
+                # A billing refusal says what stopped the call. The receipt stays started, so a
+                # retry still never buys a replacement.
+                message = billing_refusal(exc).message
+                with contextlib.suppress(Exception):
+                    await self.db.save_effect_progress(
+                        conn,
+                        execution_key=key,
+                        result={"failure_code": exc.code, "failure_message": message},
+                    )
+                raise ApplicationError(message, non_retryable=True) from exc
             except Exception:
                 raise ApplicationError(
                     "The style model request could not be confirmed; no replacement was purchased.",
@@ -437,17 +451,27 @@ class StyleCaptureActivities:
                 raise
 
     @activity.defn(name="style_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, argument: str | dict):
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == style.KEY:
-            # A rejected source file names itself and its problem; keep those words.
+            # A rejected source file names itself and its problem; keep those words. A
+            # refused model call saved what stopped it on its receipt.
             source = await self.db.get_effect(f"{run.id}:style_context")
+            model = await self.db.get_effect(f"{run.id}:style_model")
+            saved = (
+                source.error_message
+                if source is not None and source.status == "failed" and source.error_message
+                else (model.result or {}).get("failure_message")
+                if model is not None and model.status == "started"
+                else None
+            )
             await self.db.project_failure(
                 run_id=run.id,
-                error_message=(
-                    source.error_message
-                    if source is not None and source.status == "failed" and source.error_message
-                    else "Style capture could not confirm completion. "
-                    "Check the current guide and any saved result before trying again."
+                **failure_projection(
+                    passed,
+                    "Style capture could not confirm completion. "
+                    "Check the current guide and any saved result before trying again.",
+                    saved=saved if isinstance(saved, str) and saved else None,
                 ),
             )

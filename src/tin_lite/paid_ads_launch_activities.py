@@ -16,6 +16,13 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import ads_currency, paid_ads, paid_ads_launch
+from tin_lite.billing_contracts import BillingError
+from tin_lite.failures import (
+    Failure,
+    billing_refusal,
+    failure_projection,
+    split_failure_input,
+)
 from tin_lite.google_ads_requests import (
     QUERIES,
     SUBSCRIPTION_TYPES,
@@ -33,7 +40,9 @@ from tin_lite.integrations import (
     GITHUB_PROVIDER,
     GitHubFileChange,
     GoogleAdsCallError,
+    IntegrationAuthorizationError,
     IntegrationError,
+    IntegrationNotConfiguredError,
     ads_health_summary,
 )
 from tin_lite.model_providers import (
@@ -76,9 +85,39 @@ def _rows(result: dict) -> list[dict]:
     return [row for row in rows if isinstance(row, dict)]
 
 
+RECONNECT = "google_ads_reconnect"
+
+
+def _billing(status: str, reason: object) -> Failure | None:
+    """The founder wording for a billing refusal a receipt saved by its code. `spending_limit`
+    is the run's own reservation ceiling and the reconnect label is not billing."""
+    if status != "unavailable" or not reason or reason in {"spending_limit", RECONNECT}:
+        return None
+    return billing_refusal(BillingError(str(reason), ""))
+
+
+def _refusal(result: dict) -> Failure | None:
+    """What the founder can do about a request Tin refused before contacting Google Ads."""
+    if result.get("status") == "unavailable" and result.get("reason") == RECONNECT:
+        return Failure("needs_you", RECONNECT, action="integrations")
+    return _billing(str(result.get("status")), result.get("reason"))
+
+
 def _failed(result: dict, action: str, outcome: str) -> str:
     """Name the side that failed: Tin's own gate, a Google Ads refusal, or a lost answer."""
     if result.get("status") == "unavailable":
+        if result.get("reason") == RECONNECT:
+            return (
+                f"Tin could not use the linked Google Ads account for {action}, so Google Ads "
+                f"was not contacted; {outcome}. Reconnect Google Ads under Integrations, then "
+                "try again."
+            )
+        billing = _billing("unavailable", result.get("reason"))
+        if billing is not None:
+            return (
+                f"Tin could not authorize {action}, so Google Ads was not contacted; "
+                f"{outcome}. {billing.message}"
+            )
         return (
             f"Tin could not authorize {action} ({result.get('reason') or 'unavailable'}), so "
             f"Google Ads was not contacted; {outcome}. Check the project's spending limits, "
@@ -199,16 +238,17 @@ class PaidAdsLaunchActivities:
                     ):
                         value = await call()
                     result = {"status": "completed", "value": value}
-                except Exception as exc:
-                    from tin_lite.billing_contracts import BillingError
-
-                    # Raw provider errors, headers and credentials never enter evidence.
+                except BillingError as exc:
                     # A billing refusal keeps its fixed code so the failure names it.
-                    result = (
-                        {"status": "unavailable", "reason": exc.code}
-                        if isinstance(exc, BillingError)
-                        else {"status": "unknown", "reason": "provider_result_unavailable"}
-                    )
+                    result = {"status": "unavailable", "reason": exc.code}
+                except (IntegrationAuthorizationError, IntegrationNotConfiguredError):
+                    if needs != "google_ads":
+                        raise
+                    # Refused before anything reached Google Ads: the link needs the founder.
+                    result = {"status": "unavailable", "reason": RECONNECT}
+                except Exception:
+                    # Raw provider errors, headers and credentials never enter evidence.
+                    result = {"status": "unknown", "reason": "provider_result_unavailable"}
             result = {"request_sha256": fingerprint, **saved, **result}
             await self.db.complete_effect(conn, execution_key=key, result=result)
             if activity.in_activity():
@@ -259,11 +299,26 @@ class PaidAdsLaunchActivities:
             needs="model",
         )
         if result["status"] != "completed":
-            await self._save(run_id, "failure", {"code": "model_unavailable", "stage": step})
-            raise ApplicationError(
-                "A model result was unavailable; no replacement was purchased.",
-                non_retryable=True,
-            )
+            reason = result.get("reason")
+            billing = _billing(result["status"], reason)
+            if reason == "spending_limit":
+                code = "spending_limit"
+            elif billing is not None:
+                code = "billing_refused"
+            else:
+                code = "model_unavailable"
+            await self._save(run_id, "failure", {"code": code, "stage": step, "reason": reason})
+            if billing is not None:
+                raise ApplicationError(
+                    f"{billing.message} No replacement was purchased.",
+                    billing.details(),
+                    non_retryable=True,
+                )
+            message = {
+                "spending_limit": "The launch's spending limit stopped a model call",
+                "model_unavailable": "A model result was unavailable",
+            }[code]
+            raise ApplicationError(f"{message}; no replacement was purchased.", non_retryable=True)
         if result["value"].get("unusable"):
             raise UnusableModelResult(result["value"]["unusable"])
         return result["value"]["data"]
@@ -461,8 +516,11 @@ class PaidAdsLaunchActivities:
             ],
         }
         if reads["account"].get("status") != "completed" or reads["account"].get("error"):
+            text = _failed(reads["account"], "the account read", "nothing was changed")
+            refusal = _refusal(reads["account"])
             raise ApplicationError(
-                _failed(reads["account"], "the account read", "nothing was changed"),
+                text,
+                *([_carried(refusal, text).details()] if refusal else []),
                 non_retryable=reads["account"].get("error") is not None,
             )
         await self._save(run_id, "gathered:account", {"status": "completed", "value": account})
@@ -814,9 +872,16 @@ class PaidAdsLaunchActivities:
         else:
             await self._apply_tracking(run_id, draft)
 
-    async def _refuse(self, run_id: str, code: str, text: str):
-        await self._save(run_id, "failure", {"code": "google_ads", "stage": code, "detail": text})
-        raise ApplicationError(text, non_retryable=True)
+    async def _refuse(self, run_id: str, code: str, text: str, refusal: Failure | None = None):
+        value = {"code": "google_ads", "stage": code, "detail": text}
+        if refusal is None:
+            await self._save(run_id, "failure", value)
+            raise ApplicationError(text, non_retryable=True)
+        carried = _carried(refusal, text)
+        await self._save(
+            run_id, "failure", {**value, "kind": carried.kind, "action": carried.action}
+        )
+        raise ApplicationError(text, carried.details(), non_retryable=True)
 
     async def _apply_launch(self, run_id: str, draft: dict) -> None:
         scope = await self._result(run_id, "scope")
@@ -842,7 +907,10 @@ class PaidAdsLaunchActivities:
         )
         if validated.get("status") != "completed" or validated.get("error"):
             await self._refuse(
-                run_id, "validate", _failed(validated, "the plan check", "nothing was created")
+                run_id,
+                "validate",
+                _failed(validated, "the plan check", "nothing was created"),
+                _refusal(validated),
             )
         created = await self._ads(
             run_id, "apply:create", "mutate", {"operations": operations, "validate_only": False}
@@ -886,6 +954,7 @@ class PaidAdsLaunchActivities:
                     run_id,
                     "create",
                     _failed(created, "creating the campaign", "nothing was created"),
+                    _refusal(created),
                 )
             elif created.get("error"):
                 await self._refuse(
@@ -963,6 +1032,7 @@ class PaidAdsLaunchActivities:
                     "the campaign was created and is paused in your account; enable it there "
                     "or run the launch again",
                 ),
+                _refusal(enabled),
             )
         # For an unconfirmed switch this is the earliest it could have started spending.
         enabled_at = datetime.now(UTC).isoformat()
@@ -1033,6 +1103,7 @@ class PaidAdsLaunchActivities:
                             "creating the conversion action",
                             "check the account before running the launch again",
                         ),
+                        _refusal(created),
                     )
                 results = created["value"].get("results") or []
                 resource = (results[0] or {}).get("resourceName") if results else None
@@ -1182,11 +1253,19 @@ class PaidAdsLaunchActivities:
             )
 
     @activity.defn(name="paid_ads_launch_failure")
-    async def failure(self, run_id: str) -> None:
+    async def failure(self, run_ref: str | dict) -> None:
+        run_id, passed = split_failure_input(run_ref)
         run = await self.db.get_run(UUID(run_id))
         if run is None or run.executor != KEY:
             return
         failure = await self._result(run_id, "failure") or {}
+        code = failure.get("code")
+        known = None
+        if code == "billing_refused":
+            known = _billing("unavailable", failure.get("reason"))
+        elif code == "google_ads" and failure.get("kind") in {"needs_you", "transient", "internal"}:
+            action = failure.get("action")
+            known = Failure(failure["kind"], "", action=action if isinstance(action, str) else None)
         message = {
             "validation": (
                 "The Google Ads launch stopped because a model result failed validation. "
@@ -1196,11 +1275,36 @@ class PaidAdsLaunchActivities:
                 "The Google Ads launch stopped because a model result could not be confirmed. "
                 "Nothing was created in Google Ads; no replacement call was purchased."
             ),
+            "spending_limit": (
+                "The Google Ads launch stopped because a model call reached the launch's "
+                "spending limit. Nothing was created in Google Ads; no replacement call was "
+                "purchased."
+            ),
             "google_ads": failure.get("detail")
             or "Google Ads did not accept a request. Check the account before trying again.",
-        }.get(
-            failure.get("code"),
-            "The Google Ads launch stopped before finishing. Check the account before "
-            "trying again.",
+        }.get(code)
+        if code == "billing_refused" and known is not None:
+            message = (
+                f"{known.message} Nothing was created in Google Ads; no replacement call was "
+                "purchased."
+            )
+        projection = failure_projection(passed, FAILURE_FALLBACK, saved=message)
+        if known is not None:
+            projection.update(error_kind=known.kind, error_action=known.action)
+        await self.db.fail_paid_ads_launch(
+            run_id=run.id,
+            message=projection["error_message"],
+            error_kind=projection["error_kind"],
+            error_action=projection["error_action"],
+            error_detail=projection["error_detail"],
         )
-        await self.db.fail_paid_ads_launch(run_id=run.id, message=message)
+
+
+FAILURE_FALLBACK = (
+    "The Google Ads launch stopped before finishing. Check the account before trying again."
+)
+
+
+def _carried(refusal: Failure, text: str) -> Failure:
+    """The refusal's kind and fix with the launch's own sentence."""
+    return Failure(refusal.kind, text, action=refusal.action, code=refusal.code)

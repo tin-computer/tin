@@ -15,7 +15,9 @@ from tin_lite.executor_gates import (
     organic_system_gate,
     paid_ads_gate,
 )
+from tin_lite.failures import public_error_text
 from tin_lite.integrations import (
+    IntegrationAuthorizationError,
     IntegrationError,
     load_pinned_integration_requirements,
 )
@@ -57,6 +59,9 @@ class ContentProgramNotSavedError(WorkflowInputError):
             "schedule. Saving the schedule starts its first run."
         )
         self.inputs = inputs
+
+
+INPUT_FALLBACK = "Tin could not prepare this run's inputs. Nothing you entered caused it."
 
 
 class TemporalStartError(RuntimeError):
@@ -272,7 +277,7 @@ async def start_workflow_run(
                 runtime.database, approval_id, project_id, started_by_clerk_user_id
             )
         except ValueError as exc:
-            raise WorkflowInputError(str(exc)) from None
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
         if not await runtime.database.has_project_access(
             project_id=project_id, clerk_user_id=started_by_clerk_user_id
         ):
@@ -283,7 +288,7 @@ async def start_workflow_run(
         try:
             x_draft.check_inputs(normalized_inputs)
         except ValueError as exc:
-            raise WorkflowInputError(str(exc)) from None
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError("X drafting requires the native model service.")
     if workflow.executor == "social.x_style" and existing is None:
@@ -292,7 +297,7 @@ async def start_workflow_run(
         try:
             x_style.validate_inputs(normalized_inputs)
         except ValueError as exc:
-            raise WorkflowInputError(str(exc)) from None
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
         if not getattr(settings, "luna_api_key", None):
             raise WorkflowExecutorUnavailableError(
                 "X style capture requires the native model service."
@@ -343,7 +348,7 @@ async def start_workflow_run(
             if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
                 project_id=project_id, start_idempotency_key=start_idempotency_key
             ):
-                raise WorkflowInputError(str(exc)) from exc
+                raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     prerequisite_evidence: dict[str, Any] | None = None
     if existing is None and _review_transition is None:
         # Admission asks the project's durable facts, never a caller claim, whether the
@@ -376,7 +381,7 @@ async def start_workflow_run(
                     project_id, normalized_inputs["author_id"]
                 )
             except ValueError as exc:
-                raise WorkflowInputError(str(exc)) from None
+                raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
     if workflow.executor == "style.capture" and existing is None:
         from tin_lite.style_capture import StyleSourceError, read_sources
 
@@ -399,12 +404,12 @@ async def start_workflow_run(
                     project_id, normalized_inputs["author_id"]
                 )
             except ValueError as exc:
-                raise WorkflowInputError(str(exc)) from None
+                raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
         try:
             await read_sources(runtime.storage, project, normalized_inputs["source_path"])
         except StyleSourceError as exc:
             # Tin's own words: which file, and what is wrong with it.
-            raise WorkflowInputError(str(exc)) from None
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from None
         except ValueError:
             raise WorkflowInputError(
                 "Choose a valid style source packet in this project's Files before starting."
@@ -421,7 +426,7 @@ async def start_workflow_run(
                 project_id, normalized_inputs
             )
         except ValueError as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if workflow.key == technical_fix.KEY and technical_fix.batches(
         technical_fix.definition_policy(workflow.definition)
     ):
@@ -444,7 +449,7 @@ async def start_workflow_run(
                 decisions=normalized_inputs.get("decisions") or [],
             )
         except TechnicalFixError as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
         if not preview["plan"]["repairs"]:
             waiting = len(preview["decisions_needed"])
             raise WorkflowInputError(
@@ -481,7 +486,7 @@ async def start_workflow_run(
                 },
             )
         except TechnicalFixError as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if workflow.executor == organic_system.KEY:
         try:
             organic_system.check_inputs(normalized_inputs)
@@ -505,7 +510,7 @@ async def start_workflow_run(
         try:
             check_keyword_inputs(normalized_inputs)
         except (ValueError, TypeError) as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
         keyword_reason = keyword_plan_gate(settings)
         if keyword_reason is not None:
             raise WorkflowExecutorUnavailableError(keyword_reason)
@@ -513,7 +518,7 @@ async def start_workflow_run(
         try:
             check_paid_ads_inputs(normalized_inputs)
         except (ValueError, TypeError, KeyError) as exc:
-            raise WorkflowInputError(str(exc) or "Invalid paid ads inputs.") from exc
+            raise WorkflowInputError(public_error_text(exc, "Invalid paid ads inputs.")) from exc
         paid_ads_reason = paid_ads_gate(settings)
         if paid_ads_reason is not None:
             raise WorkflowExecutorUnavailableError(paid_ads_reason)
@@ -526,7 +531,7 @@ async def start_workflow_run(
         try:
             check(normalized_inputs)
         except (ValueError, TypeError, KeyError) as exc:
-            raise WorkflowInputError(str(exc) or "Invalid Google Ads inputs.") from exc
+            raise WorkflowInputError(public_error_text(exc, "Invalid Google Ads inputs.")) from exc
         ads_reason = google_ads_gate(settings)
         if ads_reason is not None:
             raise WorkflowExecutorUnavailableError(ads_reason)
@@ -543,7 +548,7 @@ async def start_workflow_run(
         try:
             public_site(normalized_inputs["site_url"])
         except ValueError as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
         audit_reason = organic_audit_gate(settings)
         if audit_reason is not None:
             raise WorkflowExecutorUnavailableError(audit_reason)
@@ -574,7 +579,7 @@ async def start_workflow_run(
                     inputs=normalized_inputs,
                 )
             except (ValueError, LookupError) as exc:
-                raise WorkflowInputError(str(exc)) from exc
+                raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
         if evidence_specs(workflow.definition):
             try:
                 create_arguments["approved_evidence_source"] = await code_evidence.select(
@@ -595,7 +600,7 @@ async def start_workflow_run(
                 if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
                     project_id=project_id, start_idempotency_key=start_idempotency_key
                 ):
-                    raise WorkflowInputError(str(exc)) from exc
+                    raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
 
     if workflow.id == content_repository_delivery.WORKFLOW_ID and existing is None:
         try:
@@ -611,7 +616,7 @@ async def start_workflow_run(
                 approval=_approval_delivery,
             )
         except (ValueError, LookupError, IntegrationError) as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if workflow.id == content_repository_delivery.WEBSITE_CHANGE_ID and existing is None:
         from tin_lite import website_change
 
@@ -624,7 +629,7 @@ async def start_workflow_run(
                 inputs=normalized_inputs,
             )
         except (ValueError, LookupError, IntegrationError) as exc:
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     if project_workflow_id is not None:
         create_arguments["project_workflow_id"] = project_workflow_id
     if trigger_source != "manual":
@@ -685,13 +690,17 @@ async def start_workflow_run(
                     storage=runtime.storage,
                     integrations=runtime.integrations,
                 ).pin(project_id=project_id, selected=create_arguments["draft_selection"])
+        except IntegrationAuthorizationError:
+            # Reconnecting or installing is the founder's fix; keep the type (and a GitHub
+            # install link or account choice) instead of calling it an input error.
+            raise
         except (ValueError, LookupError, KeyError, IntegrationError) as exc:
             # A concurrent identical request may already have selected this article.
             # Let create_run validate that request's actor, inputs and lineage as usual.
             if not start_idempotency_key or not await runtime.database.get_run_by_start_key(
                 project_id=project_id, start_idempotency_key=start_idempotency_key
             ):
-                raise WorkflowInputError(str(exc)) from exc
+                raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
     try:
         run, created = await runtime.database.create_run(**create_arguments)
     except ValueError as exc:
@@ -706,7 +715,7 @@ async def start_workflow_run(
                 or workflow.definition.get("code", {}).get("evidence") is not None
             )
         ):
-            raise WorkflowInputError(str(exc)) from exc
+            raise WorkflowInputError(public_error_text(exc, INPUT_FALLBACK)) from exc
         raise
     if not created and run.status != RunStatus.PENDING:
         return run

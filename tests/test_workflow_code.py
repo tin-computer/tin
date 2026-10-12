@@ -22,11 +22,15 @@ from test_procedure_publication import publication_db as publication_db
 from test_project_codex_execution import temporal_env as temporal_env
 
 from tin_lite.activities import TinActivities
-from tin_lite.code_activities import CodeActivities
+from tin_lite.code_activities import FAILURE_FALLBACK, CodeActivities, tin_failure
+from tin_lite.code_models import CodeModelError
+from tin_lite.code_project_files import CodeProjectFileError
+from tin_lite.code_services import CodeServiceError
 from tin_lite.code_storage import CodeStorage
 from tin_lite.codex_execution import ProjectCodexExecution
 from tin_lite.domain import RunStatus
 from tin_lite.e2b_runtime import E2BRuntime
+from tin_lite.failures import INTERNAL_MESSAGE, failure_payload
 from tin_lite.private_workflows import validate_private_definition
 from tin_lite.project_files import ProjectFileService
 from tin_lite.publication import read_run_output
@@ -900,3 +904,112 @@ async def test_named_output_heading_titles_its_review(publication_db, monkeypatc
     assert await code.review(run_id)
     run = await f.db.get_run(UUID(run_id))
     assert run.artifact_path == path and run.artifact_title == "September orders"
+
+
+class FailureReceipts:
+    """The persist receipt and the run projection a code workflow's failure reads and writes."""
+
+    def __init__(self, receipt=None):
+        self.receipt = receipt
+        self.failures: list[dict] = []
+
+    async def get_effect(self, key, conn=None):
+        return self.receipt
+
+    async def project_failure(self, **values):
+        self.failures.append(values)
+
+
+def failing_code(receipt=None):
+    code = CodeActivities.__new__(CodeActivities)
+    code.db = FailureReceipts(receipt)
+    code.common = SimpleNamespace(project_procedure_failure=AsyncMock())
+    return code
+
+
+async def test_code_failure_from_an_older_history_keeps_its_fixed_text():
+    run_id = str(uuid4())
+    code = failing_code()
+    await code.failure(run_id)
+    code.common.project_procedure_failure.assert_awaited_once_with(
+        {"run_id": run_id, "reason": FAILURE_FALLBACK}, prefer_payload=False
+    )
+    assert code.db.failures == []
+
+
+async def test_code_failure_shows_a_founder_fixable_cause_and_hides_an_internal_one():
+    run_id = str(uuid4())
+    code = failing_code()
+    await code.failure(
+        {
+            "run_id": run_id,
+            "reason": "Reconnect PostHog in Integrations.",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: Reconnect PostHog in Integrations.",
+        }
+    )
+    shown = code.common.project_procedure_failure.await_args.args[0]
+    assert shown["reason"] == "Reconnect PostHog in Integrations."
+    assert shown["kind"] == "needs_you" and shown["action"] == "integrations"
+
+    code = failing_code()
+    await code.failure(
+        {
+            "run_id": run_id,
+            "reason": INTERNAL_MESSAGE,
+            "kind": "internal",
+            "detail": "KeyError: 'secret_column'",
+        }
+    )
+    hidden = code.common.project_procedure_failure.await_args.args[0]
+    assert hidden["reason"] == FAILURE_FALLBACK and hidden["kind"] == "internal"
+    assert hidden["detail"] == "KeyError: 'secret_column'"
+
+
+async def test_code_failure_keeps_a_retained_stage_over_a_generic_cause():
+    run_id = str(uuid4())
+    retained = "Code workflow failed during execution (RuntimeError)."
+    code = failing_code(
+        SimpleNamespace(status="started", result={"failure_reason": retained}, error_message=None)
+    )
+    await code.failure(
+        {"run_id": run_id, "reason": INTERNAL_MESSAGE, "kind": "internal", "detail": "x"}
+    )
+    shown = code.common.project_procedure_failure.await_args.args[0]
+    assert shown["reason"] == retained and shown["kind"] == "explained"
+
+
+async def test_code_failure_passes_tins_refusal_over_the_receipt_text():
+    """execute() fails the receipt with "<code>: <text>" for operators; the founder reads Tin's
+    sentence, which the procedure failure is told to prefer over that receipt."""
+    run_id = str(uuid4())
+    text = "Your Tin credits ran out. Add credits in Billing, then retry."
+    written = tin_failure(CodeModelError("model_spending_stopped", text))
+    receipt = SimpleNamespace(
+        status="failed",
+        # A stage retained by an earlier attempt is not the reason this one stopped.
+        result={
+            "failure_reason": "Code workflow failed during execution (RuntimeError).",
+            "failure": failure_payload(written, f"model_spending_stopped: {text}"),
+        },
+        error_message=f"model_spending_stopped: {text}",
+    )
+    code = failing_code(receipt)
+    await code.failure(run_id)
+    assert code.db.failures == []
+    call = code.common.project_procedure_failure.await_args
+    assert call.kwargs == {"prefer_payload": True}
+    shown = call.args[0]
+    assert shown["reason"] == text
+    assert (shown["kind"], shown["action"]) == ("needs_you", "billing")
+    assert shown["detail"] == f"model_spending_stopped: {text}"
+
+
+def test_tins_own_code_refusals_are_explained_and_spending_needs_the_founder():
+    validation = tin_failure(CodeModelError("model_output_invalid"))
+    assert validation.kind == "explained" and validation.message.startswith("The model response")
+    stopped = tin_failure(CodeServiceError("No request was made.", code="spending_stopped"))
+    assert stopped.kind == "needs_you" and stopped.action == "billing"
+    files = tin_failure(CodeProjectFileError("file_access_revoked"), "No permission.")
+    assert files.kind == "explained" and files.message == "No permission."

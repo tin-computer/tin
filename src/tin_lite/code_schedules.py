@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from tin_lite.billing_contracts import BillingError
 from tin_lite.code_project_files import select as select_project_files
 from tin_lite.domain import RunStatus
+from tin_lite.failures import billing_refusal, public_error_text
 from tin_lite.private_workflows import require_private_execution
 from tin_lite.schedules import (
     ScheduledWorkflowSkip,
@@ -26,6 +27,16 @@ def dispatched(run):
         "executor": run.executor,
         "temporal_workflow_id": run.temporal_workflow_id,
     }
+
+
+def schedule_issue(exc: BaseException) -> str:
+    """What a paused schedule's card says: billing wording, Tin's own sentence, or a plain
+    note that the pause came from Tin's side, never a library's text."""
+    if isinstance(exc, BillingError):
+        return billing_refusal(exc).message
+    return public_error_text(
+        exc, "Tin could not start this scheduled run because of a problem on its side."
+    )
 
 
 async def pause_for_issue(common, configured, message):
@@ -178,11 +189,19 @@ async def dispatch_code_schedule(common, configured, workflow, payload):
     except BillingError as exc:
         if (accepted := await accepted_after_race()) is not None:
             return accepted
-        await pause_for_issue(common, configured, str(exc))
+        if billing_refusal(exc).kind == "transient":
+            # An earlier paid step is still settling: skip this occurrence, keep the schedule.
+            await db.advance_project_workflow_schedule(
+                project_workflow_id=configured.id,
+                next_run_at=next_run_after(schedule, scheduled_for),
+                expected_settings_revision=configured.settings_revision,
+            )
+            return {}
+        await pause_for_issue(common, configured, schedule_issue(exc))
         return {}
     except (LookupError, ValueError, RuntimeError) as exc:
         if (accepted := await accepted_after_race()) is not None:
             return accepted
-        await pause_for_issue(common, configured, str(exc))
+        await pause_for_issue(common, configured, schedule_issue(exc))
         return {}
     return dispatched(run)

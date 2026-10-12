@@ -11,6 +11,7 @@ from dataclasses import asdict
 
 from tin_lite.billing_contracts import NANOS_PER_CENT, BillingError, digest
 from tin_lite.domain import RunStatus
+from tin_lite.failures import billing_refusal
 from tin_lite.model_providers import (
     MessageRole,
     ModelCapability,
@@ -55,9 +56,9 @@ ERRORS = {
 
 
 class CodeModelError(ValueError):
-    def __init__(self, code):
+    def __init__(self, code, message=None):
         self.code = code
-        super().__init__(ERRORS[code])
+        super().__init__(message or ERRORS[code])
 
 
 def registered_routes():
@@ -362,11 +363,16 @@ class CodeModels:
                 raise CodeModelError("model_result_unconfirmed") from None
             except TimeoutError:
                 raise CodeModelError("model_result_unconfirmed") from None
-            except BillingError:
+            except BillingError as exc:
+                # The package keeps its stable code; the founder reads what stopped the call.
                 await self.db.complete_effect(
-                    conn, execution_key=key, result={**record, "error": "model_spending_stopped"}
+                    conn,
+                    execution_key=key,
+                    result={**record, "error": "model_spending_stopped", "billing_code": exc.code},
                 )
-                raise CodeModelError("model_spending_stopped") from None
+                raise CodeModelError(
+                    "model_spending_stopped", billing_refusal(exc).message
+                ) from None
             response = {"text": result.text, "parsed": result.parsed}
             try:
                 valid = (

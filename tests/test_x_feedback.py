@@ -434,6 +434,30 @@ async def test_uncertain_model_call_never_repurchased(publication_db):
     assert RULE not in current(f, x_style.GUIDE_PATH).decode()
 
 
+async def test_a_spending_limit_is_reported_and_never_repurchased(publication_db):
+    # A billing refusal used to read "the X revision could not be validated".
+    from tin_lite.billing_contracts import BillingError
+    from tin_lite.failures import classify
+
+    f = await setup(publication_db)
+    run = await request(f)
+    f.router.generate.side_effect = BillingError("project_limit", "Project limit reached.")
+    with pytest.raises(ApplicationError) as raised:
+        await f.activities.generate(str(run.id))
+    assert "spending limit stopped the run" in raised.value.message
+    assert isinstance(raised.value.__cause__, BillingError)
+    assert classify(raised.value).kind == "needs_you"
+    receipt = await publication_db.get_effect(f"{run.id}:x_feedback_model")
+    assert receipt.status == "started" and receipt.result["failure_code"] == "project_limit"
+    with pytest.raises(ApplicationError, match="no replacement was purchased"):
+        await f.activities.generate(str(run.id))
+    assert f.router.generate.await_count == 1
+    # An old history passes only the run ID; the saved sentence is shown.
+    await f.activities.failure(str(run.id))
+    failed = await publication_db.get_run(run.id)
+    assert "spending limit stopped the run" in failed.error_message
+
+
 async def test_concurrent_requests_admit_one_and_direct_start_is_refused(publication_db):
     f = await setup(publication_db)
     outcomes = await asyncio.gather(request(f), request(f), return_exceptions=True)
@@ -600,3 +624,50 @@ async def test_a_revision_sends_the_output_cap_of_the_policy_it_was_pinned_to(
         return
     await f.activities.generate(str(run.id))
     assert f.router.generate.await_args.args[1].max_output_tokens == cap
+
+
+class FailureDB:
+    def __init__(self, receipt=None):
+        self.run = SimpleNamespace(id=uuid4(), executor=x_feedback.KEY)
+        self.receipt = receipt
+        self.project_failure = AsyncMock()
+
+    async def get_run(self, run_id, conn=None):
+        return self.run
+
+    async def get_effect(self, key, conn=None):
+        return self.receipt
+
+
+async def test_failure_shows_the_passed_cause_by_kind():
+    db = FailureDB()
+    activities = XFeedbackActivities(database=db, storage=None, router=None)
+    # Plain run ID: the fixed sentence, as before.
+    await activities.failure(str(db.run.id))
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith("The X revision did not finish.")
+    assert kwargs["error_kind"] is None
+    await activities.failure(
+        {
+            "run_id": str(db.run.id),
+            "reason": "Your Tin credits ran out. Add credits in Billing, then retry.",
+            "kind": "needs_you",
+            "action": "billing",
+            "detail": "BillingError: insufficient funds",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith("Your Tin credits ran out.")
+    assert (kwargs["error_kind"], kwargs["error_action"]) == ("needs_you", "billing")
+    await activities.failure(
+        {
+            "run_id": str(db.run.id),
+            "reason": "Tin hit a problem on its side.",
+            "kind": "internal",
+            "detail": "KeyError: 'documents'",
+        }
+    )
+    kwargs = db.project_failure.await_args.kwargs
+    assert kwargs["error_message"].startswith("The X revision did not finish.")
+    assert kwargs["error_kind"] == "internal"
+    assert kwargs["error_detail"] == "KeyError: 'documents'"

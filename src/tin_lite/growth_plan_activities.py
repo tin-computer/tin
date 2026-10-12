@@ -8,6 +8,7 @@ run rather than being purchased twice.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from datetime import UTC, datetime
 from uuid import UUID
@@ -16,7 +17,9 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from tin_lite import growth_plan as plan
+from tin_lite.billing_contracts import BillingError
 from tin_lite.domain import GROWTH_ONBOARDING_PLAN_PATH
+from tin_lite.failures import billing_refusal, failure_projection, split_failure_input
 from tin_lite.growth_plan_site import evidence_text, read_site
 from tin_lite.model_providers import (
     MessageRole,
@@ -225,6 +228,17 @@ class GrowthPlanActivities:
                 reason = str(exc)[:160] or "unusable model result"
                 await self.db.complete_effect(conn, execution_key=key, result={"unusable": reason})
                 raise plan.UnusableModelResult(reason) from None
+            except BillingError as exc:
+                # A billing refusal says what stopped the step. The receipt stays started, so
+                # a retry still never buys a replacement.
+                message = billing_refusal(exc).message
+                with contextlib.suppress(Exception):
+                    await self.db.save_effect_progress(
+                        conn,
+                        execution_key=key,
+                        result={"failure_code": exc.code, "failure_message": message},
+                    )
+                raise ApplicationError(message, non_retryable=True) from exc
             except Exception:
                 raise ApplicationError(
                     "A plan model request could not be confirmed; no replacement was purchased.",
@@ -393,18 +407,21 @@ class GrowthPlanActivities:
                 raise
 
     @activity.defn(name="growth_plan_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, argument: str | dict):
+        run_id, passed = split_failure_input(argument)
         run = await self.db.get_run(UUID(run_id))
         if run and run.executor == plan.KEY:
-            message = (
+            fallback = (
                 "The growth plan could not confirm completion. "
                 "Check Files for a saved result before trying again."
             )
+            saved = None
             # Until the save step starts, no plan file can exist: say so instead of sending the
             # founder to Files, and keep the receipted reason when the write step recorded one.
             if await self.db.get_effect(f"{run.id}:plan_artifact_persist") is None:
                 failed = await self.db.get_effect(f"{run.id}:plan_write_failed")
-                message = (failed and failed.error_message) or (
-                    "The growth plan could not be written. Nothing was saved; try again."
-                )
-            await self.db.project_failure(run_id=run.id, error_message=message)
+                saved = (failed and failed.error_message) or None
+                fallback = "The growth plan could not be written. Nothing was saved; try again."
+            await self.db.project_failure(
+                run_id=run.id, **failure_projection(passed, fallback, saved=saved)
+            )

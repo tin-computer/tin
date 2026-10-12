@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -12,6 +13,7 @@ from temporalio.exceptions import ApplicationError
 
 from tin_lite.connection_collection import KEY, TERMINAL, CollectionError, canonical_json
 from tin_lite.connection_collection_store import CollectionStore, record
+from tin_lite.failures import Failure, failure_projection, payload_failure, split_failure_input
 from tin_lite.organic_audit_publication import publish_artifacts
 from tin_lite.workflow_packages import load_workflow_source
 
@@ -114,6 +116,66 @@ def artifacts(job, pages):
     return documents
 
 
+FAILURE_FALLBACK = "Connection collection could not finish. Accepted pages were retained."
+# Founder wording for the finite codes a collection stops with. Any other code is Tin's own
+# state and reads as the fallback.
+COLLECTION_REFUSALS = {
+    "account_owner_required": Failure(
+        "needs_you",
+        "Only the person who connected LinkedIn can collect from it. Connect your own "
+        "LinkedIn account in Integrations, then start the collection again.",
+        action="integrations",
+        code="account_owner_required",
+    ),
+    "browser_unavailable": Failure(
+        "needs_you",
+        "Tin could not reach Chrome. Open Chrome with LinkedIn signed in and the Tin "
+        "extension connected, then start the collection again.",
+        action="integrations",
+        code="browser_unavailable",
+    ),
+    "account_busy": Failure(
+        "transient",
+        "Another collection is using this LinkedIn account. Start this one again when it finishes.",
+        code="account_busy",
+    ),
+    "project_unavailable": Failure(
+        "explained", "Project access is no longer available.", code="project_unavailable"
+    ),
+    "unsupported_collection_contract": Failure(
+        "explained",
+        "This collection's saved setup is no longer supported. Start a new collection.",
+        code="unsupported_collection_contract",
+    ),
+    "collection_stopped": Failure(
+        "explained", "This collection is no longer active.", code="collection_stopped"
+    ),
+    "collection_failed": Failure(
+        "explained",
+        "Connection collection failed. Saved results include its coverage and reason.",
+        code="collection_failed",
+    ),
+}
+
+
+def collection_failure(code: str) -> Failure:
+    return COLLECTION_REFUSALS.get(code) or Failure("internal", FAILURE_FALLBACK, code=code)
+
+
+def founder_cause(passed: dict | None) -> dict | None:
+    """A passed cause whose text is a bare CollectionError code (an older history, or one
+    raised outside prepare) gets its founder sentence, or the fallback for an unknown code."""
+    failure = payload_failure(passed)
+    if failure is None or not re.fullmatch(r"[a-z][a-z_]*", failure.message):
+        return passed
+    mapped = collection_failure(failure.message)
+    cause = {**passed, "reason": mapped.message, "kind": mapped.kind}
+    cause.pop("action", None)
+    if mapped.action:
+        cause["action"] = mapped.action
+    return cause
+
+
 class CollectionActivities:
     def __init__(self, *, database, storage, settings, cloud=None, cipher=None):
         self.cloud, self.cipher = cloud, cipher
@@ -146,7 +208,10 @@ class CollectionActivities:
             await self.store.prepare(run, source.definition.get("collection_policy"))
             await self.db.mark_run_running(run.id)
         except CollectionError as exc:
-            raise ApplicationError(exc.code, non_retryable=True) from None
+            # The message stays the finite code; the details carry what the founder reads.
+            raise ApplicationError(
+                exc.code, collection_failure(exc.code).details(), non_retryable=True
+            ) from None
 
     @activity.defn(name="collection_poll")
     async def poll(self, run_id: str) -> bool:
@@ -281,14 +346,12 @@ class CollectionActivities:
                 revision,
                 f"connections/{run.id}/manifest.json",
             )
+            failed = collection_failure("collection_failed")
             await self.db.project_failure(
-                run_id=run.id,
-                error_message=(
-                    "Connection collection failed. Saved results include its coverage and reason."
-                ),
+                run_id=run.id, error_message=failed.message, error_kind=failed.kind
             )
             await self.release(run.id)
-            raise ApplicationError("collection_failed", non_retryable=True)
+            raise ApplicationError("collection_failed", failed.details(), non_retryable=True)
         people_count = len({person["profile_url"] for page in pages for person in page["records"]})
         summary = f"Collected {people_count} people. Results are in Files."
         if job["state"] != "completed":
@@ -311,7 +374,8 @@ class CollectionActivities:
         await self.release(run.id)
 
     @activity.defn(name="collection_failure")
-    async def failure(self, run_id: str):
+    async def failure(self, value: str | dict):
+        run_id, passed = split_failure_input(value)
         identifier = UUID(run_id)
         await self.db.pool.execute(
             """UPDATE connection_collection_jobs SET state='failed',
@@ -320,9 +384,9 @@ class CollectionActivities:
             identifier,
         )
         await self.release(identifier)
+        # A job that failed while publishing already recorded its own message; the run keeps it.
         await self.db.project_failure(
-            run_id=identifier,
-            error_message="Connection collection could not finish. Accepted pages were retained.",
+            run_id=identifier, **failure_projection(founder_cause(passed), FAILURE_FALLBACK)
         )
 
     async def release(self, run_id):

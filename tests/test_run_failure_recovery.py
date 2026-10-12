@@ -14,9 +14,16 @@ from temporalio.exceptions import ActivityError, ApplicationError, TimeoutError,
 
 from tin_lite import activities as activities_module
 from tin_lite import run_service
-from tin_lite.activities import TinActivities, failure_message, transient_failure
+from tin_lite.activities import (
+    TinActivities,
+    failure_message,
+    failure_record,
+    transient_failure,
+)
+from tin_lite.billing_contracts import usd_nanos
 from tin_lite.domain import RunStatus, WorkflowRun
-from tin_lite.workflows import failure_reason
+from tin_lite.failures import INTERNAL_MESSAGE, Failure
+from tin_lite.workflows import failure_fields, failure_reason
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,14 +41,43 @@ def test_failure_message_prefers_the_reason_then_other_keys() -> None:
 
 
 def test_failure_message_falls_back_to_the_exception_then_the_default() -> None:
-    assert failure_message({}, RuntimeError("panel is incomplete"), restarted=False) == (
-        "RuntimeError: panel is incomplete"
+    # Tin's own sentence: a ValueError raised inside a tin_lite module.
+    with pytest.raises(ValueError) as raised:
+        usd_nanos("ten")
+    assert failure_message({}, raised.value, restarted=False) == (
+        "Use a USD amount with at most two decimal places, such as 10.00."
     )
-    assert failure_message({"reason": ""}, ValueError(), restarted=False) == "ValueError"
+    # A library's own text (a bare KeyError, a parser error) is internal, never the founder's.
+    internal = failure_message({}, KeyError("rows"), restarted=False)
+    assert internal == INTERNAL_MESSAGE
+    assert failure_message({"reason": ""}, ValueError(), restarted=False) == INTERNAL_MESSAGE
     assert failure_message(None, restarted=False) == "workflow failed"
     assert failure_message({}, default="project task failed", restarted=False) == (
         "project task failed"
     )
+
+
+def test_failure_record_keeps_the_raw_cause_for_operators_only() -> None:
+    record = failure_record({}, KeyError("rows"), restarted=False)
+    assert record == {
+        "error_message": INTERNAL_MESSAGE,
+        "error_kind": "internal",
+        "error_action": None,
+        "error_detail": "KeyError: 'rows'",
+    }
+    carried = failure_record(
+        {
+            "run_id": "r",
+            "reason": "Reconnect X in this project",
+            "kind": "needs_you",
+            "action": "integrations",
+            "detail": "IntegrationAuthorizationError: Reconnect X in this project",
+        },
+        restarted=False,
+    )
+    assert carried["error_message"] == "Reconnect X in this project"
+    assert carried["error_kind"] == "needs_you"
+    assert carried["error_action"] == "integrations"
 
 
 def test_failure_message_truncates_and_marks_a_fresh_restart() -> None:
@@ -63,8 +99,7 @@ def test_failure_message_reads_the_process_clock(monkeypatch: pytest.MonkeyPatch
 # --- failure_reason (workflow side) -------------------------------------------------------
 
 
-def test_failure_reason_names_the_innermost_cause() -> None:
-    inner = ApplicationError("visibility target domain is invalid", type="VisibilityProtocolError")
+def activity_error(cause: BaseException) -> ActivityError:
     outer = ActivityError(
         "Activity task failed",
         scheduled_event_id=5,
@@ -74,15 +109,40 @@ def test_failure_reason_names_the_innermost_cause() -> None:
         activity_id="1",
         retry_state=None,
     )
-    outer.__cause__ = inner
-    assert failure_reason(outer) == "VisibilityProtocolError: visibility target domain is invalid"
+    outer.__cause__ = cause
+    return outer
+
+
+def test_failure_reason_keeps_tin_words_and_hides_internal_text() -> None:
+    # Tin's own refusal (no type) is kept as written.
+    refusal = ApplicationError("The audit target domain is invalid.", non_retryable=True)
+    assert failure_reason(activity_error(refusal)) == "The audit target domain is invalid."
+    # A converted library error is internal; its text is the operator detail only.
+    leaked = ApplicationError("'NoneType' object has no attribute 'x'", type="AttributeError")
+    fields = failure_fields(activity_error(leaked))
+    assert fields["reason"] == INTERNAL_MESSAGE
+    assert fields["kind"] == "internal"
+    assert fields["detail"] == "AttributeError: 'NoneType' object has no attribute 'x'"
+    # An activity's interceptor classification wins over its type.
+    carried = ApplicationError(
+        "Reconnect X in this project",
+        Failure("needs_you", "Reconnect X in this project", action="integrations").details(),
+        type="IntegrationAuthorizationError",
+    )
+    fields = failure_fields(activity_error(carried))
+    assert (fields["reason"], fields["kind"], fields["action"]) == (
+        "Reconnect X in this project",
+        "needs_you",
+        "integrations",
+    )
     timeout = TimeoutError(
         "activity Heartbeat timeout", type=TimeoutType.HEARTBEAT, last_heartbeat_details=[]
     )
-    outer.__cause__ = timeout
-    assert failure_reason(outer) == "TimeoutError: activity Heartbeat timeout"
-    assert failure_reason(RuntimeError("")) == "RuntimeError: workflow failed"
-    assert len(failure_reason(RuntimeError("z" * 1000))) == 600
+    fields = failure_fields(activity_error(timeout))
+    assert fields["kind"] == "transient"
+    assert fields["detail"] == "TimeoutError: activity Heartbeat timeout"
+    assert failure_reason(RuntimeError("")) == INTERNAL_MESSAGE
+    assert len(failure_reason(ApplicationError("z" * 1000))) == 600
 
 
 # --- transient classifier -----------------------------------------------------------------
@@ -164,7 +224,7 @@ class RetryDatabase:
             created_by_clerk_user_id="user_owner",
         )
 
-    async def project_failure(self, *, run_id: UUID, error_message: str) -> None:
+    async def project_failure(self, *, run_id: UUID, error_message: str, **_) -> None:
         assert run_id == self.run.id
         self.failures.append(error_message)
 

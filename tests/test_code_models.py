@@ -496,7 +496,7 @@ async def test_checkpoint_write_failure_keeps_its_reason_and_reuses_paid_model(b
     )
     assert "private payload" not in json.dumps(receipt.result)
     project_failure = AsyncMock()
-    monkeypatch.setattr(common, "project_codex_procedure_failure", project_failure)
+    monkeypatch.setattr(common, "project_procedure_failure", project_failure)
     await code.failure(run_id)
     assert project_failure.await_args.args[0]["reason"] == receipt.result["failure_reason"]
     monkeypatch.setattr(f.storage, "stage_native_output", stage)
@@ -580,6 +580,18 @@ async def test_validation_failure_preserves_incurred_usage_and_settlement(
     await ActivityEnvironment().run(code.failure, run_id)
     run = await f.db.get_run(UUID(run_id))
     assert run.status == RunStatus.FAILED and f.storage.repo.writes == 0
+    # The founder reads Tin's own sentence; the receipt keeps the code for operators.
+    receipt = await f.db.get_effect(f"{run_id}:procedure_artifact_persist")
+    if supplier_schema_failure:
+        assert run.error_message == code_models.ERRORS["model_output_invalid"]
+        assert receipt.error_message.startswith("model_output_invalid: ")
+    else:
+        assert run.error_message == "The code package, inputs or result failed validation."
+    assert run.error_kind == "explained"
+    assert (
+        await f.db.pool.fetchval("SELECT error_detail FROM workflow_runs WHERE id=$1", run.id)
+        == receipt.error_message
+    )
     usage = await f.db.pool.fetchrow(
         "SELECT result FROM effect_receipts WHERE operation='native_model_usage_v1'"
     )

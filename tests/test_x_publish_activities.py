@@ -314,3 +314,68 @@ async def test_uncertain_video_append_is_never_repeated(publication_db):
     with pytest.raises(ApplicationError, match="uncertain outcome"):
         await activities.execute(str(run_id))
     assert x.media_calls.count("append") == 1 and x.calls == 0
+
+
+def passed(run_id, exc):
+    from tin_lite.failures import classify, detail, failure_payload
+
+    return {"run_id": str(run_id), **failure_payload(classify(exc), detail(exc))}
+
+
+async def failed_row(db, run_id):
+    return await db.pool.fetchrow(
+        "SELECT status,error_message,error_kind,error_action,error_detail "
+        "FROM workflow_runs WHERE id=$1",
+        run_id,
+    )
+
+
+async def reopen(db, run_id):
+    # A failed run keeps its first message; reopen it to project another cause.
+    await db.pool.execute(
+        "UPDATE workflow_runs SET status='running', error_message=NULL WHERE id=$1", run_id
+    )
+
+
+@pytest.mark.asyncio
+async def test_failure_before_any_post_keeps_the_reason(publication_db):
+    # With no post receipt the failure used to say only "check the run details".
+    storage, x = HistoryStorage(), SyntheticX()
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    # A plain run ID (an older history): the fixed line, which says nothing was posted.
+    run_id, _ = await setup(publication_db, storage, x)
+    await activities.failure(str(run_id))
+    row = await failed_row(publication_db, run_id)
+    assert row["status"] == "failed" and "nothing was posted" in row["error_message"]
+    assert "run details" not in row["error_message"]
+    # A founder-fixable cause is shown with where to fix it.
+    await reopen(publication_db, run_id)
+    exc = IntegrationAuthorizationError("Reconnect X under Integrations.")
+    await activities.failure(passed(run_id, exc))
+    row = await failed_row(publication_db, run_id)
+    assert row["error_message"] == "Reconnect X under Integrations."
+    assert (row["error_kind"], row["error_action"]) == ("needs_you", "integrations")
+    # An internal cause shows the fixed line and keeps the raw text for operators.
+    await reopen(publication_db, run_id)
+    await activities.failure(passed(run_id, KeyError("media_ids")))
+    row = await failed_row(publication_db, run_id)
+    assert "nothing was posted" in row["error_message"] and row["error_kind"] == "internal"
+    assert "media_ids" in row["error_detail"] and "media_ids" not in row["error_message"]
+    assert x.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_an_uncertain_post_outranks_the_passed_cause(publication_db):
+    storage, x = HistoryStorage(), SyntheticX()
+    x.uncertain = True
+    run_id, _ = await setup(publication_db, storage, x)
+    activities = XPublishActivities(
+        database=publication_db, storage=storage, integrations=SimpleNamespace(x=x)
+    )
+    with pytest.raises(IntegrationDeliveryUnknownError) as raised:
+        await activities.execute(str(run_id))
+    await activities.failure(passed(run_id, raised.value))
+    row = await failed_row(publication_db, run_id)
+    assert "may have published" in row["error_message"]
