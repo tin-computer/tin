@@ -1942,6 +1942,76 @@ class Database:
             tool_name[:100],
         )
 
+    async def agent_setup_status(self, clerk_user_id: str) -> dict[str, Any]:
+        """How far this person's coding agent has come, across the projects they belong to.
+
+        The locked dashboard follows along with it. The agent counts as connected once a
+        project call (project_mcp_usage) or an MCP-started run carries this person's identity.
+        project_mcp_usage keeps the latest call per project, so the time can be later than
+        the very first call. Setup is this person's latest growth.onboarding run that was not
+        superseded; its plan is ready once it waits for picks or has finished.
+        """
+        row = await self.pool.fetchrow(
+            """
+            WITH mine AS (
+                SELECT projects.id, projects.name
+                FROM project_memberships
+                JOIN projects ON projects.id = project_memberships.project_id
+                WHERE project_memberships.clerk_user_id = $1 AND projects.deleted_at IS NULL
+            ),
+            setup AS (
+                SELECT runs.id, runs.project_id, mine.name AS project_name, runs.status,
+                       runs.created_at, runs.trigger_client
+                FROM workflow_runs AS runs
+                JOIN mine ON mine.id = runs.project_id
+                WHERE runs.executor = 'growth.onboarding'
+                  AND runs.started_by_clerk_user_id = $1
+                  AND runs.status <> 'superseded'
+                ORDER BY runs.created_at DESC, runs.id DESC
+                LIMIT 1
+            ),
+            agent_runs AS (
+                SELECT runs.created_at, runs.trigger_client
+                FROM workflow_runs AS runs
+                JOIN mine ON mine.id = runs.project_id
+                WHERE runs.started_by_clerk_user_id = $1 AND runs.trigger_source = 'mcp'
+            )
+            SELECT
+                (SELECT min(usage.used_at) FROM project_mcp_usage AS usage
+                 JOIN mine ON mine.id = usage.project_id
+                 WHERE usage.clerk_user_id = $1) AS usage_at,
+                (SELECT min(created_at) FROM agent_runs) AS agent_run_at,
+                (SELECT trigger_client FROM agent_runs
+                 WHERE trigger_client IS NOT NULL
+                 ORDER BY created_at DESC LIMIT 1) AS client,
+                setup.id AS setup_run_id,
+                setup.project_id AS setup_project_id,
+                setup.project_name AS setup_project_name,
+                setup.status AS setup_status,
+                setup.created_at AS setup_started_at
+            FROM (SELECT 1) AS one
+            LEFT JOIN setup ON true
+            """,
+            clerk_user_id,
+        )
+        assert row is not None
+        connected = [value for value in (row["usage_at"], row["agent_run_at"]) if value]
+        status = row["setup_status"]
+        return {
+            "agent": {
+                "connected_at": min(connected) if connected else None,
+                "client": row["client"],
+            },
+            "setup": {
+                "run_id": row["setup_run_id"],
+                "project_id": row["setup_project_id"],
+                "project_name": row["setup_project_name"],
+                "started_at": row["setup_started_at"],
+                "status": status,
+                "plan_ready": status in {"needs_input", "succeeded"},
+            },
+        }
+
     async def create_project_workflow(
         self,
         *,

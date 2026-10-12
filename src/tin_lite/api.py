@@ -169,18 +169,23 @@ SEARCH_PATHS = Query(default=None, max_length=100)
 WEEK_START = Query(description="The first of seven local days, usually a Monday.")
 
 
+LOCK_PAGE_ACTIONS = frozenset(
+    {"viewed", "install_copied", "agent_connected", "setup_started", "plan_ready"}
+)
+
+
 @router.post("/api/events/lock-page", status_code=204)
 async def record_lock_page_event(request: Request, user: AuthContext = AUTHENTICATED_USER):
-    """A browser sign-up met the locked dashboard: opened it, or copied the install line.
+    """A browser sign-up met the locked dashboard and how far it watched the agent get.
 
-    The lock stands in for browser onboarding until it exists; these two events show how
-    many people it sends to their coding agent. The body is a fixed vocabulary, never
-    free text.
+    The lock stands in for browser onboarding until it exists. Opened and copied show how
+    many people it sends to their coding agent; the other three are its steps ticking while
+    the page was open. The body is a fixed vocabulary, never free text.
     """
     body = await request.json() if await request.body() else {}
     body = body if isinstance(body, dict) else {}
     action = body.get("action")
-    if action not in {"viewed", "install_copied"}:
+    if action not in LOCK_PAGE_ACTIONS:
         raise HTTPException(status_code=400, detail="Unknown lock page action.")
     agent = body.get("agent")
     project_id = body.get("project_id")
@@ -194,6 +199,24 @@ async def record_lock_page_event(request: Request, user: AuthContext = AUTHENTIC
         project_id=str(project_id) if isinstance(project_id, str) and project_id else None,
     )
     return Response(status_code=204)
+
+
+@router.get("/api/projects/{project_id}/agent-setup")
+async def get_agent_setup(
+    project_id: UUID, request: Request, user: AuthContext = AUTHENTICATED_USER
+) -> dict[str, Any]:
+    """What the locked dashboard shows while the coding agent sets Tin up.
+
+    Asked from the project the browser has open, usually the empty personal one, and
+    answered for the person: the agent often creates and onboards a separate project for
+    the business. Every project named in the answer is one they belong to.
+    """
+    database = request.app.state.runtime.database
+    if not await database.has_project_access(
+        project_id=project_id, clerk_user_id=user.clerk_user_id
+    ):
+        raise HTTPException(status_code=404, detail="project not found")
+    return await database.agent_setup_status(user.clerk_user_id)
 
 
 BILLING_QUOTE_HEADER = Header(default=None, alias="Tin-Billing-Quote")
