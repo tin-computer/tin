@@ -113,7 +113,9 @@ test("lock page: no workflow yet locks the rail and sends the person to their co
     assert.equal(await page.locator("#lock-page-command").textContent(), 'codex mcp add tin --url https://app.tin.test/mcp && codex "Set up Tin"');
     await page.locator('[data-lock-tab="claude"]').click();
     assert.equal(await page.locator("#lock-page-command").textContent(), 'claude mcp add -s user -t http tin https://app.tin.test/mcp && claude "Set up Tin"');
-    assert.equal((await stepTitles(page))[1], "Click Allow in the tab Claude Code opens");
+    // Claude Code prints the sign-in link instead of opening a tab, then waits for a reply.
+    assert.equal((await stepTitles(page))[1], "Open the link Claude Code shows and click Allow");
+    assert.equal(await page.locator(".lock-step").nth(1).locator("p").textContent(), "Then tell Claude Code you're done and it carries on.");
     // One line on a desktop: the long Claude Code line is clipped with an ellipsis, never wrapped.
     const command = await page.locator("#lock-page-command").evaluate(node => ({clipped: node.scrollWidth > node.clientWidth, lines: Math.round(node.getBoundingClientRect().height / 18)}));
     assert.deepEqual(command, {clipped: true, lines: 1});

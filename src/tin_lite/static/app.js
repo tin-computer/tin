@@ -1410,6 +1410,19 @@ function renderLockPage() {
   if (!lockProgress(state.lockSetup).ready) scheduleLockPolling({ immediate: !state.lockSetup });
 }
 
+// Codex opens the sign-in tab itself. Claude Code only prints the link, and goes on once
+// the person writes back.
+function lockSignIn(tab, agentName) {
+  if (tab === "claude") return {
+    title: "Open the link Claude Code shows and click Allow",
+    detail: "Then tell Claude Code you're done and it carries on.",
+  };
+  return {
+    title: `Click Allow in the tab ${agentName} opens`,
+    detail: "That lets your agent use your Tin account. It's Tin's page; nothing to fill in.",
+  };
+}
+
 function renderLockSteps() {
   const container = main.querySelector("#lock-page-progress");
   if (!container) return;
@@ -1421,10 +1434,7 @@ function renderLockSteps() {
       : lockStep({ state: "active", number: 1, title: "Run this in a terminal, inside your project", body: lockInstall(tab) }),
     progress.connected
       ? lockStep({ state: "done", title: `${progress.agentName} connected`, time: clockTime(progress.connectedAt) })
-      : lockStep({
-        state: "pending", number: 2, title: `Click Allow in the tab ${progress.agentName} opens`,
-        detail: "That lets your agent use your Tin account. It's Tin's page; nothing to fill in.",
-      }),
+      : lockStep({ state: "pending", number: 2, ...lockSignIn(tab, progress.agentName) }),
   ];
   let after = '<p class="lock-page-status" role="status">waiting for your agent · this page updates by itself</p>';
   if (progress.ready) {
