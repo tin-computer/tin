@@ -67,6 +67,9 @@ See [GitHub's fork approval guidance](https://docs.github.com/en/actions/how-tos
 
 - Require the verify and staging checks, one code-owner review and resolved review threads
   on main.
+- Let only `tin-lite-maintainers` update `main` ("Main: only maintainers merge"); other
+  writers open pull requests and deploy branches to staging.
+- Limit manual runs of `deploy` to `PROD_DEPLOYERS`.
 - Restrict the `production` environment to `main`; Google Cloud trusts only that
   environment for the production deployer, and only `staging` for the staging deployer.
 - Limit the review/check bypass to the named Tin maintainer team.

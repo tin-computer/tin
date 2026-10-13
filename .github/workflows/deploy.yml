@@ -42,7 +42,16 @@ jobs:
         env:
           DISPATCHED: ${{ inputs.sha }}
           FROM_CI: ${{ github.event.workflow_run.head_sha }}
+          EVENT: ${{ github.event_name }}
+          ACTOR: ${{ github.actor }}
+          PROD_DEPLOYERS: ${{ vars.PROD_DEPLOYERS }}
         run: |
+          # Anyone with write access can press "Run workflow"; only maintainers may redeploy or
+          # roll back production by hand. Merges reach production through ci, not this path.
+          if [[ "${EVENT}" == "workflow_dispatch" && ",${PROD_DEPLOYERS}," != *",${ACTOR},"* ]]; then
+            echo "${ACTOR} is not in PROD_DEPLOYERS; ask a maintainer to run this deploy" >&2
+            exit 1
+          fi
           sha="${DISPATCHED:-${FROM_CI}}"
           if [[ ! "${sha}" =~ ^[0-9a-f]{40}$ ]]; then
             echo "a full commit SHA is required" >&2

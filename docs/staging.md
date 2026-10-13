@@ -26,6 +26,12 @@ Markdown) pass without a deploy. Staging has one slot: whoever deployed last own
 the next deploy, and a merge to `main` also takes it, so say in the team channel when you
 are testing there.
 
+Anyone with write access can deploy to staging this way, without approval. Only the
+`tin-lite-maintainers` team can update `main` (the "Main: only maintainers merge" ruleset),
+and only the people in the `PROD_DEPLOYERS` repository variable can run **deploy** by hand,
+so write access never reaches production on its own. Staging's host holds keys shared with
+production, so write access is for the team.
+
 ## From merge to production
 
 When `ci` passes on `main`, the `deploy` workflow deploys that commit to staging and, if it
